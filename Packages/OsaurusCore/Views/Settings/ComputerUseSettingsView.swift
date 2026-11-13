@@ -2,31 +2,58 @@
 //  ComputerUseSettingsView.swift
 //  OsaurusCore — Computer Use
 //
-//  Settings panel for the Computer Use feature. Organized top-down so a
-//  first-time user can follow it: what the feature is, whether it's set up
-//  (permissions), how to turn it on per agent, the safety model, and the
-//  autonomy controls. Power-user controls (per-app overrides, app allowlist,
-//  cloud vision) live under a collapsed "Advanced" section so the default
-//  view stays calm. The autonomy picker shows, in plain language, exactly
-//  what auto-runs, asks first, or is blocked for the selected stance.
-//  Sections use the shared `SettingsSection`/`SettingsToggle` primitives.
+//  Capabilities → Computer & Browser Use. The overview reads top-down for a
+//  first-time user: what the feature is, whether it's set up (permissions),
+//  and how to turn it on per agent. Autonomy (the safety model, the stance
+//  picker and, under Advanced, per-app rules / allowlist / cloud vision),
+//  Screen Context and AppleScript open as drill-ins; Browser is a child tab.
 //
 
 import SwiftUI
 
-// MARK: - Computer Use Tab Enum
+// MARK: - Computer Use Items
 
-/// Sub-tabs of the Computer Use panel. `setup` is the existing
-/// permissions/autonomy content; `models` hosts the downloadable on-device
-/// AppleScript models that power the `applescript` subagent.
-enum ComputerUseTab: String, CaseIterable, AnimatedTabItem {
+/// Drill-in pages of Computer & Browser Use. Raw values are stable deep-link
+/// ids (`computerUseSubTabRequest`). `setup` lands on the overview (where
+/// setup now lives); `models` forwards to Local Models → AppleScript.
+enum ComputerUseTab: String, CaseIterable, SettingsDrillInItem {
     case setup = "Setup"
+    case autonomy = "Autonomy"
+    case screenContext = "Screen Context"
+    case appleScript = "AppleScript"
     case models = "Models"
+
+    var id: String { rawValue }
+
+    static let drillInItems: [ComputerUseTab] = [.autonomy, .screenContext, .appleScript]
 
     var title: String {
         switch self {
         case .setup: return L("Setup")
-        case .models: return L("Models")
+        case .autonomy: return L("Autonomy")
+        case .screenContext: return L("Screen Context")
+        case .appleScript: return L("AppleScript")
+        case .models: return L("AppleScript Models")
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .setup: return "checklist"
+        case .autonomy: return "slider.horizontal.3"
+        case .screenContext: return "rectangle.on.rectangle.angled"
+        case .appleScript: return "applescript"
+        case .models: return "arrow.down.circle"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .setup: return ""
+        case .autonomy: return L("How much an agent may do on its own; per-app rules, allowlist and cloud vision.")
+        case .screenContext: return L("Share a text snapshot of your open windows at the start of each chat.")
+        case .appleScript: return L("Automation permission and how generated scripts are gated.")
+        case .models: return L("Download on-device AppleScript models.")
         }
     }
 }
@@ -39,8 +66,6 @@ struct ComputerUseSettingsView: View {
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
-    @State private var hasAppeared = false
-
     /// The editable autonomy policy, loaded from `ComputerUsePolicyStore` on
     /// appear and persisted on every change.
     @State private var policy: AutonomyPolicy = .defaultPolicy
@@ -51,31 +76,19 @@ struct ComputerUseSettingsView: View {
     /// approachable for a first read.
     @State private var showAdvanced = false
 
-    /// Sub-tab: the existing setup/permissions/autonomy cards vs the AppleScript
-    /// models browser. AppleScript automation is a Computer-Use-family feature,
-    /// so its downloadable models live here under a Models sub-tab.
-    @State private var selectedTab: ComputerUseTab = .setup
-    /// Installed curated AppleScript model count, for the Models tab badge.
+    @State private var selection: ComputerUseTab?
+    /// Installed curated AppleScript model count, for the models row badge.
     /// Refreshed on appear and whenever local models change.
     @State private var appleScriptInstalledCount = 0
 
     var body: some View {
-        VStack(spacing: 0) {
-            headerView
-                .managerHeaderEntrance(hasAppeared: hasAppeared)
-
-            Group {
-                switch selectedTab {
-                case .setup:
-                    setupTab
-                case .models:
-                    AppleScriptModelsView()
-                }
-            }
-            .opacity(hasAppeared ? 1 : 0)
+        SettingsDrillInHost(rootTitle: L("Computer & Browser Use"), selection: $selection) {
+            overview
+        } detail: { item in
+            detail(item)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
+        .background(theme.surface.canvas)
         .environment(\.theme, themeManager.currentTheme)
         .task { await refreshAppleScriptInstalledCount() }
         .onReceive(NotificationCenter.default.publisher(for: .localModelsChanged)) { _ in
@@ -88,9 +101,6 @@ struct ComputerUseSettingsView: View {
             applySubTabRequestIfNeeded()
             policy = ComputerUsePolicyStore.load()
             permissionService.startPeriodicRefresh(interval: 2.0)
-            withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
-                hasAppeared = true
-            }
         }
         .onDisappear {
             permissionService.stopPeriodicRefresh()
@@ -99,29 +109,67 @@ struct ComputerUseSettingsView: View {
 
     private func applySubTabRequestIfNeeded() {
         guard let requested = managementState.computerUseSubTabRequest else { return }
-        if let tab = ComputerUseTab(rawValue: requested) {
-            selectedTab = tab
-        }
         managementState.computerUseSubTabRequest = nil
+        switch ComputerUseTab(rawValue: requested) {
+        case .setup: selection = nil
+        case .models: managementState.openLocalModels(kind: .appleScript)
+        case let tab?: selection = tab
+        case nil: break
+        }
     }
 
-    /// The original Computer Use content: about, setup/permissions, per-agent
-    /// enable steps, the consent model, screen context, and autonomy controls.
-    private var setupTab: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                aboutCard
-                setupCard
-                enableCard
-                    .settingsLandingAnchor("computerUse.enable")
-                consentCard
-                screenContextCard
-                policyCard
-                advancedCard
+    // MARK: - Overview
+
+    private var overview: some View {
+        SettingsPage {
+            SettingsPageHeader(
+                title: "Computer & Browser Use",
+                subtitle: "Let agents operate macOS apps and the web on your behalf",
+                onRefresh: { permissionService.refreshAllPermissions() },
+                refreshHelp: "Refresh permission status"
+            )
+        } content: {
+            aboutCard
+            setupCard
+            enableCard
+                .settingsLandingAnchor("computerUse.enable")
+            SettingsSection(title: "More Settings") {
+                SettingsDrillInRows(items: ComputerUseTab.drillInItems) { selection = $0 }
+                ManagementChildLinkRows(parent: .computerUse)
+                SettingsNavigationRow(
+                    icon: ComputerUseTab.models.icon,
+                    title: ComputerUseTab.models.title,
+                    subtitle: ComputerUseTab.models.subtitle,
+                    badge: appleScriptInstalledCount,
+                    anchorId: "computerUse.models"
+                ) {
+                    managementState.openLocalModels(kind: .appleScript)
+                }
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 24)
-            .frame(maxWidth: .infinity)
+        }
+    }
+
+    @ViewBuilder
+    private func detail(_ item: ComputerUseTab) -> some View {
+        switch item {
+        case .appleScript:
+            VStack(spacing: theme.space.s0) {
+                SettingsPageHeader(title: item.title, subtitle: item.subtitle)
+                AppleScriptAutomationView()
+            }
+        default:
+            SettingsPage {
+                SettingsPageHeader(title: item.title, subtitle: item.subtitle)
+            } content: {
+                switch item {
+                case .screenContext:
+                    screenContextCard
+                default:
+                    consentCard
+                    policyCard
+                    advancedCard
+                }
+            }
         }
     }
 
@@ -129,37 +177,16 @@ struct ComputerUseSettingsView: View {
         appleScriptInstalledCount = AppleScriptModelCatalog.installedModels().count
     }
 
-    // MARK: - Header
-
-    private var headerView: some View {
-        ManagerHeaderWithTabs(
-            title: L("Computer Use"),
-            subtitle: L("Let agents operate macOS apps on your behalf")
-        ) {
-            if selectedTab == .setup {
-                HeaderSecondaryButton("Refresh", icon: "arrow.clockwise") {
-                    permissionService.refreshAllPermissions()
-                }
-                .localizedHelp("Refresh permission status")
-            }
-        } tabsRow: {
-            HeaderTabsRow(
-                selection: $selectedTab,
-                counts: appleScriptInstalledCount > 0 ? [.models: appleScriptInstalledCount] : nil
-            )
-        }
-    }
-
     // MARK: - About card
 
     private var aboutCard: some View {
-        SettingsSection(title: "What it is", icon: "cursorarrow.rays") {
-            VStack(alignment: .leading, spacing: 12) {
+        SettingsSection(title: "What It Is") {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 bodyText(
                     "When you turn it on for an agent, Computer Use lets that agent operate macOS apps for you — working through a goal step by step and showing every action in a live feed."
                 )
 
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
                     aboutRow(icon: "eye", text: "Reads what's on screen to understand each app.")
                     aboutRow(icon: "cursorarrow.click.2", text: "Clicks, types, and scrolls to carry out your request.")
                     aboutRow(
@@ -172,15 +199,15 @@ struct ComputerUseSettingsView: View {
     }
 
     private func aboutRow(icon: String, text: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: theme.space.s10) {
             Image(systemName: icon)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.accentColor)
+                .glyphSize(.caption, weight: .medium)
+                .foregroundColor(theme.text.link)
                 .frame(width: 18, alignment: .center)
-                .padding(.top, 1)
+                .padding(.top, theme.space.s2)
             Text(LocalizedStringKey(text), bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.caption)
+                .foregroundColor(theme.text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -192,62 +219,42 @@ struct ComputerUseSettingsView: View {
     }
 
     private var setupCard: some View {
-        SettingsSection(title: "Setup", icon: "checklist") {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 10) {
-                    Image(
-                        systemName: isAccessibilityGranted
-                            ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
-                    )
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundColor(isAccessibilityGranted ? theme.successColor : theme.warningColor)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(
-                            isAccessibilityGranted ? "Ready to use" : "Needs Accessibility permission",
-                            bundle: .module
-                        )
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-
-                        bodyText(
-                            isAccessibilityGranted
-                                ? "Computer Use can control apps once you enable it for an agent."
-                                : "Grant Accessibility below so agents can read and control apps."
-                        )
-                    }
-                    Spacer()
-                }
-
-                VStack(spacing: 10) {
-                    ComputerUsePermissionRow(
-                        permission: .accessibility,
-                        subtitleOverride: L(
-                            "Lets agents read on-screen elements and click, type, and scroll for you."
-                        )
-                    )
-                    ComputerUsePermissionRow(
-                        permission: .screenRecording,
-                        isOptional: true,
-                        subtitleOverride: L(
-                            "Only needed if an agent reads the screen visually (screenshots). The standard mode works without it."
-                        )
-                    )
-                }
-            }
+        SettingsSection(
+            title: "Setup",
+            subtitle: isAccessibilityGranted
+                ? "Computer Use can control apps once you enable it for an agent."
+                : "Grant Accessibility below so agents can read and control apps."
+        ) {
+            StatusChip(
+                isAccessibilityGranted ? L("Ready to use") : L("Needs Accessibility permission"),
+                tone: isAccessibilityGranted ? .success : .warning,
+                icon: isAccessibilityGranted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill"
+            )
+        } content: {
+            SettingsPermissionRow(
+                permission: .accessibility,
+                description: L("Lets agents read on-screen elements and click, type, and scroll for you.")
+            )
+            SettingsPermissionRow(
+                permission: .screenRecording,
+                isOptional: true,
+                description: L(
+                    "Only needed if an agent reads the screen visually (screenshots). The standard mode works without it."
+                )
+            )
         }
     }
 
     // MARK: - Enable card (per-agent steps)
 
     private var enableCard: some View {
-        SettingsSection(title: "Turn it on", icon: "person.2.fill") {
-            VStack(alignment: .leading, spacing: 12) {
+        SettingsSection(title: "Turn It On") {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 bodyText(
                     "Computer Use is off by default. You enable it per agent — and only custom agents can use it (the Default agent can't)."
                 )
 
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: theme.space.s10) {
                     stepRow(number: 1, text: "Open the Agents tab and select a custom agent.")
                     stepRow(number: 2, text: "Open Abilities → Subagents and turn on Computer Use.")
                     stepRow(
@@ -260,15 +267,15 @@ struct ComputerUseSettingsView: View {
     }
 
     private func stepRow(number: Int, text: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: theme.space.s10) {
             Text("\(number)")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundColor(theme.accentColor)
+                .font(SettingsFont.smallLabel)
+                .foregroundColor(theme.text.link)
                 .frame(width: 18, height: 18)
-                .background(Circle().fill(theme.accentColor.opacity(0.12)))
+                .background(Circle().fill(theme.status.info.background))
             Text(LocalizedStringKey(text), bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.caption)
+                .foregroundColor(theme.text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -276,23 +283,23 @@ struct ComputerUseSettingsView: View {
     // MARK: - Consent card (safety)
 
     private var consentCard: some View {
-        SettingsSection(title: "Staying in control", icon: "hand.raised.fill") {
-            VStack(alignment: .leading, spacing: 10) {
+        SettingsSection(title: "Staying in Control") {
+            VStack(alignment: .leading, spacing: theme.space.s10) {
                 consentRow(
                     icon: "checkmark.circle.fill",
-                    color: theme.successColor,
+                    color: theme.status.success.foreground,
                     text: L("Reading the screen never changes anything, so it always runs automatically.")
                 )
                 consentRow(
                     icon: "questionmark.circle.fill",
-                    color: theme.warningColor,
+                    color: theme.status.warning.foreground,
                     text: L(
                         "Actions that change or send something pause for your approval, based on the autonomy level below."
                     )
                 )
                 consentRow(
                     icon: "stop.circle.fill",
-                    color: theme.accentColor,
+                    color: theme.action.primary.default.background,
                     text: L("You can stop a run at any time from the activity feed in chat.")
                 )
             }
@@ -300,14 +307,14 @@ struct ComputerUseSettingsView: View {
     }
 
     private func consentRow(icon: String, color: Color, text: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: theme.space.s8) {
             Image(systemName: icon)
-                .font(.system(size: 12))
+                .glyphSize(.caption)
                 .foregroundColor(color)
-                .padding(.top, 1)
+                .padding(.top, theme.space.s2)
             Text(text)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.caption)
+                .foregroundColor(theme.text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -315,8 +322,8 @@ struct ComputerUseSettingsView: View {
     // MARK: - Screen context card
 
     private var screenContextCard: some View {
-        SettingsSection(title: "Screen context", icon: "rectangle.on.rectangle.angled") {
-            VStack(alignment: .leading, spacing: 14) {
+        SettingsSection(title: "Screen Context") {
+            VStack(alignment: .leading, spacing: theme.space.s14) {
                 bodyText(
                     "Give the assistant ambient awareness of what you're working on. When on, Osaurus freezes a quick snapshot of your open windows and the field you're focused on at the start of each chat, and shares it as background context. It's built from on-screen text only — no screenshots — and is scrubbed by the Privacy Filter before it reaches a cloud model."
                 )
@@ -343,13 +350,13 @@ struct ComputerUseSettingsView: View {
     // MARK: - Autonomy card
 
     private var policyCard: some View {
-        SettingsSection(title: "Autonomy", icon: "slider.horizontal.3") {
-            VStack(alignment: .leading, spacing: 16) {
+        SettingsSection(title: "Autonomy") {
+            VStack(alignment: .leading, spacing: theme.space.s16) {
                 bodyText(
                     "Choose how much an agent can do on its own. Per-app rules and each agent's own ceiling can only make this stricter — never less safe."
                 )
 
-                VStack(spacing: 8) {
+                VStack(spacing: theme.space.s8) {
                     ForEach(AutonomyPreset.allCases) { preset in
                         presetOptionRow(preset)
                     }
@@ -366,30 +373,25 @@ struct ComputerUseSettingsView: View {
             policy.globalPreset = preset
             persist()
         } label: {
-            HStack(spacing: 12) {
+            HStack(spacing: theme.space.s12) {
                 Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
-                    .font(.system(size: 16))
-                    .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
+                    .glyphSize(.medium)
+                    .foregroundColor(isSelected ? theme.text.link : theme.text.tertiary)
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text(preset.displayLabel)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.sectionTitle)
+                        .foregroundColor(theme.text.primary)
                     Text(preset.detail)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.tertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 8)
             }
-            .padding(12)
+            .padding(theme.space.s12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .surface(
-                cornerRadius: 10,
-                fill: isSelected ? theme.accentColor.opacity(0.08) : theme.inputBackground,
-                stroke: isSelected ? theme.accentColor.opacity(0.5) : theme.inputBorder,
-                lineWidth: isSelected ? 1.5 : 1
-            )
+            .settingsChrome(isSelected ? .selected : .control)
             .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
@@ -399,38 +401,38 @@ struct ComputerUseSettingsView: View {
     /// actually does for each effect class, so the abstract stance becomes
     /// concrete. Mirrors `AutonomyPreset.disposition(for:)` exactly.
     private var whatHappensSummary: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             Text("What this means right now", bundle: .module)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.smallLabel)
+                .foregroundColor(theme.text.secondary)
 
-            VStack(spacing: 8) {
+            VStack(spacing: theme.space.s8) {
                 ForEach(EffectClass.allCases, id: \.self) { effect in
                     effectSummaryRow(effect)
                 }
             }
         }
-        .padding(12)
+        .padding(theme.space.s12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .surface(cornerRadius: 10, fill: theme.tertiaryBackground)
+        .settingsChrome(.inset)
     }
 
     private func effectSummaryRow(_ effect: EffectClass) -> some View {
         let info = effectInfo(effect)
         let disposition = policy.globalPreset.disposition(for: effect)
-        return HStack(spacing: 10) {
+        return HStack(spacing: theme.space.s10) {
             Image(systemName: info.icon)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .glyphSize(.caption)
+                .foregroundColor(theme.text.secondary)
                 .frame(width: 18, alignment: .center)
 
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(LocalizedStringKey(info.title), bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                 Text(LocalizedStringKey(info.example), bundle: .module)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 8)
@@ -440,20 +442,14 @@ struct ComputerUseSettingsView: View {
 
     private func dispositionPill(_ disposition: AutonomyDisposition) -> some View {
         let color = dispositionColor(disposition)
-        return Text(disposition.displayLabel)
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundColor(color)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(Capsule().fill(color.opacity(0.12)))
-            .overlay(Capsule().stroke(color.opacity(0.25), lineWidth: 0.5))
+        return StatusChip(disposition.displayLabel, tint: color)
     }
 
     private func dispositionColor(_ disposition: AutonomyDisposition) -> Color {
         switch disposition {
-        case .allow: return theme.successColor
-        case .confirm: return theme.warningColor
-        case .deny: return theme.errorColor
+        case .allow: return theme.status.success.foreground
+        case .confirm: return theme.status.warning.foreground
+        case .deny: return theme.status.error.foreground
         }
     }
 
@@ -475,50 +471,47 @@ struct ComputerUseSettingsView: View {
     // MARK: - Advanced (collapsed)
 
     private var advancedCard: some View {
-        SettingsSection(title: "Advanced", icon: "gearshape.2") {
+        SettingsSection(title: "Advanced") {
             DisclosureGroup(isExpanded: $showAdvanced) {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: theme.space.s16) {
                     perAppSection
-                    SettingsDivider()
                     allowlistSection
-                    SettingsDivider()
                     cloudVisionSection
-                    SettingsDivider()
                     ComputerUseDiagnosticsPanel(policy: policy)
                 }
-                .padding(.top, 16)
+                .padding(.top, theme.space.s16)
             } label: {
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     Text("Per-app rules, app allowlist, and cloud vision.", bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.tertiary)
                     Spacer()
                 }
                 .contentShape(Rectangle())
                 // The native DisclosureGroup only toggles on the caret; make the
                 // whole label row toggle it too.
                 .onTapGesture {
-                    withAnimation(.easeInOut(duration: 0.2)) {
+                    withAnimation(theme.motion.quick) {
                         showAdvanced.toggle()
                     }
                 }
             }
-            .accentColor(theme.tertiaryText)
+            .tint(theme.text.tertiary)
         }
     }
 
     private var perAppSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             sectionTitle(L("Per-app rules"))
             hintText(
                 "Hold a specific app to a stricter stance than your default. A rule can only add caution, never remove it."
             )
 
             if sortedOverrideKeys.isEmpty {
-                emptyHint("No rules yet — every app uses your default above.")
+                SettingsEmptyState(inline: "app.dashed", title: "No rules yet", hint: "Every app uses your default above.")
             } else {
                 ForEach(sortedOverrideKeys, id: \.self) { appKey in
-                    appRow(icon: "app.dashed", iconColor: theme.secondaryText, name: appKey) {
+                    appRow(icon: "app.dashed", iconColor: theme.text.secondary, name: appKey) {
                         let current = policy.perApp[appKey] ?? .cautious
                         presetPickerMenu(
                             Binding(
@@ -548,17 +541,21 @@ struct ComputerUseSettingsView: View {
     }
 
     private var allowlistSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             sectionTitle(L("App allowlist"))
             hintText(
                 "Leave empty to allow Computer Use in any app. Add apps to restrict it to ONLY those — every other app is blocked before any action."
             )
 
             if (policy.allowlist ?? []).isEmpty {
-                emptyHint("Empty — Computer Use is allowed in any app.")
+                SettingsEmptyState(
+                    inline: "checkmark.shield",
+                    title: "No apps on the allowlist",
+                    hint: "Computer Use is allowed in any app."
+                )
             } else {
                 ForEach(policy.allowlist ?? [], id: \.self) { app in
-                    appRow(icon: "checkmark.shield", iconColor: theme.successColor, name: app) {
+                    appRow(icon: "checkmark.shield", iconColor: theme.status.success.foreground, name: app) {
                         removeButton(help: L("Remove from allowlist")) { removeAllowlisted(app) }
                     }
                 }
@@ -573,14 +570,14 @@ struct ComputerUseSettingsView: View {
     }
 
     private var cloudVisionSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             sectionTitle(L("Cloud vision"))
             hintText(
                 "Perception stays on this Mac by default. If an agent uses a cloud model, you can let it send screenshots for the rare cases on-screen text isn't enough — but only after sensitive text is masked on-device first."
             )
 
             SettingsToggle(
-                title: L("Allow masked screenshots to reach a cloud model"),
+                title: "Allow Masked Screenshots to Reach a Cloud Model",
                 description: "Off by default. Nothing is sent without this and on-device masking.",
                 isOn: Binding(
                     get: { cloudVisionConsent.isPersistentlyGranted },
@@ -591,7 +588,7 @@ struct ComputerUseSettingsView: View {
             // Redaction mode: mask everything (default, safest) vs. mask only
             // detected PII (less strict — leaves non-sensitive text readable).
             SettingsToggle(
-                title: L("Mask only detected sensitive text"),
+                title: "Mask Only Detected Sensitive Text",
                 description:
                     "Off (recommended): mask ALL on-screen text before sending. On: send a screenshot where only detected sensitive text (names, emails, numbers, secrets) is masked — other text stays readable to the model.",
                 isOn: Binding(
@@ -610,18 +607,8 @@ struct ComputerUseSettingsView: View {
 
     private func sectionTitle(_ text: String) -> some View {
         Text(text)
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundColor(theme.primaryText)
-    }
-
-    private func emptyHint(_ text: String) -> some View {
-        Text(LocalizedStringKey(text), bundle: .module)
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
-            .padding(.vertical, 8)
-            .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .surface(cornerRadius: 8, fill: theme.inputBackground.opacity(0.5))
+            .font(SettingsFont.compactLabel)
+            .foregroundColor(theme.text.primary)
     }
 
     @ViewBuilder
@@ -631,26 +618,26 @@ struct ComputerUseSettingsView: View {
         name: String,
         @ViewBuilder trailing: () -> Trailing
     ) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             Image(systemName: icon)
-                .font(.system(size: 12))
+                .glyphSize(.caption)
                 .foregroundColor(iconColor)
             Text(name)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.compactLabel)
+                .foregroundColor(theme.text.primary)
             Spacer()
             trailing()
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .surface(cornerRadius: 8, fill: theme.inputBackground, stroke: theme.inputBorder)
+        .padding(.horizontal, theme.space.s8)
+        .padding(.vertical, theme.space.s8)
+        .settingsChrome(.control)
     }
 
     private func removeButton(help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: "trash")
-                .font(.system(size: 12))
-                .foregroundColor(theme.errorColor)
+                .glyphSize(.caption)
+                .foregroundColor(theme.status.error.foreground)
         }
         .buttonStyle(PlainButtonStyle())
         .help(Text(help))
@@ -661,62 +648,23 @@ struct ComputerUseSettingsView: View {
         _ selection: Binding<AutonomyPreset>,
         options: [AutonomyPreset] = AutonomyPreset.allCases
     ) -> some View {
-        Menu {
+        SettingsMenuPicker(selection: selection) {
             ForEach(options) { preset in
-                Button {
-                    selection.wrappedValue = preset
-                } label: {
-                    if preset == selection.wrappedValue {
-                        Label(preset.displayLabel, systemImage: "checkmark")
-                    } else {
-                        Text(preset.displayLabel)
-                    }
-                }
+                Text(preset.displayLabel).tag(preset)
             }
-        } label: {
-            HStack(spacing: 6) {
-                Text(selection.wrappedValue.displayLabel)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 9))
-                    .foregroundColor(theme.secondaryText)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .surface(cornerRadius: 6, fill: theme.tertiaryBackground, stroke: theme.inputBorder)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
     }
 
     @ViewBuilder
     private func appAddRow(placeholder: String, text: Binding<String>, action: @escaping () -> Void)
         -> some View
     {
-        HStack(spacing: 8) {
-            TextField(placeholder, text: text)
-                .textFieldStyle(PlainTextFieldStyle())
-                .font(.system(size: 12))
-                .foregroundColor(theme.primaryText)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .surface(cornerRadius: 6, fill: theme.inputBackground, stroke: theme.inputBorder)
-                .onSubmit(action)
+        HStack(spacing: theme.space.s8) {
+            SettingsTextField(placeholder: placeholder, text: text, onSubmit: action)
             Button(action: action) {
-                HStack(spacing: 4) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 11))
-                    Text(L("Add"))
-                        .font(.system(size: 12, weight: .medium))
-                }
-                .foregroundColor(theme.secondaryText)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .surface(cornerRadius: 6, fill: theme.tertiaryBackground, stroke: theme.inputBorder)
+                Label(L("Add"), systemImage: "plus")
             }
-            .buttonStyle(PlainButtonStyle())
+            .assignedSettingsButtonStyle(.secondary, size: .compact)
         }
     }
 
@@ -782,16 +730,16 @@ struct ComputerUseSettingsView: View {
     /// Standard panel paragraph: 12pt secondary text that wraps freely.
     private func bodyText(_ text: String) -> some View {
         Text(LocalizedStringKey(text), bundle: .module)
-            .font(.system(size: 12))
-            .foregroundColor(theme.secondaryText)
+            .font(SettingsFont.caption)
+            .foregroundColor(theme.text.secondary)
             .fixedSize(horizontal: false, vertical: true)
     }
 
     /// Smaller 11pt tertiary helper/caption text.
     private func hintText(_ text: String) -> some View {
         Text(LocalizedStringKey(text), bundle: .module)
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
+            .font(SettingsFont.rowDescription)
+            .foregroundColor(theme.text.tertiary)
             .fixedSize(horizontal: false, vertical: true)
     }
 }
@@ -804,118 +752,3 @@ struct ComputerUseSettingsView: View {
 /// `isOptional` softens the unmet state (a neutral "Optional" tag instead of
 /// an alarming "Not Granted"), and `subtitleOverride` lets the caller supply
 /// Computer-Use-specific copy in place of the generic plugin description.
-private struct ComputerUsePermissionRow: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-    @ObservedObject private var permissionService = SystemPermissionService.shared
-    let permission: SystemPermission
-    var isOptional: Bool = false
-    var subtitleOverride: String? = nil
-
-    private var theme: ThemeProtocol { themeManager.currentTheme }
-
-    private var isGranted: Bool {
-        permissionService.permissionStates[permission] ?? false
-    }
-
-    private var statusText: String {
-        if isGranted { return L("Granted") }
-        return isOptional ? L("Optional") : L("Not Granted")
-    }
-
-    private var statusColor: Color {
-        if isGranted { return theme.successColor }
-        return isOptional ? theme.tertiaryText : theme.warningColor
-    }
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: permission.systemIconName)
-                .font(.system(size: 16, weight: .medium))
-                .foregroundColor(isGranted ? theme.successColor : theme.secondaryText)
-                .frame(width: 40, height: 40)
-                .surface(
-                    cornerRadius: 10,
-                    fill: isGranted ? theme.successColor.opacity(0.12) : theme.tertiaryBackground
-                )
-
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
-                    Text(permission.displayName)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-
-                    Text(statusText)
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(statusColor)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(statusColor.opacity(0.1)))
-                }
-                Text(subtitleOverride ?? permission.description)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer()
-
-            if isGranted {
-                Button(action: { permissionService.openSystemSettings(for: permission) }) {
-                    actionLabel(icon: "gear", title: L("Settings"), filled: false)
-                }
-                .buttonStyle(PlainButtonStyle())
-            } else {
-                Button(action: { permissionService.requestPermission(permission) }) {
-                    actionLabel(icon: "hand.raised", title: L("Grant"), filled: true)
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-        }
-        .padding(14)
-        .surface(
-            cornerRadius: 12,
-            fill: theme.inputBackground,
-            stroke: isGranted ? theme.successColor.opacity(0.3) : theme.inputBorder
-        )
-    }
-
-    @ViewBuilder
-    private func actionLabel(icon: String, title: String, filled: Bool) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.system(size: 11))
-            Text(title)
-                .font(.system(size: 12, weight: .medium))
-        }
-        .foregroundColor(filled ? .white : theme.secondaryText)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .surface(
-            cornerRadius: 6,
-            fill: filled ? theme.accentColor : theme.tertiaryBackground,
-            stroke: filled ? .clear : theme.inputBorder
-        )
-    }
-}
-
-// MARK: - Styling helpers
-
-private extension View {
-    /// The panel's standard filled-and-bordered rounded surface, applied as a
-    /// background. A `.clear` stroke (the default) yields a fill-only surface.
-    func surface(
-        cornerRadius: CGFloat,
-        fill: Color,
-        stroke: Color = .clear,
-        lineWidth: CGFloat = 1
-    ) -> some View {
-        background(
-            RoundedRectangle(cornerRadius: cornerRadius)
-                .fill(fill)
-                .overlay(
-                    RoundedRectangle(cornerRadius: cornerRadius)
-                        .stroke(stroke, lineWidth: lineWidth)
-                )
-        )
-    }
-}

@@ -27,9 +27,9 @@ The mental model: **memory** is what an agent learns about you from conversation
 
 ## Getting Started
 
-1. Open the Management window (`⌘ Shift M`) → **Knowledge**
+1. Open Settings… (`⌘,`) → **Knowledge**
 2. **Add Collection** — point it at any folder of markdown (your docs, an Obsidian vault, an exported wiki)
-3. Open an agent → **Features → Knowledge** — enable the toggle and check the collections this agent may use
+3. Open a custom agent → **Abilities → Knowledge** — enable the toggle and check the collections this agent may use
 4. Chat. The agent gets `search_knowledge` / `read_knowledge` / `list_knowledge` and consults the library only when a task calls for it
 
 Files are indexed in place and never moved or modified. Edits to the folder are picked up within seconds (FSEvents watcher + content-hash incremental re-index).
@@ -165,7 +165,7 @@ The corpus only changes through a human-governed flag → ticket → proposal �
 
 `KnowledgeCurationService.approve()` is the **only** code path that writes into a collection folder. It re-validates the proposal is `pending`, re-checks path confinement, writes atomically, flips the proposal to `approved`, resolves any linked ticket to `resolved`, posts `.knowledgeCurationChanged` (so the UI drops the card immediately), and then re-indexes. A reviewer's edited version (`overrideContent`) wins over the curator's draft. Dismissing a proposal that was the sole answer to a `proposed` ticket reopens that ticket to `open`.
 
-Put the curator on a Schedule (see [SCHEDULES.md](SCHEDULES.md)) and the loop runs in the background — approvals still wait for you. The Knowledge sidebar item highlights while proposals are pending.
+Put the curator on a schedule automation (see [AUTOMATIONS.md](AUTOMATIONS.md)) and the loop runs in the background — approvals still wait for you. The Knowledge sidebar item highlights while proposals are pending.
 
 ---
 

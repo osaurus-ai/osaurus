@@ -40,9 +40,9 @@ struct ClaudeCodeSetupStep: View {
     private var overlay: [String: String] { runtime?.environment ?? [:] }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: theme.space.s20) {
                     backButton
                     title
 
@@ -59,7 +59,7 @@ struct ClaudeCodeSetupStep: View {
                         signedInCard(status)
                     }
                 }
-                .padding(24)
+                .padding(theme.space.s24)
             }
 
             footer
@@ -72,19 +72,19 @@ struct ClaudeCodeSetupStep: View {
 
     private var backButton: some View {
         Button(action: onBack) {
-            HStack(spacing: 6) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: "chevron.left")
-                    .font(.system(size: 11, weight: .semibold))
+                    .glyphSize(.footnote, weight: .semibold)
                 Text("Back", bundle: .module)
-                    .font(.system(size: 13))
+                    .font(SettingsFont.body)
             }
-            .foregroundColor(theme.secondaryText)
+            .foregroundColor(theme.text.secondary)
         }
         .buttonStyle(.plain)
     }
 
     private var title: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             ZStack {
                 Circle()
                     .fill(
@@ -96,17 +96,17 @@ struct ClaudeCodeSetupStep: View {
                     )
                     .frame(width: 40, height: 40)
                 Image(systemName: "terminal.fill")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(.white)
+                    .glyphSize(.medium, weight: .medium)
+                    .foregroundColor(FixedPalette.onMedia)
             }
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text("Claude Code", bundle: .module)
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.pageTitle)
+                    .foregroundColor(theme.text.primary)
                 Text("Use your signed-in Claude Code CLI", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.caption)
+                    .foregroundColor(theme.text.secondary)
             }
         }
     }
@@ -115,21 +115,21 @@ struct ClaudeCodeSetupStep: View {
 
     private var probingCard: some View {
         card {
-            HStack(spacing: 12) {
-                ProgressView().controlSize(.small)
+            HStack(spacing: theme.space.s12) {
+                SettingsSpinner()
                 Text("Checking Claude Code…", bundle: .module)
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.body)
+                    .foregroundColor(theme.text.secondary)
             }
         }
     }
 
     private func notInstalledCard(searchedPath: String) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             card {
                 statusRow(
                     icon: "exclamationmark.triangle.fill",
-                    tint: theme.warningColor,
+                    tint: theme.status.warning.foreground,
                     title: Text("Claude Code isn't installed", bundle: .module),
                     detail: Text(
                         "Osaurus runs your local `claude` command, so Claude Code has to be installed first.",
@@ -138,49 +138,47 @@ struct ClaudeCodeSetupStep: View {
                 )
             }
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
                 Text("Install it, then come back:", bundle: .module)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.rowTitle)
+                    .foregroundColor(theme.text.secondary)
 
                 Text(verbatim: "npm install -g @anthropic-ai/claude-code")
-                    .font(.system(size: 12, design: .monospaced))
+                    .font(SettingsFont.monoSmall)
                     .textSelection(.enabled)
-                    .padding(10)
+                    .padding(theme.space.s8)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8).fill(theme.tertiaryBackground)
-                    )
+                    .settingsChrome(.inset)
             }
 
             DisclosureGroup {
                 Text(verbatim: searchedPath.replacingOccurrences(of: ":", with: "\n"))
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.tertiary)
                     .textSelection(.enabled)
-                    .padding(.top, 6)
+                    .padding(.top, theme.space.s6)
             } label: {
                 Text("Already installed? Show where Osaurus looked", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.caption)
+                    .foregroundColor(theme.text.secondary)
             }
 
             Text(
                 "A GUI app inherits a narrower PATH than your terminal. If `claude` lives somewhere unusual, symlink it into /usr/local/bin.",
                 bundle: .module
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
+            .font(SettingsFont.rowDescription)
+            .foregroundColor(theme.text.tertiary)
             .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     private var signedOutCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             card {
                 statusRow(
                     icon: "person.crop.circle.badge.questionmark",
-                    tint: theme.secondaryText,
+                    tint: theme.text.secondary,
                     title: Text("Claude Code isn't signed in", bundle: .module),
                     detail: Text(
                         "Sign in with the Anthropic account that has your Pro or Max subscription.",
@@ -190,60 +188,45 @@ struct ClaudeCodeSetupStep: View {
             }
 
             Button(action: signIn) {
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     if isSigningIn {
-                        ProgressView().controlSize(.small)
+                        SettingsSpinner()
                     } else {
                         Image(systemName: "person.crop.circle.badge.checkmark")
-                            .font(.system(size: 13, weight: .semibold))
                     }
                     Text(
                         isSigningIn ? "Waiting for your browser…" : "Sign in with Claude",
                         bundle: .module
                     )
-                    .font(.system(size: 13, weight: .semibold))
                 }
-                .foregroundColor(.white)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 10)
-                .background(RoundedRectangle(cornerRadius: 10).fill(theme.accentColor))
             }
-            .buttonStyle(.plain)
+            .assignedSettingsButtonStyle(.primary)
             .disabled(isSigningIn)
 
-            HStack(spacing: 14) {
+            HStack(spacing: theme.space.s12) {
                 if isSigningIn {
-                    Button(action: cancelSignIn) {
-                        Text("Cancel Sign-In", bundle: .module)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
-                    }
-                    .buttonStyle(.plain)
+                    SettingsButton(.tertiary, "Cancel Sign-In", size: .compact, action: cancelSignIn)
                 }
-                Button(action: openTerminalSignIn) {
-                    Text("Sign In from Terminal Instead", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.accentColor)
-                }
-                .buttonStyle(.plain)
+                SettingsButton(.tertiary, "Sign In from Terminal Instead", size: .compact, action: openTerminalSignIn)
             }
 
             Text(
                 "This opens Claude Code's own sign-in in your browser. Osaurus never sees your credentials. If the browser flow stalls, sign in from Terminal, then choose Re-check.",
                 bundle: .module
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
+            .font(SettingsFont.rowDescription)
+            .foregroundColor(theme.text.tertiary)
             .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     private func statusUnavailableCard(cliVersion: String?) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             card {
                 statusRow(
                     icon: "terminal.fill",
-                    tint: theme.warningColor,
+                    tint: theme.status.warning.foreground,
                     title: Text("Sign-in status needs a terminal check", bundle: .module),
                     detail: Text(
                         "This Claude Code version doesn't provide machine-readable sign-in status. Osaurus won't guess or inspect its credentials.",
@@ -256,71 +239,62 @@ struct ClaudeCodeSetupStep: View {
                 detailRow(label: Text("Installed version", bundle: .module), value: cliVersion)
             }
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
                 Text("Open Claude Code and complete sign-in:", bundle: .module)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.rowTitle)
+                    .foregroundColor(theme.text.secondary)
                 Text(verbatim: "claude")
-                    .font(.system(size: 12, design: .monospaced))
+                    .font(SettingsFont.monoSmall)
                     .textSelection(.enabled)
-                    .padding(10)
+                    .padding(theme.space.s8)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8).fill(theme.tertiaryBackground)
-                    )
+                    .settingsChrome(.inset)
             }
 
             Text(
                 "Agents on Claude Code can chat once it's signed in. Updating Claude Code enables status checks and browser sign-in from this screen.",
                 bundle: .module
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
+            .font(SettingsFont.rowDescription)
+            .foregroundColor(theme.text.tertiary)
             .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     private func signedInCard(_ status: ClaudeCodeAuthStatus) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             card {
                 statusRow(
                     icon: "checkmark.circle.fill",
-                    tint: theme.successColor,
+                    tint: theme.status.success.foreground,
                     title: Text("Signed in and ready", bundle: .module),
                     detail: nil
                 )
             }
 
-            VStack(spacing: 0) {
+            VStack(spacing: theme.space.s0) {
                 if let email = status.email {
                     detailRow(label: Text("Account", bundle: .module), value: email)
                 }
                 if let plan = status.displayPlan {
-                    Divider().overlay(theme.primaryBorder.opacity(0.4))
+                    Divider().overlay(theme.border.subtle)
                     detailRow(label: Text("Plan", bundle: .module), value: plan)
                 }
                 if let org = status.orgName, org != status.email {
-                    Divider().overlay(theme.primaryBorder.opacity(0.4))
+                    Divider().overlay(theme.border.subtle)
                     detailRow(label: Text("Organization", bundle: .module), value: org)
                 }
             }
-            .padding(.vertical, 4)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(theme.cardBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(theme.cardBorder, lineWidth: 1)
-                    )
-            )
+            .padding(.vertical, theme.space.s4)
+            .settingsChrome(.card)
 
             if status.usesSubscription {
                 Text(
                     "Agents on Claude Code can chat now. Requests draw on your subscription's limits, shared with your terminal sessions.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
             } else {
                 // Signed in, but through an API key or enterprise gateway — the
@@ -330,8 +304,8 @@ struct ClaudeCodeSetupStep: View {
                     "This sign-in isn't a Pro or Max subscription, so requests bill through whatever credential Claude Code is configured with. Osaurus removes ANTHROPIC_API_KEY from the environment it starts Claude Code with.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -340,50 +314,38 @@ struct ClaudeCodeSetupStep: View {
     // MARK: - Footer
 
     private var footer: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             Spacer()
 
             Button(action: { Task { await probe() } }) {
                 Text("Re-check", bundle: .module)
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.secondaryText)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
+                    .font(SettingsFont.body)
+                    .foregroundColor(theme.text.secondary)
+                    .padding(.horizontal, theme.space.s12)
+                    .padding(.vertical, theme.space.s8)
             }
             .buttonStyle(.plain)
             .disabled(phase == .probing || isSigningIn)
 
             Button(action: onDone) {
                 Text(completionTitle, bundle: .module)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 8)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(theme.accentColor))
             }
-            .buttonStyle(.plain)
+            .assignedSettingsButtonStyle(.primary)
             .disabled(requiresUsableCLI && !canComplete)
             .opacity(requiresUsableCLI && !canComplete ? 0.5 : 1)
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 16)
-        .background(theme.secondaryBackground)
+        .padding(.horizontal, theme.space.s24)
+        .padding(.vertical, theme.space.s16)
+        .background(theme.surface.subtle)
     }
 
     // MARK: - Building blocks
 
     private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         content()
-            .padding(14)
+            .padding(theme.space.s12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(theme.cardBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(theme.cardBorder, lineWidth: 1)
-                    )
-            )
+            .settingsChrome(.card)
     }
 
     private func statusRow(
@@ -392,20 +354,20 @@ struct ClaudeCodeSetupStep: View {
         title: Text,
         detail: Text?
     ) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: theme.space.s12) {
             Image(systemName: icon)
-                .font(.system(size: 16, weight: .semibold))
+                .glyphSize(.medium, weight: .semibold)
                 .foregroundColor(tint)
                 .frame(width: 24)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
                 title
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .textStyle(.label, weight: 600)
+                    .foregroundColor(theme.text.primary)
                 if let detail {
                     detail
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
+                        .textStyle(.caption)
+                        .foregroundColor(theme.text.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -416,16 +378,16 @@ struct ClaudeCodeSetupStep: View {
     private func detailRow(label: Text, value: String) -> some View {
         HStack {
             label
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .textStyle(.caption)
+                .foregroundColor(theme.text.secondary)
             Spacer()
             Text(verbatim: value)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.compactLabel)
+                .foregroundColor(theme.text.primary)
                 .textSelection(.enabled)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.horizontal, theme.space.s12)
+        .padding(.vertical, theme.space.s8)
     }
 
     // MARK: - Actions

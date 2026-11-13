@@ -33,17 +33,9 @@ struct ExternalModelsSettingsView: View {
     @State private var showHFCachePicker: Bool = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(
-                "Choose which other apps' models appear in your catalog. Files are referenced in place and never copied, modified, or deleted.",
-                bundle: .module
-            )
-            .font(.system(size: 12))
-            .foregroundColor(theme.tertiaryText)
-            .fixedSize(horizontal: false, vertical: true)
-
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             SettingsToggle(
-                title: L("Hugging Face cache and model folder"),
+                title: "Hugging Face cache and model folder",
                 description:
                     "Use MLX models from ~/.cache/huggingface, HF_HOME / HF_HUB_CACHE, or a custom folder.",
                 badge:
@@ -57,72 +49,60 @@ struct ExternalModelsSettingsView: View {
             }
 
             SettingsToggle(
-                title: L("LM Studio"),
+                title: "LM Studio",
                 description: "Use safetensors models from your LM Studio library.",
                 badge: importLMStudio && lmStudioCount > 0 ? "\(lmStudioCount)" : nil,
                 isOn: $importLMStudio
             )
 
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 if isScanning {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle())
-                        .scaleEffect(0.5)
-                        .frame(width: 12, height: 12)
+                    SettingsSpinner(size: .mini)
                     Text("Scanning…", bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.tertiary)
                 } else {
                     let count = hfCount + lmStudioCount + customFolderCount
                     Text(
                         count == 1 ? L("1 external model found") : L("\(count) external models found")
                     )
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
                 }
 
                 Spacer()
 
-                Button(
-                    action: { rescan() },
-                    label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.clockwise")
-                                .font(.system(size: 11, weight: .semibold))
-                            Text("Rescan", bundle: .module)
-                                .font(.system(size: 12, weight: .semibold))
-                        }
-                    }
-                )
-                .buttonStyle(PlainButtonStyle())
+                SettingsButton(.secondary, "Rescan", icon: "arrow.clockwise", isLoading: isScanning, size: .compact) {
+                    rescan()
+                }
                 .disabled(isScanning)
             }
 
             if let scanReport, !scanReport.skipped.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack(spacing: 5) {
+                VStack(alignment: .leading, spacing: theme.space.s6) {
+                    HStack(spacing: theme.space.s4) {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(theme.warningColor)
+                            .glyphSize(.micro, weight: .semibold)
+                            .foregroundColor(theme.status.warning.foreground)
                         let count = scanReport.skipped.count
                         Text(
                             count == 1
                                 ? L("1 external candidate skipped")
                                 : L("\(count) external candidates skipped")
                         )
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
+                        .textStyle(.footnote, weight: 500)
+                        .foregroundColor(theme.text.secondary)
                     }
 
                     ForEach(Array(scanReport.skipped.prefix(3).enumerated()), id: \.offset) { _, item in
                         Text(skippedSummary(item))
-                            .font(.system(size: 10))
-                            .foregroundColor(theme.tertiaryText)
+                            .font(SettingsFont.footnote)
+                            .foregroundColor(theme.text.tertiary)
                             .lineLimit(2)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                .padding(.top, 2)
+                .padding(.top, theme.space.s2)
             }
         }
         .onAppear { refreshCounts() }
@@ -144,64 +124,47 @@ struct ExternalModelsSettingsView: View {
     }
 
     private var hfCachePathControl: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             Text("Cache or model folder path", bundle: .module)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.smallLabel)
+                .foregroundColor(theme.text.secondary)
 
-            HStack(spacing: 8) {
-                TextField(defaultHFCacheDisplayPath, text: $customHFCachePath)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
-                    .onSubmit { rescan() }
-
-                Button(
-                    action: { showHFCachePicker = true },
-                    label: {
-                        Image(systemName: "folder.badge.gearshape")
-                            .font(.system(size: 11, weight: .semibold))
-                            .frame(width: 22, height: 22)
-                    }
+            HStack(spacing: theme.space.s8) {
+                SettingsTextField(
+                    placeholder: defaultHFCacheDisplayPath,
+                    text: $customHFCachePath,
+                    monospaced: true,
+                    onSubmit: rescan
                 )
-                .buttonStyle(.plain)
-                .localizedHelp("Choose Hugging Face cache or model folder")
+
+                SettingsIconButton(
+                    "folder.badge.gearshape",
+                    help: "Choose Hugging Face cache or model folder",
+                    size: .compact
+                ) {
+                    showHFCachePicker = true
+                }
 
                 if !customHFCachePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Button(
-                        action: {
-                            customHFCachePath = ""
-                        },
-                        label: {
-                            Image(systemName: "arrow.counterclockwise")
-                                .font(.system(size: 11, weight: .semibold))
-                                .frame(width: 22, height: 22)
-                        }
-                    )
-                    .buttonStyle(.plain)
-                    .localizedHelp("Use default Hugging Face cache locations")
+                    SettingsIconButton(
+                        "arrow.counterclockwise",
+                        help: "Use default Hugging Face cache locations",
+                        size: .compact
+                    ) {
+                        customHFCachePath = ""
+                    }
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(theme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(theme.inputBorder, lineWidth: 1)
-                    )
-            )
 
             Text(
                 "Empty scans ~/models, HF_HUB_CACHE, HF_HOME/hub, and ~/.cache/huggingface/hub.",
                 bundle: .module
             )
-            .font(.system(size: 10))
-            .foregroundColor(theme.tertiaryText)
+            .font(SettingsFont.footnote)
+            .foregroundColor(theme.text.tertiary)
             .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.leading, 8)
+        .padding(.leading, theme.space.s8)
     }
 
     private func refreshCounts() {

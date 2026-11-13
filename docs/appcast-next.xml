@@ -1,0 +1,127 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Osaurus</title>
+        <item>
+            <title>1.0.2</title>
+            <pubDate>Thu, 12 Nov 2026 11:41:16 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>1.0.2</sparkle:version>
+            <sparkle:shortVersionString>1.0.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/1.0.2/Osaurus-1.0.2.dmg" length="121329160" type="application/octet-stream" sparkle:edSignature="YlcF+BCXfNLfWtLk1pKK6ydiERVneZiWZSzKj6sK/VDEunCH66u+XPgZEWdWOcmRovcvw1wgBCiJH2U+wD4NDw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+* Eagerly prime telemetry consent cache at launch and guard undecided reads by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3354
+* Compile simpleName regexes once and memoize familyDisplayName by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3344
+* Accelerate Markdown line splitting with UTF-8 newline scanning by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3337
+* Memoize connected spawn target index in RemoteProviderManager by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3321
+* Consume bounded screen-context status-bar coordinate checks by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3335
+* Move keychain wipe off the main actor during factory reset by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3361
+* Coalesce download progress publishes and throttle ModelManager objectWillChange by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3338
+* Cache resolved home directory in ExecutableLocator to stop main thread hangs by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3320
+* Debounce network path monitor updates to avoid main thread hangs by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3295
+* Refresh model lists for Grok 4.7, GPT-6.1, Gemini 4, and Nano Banana 2.1 by @tpae in https://github.com/osaurus-ai/osaurus/pull/3388
+* Report read-only folders and empty share_artifact content accurately by @tpae in https://github.com/osaurus-ai/osaurus/pull/3389
+* Fix config apply turning on Remote Access for every agent by @tpae in https://github.com/osaurus-ai/osaurus/pull/3392
+* Report attached folders accurately when loading a workspace tool by @tpae in https://github.com/osaurus-ai/osaurus/pull/3397
+* Show the Working Folder picker and Knowledge grants in agent settings by @tpae in https://github.com/osaurus-ai/osaurus/pull/3398
+* Offer only Raptor 0.7 in onboarding and refresh Models tab Top Picks by @tpae in https://github.com/osaurus-ai/osaurus/pull/3400
+* Harden device Sync: owner checks, safer removal, clearer pairing and status, Osaurus servers by @tpae in https://github.com/osaurus-ai/osaurus/pull/3399
+* Make the design library the single source for spacing, color and dividers by @tpae in https://github.com/osaurus-ai/osaurus/pull/3401
+* Don't time workflow steps while a person is answering by @tpae in https://github.com/osaurus-ai/osaurus/pull/3402
+
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/1.0.1...1.0.2
+]]></description>
+        </item>
+        <item>
+            <title>1.0.1</title>
+            <pubDate>Wed, 11 Nov 2026 05:56:50 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>1.0.1</sparkle:version>
+            <sparkle:shortVersionString>1.0.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/1.0.1/Osaurus-1.0.1.dmg" length="121418335" type="application/octet-stream" sparkle:edSignature="cEvFJdCOGkcY8vBQEYGzyQ/m+aQGD1DF2YILd2viTpX/z4eKmCdYDgblhBElkJ1bjaZfkZtvS25gCoPP+mRNBQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+* Document the two release lanes and refuse tags on the other product's code by @tpae in https://github.com/osaurus-ai/osaurus/pull/3371
+* Delegated agents inherit the Orchestrator's working folder by @tpae in https://github.com/osaurus-ai/osaurus/pull/3375
+* fix: queued imports wait for the local model scan before resolving agent models by @tpae in https://github.com/osaurus-ai/osaurus/pull/3376
+* Fix workflows stuck on "Changed outside Osaurus" by @tpae in https://github.com/osaurus-ai/osaurus/pull/3377
+* CI: lint on Linux and skip untouched optional macOS lanes on PRs by @tpae in https://github.com/osaurus-ai/osaurus/pull/3379
+* Rewrite the README for 1.0 and drop custom-theme leftovers from the docs by @tpae in https://github.com/osaurus-ai/osaurus/pull/3380
+* Fix subagent tool-call crash in Release builds (APPLE-MACOS-3R9) by @tpae in https://github.com/osaurus-ai/osaurus/pull/3381
+* Keep chat times stable on selection; one blank New Chat per window by @tpae in https://github.com/osaurus-ai/osaurus/pull/3382
+* Center control labels, fix onboarding contrast, and use stock teammate avatars by @tpae in https://github.com/osaurus-ai/osaurus/pull/3383
+* Analytics coverage for Osaurus 1.0 by @tpae in https://github.com/osaurus-ai/osaurus/pull/3378
+* Fix light-mode contrast on onboarding setup and the selected rail tab by @tpae in https://github.com/osaurus-ai/osaurus/pull/3384
+
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/1.0.0...1.0.1
+]]></description>
+        </item>
+        <item>
+            <title>1.0.0</title>
+            <pubDate>Tue, 10 Nov 2026 18:40:15 +0000</pubDate>
+            <sparkle:channel>release</sparkle:channel>
+            <sparkle:version>1.0.0</sparkle:version>
+            <sparkle:shortVersionString>1.0.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/1.0.0/Osaurus-1.0.0.dmg" length="121742224" type="application/octet-stream" sparkle:edSignature="AWHgVCdWzcey67vQ27Xmm/6eFgeYUabawTb1zJgMdTn1J1Y2BrPmfu3YvajH92F1ue8LGZey9GfsnolX+hZ9AQ=="/>
+            <description sparkle:format="markdown"><![CDATA[
+Osaurus 1.0 turns your Mac into a team of AI agents that get real work done, privately and on your own hardware.
+
+## What's new
+
+**Workflows.** Describe a job in plain words, and the Architect builds it as a workflow, tests it, and saves it. A workflow strings together agents, local models, code, and image or video steps, and it's shown in plain language so you can see exactly what it will do. You choose which folders it may read. Its work happens in a sandbox, and the results come back to you. When something breaks, Osaurus explains what went wrong and offers to fix it with the Architect. Share a workflow as a file or publish it to store.osaurus.ai.
+
+**Automations.** Schedules, watchers and channel routing now live in one place. A workflow can start on a timer, a new email, an RSS or event feed, a webhook, an app event, or a run that failed. It replies in the conversation that started it.
+
+**Tasks and approvals.** Every run you aren't watching becomes a task in one queue, and runs left open when you quit pick up where they left off. When an agent needs a decision, it asks you on the Approvals page and waits for your answer.
+
+**Your team of agents.** Build an agent with a guided Configurator, or start with a ready-made team during onboarding. Each agent can suggest follow-ups, and you can turn that off per agent.
+
+**Sync and iPhone.** Conversations and agents sync across your devices. Your iPhone picks up chats you started on your Mac and offers quick actions for your agents. The 6-digit pairing code is gone.
+
+**Keys and connections.** One place holds every key your agents, tools and workflows use. Each bot, workspace or mail account is one connection, and first-party websites can offer "Log in with Osaurus".
+
+**Spaces and Projects.** Spaces are separate Osaurus environments you open from the Dock menu. Projects keep related chats together in the sidebar.
+
+**A safer sandbox.** Each agent gets its own isolated Linux environment, with tighter limits on what agents and workflows can touch. Setup no longer needs Homebrew.
+
+**Faster and lighter.** Idle memory drops from 919 MB to 132 MB, voice loads only when you first use it, and long chats stay responsive.
+
+**A fresh look.** Every settings page is redesigned on one shared pattern, with new themes and a new onboarding. Local Models has a sortable table with a details panel, one searchable model picker works everywhere, and a Dock click brings back the window you used last.
+
+## Coming from Osaurus Classic
+
+Osaurus 0.25 is now **Osaurus Classic**. It keeps its own update channel and still gets maintenance releases, so Classic never moves you to 1.0 unless you ask. If you installed Osaurus with Homebrew, `brew upgrade` will install 1.0.
+
+To move to 1.0 from inside Classic, turn on **Beta Updates** in Settings → General and check for updates. Classic asks before it installs 1.0, even if you chose to install updates automatically. You can also download 1.0 and drag it over your existing app. Either way, your chats, models, keys and settings carry over. Once you're on 1.0, turn Beta Updates off if you only want stable releases.
+
+## Going back to Classic
+
+Reinstall the Classic DMG from its release page. Your data stays where it is, with these limits:
+
+- Classic doesn't see keys you add or change in 1.0.
+- Workflows and automations made in 1.0 don't run in Classic.
+- Pending self-schedules and run history appear empty in Classic.
+- Chats that exist only in sync are missing.
+- The sandbox is rebuilt, and packages you installed in it are gone.
+
+If you edit an agent, a remote agent or the sandbox settings in Classic, 1.0 restores the 1.0-only settings when you come back, and your Classic edits stay. Classic does permanently drop a few smaller things it doesn't know about: the new sections of a saved config template, the default agent's avatar, the Slack workspace name, and newer chat tab layout settings.
+
+## What's going away
+
+- The What's New sheet, the chat layout tour and the custom theme editor are gone.
+- The email trigger becomes an email channel.
+- Older iPhone and Mac builds that pair over the local network can't pair with 1.0.
+
+]]></description>
+        </item>
+  </channel>
+</rss>

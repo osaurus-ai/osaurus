@@ -10,34 +10,57 @@ import SwiftUI
 
 // MARK: - Memory Tab
 
-/// Sub-navigation for the Memory section. Mirrors the house pattern used by
-/// `ToolsTab` / `VoiceTab` / `ServerTab` so Memory gets the same
-/// `ManagerHeaderWithTabs` + `HeaderTabsRow` chrome as the rest of the app.
-enum MemoryTab: String, CaseIterable, AnimatedTabItem {
+/// Drill-in pages of Memory. Raw values are stable deep-link ids
+/// (`memorySubTabRequest`, settings-search `subTab`); `identity` predates
+/// the "Profile" title.
+enum MemoryTab: String, CaseIterable, SettingsDrillInItem {
     case identity
     case memories
     case agents
     case settings
     case diagnostics
 
+    var id: String { rawValue }
+
     var title: String {
         switch self {
-        case .identity: return L("Identity")
+        case .identity: return L("Profile")
         case .memories: return L("Memories")
-        case .agents: return L("Agents")
+        case .agents: return L("Agents & Projects")
         case .settings: return L("Settings")
         case .diagnostics: return L("Diagnostics")
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .identity: return "person.text.rectangle"
+        case .memories: return "brain"
+        case .agents: return "person.2"
+        case .settings: return "gearshape"
+        case .diagnostics: return "stethoscope"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .identity: return L("What Osaurus knows about you, and overrides it must always follow.")
+        case .memories: return L("Pinned facts and episodes, searchable.")
+        case .agents: return L("Memory kept per agent and per project.")
+        case .settings: return L("Budget, retention, consolidation, and clearing memory.")
+        case .diagnostics: return L("Processing queue, logs and recovery tools.")
         }
     }
 }
 
 struct MemoryView: View {
+    @ObservedObject private var badgeStore = ManagementBadgeStore.shared
     @ObservedObject var themeManager = ThemeManager.shared
     @ObservedObject var agentManager = AgentManager.shared
     @ObservedObject private var appConfig = AppConfiguration.shared
     @ObservedObject private var managementState = ManagementStateManager.shared
 
-    var theme: ThemeProtocol { themeManager.currentTheme }
+    var theme: any ThemeProtocol { themeManager.currentTheme }
 
     private static let iso8601Formatter = ISO8601DateFormatter()
 
@@ -109,7 +132,7 @@ struct MemoryView: View {
 
     // MARK: UI State
 
-    @State private var selectedTab: MemoryTab = .identity
+    @State private var selectedTab: MemoryTab?
     @State private var selectedAgent: Agent?
     @State private var hasAppeared = false
     /// Mirrors the sidebar's Developer Tools switch; gates the Diagnostics
@@ -156,12 +179,12 @@ struct MemoryView: View {
                 AgentDetailView(
                     agent: agent,
                     onBack: {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        withAnimation(theme.motion.springAnimation) {
                             selectedAgent = nil
                         }
                     },
                     onDelete: { _ in
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        withAnimation(theme.motion.springAnimation) {
                             selectedAgent = nil
                         }
                         loadData()
@@ -187,30 +210,24 @@ struct MemoryView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
-        .environment(\.theme, themeManager.currentTheme)
+        .background(theme.surface.canvas)
+        .environment(\.theme, theme)
     }
 
     private var memoryContent: some View {
         ZStack {
-            VStack(spacing: 0) {
-                headerView
-                    .managerHeaderEntrance(hasAppeared: hasAppeared)
+            VStack(spacing: theme.space.s0) {
+                if selectedTab == nil {
+                    headerView
+                        .settingsHeaderEntrance(hasAppeared: hasAppeared)
+                }
 
                 Group {
                     if isLoading {
                         loadingView
                     } else {
-                        VStack(spacing: 0) {
-                            if !config.enabled {
-                                disabledBanner
-                                    .padding(.horizontal, 24)
-                                    .padding(.top, 16)
-                            }
-
-                            tabContent
-                                .settingsLandingAnchor("memory.settings")
-                        }
+                        tabContent
+                            .settingsLandingAnchor("memory.settings")
                     }
                 }
                 .opacity(hasAppeared ? 1 : 0)
@@ -222,7 +239,7 @@ struct MemoryView: View {
                     Spacer()
                     ThemedToastView(toast.text, type: toast.isError ? .error : .success)
                         .transition(.move(edge: .bottom).combined(with: .opacity))
-                        .padding(.bottom, 20)
+                        .padding(.bottom, theme.space.s16)
                 }
                 .zIndex(100)
             }
@@ -238,7 +255,7 @@ struct MemoryView: View {
             }
             loadData(staleAfter: Self.memoryDataFreshWindow)
             applyPendingProjectPreview()
-            withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
+            withAnimation(theme.motion.standard.delay(0.05)) {
                 hasAppeared = true
             }
         }
@@ -248,11 +265,11 @@ struct MemoryView: View {
             managementState.memorySubTabRequest = nil
         }
         .onReceive(NotificationCenter.default.publisher(for: SidebarSectionExpansion.changed)) { _ in
-            withAnimation(.easeOut(duration: 0.2)) {
+            withAnimation(theme.motion.quick) {
                 showDeveloperDetail = SidebarSectionExpansion.isDeveloperToolsOn
                 // Don't strand the selection on a tab that just disappeared.
                 if !showDeveloperDetail, selectedTab == .diagnostics {
-                    selectedTab = .identity
+                    selectedTab = nil
                 }
             }
         }
@@ -266,7 +283,7 @@ struct MemoryView: View {
                 identity: identity,
                 onSave: { newContent in
                     saveIdentityEdit(newContent)
-                    showToast(L("Identity saved"))
+                    showToast(L("Profile saved"))
                 }
             )
             .frame(minWidth: 500, minHeight: 400)
@@ -301,166 +318,135 @@ struct MemoryView: View {
     // MARK: - Header
 
     private var headerView: some View {
-        ManagerHeaderWithTabs(
-            title: L("Memory"),
-            subtitle: L("Manage your identity, overrides, and memory configuration")
-        ) {
-            HeaderIconButton("arrow.clockwise", isLoading: isRefreshing, help: "Refresh") {
-                refreshData()
-            }
-            .accessibilityLabel(Text("Refresh memory data", bundle: .module))
-        } tabsRow: {
-            HeaderTabsRow(
-                selection: $selectedTab,
-                tabs: visibleTabs,
-                counts: [
-                    .memories: totalPinned + totalEpisodes,
-                    // The tab hosts both the agent and project memory cards,
-                    // so its count covers every row shown inside it — a lone
-                    // project namespace must not read as "Agents (0)".
-                    .agents: agentMemoryCounts.count + projectMemoryCounts.count,
-                ],
-                badges: [.diagnostics: pendingSignals.totalSignals]
-            )
-        }
+        SettingsPageHeader(
+            title: "Memory",
+            subtitle: "What Osaurus remembers about you, your agents and your projects",
+            count: badgeStore.headerCount(for: .memory),
+            onRefresh: { refreshData() },
+            refreshHelp: "Refresh memory data",
+            isRefreshing: isRefreshing
+        )
     }
 
-    // MARK: - Tab Content
+    // MARK: - Overview and drill-in pages
 
     @ViewBuilder
     private var tabContent: some View {
-        switch selectedTab {
-        case .identity: identityTab
-        case .memories: memoriesTab
-        case .agents: agentsTab
-        case .settings: settingsTab
-        case .diagnostics: diagnosticsTab
+        SettingsDrillInHost(rootTitle: L("Memory"), selection: $selectedTab) {
+            ScrollView {
+                SettingsPageContent {
+                    if !config.enabled {
+                        disabledBanner
+                    }
+                    statsSection
+                    SettingsDrillInList(
+                        items: visibleTabs,
+                        badges: [
+                            .memories: totalPinned + totalEpisodes,
+                            .agents: agentMemoryCounts.count + projectMemoryCounts.count,
+                            .diagnostics: pendingSignals.totalSignals,
+                        ]
+                    ) { selectedTab = $0 }
+                }
+            }
+        } detail: { tab in
+            VStack(spacing: theme.space.s0) {
+                SettingsPageHeader(title: tab.title, subtitle: tab.subtitle)
+                switch tab {
+                case .identity: identityTab
+                case .memories: memoriesTab
+                case .agents: agentsTab
+                case .settings: settingsTab
+                case .diagnostics: diagnosticsTab
+                }
+            }
         }
     }
 
     private var loadingView: some View {
-        VStack {
-            Spacer()
-            ProgressView()
-                .controlSize(.small)
-                .padding(.bottom, 4)
-            Text("Loading memory...", bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.tertiaryText)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        SettingsEmptyState(loading: "Loading memory…")
+            .settingsPageInsets()
+            .frame(maxHeight: .infinity, alignment: .top)
     }
 
     private var identityTab: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            SettingsPageContent {
                 identitySection
                 overridesSection
             }
-            .padding(24)
         }
     }
 
     private var memoriesTab: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            SettingsPageContent {
                 memoryConsoleSection
             }
-            .padding(24)
         }
     }
 
     private var agentsTab: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            SettingsPageContent {
                 agentsSection
                 if !projectMemoryCounts.isEmpty {
                     projectsSection
                 }
             }
-            .padding(24)
         }
     }
 
     private var settingsTab: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                statsSection
+            SettingsPageContent {
                 configurationSection
                 dangerZoneSection
             }
-            .padding(24)
         }
     }
 
     private var diagnosticsTab: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            SettingsPageContent {
                 diagnosticsSection
             }
-            .padding(24)
         }
     }
 
     // MARK: - Disabled Banner
 
     private var disabledBanner: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 16, weight: .medium))
-                .foregroundColor(theme.warningColor)
-
-            Text("Memory system is disabled. Enable it below to start building memory.", bundle: .module)
-                .font(.system(size: 13))
-                .foregroundColor(theme.secondaryText)
-
-            Spacer()
-
-            Button {
+        SettingsCallout(
+            icon: "exclamationmark.triangle.fill",
+            title: "Memory is off",
+            message: "Memory system is disabled. Enable it below to start building memory.",
+            tone: .warning
+        ) {
+            SettingsButton(.primary, "Enable", size: .compact) {
                 config.enabled = true
                 MemoryConfigurationStore.save(config)
                 loadData()
                 showToast(L("Memory enabled"))
-            } label: {
-                Text("Enable", bundle: .module)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 7)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(theme.accentColor))
             }
-            .buttonStyle(PlainButtonStyle())
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.warningColor.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.warningColor.opacity(0.25), lineWidth: 1)
-                )
-        )
     }
 
     // MARK: - Identity Section
 
     private var identitySection: some View {
-        MemorySectionCard(title: L("Identity"), icon: "person.text.rectangle") {
+        SettingsSection(title: "About You") {
             // "Distill pending" goes through `syncNow()` directly. The
             // important difference vs `recoverOrphanedSignals()` (which
             // runs at app launch) is that this path skips the
             // `canDistillCheaply` guard, so it works for users who picked
             // a large local MLX model that isn't resident yet.
-            MemorySectionActionButton(
-                isDistilling ? L("Distilling...") : L("Distill pending"),
-                icon: "wand.and.stars"
-            ) {
+            SettingsButton(.secondary, isDistilling ? "Distilling..." : "Distill pending", icon: "wand.and.stars", size: .compact) {
                 runDistillPending()
             }
             .disabled(isDistilling || !config.enabled)
 
-            MemorySectionActionButton(isSyncing ? "Syncing..." : "Sync", icon: "arrow.triangle.2.circlepath") {
+            SettingsButton(.secondary, isSyncing ? "Syncing..." : "Sync", icon: "arrow.triangle.2.circlepath", size: .compact) {
                 guard !isSyncing else { return }
                 isSyncing = true
                 Task.detached {
@@ -474,28 +460,21 @@ struct MemoryView: View {
             }
             .disabled(isSyncing || !config.enabled)
 
-            MemorySectionActionButton("Edit", icon: "pencil") {
+            SettingsButton(.secondary, "Edit", icon: "pencil", size: .compact) {
                 showIdentityEditor = true
             }
         } content: {
             if let identity, !identity.content.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
                     Text(identity.content)
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.secondaryText)
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.body)
+                        .foregroundColor(theme.text.secondary)
                         .lineLimit(6)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(12)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.inputBackground)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(theme.inputBorder, lineWidth: 1)
-                                )
-                        )
+                        .padding(.horizontal, theme.space.s12).padding(.vertical, theme.space.s12)
+                        .settingsChrome(.control)
 
-                    HStack(spacing: 12) {
+                    HStack(spacing: theme.space.s12) {
                         if identity.version > 0 {
                             metadataTag("v\(identity.version)")
                         }
@@ -508,34 +487,27 @@ struct MemoryView: View {
 
                         if !identity.generatedAt.isEmpty {
                             Text(Self.formatRelativeDate(identity.generatedAt))
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.tertiaryText)
+                                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                                .foregroundColor(theme.text.tertiary)
                                 .help(identity.generatedAt)
                         }
                     }
                 }
             } else {
-                HStack(spacing: 10) {
+                HStack(spacing: theme.space.s8) {
                     Image(systemName: "info.circle")
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.tertiaryText)
+                        .glyphSize(.label)
+                        .foregroundColor(theme.text.tertiary)
                     Text(
                         "No identity yet. Chat with Osaurus and the memory system will build your identity from session distillations.",
                         bundle: .module
                     )
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.body)
+                    .foregroundColor(theme.text.tertiary)
                 }
-                .padding(12)
+                .padding(.horizontal, theme.space.s12).padding(.vertical, theme.space.s12)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(theme.inputBorder, lineWidth: 1)
-                        )
-                )
+                .settingsChrome(.control)
             }
         }
     }
@@ -544,41 +516,35 @@ struct MemoryView: View {
 
     private var overridesSection: some View {
         let overrides = identity?.overrides ?? []
-        return MemorySectionCard(
-            title: L("Your Overrides"),
-            icon: "pin.fill",
-            count: overrides.isEmpty ? nil : overrides.count
+        return SettingsSection(
+            title: "Your Overrides",
+            caption: overrides.isEmpty ? nil : "\(overrides.count)"
         ) {
-            MemorySectionActionButton("Add", icon: "plus") {
+            SettingsButton(.secondary, "Add", icon: "plus", size: .compact) {
                 showAddOverride = true
             }
         } content: {
             if overrides.isEmpty {
-                HStack(spacing: 10) {
+                HStack(spacing: theme.space.s8) {
                     Image(systemName: "info.circle")
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.tertiaryText)
+                        .glyphSize(.label)
+                        .foregroundColor(theme.text.tertiary)
                     Text(
                         "No overrides set. Add explicit facts that should always be in your identity.",
                         bundle: .module
                     )
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.body)
+                    .foregroundColor(theme.text.tertiary)
                 }
             } else {
-                VStack(spacing: 0) {
-                    ForEach(Array(overrides.enumerated()), id: \.offset) { index, content in
-                        if index > 0 {
-                            Divider().opacity(0.5)
+                ForEach(Array(overrides.enumerated()), id: \.offset) { index, content in
+                    MemoryOverrideRow(
+                        content: content,
+                        onDelete: {
+                            removeOverride(index: index)
+                            showToast(L("Override removed"))
                         }
-                        MemoryOverrideRow(
-                            content: content,
-                            onDelete: {
-                                removeOverride(index: index)
-                                showToast(L("Override removed"))
-                            }
-                        )
-                    }
+                    )
                 }
             }
         }
@@ -592,37 +558,19 @@ struct MemoryView: View {
     /// only surfaces the memory count, a context preview, and a jump into
     /// the Memories tab — no more duplicated pinned/episode panels.
     private var defaultAgentSummaryRow: some View {
-        HStack(spacing: 10) {
+        LibraryRow(
+            title: L("Default Agent"),
+            subtitle: L("Uses your global memory settings")
+        ) {
             Circle()
-                .fill(theme.accentColor)
+                .fill(theme.action.primary.default.background)
                 .frame(width: 8, height: 8)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Default Agent", bundle: .module)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-
-                Text("Uses your global memory settings", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
+        } trailing: {
             let totalCount = defaultAgentPinned.count + defaultAgentEpisodes.count
             if totalCount > 0 {
-                Text(pluralizedMemory(totalCount, "memory", "memories"))
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2)
-                    .background(
-                        Capsule().fill(theme.tertiaryBackground)
-                    )
+                MemoryCountLabel(count: totalCount)
             }
-
-            Button {
+            SettingsIconButton("eye", help: "Preview memory context", size: .compact) {
                 Task {
                     let cfg = MemoryConfigurationStore.load()
                     let ctx = await MemoryContextAssembler.assembleContext(
@@ -636,43 +584,16 @@ struct MemoryView: View {
                         : trimmed
                     contextPreviewItem = ContextPreviewItem(text: text)
                 }
-            } label: {
-                Image(systemName: "eye")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
-                    .frame(width: 26, height: 26)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(theme.tertiaryBackground)
-                    )
             }
-            .buttonStyle(PlainButtonStyle())
-            .localizedHelp("Preview memory context")
-
-            Button {
-                withAnimation(.easeOut(duration: 0.2)) {
+            SettingsButton(
+                .secondary, "Browse in Memories", icon: "rectangle.and.text.magnifyingglass", size: .compact,
+                help: "Browse the default agent's memories"
+            ) {
+                withAnimation(theme.motion.quick) {
                     selectedTab = .memories
                 }
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "rectangle.and.text.magnifyingglass")
-                        .font(.system(size: 10, weight: .medium))
-                    Text("Browse in Memories", bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .foregroundColor(theme.secondaryText)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(theme.tertiaryBackground)
-                )
             }
-            .buttonStyle(PlainButtonStyle())
-            .localizedHelp("Browse the default agent's memories")
         }
-        .padding(.vertical, 10)
-        .padding(.horizontal, 4)
     }
 
     // MARK: - Agents Section
@@ -688,44 +609,35 @@ struct MemoryView: View {
     }
 
     private var agentsSection: some View {
-        MemorySectionCard(title: L("Agents"), icon: "person.2") {
-            VStack(spacing: 0) {
-                defaultAgentSummaryRow
+        SettingsSection(title: "Agents") {
+            defaultAgentSummaryRow
 
-                if !agentMemoryCounts.isEmpty {
-                    Divider()
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 4)
-
-                    ForEach(Array(agentMemoryCounts.enumerated()), id: \.element.agent.id) { index, pair in
-                        if index > 0 {
-                            Divider().opacity(0.5)
-                        }
-                        MemoryAgentRow(
-                            agent: pair.agent,
-                            count: pair.count,
-                            onSelect: {
-                                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                                    selectedAgent = pair.agent
-                                }
-                            },
-                            onPreviewContext: {
-                                Task {
-                                    let cfg = MemoryConfigurationStore.load()
-                                    let ctx = await MemoryContextAssembler.assembleContext(
-                                        agentId: pair.agent.id.uuidString,
-                                        config: cfg
-                                    )
-                                    let trimmed = ctx.trimmingCharacters(in: .whitespacesAndNewlines)
-                                    let text =
-                                        trimmed.isEmpty
-                                        ? L("(No memory context assembled — memory may be empty or disabled)")
-                                        : trimmed
-                                    contextPreviewItem = ContextPreviewItem(text: text)
-                                }
+            if !agentMemoryCounts.isEmpty {
+                ForEach(agentMemoryCounts, id: \.agent.id) { pair in
+                    MemoryAgentRow(
+                        agent: pair.agent,
+                        count: pair.count,
+                        onSelect: {
+                            withAnimation(theme.motion.springAnimation) {
+                                selectedAgent = pair.agent
                             }
-                        )
-                    }
+                        },
+                        onPreviewContext: {
+                            Task {
+                                let cfg = MemoryConfigurationStore.load()
+                                let ctx = await MemoryContextAssembler.assembleContext(
+                                    agentId: pair.agent.id.uuidString,
+                                    config: cfg
+                                )
+                                let trimmed = ctx.trimmingCharacters(in: .whitespacesAndNewlines)
+                                let text =
+                                    trimmed.isEmpty
+                                    ? L("(No memory context assembled — memory may be empty or disabled)")
+                                    : trimmed
+                                contextPreviewItem = ContextPreviewItem(text: text)
+                            }
+                        }
+                    )
                 }
             }
         }
@@ -738,35 +650,29 @@ struct MemoryView: View {
     /// and membership are managed on the project pages; this surface exists
     /// so project memory stays inspectable and deletable like agent memory.
     private var projectsSection: some View {
-        MemorySectionCard(title: L("Projects"), icon: "folder") {
-            VStack(spacing: 0) {
-                ForEach(Array(projectMemoryCounts.enumerated()), id: \.element.namespaceKey) {
-                    index, entry in
-                    if index > 0 {
-                        Divider().opacity(0.5)
-                    }
-                    MemoryProjectRow(
-                        name: entry.name,
-                        count: entry.count,
-                        onPreviewContext: {
-                            // Read stored rows directly instead of going through
-                            // `assembleContext`: the assembler's relevance gate
-                            // returns `.none` for an empty query, which made this
-                            // preview always come back blank even with memories
-                            // present. Chat injection is unaffected (it passes the
-                            // user's message as the query).
-                            Task.detached {
-                                let text = Self.projectNamespacePreview(entry.namespaceKey)
-                                await MainActor.run {
-                                    contextPreviewItem = ContextPreviewItem(text: text)
-                                }
+        SettingsSection(title: "Projects") {
+            ForEach(projectMemoryCounts, id: \.namespaceKey) { entry in
+                MemoryProjectRow(
+                    name: entry.name,
+                    count: entry.count,
+                    onPreviewContext: {
+                        // Read stored rows directly instead of going through
+                        // `assembleContext`: the assembler's relevance gate
+                        // returns `.none` for an empty query, which made this
+                        // preview always come back blank even with memories
+                        // present. Chat injection is unaffected (it passes the
+                        // user's message as the query).
+                        Task.detached {
+                            let text = Self.projectNamespacePreview(entry.namespaceKey)
+                            await MainActor.run {
+                                contextPreviewItem = ContextPreviewItem(text: text)
                             }
-                        },
-                        onForget: {
-                            forgetProjectNamespace(entry.namespaceKey)
                         }
-                    )
-                }
+                    },
+                    onForget: {
+                        forgetProjectNamespace(entry.namespaceKey)
+                    }
+                )
             }
         }
     }
@@ -870,30 +776,25 @@ struct MemoryView: View {
     // MARK: - Statistics Section
 
     private var statsSection: some View {
-        SettingsSection(title: "Statistics", icon: "chart.bar") {
-            HStack(spacing: 0) {
-                statBlock(label: "Total Calls", value: "\(processingStats.totalCalls)")
-                Divider().frame(height: 36).opacity(0.5)
-                statBlock(label: "Avg Latency", value: "\(processingStats.avgDurationMs)ms")
-                Divider().frame(height: 36).opacity(0.5)
-                statBlock(label: "Success", value: "\(processingStats.successCount)")
-                Divider().frame(height: 36).opacity(0.5)
-                statBlock(label: "Errors", value: "\(processingStats.errorCount)")
-                Divider().frame(height: 36).opacity(0.5)
-                statBlock(label: "Skipped", value: "\(processingStats.skippedCount)")
-                Divider().frame(height: 36).opacity(0.5)
-                statBlock(label: "Database", value: formatBytes(dbSizeBytes))
-            }
+        SettingsSection(title: "Statistics") {
+            SettingsStatStrip(stats: [
+                SettingsStat(label: "Total Calls", value: "\(processingStats.totalCalls)"),
+                SettingsStat(label: "Avg Latency", value: "\(processingStats.avgDurationMs)ms"),
+                SettingsStat(label: "Success", value: "\(processingStats.successCount)"),
+                SettingsStat(label: "Errors", value: "\(processingStats.errorCount)"),
+                SettingsStat(label: "Skipped", value: "\(processingStats.skippedCount)"),
+                SettingsStat(label: "Database", value: formatBytes(dbSizeBytes)),
+            ])
         }
     }
 
     // MARK: - Configuration Section
 
     private var configurationSection: some View {
-        SettingsSection(title: "Configuration", icon: "gearshape") {
-            VStack(alignment: .leading, spacing: 14) {
+        SettingsSection(title: "Configuration") {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 SettingsToggle(
-                    title: L("Enable Memory"),
+                    title: "Enable Memory",
                     description: "Build identity and long-term memories from your chats",
                     isOn: $config.enabled
                 )
@@ -902,28 +803,15 @@ struct MemoryView: View {
                     MemoryConfigurationStore.save(config)
                 }
 
-                SettingsDivider()
-
-                HStack(spacing: 12) {
-                    Text("Core Model", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                        .frame(width: 140, alignment: .leading)
-
-                    Text(appConfig.chatConfig.coreModelIdentifier ?? "None")
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.primaryText)
-
-                    Spacer()
-
-                    Text("Change in Settings → General", bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                SettingsNavigationRow(
+                    icon: ManagementTab.modelDefaults.icon,
+                    title: "Core Model",
+                    subtitle: appConfig.chatConfig.coreModelIdentifier ?? L("Not chosen yet")
+                ) {
+                    managementState.selectedTab = .modelDefaults
                 }
 
-                SettingsDivider()
-
-                SettingsStepperField(
+                SettingsStepperRow(
                     label: "Memory Budget",
                     help: "Tokens of memory context injected per turn",
                     text: $tempMemoryBudget,
@@ -936,7 +824,7 @@ struct MemoryView: View {
                     applyConfigEdit(newValue, range: 100 ... 4000, keyPath: \.memoryBudgetTokens)
                 }
 
-                SettingsStepperField(
+                SettingsStepperRow(
                     label: "Episode Retention",
                     help: "Days episodes are kept before pruning. 0 keeps them forever",
                     text: $tempEpisodeRetention,
@@ -949,8 +837,8 @@ struct MemoryView: View {
                     applyConfigEdit(newValue, range: 0 ... 3650, keyPath: \.episodeRetentionDays)
                 }
 
-                HStack(alignment: .bottom, spacing: 12) {
-                    SettingsStepperField(
+                HStack(alignment: .bottom, spacing: theme.space.s12) {
+                    SettingsStepperRow(
                         label: "Consolidation Interval",
                         help: "Hours between decay / dedup / eviction runs",
                         text: $tempConsolidationInterval,
@@ -963,7 +851,7 @@ struct MemoryView: View {
                         applyConfigEdit(newValue, range: 1 ... 168, keyPath: \.consolidationIntervalHours)
                     }
 
-                    VStack(alignment: .trailing, spacing: 4) {
+                    VStack(alignment: .trailing, spacing: theme.space.s4) {
                         Button {
                             guard !isConsolidating else { return }
                             isConsolidating = true
@@ -987,10 +875,10 @@ struct MemoryView: View {
                         } label: {
                             Text(isConsolidating ? "Running..." : "Run Now", bundle: .module)
                         }
-                        .buttonStyle(SettingsButtonStyle())
+                        .assignedSettingsButtonStyle()
                         .disabled(isConsolidating || !config.enabled)
 
-                        HStack(spacing: 4) {
+                        HStack(spacing: theme.space.s4) {
                             Text("Last run:", bundle: .module)
                             if let lastConsolidationRun {
                                 Text(lastConsolidationRun, style: .relative)
@@ -999,11 +887,11 @@ struct MemoryView: View {
                                 Text("Never", bundle: .module)
                             }
                         }
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.tertiary)
                         .help(lastConsolidationRun.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "")
                     }
-                    .padding(.bottom, 4)
+                    .padding(.bottom, theme.space.s4)
                 }
             }
         }
@@ -1027,98 +915,21 @@ struct MemoryView: View {
     // MARK: - Danger Zone
 
     private var dangerZoneSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                Image(systemName: "exclamationmark.triangle")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.errorColor)
-                    .frame(width: 20)
-
-                Text("DANGER ZONE", bundle: .module)
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(theme.errorColor)
-                    .tracking(0.5)
-
-                Spacer()
+        SettingsDestructiveZone {
+            SettingsDestructiveRow(
+                title: "Clear All Memory",
+                description: "Permanently delete identity, pinned facts, episodes, and conversation history.",
+                actionTitle: "Clear all…"
+            ) {
+                showClearConfirmation = true
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 14)
-
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Clear All Memory", bundle: .module)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(theme.primaryText)
-                        Text(
-                            "Permanently delete identity, pinned facts, episodes, and conversation history.",
-                            bundle: .module
-                        )
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
-                    }
-
-                    Spacer()
-
-                    Button {
-                        showClearConfirmation = true
-                    } label: {
-                        Text("Clear All", bundle: .module)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(theme.errorColor)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 7)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(theme.errorColor.opacity(0.1))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .stroke(theme.errorColor.opacity(0.3), lineWidth: 1)
-                                    )
-                            )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
-            }
-            .padding(.horizontal, 16)
-            .padding(.bottom, 16)
         }
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.errorColor.opacity(0.2), lineWidth: 1)
-                )
-        )
     }
 
     // MARK: - Helpers
 
     private func metadataTag(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundColor(theme.secondaryText)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(
-                Capsule()
-                    .fill(theme.tertiaryBackground)
-            )
-    }
-
-    private func statBlock(label: String, value: String) -> some View {
-        VStack(spacing: 2) {
-            Text(value)
-                .font(.system(size: 15, weight: .semibold, design: .rounded))
-                .foregroundColor(theme.primaryText)
-            Text(LocalizedStringKey(label), bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-        }
-        .frame(maxWidth: .infinity)
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel(Text(LocalizedStringKey(label), bundle: .module) + Text(": \(value)"))
+        StatusChip(text, tone: .neutral)
     }
 
     // MARK: - Data Loading
@@ -1323,11 +1134,11 @@ struct MemoryView: View {
     func showToast(_ message: String, isError: Bool = false) {
         // Same rhythm as the General/Chat tabs' success toasts: theme spring
         // in, quick ease out, 2.5 s hold.
-        withAnimation(theme.springAnimation()) {
+        withAnimation(theme.motion.springAnimation) {
             toastMessage = (message, isError)
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-            withAnimation(theme.animationQuick()) {
+            withAnimation(theme.motion.quick) {
                 toastMessage = nil
             }
         }

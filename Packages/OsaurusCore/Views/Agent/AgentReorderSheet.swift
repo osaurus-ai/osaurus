@@ -16,10 +16,13 @@ struct AgentReorderSheet: View {
     @State private var hasPendingReorder = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-
-            Divider().foregroundColor(theme.primaryBorder)
+        VStack(spacing: theme.space.s0) {
+            SettingsSheetHeader(
+                icon: "arrow.up.arrow.down",
+                title: "Reorder Agents",
+                subtitle: "Drag to set the order shown across the app.",
+                onClose: { dismiss() }
+            )
 
             if orderedAgents.isEmpty {
                 emptyState
@@ -28,7 +31,7 @@ struct AgentReorderSheet: View {
                 List {
                     ForEach(orderedAgents) { agent in
                         row(for: agent)
-                            .listRowBackground(theme.cardBackground)
+                            .listRowBackground(theme.surface.raised)
                             .listRowSeparator(.hidden)
                             .listRowInsets(EdgeInsets(top: 4, leading: 20, bottom: 4, trailing: 20))
                     }
@@ -37,66 +40,37 @@ struct AgentReorderSheet: View {
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
             }
+
+            SettingsSheetFooter(primary: .init(label: "Done") { dismiss() })
         }
-        .frame(minWidth: 420, minHeight: 480)
-        .background(theme.secondaryBackground)
+        .frame(minWidth: SettingsSheetWidth.compact, minHeight: 480)
+        .background(theme.surface.subtle)
         .onAppear { syncFromManager() }
         .onReceive(agentManager.$agents) { _ in syncFromManager() }
         .onDisappear { commitIfNeeded() }
     }
 
-    // MARK: - Header
-
-    private var header: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Reorder Agents", bundle: .module)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Text("Drag to set the order shown across the app.", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
-            }
-
-            Spacer()
-
-            Button {
-                dismiss()
-            } label: {
-                Text("Done", bundle: .module)
-                    .font(.system(size: 13, weight: .medium))
-            }
-            .buttonStyle(.borderedProminent)
-            .keyboardShortcut(.defaultAction)
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
-    }
-
     // MARK: - Row
 
     private func row(for agent: Agent) -> some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             AgentAvatarView(
                 mascotId: agent.avatar,
                 name: agent.name,
-                tint: theme.accentColor,
+                tint: theme.action.primary.default.background,
                 diameter: 28,
                 customImageURL: agent.customAvatarURL,
                 monogramFontSize: 13,
                 borderWidth: 1
             )
 
-            VStack(alignment: .leading, spacing: 1) {
+            SettingsRowText {
                 Text(agent.name)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.primaryText)
                     .lineLimit(1)
-
+            } description: {
                 if !agent.displayDescription.isEmpty {
                     Text(agent.displayDescription)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
+                        .foregroundColor(theme.text.secondary)
                         .lineLimit(1)
                 }
             }
@@ -104,27 +78,18 @@ struct AgentReorderSheet: View {
             Spacer(minLength: 0)
 
             Image(systemName: "line.3.horizontal")
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
+                .glyphSize(.label, weight: .medium)
+                .foregroundColor(theme.text.tertiary)
         }
-        .padding(.vertical, 6)
+        .padding(.vertical, theme.space.s6)
         .contentShape(Rectangle())
     }
 
     // MARK: - Empty State
 
     private var emptyState: some View {
-        VStack(spacing: 10) {
-            Spacer()
-            Image(systemName: "line.3.horizontal")
-                .font(.system(size: 32, weight: .light))
-                .foregroundColor(theme.tertiaryText)
-            Text("No custom agents to reorder.", bundle: .module)
-                .font(.system(size: 13))
-                .foregroundColor(theme.secondaryText)
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        SettingsEmptyState(inline: "line.3.horizontal", title: "No custom agents to reorder.")
+            .frame(maxHeight: .infinity)
     }
 
     // MARK: - Actions

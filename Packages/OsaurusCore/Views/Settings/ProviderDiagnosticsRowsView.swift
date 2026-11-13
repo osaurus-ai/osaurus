@@ -9,7 +9,9 @@ import AppKit
 import SwiftUI
 
 struct ProviderDiagnosticsRowsView: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
 
     let report: ProviderDiagnosticReport
     var maxRows: Int?
@@ -25,32 +27,32 @@ struct ProviderDiagnosticsRowsView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: "stethoscope")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
+                    .glyphSize(.footnote, weight: .semibold)
+                    .foregroundColor(theme.text.tertiary)
                 Text("Diagnostics", bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.secondary)
                 Spacer()
                 Button(action: copyReport) {
                     Image(systemName: "doc.on.doc")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
+                        .glyphSize(.footnote, weight: .semibold)
+                        .foregroundColor(theme.text.tertiary)
                         .frame(width: 24, height: 24)
                 }
                 .buttonStyle(PlainButtonStyle())
                 .localizedHelp("Copy")
             }
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 ForEach(visibleRows) { row in
                     diagnosticRow(row)
                 }
                 if hiddenCount > 0 {
                     Button {
-                        withAnimation(.easeOut(duration: 0.18)) {
+                        withAnimation(theme.motion.quick) {
                             showingAll = true
                         }
                     } label: {
@@ -58,13 +60,13 @@ struct ProviderDiagnosticsRowsView: View {
                             hiddenCount == 1 ? "Show 1 more detail" : "Show \(hiddenCount) more details",
                             systemImage: "chevron.down"
                         )
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.accentColor)
+                        .componentInspectionText(47, role: .label, fallback: .footnote, weight: 500, theme: theme)
+                        .foregroundColor(theme.text.link)
                     }
                     .buttonStyle(PlainButtonStyle())
                 } else if showingAll, maxRows != nil, report.rows.count > (maxRows ?? 0) {
                     Button {
-                        withAnimation(.easeOut(duration: 0.18)) {
+                        withAnimation(theme.motion.quick) {
                             showingAll = false
                         }
                     } label: {
@@ -73,46 +75,46 @@ struct ProviderDiagnosticsRowsView: View {
                         } icon: {
                             Image(systemName: "chevron.up")
                         }
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(theme.accentColor)
+                        .componentInspectionText(47, role: .label, fallback: .footnote, weight: 500, theme: theme)
+                        .foregroundColor(theme.text.link)
                     }
                     .buttonStyle(PlainButtonStyle())
                 }
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.horizontal, theme.space.s16)
+        .padding(.vertical, theme.space.s8)
     }
 
     private func diagnosticRow(_ row: ProviderDiagnosticRow) -> some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: theme.space.s8) {
             Image(systemName: icon(for: row.severity))
-                .font(.system(size: 10, weight: .semibold))
+                .glyphSize(.micro, weight: .semibold)
                 .foregroundColor(color(for: row.severity))
                 .frame(width: 14, height: 14)
 
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                HStack(alignment: .firstTextBaseline, spacing: theme.space.s6) {
                     Text(row.title)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
+                        .foregroundColor(theme.text.secondary)
                     Text(row.value)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.smallLabel)
+                        .foregroundColor(theme.text.primary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
 
                 if let detail = row.detail, !detail.isEmpty {
                     Text(detail)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText)
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.footnote)
+                        .foregroundColor(theme.text.tertiary)
                         .lineLimit(2)
                 }
 
                 if let action = row.action, !action.isEmpty {
                     Text(action)
-                        .font(.system(size: 10, weight: .medium))
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.chip)
                         .foregroundColor(color(for: row.severity))
                         .lineLimit(2)
                 }
@@ -129,13 +131,13 @@ struct ProviderDiagnosticsRowsView: View {
     private func color(for severity: ProviderDiagnosticSeverity) -> Color {
         switch severity {
         case .ok:
-            return theme.successColor
+            return theme.status.success.foreground
         case .info:
-            return theme.infoColor
+            return theme.status.info.foreground
         case .warning:
-            return theme.warningColor
+            return theme.status.warning.foreground
         case .blocked:
-            return theme.errorColor
+            return theme.status.error.foreground
         }
     }
 

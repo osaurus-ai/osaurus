@@ -54,10 +54,9 @@ struct ConfigYAMLStrictDecodeTests {
 
     @Test
     func removedSections_teachTheSettingsUIRedirect() {
-        // Scope reduction 2: `server`, `chat`, `app` are Settings-UI-only.
-        // A document naming them must get the honest redirect, not a
-        // did-you-mean loop.
-        for removed in ["server", "chat", "app"] {
+        // Scope reduction 2: `server` is Settings-UI-only. A document naming
+        // it must get the honest redirect, not a did-you-mean loop.
+        for removed in ["server"] {
             do {
                 _ = try ConfigYAML.decode("\(removed):\n  anything: true\n")
                 Issue.record("expected rejection of removed section `\(removed)`")
@@ -442,6 +441,49 @@ struct ConfigTemplateStoreSecurityTests {
     }
 }
 
+// MARK: - Agent avatar
+
+@MainActor
+struct AgentEntryAvatarTests {
+
+    @Test
+    func avatar_decodesFromYAMLAndPatchesTheAgent() throws {
+        let document = try ConfigYAML.decode(
+            """
+            agents:
+              - name: Scout
+                avatar: green
+            """)
+        let entry = try #require(document.agents?.first)
+        #expect(entry.avatar == "green")
+        var agent = AgentManager.newCustomAgentRecord(name: "Scout")
+        _ = try ConfigApplier.patchDraft(&agent, with: entry)
+        #expect(agent.avatar == "green")
+        #expect(ConfigExporter.exportAgent(agent).avatar == "green")
+    }
+
+    @Test
+    func patchDraft_rejectsAnUnknownMascotWithoutChangingTheAgent() throws {
+        var agent = AgentManager.newCustomAgentRecord(name: "Scout")
+        let before = agent
+        var entry = AgentEntry(name: "Renamed")
+        entry.avatar = "unicorn"
+        #expect(throws: ConfigApplier.DraftPatchError.self) { try ConfigApplier.patchDraft(&agent, with: entry) }
+        #expect(agent == before)
+    }
+
+    @Test
+    func emptyAvatar_showsTheInitial() throws {
+        var agent = AgentManager.newCustomAgentRecord(name: "Scout")
+        agent.avatar = "green"
+        var entry = AgentEntry(name: "")
+        entry.avatar = ""
+        _ = try ConfigApplier.patchDraft(&agent, with: entry)
+        #expect(agent.avatar == nil)
+        #expect(agent.name == "Scout", "an empty name in a draft patch leaves the name alone")
+    }
+}
+
 // MARK: - Planner
 
 @Suite(.serialized)
@@ -479,14 +521,14 @@ struct ConfigPlannerTests {
         // reduction 2 (server-owned gates left with the `server` section).
         var document = OsaurusConfigDocument()
         var tools = ToolsSection()
-        tools.policies = ["web_search": "auto"]
+        tools.policies = ["update_skill": "auto"]
         document.tools = tools
 
         let plan = try ConfigPlanner.plan(document: document, prune: false)
         // Either the current state already has it on auto (no change) or the
         // plan must carry the exact risk string the apply gate lists.
         if !plan.isEmpty {
-            #expect(plan.risks.contains(ConfigRisk.autoPolicy("web_search")))
+            #expect(plan.risks.contains(ConfigRisk.autoPolicy("update_skill")))
             #expect(plan.hasHighRiskChanges)
         }
     }
@@ -568,7 +610,8 @@ struct ConfigPlannerTests {
         schedule.instructions = "do things"
         schedule.frequency = "daily"
         schedule.frequencyTimeOfDay = "08:00"
-        document.schedules = [schedule]
+        // Legacy `schedules:` input is translated into an event before validation.
+        document.legacySchedules = [schedule]
 
         do {
             _ = try ConfigPlanner.plan(document: document, prune: false)
@@ -587,7 +630,7 @@ struct ConfigPlannerTests {
         schedule.agent = "default"
         schedule.instructions = "do things"
         schedule.frequency = "fortnightly"
-        document.schedules = [schedule]
+        document.legacySchedules = [schedule]
 
         do {
             _ = try ConfigPlanner.plan(document: document, prune: false)
@@ -672,91 +715,84 @@ struct ConfigPlannerPruneIntegrityTests {
         _ = await AgentManager.shared.delete(id: agent.id)
     }
 
-    @Test
-    func pruneRefusesToDeleteAgentASurvivingScheduleStillRunsOn() async throws {
-        try await withSeededAgent { agent in
-            let schedule = ScheduleManager.shared.create(
-                name: "Prune Probe Schedule \(UUID().uuidString.prefix(6))",
-                instructions: "do things",
-                agentId: agent.id,
-                frequency: .daily(hour: 8, minute: 0),
-                isEnabled: false
-            )
-            defer { ScheduleManager.shared.delete(id: schedule.id) }
+    private func scheduleEvent(agent: Agent, name: String = "Prune Probe Schedule") -> OsaurusEvent {
+        EventManager.shared.create(
+            OsaurusEvent(
+                name: "\(name) \(UUID().uuidString.prefix(6))",
+                isEnabled: false,
+                source: .schedule(ScheduleSourceConfig(frequency: .daily(hour: 8, minute: 0))),
+                action: .agent(AgentEventAction(target: .local(agent.id), instructions: "do things"))
+            ))
+    }
 
-            // `agents: []` + prune deletes the agent; the schedules section
-            // is ABSENT so the schedule survives — must refuse.
+    private func folderEvent(agent: Agent) -> OsaurusEvent {
+        EventManager.shared.create(
+            OsaurusEvent(
+                name: "Prune Probe Watcher \(UUID().uuidString.prefix(6))",
+                isEnabled: false,
+                source: .folder(FolderSourceConfig()),
+                action: .agent(AgentEventAction(target: .local(agent.id), instructions: "organize"))
+            ))
+    }
+
+    @Test
+    func pruneRefusesToDeleteAgentASurvivingEventStillRunsOn() async throws {
+        try await withSeededAgent { agent in
+            let schedule = scheduleEvent(agent: agent)
+            let watcher = folderEvent(agent: agent)
+            defer {
+                _ = EventManager.shared.delete(id: schedule.id)
+                _ = EventManager.shared.delete(id: watcher.id)
+            }
+
+            // `agents: []` + prune deletes the agent; the events section is
+            // ABSENT so both events survive — must refuse, naming each.
             var document = OsaurusConfigDocument()
             document.agents = []
             do {
                 _ = try ConfigPlanner.plan(document: document, prune: true)
-                Issue.record("expected prune refusal for the dangling schedule")
+                Issue.record("expected prune refusal for the dangling events")
             } catch let issues as ConfigPlanIssues {
                 #expect(issues.issues.contains { $0.contains(schedule.name) })
+                #expect(issues.issues.contains { $0.contains(watcher.name) })
                 #expect(issues.issues.contains { $0.contains(agent.name) })
             }
         }
     }
 
     @Test
-    func pruneRefusesToDeleteAgentASurvivingWatcherStillRunsOn() async throws {
+    func pruningTheEventAlongsideItsAgent_isAllowed() async throws {
         try await withSeededAgent { agent in
-            let watcher = WatcherManager.shared.create(
-                name: "Prune Probe Watcher \(UUID().uuidString.prefix(6))",
-                instructions: "organize",
-                agentId: agent.id,
-                isEnabled: false
-            )
-            defer { WatcherManager.shared.delete(id: watcher.id) }
+            let schedule = scheduleEvent(agent: agent)
+            defer { _ = EventManager.shared.delete(id: schedule.id) }
 
+            // Declaring `events: []` prunes the event together with the
+            // agent — nothing dangles, so the plan must succeed.
             var document = OsaurusConfigDocument()
             document.agents = []
-            do {
-                _ = try ConfigPlanner.plan(document: document, prune: true)
-                Issue.record("expected prune refusal for the dangling watcher")
-            } catch let issues as ConfigPlanIssues {
-                #expect(issues.issues.contains { $0.contains(watcher.name) })
-            }
-        }
-    }
-
-    @Test
-    func pruningTheScheduleAlongsideItsAgent_isAllowed() async throws {
-        try await withSeededAgent { agent in
-            let schedule = ScheduleManager.shared.create(
-                name: "Prune Probe Schedule \(UUID().uuidString.prefix(6))",
-                instructions: "do things",
-                agentId: agent.id,
-                frequency: .daily(hour: 8, minute: 0),
-                isEnabled: false
-            )
-            defer { ScheduleManager.shared.delete(id: schedule.id) }
-
-            // Declaring `schedules: []` prunes the schedule together with
-            // the agent — nothing dangles, so the plan must succeed.
-            var document = OsaurusConfigDocument()
-            document.agents = []
-            document.schedules = []
+            document.automations = []
             let plan = try ConfigPlanner.plan(document: document, prune: true)
             #expect(plan.actions.contains { $0.section == "agents" && $0.kind == .delete })
-            #expect(plan.actions.contains { $0.section == "schedules" && $0.kind == .delete })
+            #expect(plan.actions.contains { $0.section == "automations" && $0.kind == .delete && $0.target == schedule.name })
         }
     }
 
     @Test
-    func scheduleReassignedToAPrunedAgent_failsValidation() async throws {
+    func eventReassignedToAPrunedAgent_failsValidation() async throws {
         try await withSeededAgent { agent in
-            // The document keeps NO agents but tries to point a schedule at
+            // The document keeps NO agents but tries to point an event at
             // the pruned one — the post-apply agent set must exclude it.
-            var schedule = ScheduleEntry(name: "Prune Probe Reassign")
-            schedule.agent = agent.name
-            schedule.instructions = "do things"
-            schedule.frequency = "daily"
-            schedule.frequencyTimeOfDay = "08:00"
+            var entry = EventEntry(name: "Prune Probe Reassign")
+            var source = EventSourceEntry(kind: "schedule")
+            source.frequency = "daily"
+            source.frequencyTimeOfDay = "08:00"
+            entry.source = source
+            entry.agent = agent.name
+            entry.instructions = "do things"
 
             var document = OsaurusConfigDocument()
             document.agents = []
-            document.schedules = [schedule]
+            document.automations = [entry]
             do {
                 _ = try ConfigPlanner.plan(document: document, prune: true)
                 Issue.record("expected validation failure for reassignment to a pruned agent")
@@ -767,43 +803,23 @@ struct ConfigPlannerPruneIntegrityTests {
     }
 
     @Test
-    func schedulePruneDeletes_carryARiskString() async throws {
+    func eventPruneDeletes_carryARiskString() async throws {
         try await withSeededAgent { agent in
-            let schedule = ScheduleManager.shared.create(
-                name: "Prune Probe Schedule \(UUID().uuidString.prefix(6))",
-                instructions: "do things",
-                agentId: agent.id,
-                frequency: .daily(hour: 8, minute: 0),
-                isEnabled: false
-            )
-            defer { ScheduleManager.shared.delete(id: schedule.id) }
+            let schedule = scheduleEvent(agent: agent)
+            let watcher = folderEvent(agent: agent)
+            defer {
+                _ = EventManager.shared.delete(id: schedule.id)
+                _ = EventManager.shared.delete(id: watcher.id)
+            }
 
-            // Prune ONLY the schedules section (agents stay): the delete
-            // must be flagged high-risk so the apply gate prompts.
+            // Prune ONLY the events section (agents stay): each delete must
+            // be flagged high-risk so the apply gate prompts.
             var document = OsaurusConfigDocument()
-            document.schedules = []
+            document.automations = []
             let plan = try ConfigPlanner.plan(document: document, prune: true)
             #expect(plan.hasHighRiskChanges)
-            #expect(plan.risks.contains(ConfigRisk.deleteSchedule(schedule.name)))
-        }
-    }
-
-    @Test
-    func watcherPruneDeletes_carryARiskString() async throws {
-        try await withSeededAgent { agent in
-            let watcher = WatcherManager.shared.create(
-                name: "Prune Probe Watcher \(UUID().uuidString.prefix(6))",
-                instructions: "organize",
-                agentId: agent.id,
-                isEnabled: false
-            )
-            defer { WatcherManager.shared.delete(id: watcher.id) }
-
-            var document = OsaurusConfigDocument()
-            document.watchers = []
-            let plan = try ConfigPlanner.plan(document: document, prune: true)
-            #expect(plan.hasHighRiskChanges)
-            #expect(plan.risks.contains(ConfigRisk.deleteWatcher(watcher.name)))
+            #expect(plan.risks.contains(ConfigRisk.deleteEvent(schedule.name)))
+            #expect(plan.risks.contains(ConfigRisk.deleteEvent(watcher.name)))
         }
     }
 }
@@ -819,26 +835,27 @@ struct ConfigPlanFidelityTests {
         let agent = AgentManager.shared.create(
             name: "Fidelity Probe Agent \(UUID().uuidString.prefix(6))",
             description: "Exercises agent configuration in this isolated test.", systemPrompt: "")
-        let schedule = ScheduleManager.shared.create(
-            name: "Fidelity Probe Schedule \(UUID().uuidString.prefix(6))",
-            instructions: "do things",
-            agentId: agent.id,
-            frequency: .weekly(dayOfWeek: 2, hour: 8, minute: 0),
-            isEnabled: false
-        )
+        let event = EventManager.shared.create(
+            OsaurusEvent(
+                name: "Fidelity Probe Schedule \(UUID().uuidString.prefix(6))",
+                isEnabled: false,
+                source: .schedule(ScheduleSourceConfig(frequency: .weekly(dayOfWeek: 2, hour: 8, minute: 0))),
+                action: .agent(AgentEventAction(target: .local(agent.id), instructions: "do things"))
+            ))
 
         // Stored: weekly MON 08:00. Document: lenient spellings the parser
         // accepts — must NOT show as a change.
-        var entry = ScheduleEntry(name: schedule.name)
-        entry.frequency = "Weekly"
-        entry.frequencyValue = "Monday"
-        entry.frequencyTimeOfDay = "08:00"
+        var entry = ConfigEvents.export(event)
+        entry.agent = agent.name
+        entry.source?.frequency = "Weekly"
+        entry.source?.frequencyValue = "Monday"
+        entry.source?.frequencyTimeOfDay = "08:00"
 
         var document = OsaurusConfigDocument()
-        document.schedules = [entry]
+        document.automations = [entry]
         let plan = try? ConfigPlanner.plan(document: document, prune: false)
 
-        ScheduleManager.shared.delete(id: schedule.id)
+        _ = EventManager.shared.delete(id: event.id)
         _ = await AgentManager.shared.delete(id: agent.id)
 
         guard let plan else {
@@ -846,7 +863,7 @@ struct ConfigPlanFidelityTests {
             return
         }
         #expect(
-            !plan.actions.contains { $0.section == "schedules" && $0.kind == .update },
+            !plan.actions.contains { $0.section == "automations" && $0.kind == .update },
             "equivalent frequency spellings planned an update:\n\(plan.summaryText())")
     }
 
@@ -947,11 +964,12 @@ struct ConfigExportRedactionTests {
 struct OsaurusConfigToolHighRiskGateTests {
 
     // A surviving high-risk gate (scope reduction 2 removed the server-owned
-    // ones): setting a tool policy to `auto` runs it without asking.
+    // ones): setting a tool policy to `auto` runs it without asking. The
+    // tool must default to `ask`, or `auto` is no change at all.
     private static let highRiskYAML = """
         tools:
           policies:
-            web_search: auto
+            update_skill: auto
         """
 
     private static func applyArgs() -> String {
@@ -962,7 +980,7 @@ struct OsaurusConfigToolHighRiskGateTests {
 
     @Test
     func headlessDenyContext_refusesHighRiskApply() async throws {
-        let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+        let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.configuratorId) {
             try await ChatExecutionContext.$denyUnapprovedToolPrompts.withValue(true) {
                 try await OsaurusConfigTool().execute(argumentsJSON: Self.applyArgs())
             }
@@ -973,7 +991,7 @@ struct OsaurusConfigToolHighRiskGateTests {
         #expect(!result.contains("\"status\":\"applied\""))
         // And the tool policy must be unchanged afterwards.
         let policy = await MainActor.run {
-            ConfigExporter.export().tools?.policies?["web_search"]
+            ConfigExporter.export().tools?.policies?["update_skill"]
         }
         #expect(policy != "auto", "high-risk apply leaked through the deny gate")
     }
@@ -985,7 +1003,7 @@ struct OsaurusConfigToolHighRiskGateTests {
         for sectionsValue: Any in [["models"], "models"] {
             let args: [String: Any] = ["action": "schema", "sections": sectionsValue]
             let data = try JSONSerialization.data(withJSONObject: args)
-            let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+            let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.configuratorId) {
                 try await OsaurusConfigTool()
                     .execute(argumentsJSON: String(decoding: data, as: UTF8.self))
             }
@@ -998,7 +1016,7 @@ struct OsaurusConfigToolHighRiskGateTests {
     func schemaAction_unknownSection_suggestsTheRealOne() async throws {
         let args: [String: Any] = ["action": "schema", "sections": "mcp"]
         let data = try JSONSerialization.data(withJSONObject: args)
-        let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+        let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.configuratorId) {
             try await OsaurusConfigTool()
                 .execute(argumentsJSON: String(decoding: data, as: UTF8.self))
         }
@@ -1018,7 +1036,7 @@ struct OsaurusConfigToolHighRiskGateTests {
             """
         let args: [String: Any] = ["action": "plan", "yaml": yaml]
         let data = try JSONSerialization.data(withJSONObject: args)
-        let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+        let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.configuratorId) {
             try await OsaurusConfigTool()
                 .execute(argumentsJSON: String(decoding: data, as: UTF8.self))
         }
@@ -1034,7 +1052,7 @@ struct OsaurusConfigToolHighRiskGateTests {
         // exist"; the scoped export must ship the schema shape alongside.
         let args: [String: Any] = ["action": "export", "sections": "tools"]
         let data = try JSONSerialization.data(withJSONObject: args)
-        let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+        let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.configuratorId) {
             try await OsaurusConfigTool()
                 .execute(argumentsJSON: String(decoding: data, as: UTF8.self))
         }
@@ -1058,7 +1076,7 @@ struct OsaurusConfigToolHighRiskGateTests {
             .joined(separator: "\n")
         let args: [String: Any] = ["action": "apply", "yaml": yaml, "prune": true]
         let data = try JSONSerialization.data(withJSONObject: args)
-        let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+        let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.configuratorId) {
             try await ChatExecutionContext.$autoApproveToolPrompts.withValue(true) {
                 try await OsaurusConfigTool()
                     .execute(argumentsJSON: String(decoding: data, as: UTF8.self))
@@ -1071,7 +1089,7 @@ struct OsaurusConfigToolHighRiskGateTests {
             keepList.isEmpty ? "commands: []" : "commands:\n" + keepList.joined(separator: "\n")
         let cleanup: [String: Any] = ["action": "apply", "yaml": cleanupYAML, "prune": true]
         let cleanupData = try JSONSerialization.data(withJSONObject: cleanup)
-        _ = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+        _ = try await ChatExecutionContext.$currentAgentId.withValue(Agent.configuratorId) {
             try await ChatExecutionContext.$autoApproveToolPrompts.withValue(true) {
                 try await OsaurusConfigTool()
                     .execute(argumentsJSON: String(decoding: cleanupData, as: UTF8.self))
@@ -1082,15 +1100,17 @@ struct OsaurusConfigToolHighRiskGateTests {
     @Test
     func externalSurface_refusesHighRiskApply() async throws {
         let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
-            try await ChatExecutionContext.$isExternalSurface.withValue(true) {
-                try await OsaurusConfigTool().execute(argumentsJSON: Self.applyArgs())
+            try await ChatExecutionContext.$harnessTokenAgentId.withValue(Agent.defaultId) {
+                try await ChatExecutionContext.$isExternalSurface.withValue(true) {
+                    try await OsaurusConfigTool().execute(argumentsJSON: Self.applyArgs())
+                }
             }
         }
         // Refused as unanswerable, never reported as the user saying no.
         #expect(result.contains("permission_denied"))
         #expect(!result.contains("declined"))
         let policy = await MainActor.run {
-            ConfigExporter.export().tools?.policies?["web_search"]
+            ConfigExporter.export().tools?.policies?["update_skill"]
         }
         #expect(policy != "auto", "high-risk apply leaked through the external-surface gate")
     }

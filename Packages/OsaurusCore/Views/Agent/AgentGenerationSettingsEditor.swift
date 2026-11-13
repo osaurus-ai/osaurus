@@ -58,100 +58,90 @@ struct AgentGenerationSettingsEditor: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s24) {
             header
-            Divider().overlay(theme.cardBorder)
-            VStack(alignment: .leading, spacing: 24) {
-                if currentApplicability == .nativeBlockDiffusion {
-                    Text(
-                        "This model uses its native denoising schedule. Temperature, probability filters and repetition penalties are not used. Saved overrides are kept for models that use them.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 12)).foregroundColor(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                }
-                group("Sampling", subtitle: "How tokens are chosen") {
-                    parameter(
-                        "Temperature",
-                        description: "Randomness of token choice. Lower is more focused, higher is more varied.",
-                        field: .temperature
-                    )
-                    parameter(
-                        "Top P",
-                        description: "Sample only from tokens within this cumulative probability (0–1).",
-                        field: .topP
-                    )
-                    parameter("Top K", description: "Sample only from the K most likely tokens.", field: .topK)
-                    parameter(
-                        "Min P",
-                        description: "Drop tokens below this fraction of the most likely token's probability.",
-                        field: .minP
-                    )
-                }
-                group("Length & reasoning", subtitle: "How much and when to stop") {
-                    parameter(
-                        "Max Tokens",
-                        description: "Upper limit on tokens generated in one response, including reasoning.",
-                        field: .maxTokens
-                    )
-                    reasoningControls
-                    speculationControls
-                    stopSequences
-                }
-                group("Repetition", subtitle: "Discourage repeated text") {
-                    parameter(
-                        "Repetition penalty",
-                        description: "Multiplicative penalty on tokens already used. 1.0 means off.",
-                        field: .repetitionPenalty
-                    )
-                    parameter(
-                        "Frequency penalty",
-                        description: "Penalizes tokens in proportion to how often they've appeared.",
-                        field: .frequencyPenalty
-                    )
-                    parameter(
-                        "Presence penalty",
-                        description: "Penalizes tokens that have appeared at least once.",
-                        field: .presencePenalty
-                    )
-                }
-                group("Reproducibility", subtitle: "") {
-                    parameter(
-                        "Seed",
-                        description: "A fixed seed requests repeatable sampling; results also depend on the backend.",
-                        field: .seed
-                    )
-                }
-                templateParameters
+            if currentApplicability == .nativeBlockDiffusion {
+                Text(
+                    "This model uses its native denoising schedule. Temperature, probability filters and repetition penalties are not used. Saved overrides are kept for models that use them.",
+                    bundle: .module
+                )
+                .font(SettingsFont.rowDescription).foregroundColor(theme.text.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+            group("Sampling", subtitle: "How tokens are chosen") {
+                parameter(
+                    "Temperature",
+                    description: "Randomness of token choice. Lower is more focused, higher is more varied.",
+                    field: .temperature
+                )
+                parameter(
+                    "Top P",
+                    description: "Sample only from tokens within this cumulative probability (0–1).",
+                    field: .topP
+                )
+                parameter("Top K", description: "Sample only from the K most likely tokens.", field: .topK)
+                parameter(
+                    "Min P",
+                    description: "Drop tokens below this fraction of the most likely token's probability.",
+                    field: .minP
+                )
+            }
+            group("Length & reasoning", subtitle: "How much and when to stop") {
+                parameter(
+                    "Max Tokens",
+                    description: "Upper limit on tokens generated in one response, including reasoning.",
+                    field: .maxTokens
+                )
+                reasoningControls
+                speculationControls
+                stopSequences
+            }
+            group("Repetition", subtitle: "Discourage repeated text") {
+                parameter(
+                    "Repetition penalty",
+                    description: "Multiplicative penalty on tokens already used. 1.0 means off.",
+                    field: .repetitionPenalty
+                )
+                parameter(
+                    "Frequency penalty",
+                    description: "Penalizes tokens in proportion to how often they've appeared.",
+                    field: .frequencyPenalty
+                )
+                parameter(
+                    "Presence penalty",
+                    description: "Penalizes tokens that have appeared at least once.",
+                    field: .presencePenalty
+                )
+            }
+            group("Reproducibility", subtitle: "") {
+                parameter(
+                    "Seed",
+                    description: "A fixed seed requests repeatable sampling; results also depend on the backend.",
+                    field: .seed
+                )
+            }
+            templateParameters
 
-                if let error,
-                    !AgentGenerationField.allCases.contains(where: { draft.validationMessage(for: $0) == error })
-                {
-                    Text(error).font(.system(size: 11)).foregroundColor(.red)
-                        .fixedSize(horizontal: false, vertical: true)
+            if let error,
+                !AgentGenerationField.allCases.contains(where: { draft.validationMessage(for: $0) == error })
+            {
+                validation(error)
+            }
+            HStack {
+                SettingsButton(.tertiary, "Reset to inherited", size: .compact) {
+                    draft = AgentGenerationDraft()
+                    save()
                 }
-                HStack {
-                    Button(L("Reset to inherited")) {
-                        draft = AgentGenerationDraft()
-                        save()
-                    }
-                    .buttonStyle(.borderless)
-                    if showsSaveButton {
-                        Spacer()
-                        Button(L("Save generation defaults"), action: save)
-                            .buttonStyle(.borderedProminent)
-                            .disabled(
-                                (choices == nil || choices?.modelID != modelID)
-                                    && (draft.reasoningEffort != "" || draft.thinking != "inherit" || draft.speculation != "inherit")
-                            )
-                    }
+                if showsSaveButton {
+                    Spacer()
+                    SettingsButton(.primary, "Save generation defaults", size: .compact, action: save)
+                        .disabled(
+                            (choices == nil || choices?.modelID != modelID)
+                                && (draft.reasoningEffort != "" || draft.thinking != "inherit" || draft.speculation != "inherit")
+                        )
                 }
             }
-            .padding(16)
         }
-        .background(theme.cardBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).stroke(theme.cardBorder, lineWidth: 1))
         .onGeometryChange(for: CGFloat.self) {
             $0.size.width
         } action: {
@@ -216,17 +206,16 @@ struct AgentGenerationSettingsEditor: View {
         if let choices, choices.modelID == modelID {
             if let status = choices.speculation, status.speculationAvailable {
                 rowLabel("Speculative Decoding", "Off uses ordinary decoding. On requests adaptive drafting without changing sampling.")
-                Picker(L("Speculative Decoding"), selection: $draft.speculation) {
-                    Text(localized: "Inherit").tag("inherit")
-                    Text(localized: "Off (AR)").tag("off")
-                    if !status.speculationBlocked {
-                        Text(localized: "On (Adaptive)").tag("on")
-                    }
-                }
-                .pickerStyle(.segmented).labelsHidden()
+                AssignedBaseSegmentedPicker(
+                    selection: $draft.speculation,
+                    options: [.init("inherit", "Inherit"), .init("off", "Off (AR)")]
+                        + (status.speculationBlocked ? [] : [.init("on", "On (Adaptive)")])
+                )
+                .fixedSize()
+                .accessibilityLabel(Text("Speculative Decoding", bundle: .module))
                 .settingsLandingAnchor("agents.generation.speculativeDecoding")
                 Text(status.speculationCapabilityDescription)
-                    .font(.system(size: 11)).foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.rowDescription).foregroundColor(theme.text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
             if draft.speculation != "inherit",
@@ -235,8 +224,8 @@ struct AgentGenerationSettingsEditor: View {
             {
                 HStack {
                     Text("Saved speculation override is unavailable for this model.", bundle: .module)
-                        .font(.system(size: 11)).foregroundColor(theme.tertiaryText)
-                    Button(L("Use Inherit")) { draft.speculation = "inherit" }.buttonStyle(.borderless)
+                        .font(SettingsFont.rowDescription).foregroundColor(theme.status.warning.foreground)
+                    SettingsButton(.tertiary, "Use Inherit", size: .compact) { draft.speculation = "inherit" }
                 }
             }
         }
@@ -246,19 +235,21 @@ struct AgentGenerationSettingsEditor: View {
     private var reasoningControls: some View {
         if modelID == nil {
             Text("Choose a model to detect its reasoning controls.", bundle: .module)
-                .font(.system(size: 11)).foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription).foregroundColor(theme.text.tertiary)
         } else if let choices, choices.modelID == modelID {
             if let capabilities = choices.efforts, !capabilities.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
                     Text("Reasoning effort", bundle: .module)
-                        .font(.system(size: 11, weight: .medium)).foregroundColor(theme.secondaryText)
-                    Picker(L("Reasoning effort"), selection: $draft.reasoningEffort) {
-                        Text(localized: "Inherit").tag("")
-                        ForEach(capabilities.levels) { level in
-                            Text(ModelReasoningCapabilities.displayLabel(forEffort: level.id)).tag(level.id)
-                        }
-                    }
-                    .pickerStyle(.segmented).labelsHidden()
+                        .font(SettingsFont.rowTitle).foregroundColor(theme.text.primary)
+                    AssignedBaseSegmentedPicker(
+                        selection: $draft.reasoningEffort,
+                        options: [.init("", "Inherit")]
+                            + capabilities.levels.map {
+                                .init($0.id, ModelReasoningCapabilities.displayLabel(forEffort: $0.id), verbatim: true)
+                            }
+                    )
+                    .fixedSize()
+                    .accessibilityLabel(Text("Reasoning effort", bundle: .module))
                     .settingsLandingAnchor("agents.generation.reasoningEffort")
                     if !draft.reasoningEffort.isEmpty,
                         !capabilities.levels.contains(where: { $0.id == draft.reasoningEffort })
@@ -271,12 +262,12 @@ struct AgentGenerationSettingsEditor: View {
             }
             if choices.showsThinkingControl {
                 rowLabel("thinking.mode.label", "Let the model reason before answering, on models that support it.")
-                Picker(L("thinking.mode.label"), selection: $draft.thinking) {
-                    Text(localized: "Inherit").tag("inherit")
-                    Text(localized: "On").tag("on")
-                    Text(localized: "Off").tag("off")
-                }
-                .pickerStyle(.segmented).labelsHidden()
+                AssignedBaseSegmentedPicker(
+                    selection: $draft.thinking,
+                    options: [.init("inherit", "Inherit"), .init("on", "On"), .init("off", "Off")]
+                )
+                .fixedSize()
+                .accessibilityLabel(Text(verbatim: L("thinking.mode.label")))
                 .settingsLandingAnchor("agents.generation.thinking")
             } else if draft.thinking != "inherit" {
                 if choices.supportsThinking {
@@ -284,17 +275,17 @@ struct AgentGenerationSettingsEditor: View {
                         Text(localized: "thinking.mode.label")
                         Text(draft.thinking == "on" ? L("On") : L("Off"))
                         Spacer()
-                        Button(L("Use Inherit")) { draft.thinking = "inherit" }.buttonStyle(.borderless)
+                        SettingsButton(.tertiary, "Use Inherit", size: .compact) { draft.thinking = "inherit" }
                     }
                 } else {
                     unsupportedReasoning
                 }
             }
         } else {
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
+            HStack(spacing: theme.space.s8) {
+                SettingsSpinner()
                 Text("Detecting model reasoning controls…", bundle: .module)
-                    .font(.system(size: 11)).foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.rowDescription).foregroundColor(theme.text.tertiary)
             }
         }
     }
@@ -302,44 +293,37 @@ struct AgentGenerationSettingsEditor: View {
     private var unsupportedReasoning: some View {
         HStack {
             Text("Saved reasoning choices are not supported by the selected model.", bundle: .module)
-                .font(.system(size: 11)).foregroundColor(.orange)
-            Button(L("Use Inherit")) {
+                .font(SettingsFont.rowDescription).foregroundColor(theme.status.warning.foreground)
+            SettingsButton(.tertiary, "Use Inherit", size: .compact) {
                 draft.reasoningEffort = ""
                 draft.thinking = "inherit"
-            }.buttonStyle(.borderless)
+            }
         }
     }
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "slider.horizontal.3")
-                .font(.system(size: 18, weight: .medium)).foregroundColor(theme.accentColor)
-                .padding(10).background(theme.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Generation Overrides", bundle: .module)
-                    .font(.system(size: 16, weight: .semibold)).foregroundColor(theme.primaryText)
-                Text(
-                    "Available settings inherit the model and server defaults. Switch a setting to Custom to override it for this agent only.",
-                    bundle: .module
-                )
-                .font(.system(size: 12)).foregroundColor(theme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-            }
+        HStack(alignment: .top, spacing: theme.space.s12) {
+            Text(
+                "Available settings inherit the model and server defaults. Switch a setting to Custom to override it for this agent only.",
+                bundle: .module
+            )
+            .font(SettingsFont.rowDescription).foregroundColor(theme.text.tertiary)
+            .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
-            VStack(alignment: .trailing, spacing: 4) {
+            VStack(alignment: .trailing, spacing: theme.space.s4) {
                 Text("Overrides: \(draft.overrideCount)", bundle: .module)
-                    .font(.system(size: 11, weight: .medium)).foregroundColor(theme.accentColor)
-                    .padding(.horizontal, 10).padding(.vertical, 6)
-                    .background(theme.accentColor.opacity(0.10), in: Capsule())
+                    .font(SettingsFont.chip).foregroundColor(theme.action.primary.default.background)
+                    .padding(.horizontal, theme.space.s8).padding(.vertical, theme.space.s4)
+                    .background(theme.selection.background, in: Capsule())
                     .fixedSize()
                 let inactive = currentApplicability.inactiveOverrideCount(in: draft)
                 if inactive > 0 {
                     Text("\(inactive) not used by this model", bundle: .module)
-                        .font(.system(size: 11)).foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.rowDescription).foregroundColor(theme.text.tertiary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-        }.padding(16)
+        }
     }
 
     private func group<Content: View>(
@@ -347,83 +331,74 @@ struct AgentGenerationSettingsEditor: View {
         subtitle: String,
         @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Text(LocalizedStringKey(title), bundle: .module).textCase(.uppercase)
-                    .font(.system(size: 10, weight: .bold)).tracking(0.7).foregroundColor(theme.accentColor)
+        VStack(alignment: .leading, spacing: theme.space.s14) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(LocalizedStringKey(title), bundle: .module)
+                    .font(SettingsFont.sectionTitle).foregroundColor(theme.text.primary)
                 Spacer()
                 if !subtitle.isEmpty {
                     Text(LocalizedStringKey(subtitle), bundle: .module)
-                        .font(.system(size: 11)).foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.rowDescription).foregroundColor(theme.text.tertiary)
                 }
             }
-            Divider().overlay(theme.cardBorder)
+            Divider().overlay(theme.border.subtle)
             content()
         }
     }
 
     private func rowLabel(_ title: String, _ description: String) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text(LocalizedStringKey(title), bundle: .module)
-                .font(.system(size: 12, weight: .semibold)).foregroundColor(theme.primaryText)
-            if !description.isEmpty {
-                Text(LocalizedStringKey(description), bundle: .module)
-                    .font(.system(size: 11)).foregroundColor(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }.frame(maxWidth: .infinity, alignment: .leading)
+        SettingsRowText(title, description: description)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func modePicker(_ title: String, field: AgentGenerationField) -> some View {
-        Picker(
-            LocalizedStringKey(title),
+        AssignedBaseSegmentedPicker(
             selection: Binding(
                 get: { draft[keyPath: field.path].isCustom },
                 set: { draft[keyPath: field.path].setCustom($0, inheritedText: inherited[field].customText) }
-            )
-        ) {
-            Text(localized: "Inherit").tag(false)
-            Text(localized: "Custom").tag(true)
-        }.pickerStyle(.segmented).labelsHidden().frame(width: 148)
-            .accessibilityLabel(Text("\(title) mode"))
-            .disabled(!currentApplicability.isApplicable(field))
+            ),
+            options: [.init(false, "Inherit"), .init(true, "Custom")]
+        )
+        .fixedSize()
+        .accessibilityLabel(Text("\(title) mode"))
+        .disabled(!currentApplicability.isApplicable(field))
     }
 
     private func inheritedValue(_ field: AgentGenerationField) -> some View {
         let value = inherited[field]
-        return HStack(spacing: 6) {
-            Text(value.text).font(.system(size: 12, design: .monospaced))
+        return HStack(spacing: theme.space.s6) {
+            Text(value.text).font(SettingsFont.mono)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
             if !value.source.isEmpty {
-                Text(value.source.uppercased())
-                    .font(.system(size: 9, weight: .semibold))
+                Text(value.source)
+                    .font(SettingsFont.chip)
             }
-        }.foregroundColor(theme.tertiaryText)
-            .padding(.horizontal, 10).padding(.vertical, 10)
-            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+        }.foregroundColor(theme.text.tertiary)
+            .padding(.horizontal, theme.space.s12).padding(.vertical, theme.space.s8)
+            .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
             .overlay(
-                RoundedRectangle(cornerRadius: 10).stroke(
-                    theme.inputBorder,
-                    style: StrokeStyle(lineWidth: 1, dash: [4, 3])
+                RoundedRectangle(cornerRadius: theme.radius.medium).stroke(
+                    theme.border.default,
+                    style: StrokeStyle(lineWidth: theme.stroke.default, dash: [4, 3])
                 )
             )
     }
 
     private func parameter(_ title: String, description: String, field: AgentGenerationField) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // Use the card width for every row. Ideal text widths made ViewThatFits
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            // Use the editor width for every row. Ideal text widths made ViewThatFits
             // mix horizontal and stacked rows on the same editing screen.
             if editorWidth >= 600 {
-                HStack(alignment: .top, spacing: 14) {
+                HStack(alignment: .top, spacing: theme.space.s14) {
                     rowLabel(title, description).frame(minWidth: 190)
                     modePicker(title, field: field)
-                    parameterValue(title, field: field).frame(width: 160)
+                    parameterValue(title, field: field).frame(maxWidth: 160)
                 }
             } else {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: theme.space.s10) {
                     rowLabel(title, description)
-                    HStack(alignment: .top, spacing: 12) {
+                    HStack(alignment: .top, spacing: theme.space.s12) {
                         modePicker(title, field: field)
                         parameterValue(title, field: field)
                     }
@@ -436,20 +411,19 @@ struct AgentGenerationSettingsEditor: View {
     @ViewBuilder
     private func parameterValue(_ title: String, field: AgentGenerationField) -> some View {
         if !currentApplicability.isApplicable(field) {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
                 if draft[keyPath: field.path].isCustom {
-                    Text(draft[keyPath: field.path].text)
-                        .font(.system(size: 12, design: .monospaced))
+                    Text(draft[keyPath: field.path].text).font(SettingsFont.mono)
                     Text("Saved; not used by this model", bundle: .module)
-                        .font(.system(size: 11))
+                        .font(SettingsFont.rowDescription)
                 } else {
                     Text("Not used by this model", bundle: .module)
-                        .font(.system(size: 12))
+                        .font(SettingsFont.rowDescription)
                 }
             }
-            .foregroundColor(theme.tertiaryText)
+            .foregroundColor(theme.text.tertiary)
             .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(Text(title))
             .accessibilityValue(
@@ -458,30 +432,25 @@ struct AgentGenerationSettingsEditor: View {
                     : Text("Not used by this model", bundle: .module)
             )
         } else if draft[keyPath: field.path].isCustom {
-            StyledTextField(
+            SettingsTextField(
                 placeholder: L("Value"),
-                text: Binding(get: { draft[keyPath: field.path].text }, set: { draft[keyPath: field.path].text = $0 })
+                text: Binding(get: { draft[keyPath: field.path].text }, set: { draft[keyPath: field.path].text = $0 }),
+                isInvalid: draft.validationMessage(for: field) != nil
             )
             .accessibilityLabel(Text(title))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10).stroke(
-                    draft.validationMessage(for: field) == nil ? Color.clear : .red,
-                    lineWidth: 1
-                )
-            )
         } else {
             inheritedValue(field)
         }
     }
 
     private func validation(_ message: String) -> some View {
-        Text(message).font(.system(size: 11)).foregroundColor(.red)
+        Text(message).font(SettingsFont.rowDescription).foregroundColor(theme.status.error.foreground)
             .fixedSize(horizontal: false, vertical: true)
     }
 
     private var stopSequences: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
+            HStack(alignment: .top, spacing: theme.space.s12) {
                 rowLabel(
                     "Stop sequences",
                     "Generation ends when any additional stop string is produced. Model end-of-turn tokens still apply."
@@ -489,17 +458,18 @@ struct AgentGenerationSettingsEditor: View {
                 modePicker("Stop sequences", field: .stop)
             }
             if draft.stop.isCustom {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
                     let values = (try? JSONDecoder().decode([String].self, from: Data(draft.stop.text.utf8))) ?? []
                     // Adaptive columns keep long exact strings reachable at narrow creation widths.
                     LazyVGrid(
                         columns: [GridItem(.adaptive(minimum: 120), alignment: .leading)],
                         alignment: .leading,
-                        spacing: 6
+                        spacing: theme.space.s6
                     ) {
                         ForEach(Array(values.enumerated()), id: \.offset) { index, value in
-                            HStack(spacing: 8) {
-                                Text(String(reflecting: value)).font(.system(size: 11, design: .monospaced))
+                            HStack(spacing: theme.space.s8) {
+                                Text(String(reflecting: value)).font(SettingsFont.monoSmall)
+                                    .foregroundColor(theme.text.primary)
                                     .lineLimit(2).help(value)
                                 Spacer(minLength: 0)
                                 Button {
@@ -509,28 +479,32 @@ struct AgentGenerationSettingsEditor: View {
                                         self.error = error.localizedDescription
                                     }
                                 } label: {
-                                    Image(systemName: "xmark").font(.system(size: 10))
+                                    Image(systemName: "xmark").font(SettingsFont.glyphSmall)
+                                        .foregroundColor(theme.text.secondary)
                                 }
                                 .buttonStyle(.plain).accessibilityLabel(
                                     Text("Remove stop sequence \(index + 1)", bundle: .module)
                                 )
-                            }.padding(8)
-                                .background(theme.accentColor.opacity(0.10), in: RoundedRectangle(cornerRadius: 8))
-                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.inputBorder, lineWidth: 1))
+                            }.padding(theme.space.s8)
+                                .background(theme.surface.subtle, in: RoundedRectangle(cornerRadius: theme.radius.medium))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: theme.radius.medium)
+                                        .stroke(theme.border.subtle, lineWidth: theme.stroke.default))
                         }
                     }
                     HStack {
-                        StyledTextField(
+                        SettingsTextField(
                             placeholder: L("Type a sequence, press Enter"),
                             text: $draft.pendingStopSequence,
-                            monospaced: true
+                            monospaced: true,
+                            onSubmit: commitStopSequence
                         )
                         .accessibilityLabel(Text("New stop sequence", bundle: .module))
-                        .onSubmit(commitStopSequence)
-                        Button(L("Add"), action: commitStopSequence).disabled(draft.pendingStopSequence.isEmpty)
+                        SettingsButton(.secondary, "Add", size: .compact, action: commitStopSequence)
+                            .disabled(draft.pendingStopSequence.isEmpty)
                     }
                     Text("Text is kept exactly as entered. Saving also adds a pending sequence.", bundle: .module)
-                        .font(.system(size: 10)).foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.footnote).foregroundColor(theme.text.tertiary)
                 }
             } else {
                 inheritedValue(.stop)
@@ -544,29 +518,30 @@ struct AgentGenerationSettingsEditor: View {
     }
 
     private var templateParameters: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             Button {
-                withAnimation(.easeInOut(duration: 0.18)) { showTemplateParameters.toggle() }
+                withAnimation(theme.motion.quick) { showTemplateParameters.toggle() }
             } label: {
                 HStack {
-                    VStack(alignment: .leading, spacing: 5) {
+                    SettingsRowText {
                         Text("Advanced: chat template parameters", bundle: .module)
-                            .font(.system(size: 12, weight: .semibold)).foregroundColor(theme.primaryText)
+                    } description: {
                         Text(draft.templateKwargs.isCustom ? L("Custom parameters") : L("Inherited from the model"))
-                            .font(.system(size: 11)).foregroundColor(theme.secondaryText)
                     }
                     Spacer()
-                    Text(showTemplateParameters ? L("Hide") : L("Show")).foregroundColor(theme.accentColor)
+                    Text(showTemplateParameters ? L("Hide") : L("Show"))
+                        .font(SettingsFont.smallLabel).foregroundColor(theme.action.primary.default.background)
                 }.contentShape(Rectangle())
             }.buttonStyle(.plain)
             if showTemplateParameters {
                 HStack {
-                    Text("Template parameters (JSON)", bundle: .module).font(.system(size: 12, weight: .medium))
+                    Text("Template parameters (JSON)", bundle: .module)
+                        .font(SettingsFont.rowTitle).foregroundColor(theme.text.primary)
                     Spacer()
                     modePicker("Template parameters", field: .templateKwargs)
                 }
                 if draft.templateKwargs.isCustom {
-                    StyledTextField(
+                    SettingsTextField(
                         placeholder: "{}",
                         text: $draft.templateKwargs.text,
                         axis: .vertical,
@@ -576,18 +551,18 @@ struct AgentGenerationSettingsEditor: View {
                     .accessibilityLabel(Text("Template parameters JSON", bundle: .module))
                 } else {
                     Text("{} · No additional parameters", bundle: .module)
-                        .font(.system(size: 12, design: .monospaced)).foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.mono).foregroundColor(theme.text.tertiary)
                 }
                 Text(
                     "Additional variables for the model's template, not the template itself. Conversation, tools and special-token variables cannot be replaced.",
                     bundle: .module
                 )
-                .font(.system(size: 11)).foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription).foregroundColor(theme.text.tertiary)
             }
             if let message = draft.validationMessage(for: .templateKwargs) { validation(message) }
-        }.padding(14)
-            .background(theme.inputBackground.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.cardBorder, lineWidth: 1))
+        }.padding(theme.space.s12)
+            .background(theme.surface.subtle, in: RoundedRectangle(cornerRadius: theme.radius.large))
+            .overlay(RoundedRectangle(cornerRadius: theme.radius.large).stroke(theme.border.subtle, lineWidth: theme.stroke.default))
             .settingsLandingAnchor("agents.generation.templateKwargs")
     }
 
@@ -599,7 +574,6 @@ struct AgentGenerationSettingsEditor: View {
     private func expandForLanding(_ id: String?) {
         guard let id else { return }
         if id == "agents.generation.templateKwargs" { showTemplateParameters = true }
-
     }
 
     private func save() {

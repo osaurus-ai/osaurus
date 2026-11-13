@@ -1,0 +1,28 @@
+{
+  "id": "chat_import_reader.gemini-and-cursor-rules",
+  "domain": "chat_import_reader",
+  "label": "chat import reader • Gemini extension context and a Cursor rule become skills",
+  "query": "Bring these instructions into Osaurus",
+  "notes": "GEMINI.md and `.cursor/rules/*.mdc` are instructions for an assistant with no persona of their own, so each is a skill.",
+  "fixtures": {},
+  "expect": {
+    "chatImport": {
+      "documents": [
+        {
+          "origin": "https://github.com/acme/firebase-gemini",
+          "path": "GEMINI.md",
+          "text": "# Firebase helper\n\nWhen the user works with Firebase, prefer the Firebase CLI. Deploy with `firebase deploy --only hosting` and always run `firebase emulators:start` before testing rules."
+        },
+        {
+          "origin": "https://github.com/acme/web",
+          "path": ".cursor/rules/react-style.mdc",
+          "text": "---\ndescription: React component style\nglobs: src/**/*.tsx\nalwaysApply: false\n---\nUse function components with hooks. Name files in PascalCase. Keep components under 200 lines."
+        }
+      ],
+      "items": [
+        { "kind": "skill", "name": "firebase" },
+        { "kind": "skill", "name": "react" }
+      ]
+    }
+  }
+}

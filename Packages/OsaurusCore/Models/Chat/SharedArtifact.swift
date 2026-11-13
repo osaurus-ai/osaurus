@@ -254,6 +254,18 @@ extension SharedArtifact {
         case copyFailed(source: String, reason: String)
     }
 
+    /// The marker block a `share_artifact` result carries: the success envelope's `text`, or
+    /// the whole string for a legacy raw-marker result. `nil` for anything else (the tool's
+    /// own failure envelopes), which callers must pass through unchanged.
+    static func shareArtifactMarkerText(fromToolResult toolResult: String) -> String? {
+        if let payload = ToolEnvelope.successPayload(toolResult) as? [String: Any],
+            let text = payload["text"] as? String
+        {
+            return text
+        }
+        return toolResult.contains(startMarker) ? toolResult : nil
+    }
+
     /// Extracts marker-delimited metadata and content lines from a tool result string.
     static func parseMarkers(from toolResult: String) -> ParsedMarkers? {
         guard let startRange = toolResult.range(of: startMarker),
@@ -776,11 +788,12 @@ extension SharedArtifact {
             if relativePath.hasPrefix(containerHome + "/") {
                 relativePath = String(relativePath.dropFirst(containerHome.count + 1))
             } else if relativePath.hasPrefix("/workspace/") {
-                let stripped = String(relativePath.dropFirst("/workspace/".count))
-                if let resolved = resolveContainedPath(stripped, within: OsaurusPaths.containerWorkspace()) {
-                    return .candidate(resolved, attempted: [resolved.path])
-                }
-                return .rejected
+                // Only the agent's own home and `/workspace/shared` are in
+                // scope; another agent's home is never shareable.
+                guard let (root, relative) = SandboxAgentPathScope(agentName: agent).split(sandboxPath: relativePath),
+                    let resolved = resolveContainedPath(relative.isEmpty ? "." : relative, within: root)
+                else { return .rejected }
+                return .candidate(resolved, attempted: [resolved.path])
             }
             if relativePath.hasPrefix("./") {
                 relativePath = String(relativePath.dropFirst(2))

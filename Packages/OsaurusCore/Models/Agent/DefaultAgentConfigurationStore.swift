@@ -21,20 +21,42 @@ public enum DefaultAgentConfigurationStore {
     /// without paying file I/O on every redraw.
     private static var cached: DefaultAgentConfiguration?
 
+    private static let reloadGuard = ConfigFileReloadGuard()
+
     /// Synchronous cached read. Loads from disk on first call.
     public static func load() -> DefaultAgentConfiguration {
         if let cached { return cached }
         let loaded = loadFromDisk()
+        reloadGuard.noteLoaded(from: configFileURL())
         cached = loaded
-        Agent.defaultAgentNameOverride = loaded.resolvedDisplayName
+        mirrorIdentity(loaded)
         return loaded
     }
+
+    /// Re-read `default-agent.json` when it changed on disk without going
+    /// through `save` (the Orchestrator calls this at the start of every
+    /// turn). Returns true when the cache changed.
+    @discardableResult
+    public static func reloadIfChangedOnDisk() -> Bool {
+        guard cached != nil else { return false }
+        guard let data = reloadGuard.externalChange(at: configFileURL()),
+            let decoded = try? JSONDecoder().decode(DefaultAgentConfiguration.self, from: data),
+            decoded != cached
+        else { return false }
+        cached = decoded
+        mirrorIdentity(decoded)
+        NotificationCenter.default.post(name: .appConfigurationChanged, object: nil)
+        return true
+    }
+
+    /// Changes on every save or detected reload.
+    public static var generation: Int { reloadGuard.generation }
 
     /// Persist `configuration` and update the cache. Posts a
     /// `.appConfigurationChanged` notification so observers re-read.
     public static func save(_ configuration: DefaultAgentConfiguration) {
         cached = configuration
-        Agent.defaultAgentNameOverride = configuration.resolvedDisplayName
+        mirrorIdentity(configuration)
         saveToDisk(configuration)
         NotificationCenter.default.post(name: .appConfigurationChanged, object: nil)
     }
@@ -44,7 +66,16 @@ public enum DefaultAgentConfigurationStore {
     /// `load()` to reread from the new directory.
     public static func resetCacheForTests() {
         cached = nil
-        Agent.defaultAgentNameOverride = nil
+        reloadGuard.reset()
+        mirrorIdentity(.default)
+    }
+
+    /// `Agent.default` is built on demand from any context, so the
+    /// identity fields it renders live in nonisolated statics.
+    private static func mirrorIdentity(_ configuration: DefaultAgentConfiguration) {
+        Agent.defaultAgentNameOverride = configuration.resolvedDisplayName
+        Agent.defaultAgentAvatarOverride = configuration.avatar
+        Agent.defaultAgentCustomAvatarFilename = configuration.customAvatarFilename
     }
 
     // MARK: - Disk
@@ -89,6 +120,7 @@ public enum DefaultAgentConfigurationStore {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             let data = try encoder.encode(configuration)
+            reloadGuard.noteSaved(data)
             // Persist off the main thread. Tests (override directory / root)
             // read the file back immediately, so they write synchronously.
             ConfigDiskWriter.write(

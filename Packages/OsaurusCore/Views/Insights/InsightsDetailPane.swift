@@ -35,46 +35,34 @@ struct InsightsDetailPane: View {
     private var hInset: CGFloat { presentation == .inspector ? 20 : 24 }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             header
             Divider()
-                .background(theme.primaryBorder.opacity(0.3))
+                .background(theme.border.subtle)
             if log.isPluginLog {
                 pluginBody
             } else {
                 if availableTabs.count > 1 {
                     tabPicker
                         .padding(.horizontal, hInset)
-                        .padding(.top, 12)
+                        .padding(.top, theme.space.s12)
                 }
                 tabContent
             }
         }
-        .background(theme.primaryBackground)
+        .background(theme.surface.canvas)
         .id(log.id)
     }
 
     // MARK: - Header
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            HStack(spacing: theme.space.s8) {
                 if presentation == .page {
-                    Button(action: onBack) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "chevron.left")
-                                .font(.system(size: 11, weight: .semibold))
-                            Text("Back", bundle: .module)
-                                .font(.system(size: 12, weight: .medium))
-                        }
-                        .foregroundColor(theme.secondaryText)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(RoundedRectangle(cornerRadius: 6).fill(theme.tertiaryBackground.opacity(0.5)))
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .keyboardShortcut(.escape, modifiers: [])
+                    SettingsBackButton(title: "Insights", action: onBack)
+                        .padding(.leading, -theme.space.s8)
+                        .keyboardShortcut(.escape, modifiers: [])
                 }
 
                 Spacer()
@@ -82,47 +70,38 @@ struct InsightsDetailPane: View {
                 copyMenu
 
                 if presentation == .inspector {
-                    Button(action: onBack) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(theme.secondaryText)
-                            .frame(width: 26, height: 26)
-                            .background(RoundedRectangle(cornerRadius: 6).fill(theme.tertiaryBackground.opacity(0.5)))
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .help(Text("Close", bundle: .module))
+                    SettingsIconButton("xmark", help: "Close", size: .compact, action: onBack)
                 }
             }
 
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: theme.space.s12) {
                 ZStack {
-                    Circle().fill(log.category.tint.opacity(0.14))
+                    Circle().fill(theme.dataWash(log.category.ink))
                     Image(systemName: log.category.icon)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(log.category.tint.opacity(0.9))
+                        .glyphSize(.label, weight: .semibold)
+                        .foregroundColor(theme.dataInk(log.category.ink))
                 }
                 .frame(width: 32, height: 32)
 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: theme.space.s4) {
                     Text(log.title)
-                        .font(.system(size: 16, weight: .semibold, design: usesMonospacedTitle ? .monospaced : .default))
-                        .foregroundColor(theme.primaryText)
+                        .textStyle(usesMonospacedTitle ? .code : .heading, weight: 600)
+                        .foregroundColor(theme.text.primary)
                         .lineLimit(2)
                         .truncationMode(.middle)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
 
                     Text(subtitle)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.secondary)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
 
                     if log.category != .system {
                         Text(verbatim: "\(log.method) \(Self.abbreviatedPath(log.path))")
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundColor(theme.tertiaryText)
+                            .font(SettingsFont.monoSmall)
+                            .foregroundColor(theme.text.tertiary)
                             .lineLimit(1)
                             .truncationMode(.middle)
                             .textSelection(.enabled)
@@ -137,7 +116,7 @@ struct InsightsDetailPane: View {
             }
         }
         .padding(.horizontal, hInset)
-        .padding(.vertical, 14)
+        .padding(.vertical, theme.space.s12)
     }
 
     /// `Category · time · duration · Source · Agent` — only the parts that exist.
@@ -157,16 +136,11 @@ struct InsightsDetailPane: View {
     }
 
     private var failurePill: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "exclamationmark.circle.fill")
-                .font(.system(size: 9, weight: .bold))
-            Text(verbatim: log.statusCode == 200 ? L("failed") : "\(log.statusCode) · \(L("failed"))")
-                .font(.system(size: 10, weight: .semibold, design: .monospaced))
-        }
-        .foregroundColor(theme.errorColor)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(Capsule().fill(theme.errorColor.opacity(0.12)))
+        StatusChip(
+            log.statusCode == 200 ? L("failed") : "\(log.statusCode) · \(L("failed"))",
+            tone: .error,
+            icon: "exclamationmark.circle.fill"
+        )
         .fixedSize()
     }
 
@@ -179,7 +153,7 @@ struct InsightsDetailPane: View {
         let localRes = log.formattedResponseBody
         let wireRes = log.formattedWireResponseBody
         if localReq != nil || wireReq != nil || localRes != nil || wireRes != nil {
-            Menu {
+            SettingsMenuButton(.secondary, "Copy", icon: "doc.on.doc", size: .compact) {
                 if wireReq != nil || localReq != nil {
                     Section(header: Text("Request", bundle: .module)) {
                         if let wireReq {
@@ -204,23 +178,7 @@ struct InsightsDetailPane: View {
                         }
                     }
                 }
-            } label: {
-                HStack(spacing: 5) {
-                    Image(systemName: "doc.on.doc")
-                        .font(.system(size: 10, weight: .semibold))
-                    Text("Copy", bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .semibold))
-                }
-                .foregroundColor(theme.secondaryText)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(RoundedRectangle(cornerRadius: 6).fill(theme.tertiaryBackground.opacity(0.5)))
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
             .help(Text("Copy request or response JSON", bundle: .module))
         }
     }
@@ -287,21 +245,25 @@ struct InsightsDetailPane: View {
     }
 
     private var tabPicker: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: theme.space.s4) {
             ForEach(availableTabs, id: \.self) { tab in
                 Button(action: { selectedTab = tab }) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         Image(systemName: tab.icon)
-                            .font(.system(size: 11, weight: .semibold))
+                            .glyphSize(.footnote, weight: .semibold)
                         tab.label
-                            .font(.system(size: 12, weight: selectedTab == tab ? .semibold : .medium))
+                            .textStyle(.caption, weight: selectedTab == tab ? 600 : 500)
                     }
-                    .foregroundColor(selectedTab == tab ? .white : theme.secondaryText)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
+                    .foregroundColor(selectedTab == tab ? theme.text.primary : theme.text.secondary)
+                    .padding(.horizontal, theme.space.s12)
+                    .padding(.vertical, theme.space.s6)
                     .background(
-                        RoundedRectangle(cornerRadius: 7)
-                            .fill(selectedTab == tab ? theme.accentColor.opacity(0.85) : Color.clear)
+                        RoundedRectangle(cornerRadius: theme.radius.medium)
+                            .fill(selectedTab == tab ? theme.surface.selected : Color.clear)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: theme.radius.medium)
+                            .strokeBorder(selectedTab == tab ? theme.selectionBorder : .clear, lineWidth: theme.selectionStroke)
                     )
                     .contentShape(Rectangle())
                 }
@@ -309,11 +271,8 @@ struct InsightsDetailPane: View {
             }
             Spacer()
         }
-        .padding(4)
-        .background(
-            RoundedRectangle(cornerRadius: 9)
-                .fill(theme.tertiaryBackground.opacity(0.4))
-        )
+        .padding(theme.space.s4)
+        .settingsChrome(.inset)
     }
 
     @ViewBuilder
@@ -335,35 +294,35 @@ struct InsightsDetailPane: View {
         let level = PluginLogLevel(statusCode: log.statusCode)
         let levelColor = level.color(theme: theme)
         ScrollView {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
+                HStack(spacing: theme.space.s8) {
                     Image(systemName: level.icon)
-                        .font(.system(size: 12))
+                        .glyphSize(.caption)
                         .foregroundColor(levelColor)
                     Text(level.label, bundle: .module)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(SettingsFont.smallLabel)
                         .foregroundColor(levelColor)
                     Spacer()
                 }
                 if let body = log.requestBody {
                     Text(body)
-                        .font(.system(size: 12, design: .monospaced))
+                        .font(SettingsFont.monoSmall)
                         .foregroundColor(levelColor)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .padding(14)
+            .padding(theme.space.s12)
             .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(levelColor.opacity(0.06))
+                RoundedRectangle(cornerRadius: theme.radius.medium)
+                    .fill(level.wash(theme: theme))
                     .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(levelColor.opacity(0.2), lineWidth: 1)
+                        RoundedRectangle(cornerRadius: theme.radius.medium)
+                            .stroke(level.edge(theme: theme), lineWidth: theme.stroke.default)
                     )
             )
             .padding(.horizontal, hInset)
-            .padding(.vertical, 20)
+            .padding(.vertical, theme.space.s16)
             .frame(maxWidth: 920, alignment: .topLeading)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
@@ -421,14 +380,14 @@ private struct RawTab: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 2) {
+        VStack(spacing: theme.space.s0) {
+            HStack(spacing: theme.space.s2) {
                 pill(.request, label: Text("Request", bundle: .module), icon: "arrow.up.circle")
                 pill(.response, label: Text("Response", bundle: .module), icon: "arrow.down.circle")
                 Spacer()
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 14)
+            .padding(.horizontal, theme.space.s24)
+            .padding(.top, theme.space.s12)
 
             Group {
                 switch kind {
@@ -455,14 +414,14 @@ private struct RawTab: View {
     private func pill(_ value: BodyTab.Kind, label: Text, icon: String) -> some View {
         let isSelected = kind == value
         return Button(action: { kind = value }) {
-            HStack(spacing: 5) {
-                Image(systemName: icon).font(.system(size: 10, weight: .semibold))
-                label.font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+            HStack(spacing: theme.space.s4) {
+                Image(systemName: icon).glyphSize(.micro, weight: .semibold)
+                label.textStyle(.footnote, weight: isSelected ? 600 : 500)
             }
-            .foregroundColor(isSelected ? theme.primaryText : theme.secondaryText)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(RoundedRectangle(cornerRadius: 6).fill(isSelected ? theme.cardBackground : Color.clear))
+            .foregroundColor(isSelected ? theme.text.primary : theme.text.secondary)
+            .padding(.horizontal, theme.space.s8)
+            .padding(.vertical, theme.space.s6)
+            .settingsChrome(isSelected ? .surface : nil)
             .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
@@ -506,9 +465,25 @@ private enum PluginLogLevel {
     /// to dark/light mode rather than baking in a fixed gray.
     func color(theme: ThemeProtocol) -> Color {
         switch self {
-        case .info: return theme.primaryText
-        case .warning: return .orange
-        case .error: return .red
+        case .info: return theme.text.primary
+        case .warning: return theme.status.warning.foreground
+        case .error: return theme.status.error.foreground
+        }
+    }
+
+    func wash(theme: ThemeProtocol) -> Color {
+        switch self {
+        case .info: return theme.surface.subtle
+        case .warning: return theme.status.warning.background
+        case .error: return theme.status.error.background
+        }
+    }
+
+    func edge(theme: ThemeProtocol) -> Color {
+        switch self {
+        case .info: return theme.border.subtle
+        case .warning: return theme.status.warning.border
+        case .error: return theme.status.error.border
         }
     }
 }
@@ -526,7 +501,7 @@ private struct PromptTab: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 if let parsed = parsedRequest {
                     if parsed.messages.isEmpty {
                         emptyState(text: Text("No messages in request", bundle: .module))
@@ -552,8 +527,8 @@ private struct PromptTab: View {
                     emptyState(text: Text("Request body is not a chat completion", bundle: .module))
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 20)
+            .padding(.horizontal, theme.space.s24)
+            .padding(.vertical, theme.space.s16)
             .frame(maxWidth: 920, alignment: .topLeading)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
@@ -562,39 +537,39 @@ private struct PromptTab: View {
     private func emptyState(text: Text) -> some View {
         HStack {
             Spacer()
-            VStack(spacing: 8) {
+            VStack(spacing: theme.space.s8) {
                 Image(systemName: "text.bubble")
-                    .font(.system(size: 28))
-                    .foregroundColor(theme.tertiaryText.opacity(0.5))
+                    .glyphSize(.display)
+                    .foregroundColor(theme.text.tertiary)
                 text
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.tertiaryText)
+                    .textStyle(.caption)
+                    .foregroundColor(theme.text.tertiary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 520)
             }
-            .padding(.vertical, 40)
+            .padding(.vertical, theme.space.s40)
             Spacer()
         }
     }
 
     private func toolsSection(_ tools: [ParsedTool]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: "wrench.and.screwdriver.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(.teal.opacity(0.8))
+                    .glyphSize(.footnote, weight: .semibold)
+                    .foregroundColor(theme.status.info.foreground)
                 Text("Tools (\(tools.count))", bundle: .module)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.smallLabel)
+                    .foregroundColor(theme.text.secondary)
                 Spacer()
             }
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 ForEach(Array(tools.enumerated()), id: \.offset) { _, tool in
                     ToolCard(tool: tool)
                 }
             }
         }
-        .padding(.top, 8)
+        .padding(.top, theme.space.s8)
     }
 }
 
@@ -619,7 +594,7 @@ private enum MessageRoleStyle {
         }
     }
 
-    var color: Color {
+    var ink: DataInk {
         switch self {
         case .system: return .purple
         case .user: return .blue
@@ -663,9 +638,10 @@ private struct MessageCard: View {
     @State private var isExpanded: Bool = true
 
     private var role: MessageRoleStyle { MessageRoleStyle(rawRole: message.role) }
+    private var roleColor: Color { theme.dataInk(role.ink) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             cardHeader
             if isExpanded {
                 cardContent
@@ -674,39 +650,36 @@ private struct MessageCard: View {
                 }
             }
         }
-        .padding(12)
+        .padding(theme.space.s12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(role.color.opacity(0.06))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(role.color.opacity(0.2), lineWidth: 1)
-                )
+        .settingsChrome(.card, radius: theme.radius.medium)
+        .overlay(
+            RoundedRectangle(cornerRadius: theme.radius.medium)
+                .stroke(theme.dataWash(role.ink), lineWidth: theme.stroke.default)
         )
     }
 
     private var cardHeader: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             roleBadge
             Spacer()
             if let toolCallId = message.toolCallId {
                 Text(verbatim: "call: \(toolCallId)")
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.tertiary)
             }
             Button(action: copyContent) {
                 Image(systemName: "doc.on.doc")
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .glyphSize(.micro)
+                    .foregroundColor(theme.text.tertiary)
             }
             .buttonStyle(PlainButtonStyle())
             .localizedHelp("Copy")
 
-            Button(action: { withAnimation(.easeInOut(duration: 0.15)) { isExpanded.toggle() } }) {
+            Button(action: { withAnimation(theme.motion.quick) { isExpanded.toggle() } }) {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText.opacity(0.7))
+                    .glyphSize(.micro, weight: .semibold)
+                    .foregroundColor(theme.text.tertiary)
                     .rotationEffect(.degrees(isExpanded ? 90 : 0))
             }
             .buttonStyle(PlainButtonStyle())
@@ -717,56 +690,44 @@ private struct MessageCard: View {
     private var cardContent: some View {
         if let content = message.content, !content.isEmpty {
             Text(content)
-                .font(.system(size: 12))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.caption)
+                .foregroundColor(theme.text.primary)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .fixedSize(horizontal: false, vertical: true)
         } else if message.toolCalls.isEmpty {
             Text("(empty)", bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
         }
     }
 
     private var toolCallsList: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             ForEach(Array(message.toolCalls.enumerated()), id: \.offset) { _, call in
-                HStack(alignment: .top, spacing: 8) {
+                HStack(alignment: .top, spacing: theme.space.s8) {
                     Image(systemName: "wrench.and.screwdriver")
-                        .font(.system(size: 10))
-                        .foregroundColor(.teal.opacity(0.8))
-                    VStack(alignment: .leading, spacing: 2) {
+                        .glyphSize(.micro)
+                        .foregroundColor(theme.status.info.foreground)
+                    VStack(alignment: .leading, spacing: theme.space.s2) {
                         Text(call.name)
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                            .foregroundColor(theme.primaryText)
+                            .font(SettingsFont.monoSmall)
+                            .foregroundColor(theme.text.primary)
                         Text(call.arguments)
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundColor(theme.secondaryText)
+                            .font(SettingsFont.monoSmall)
+                            .foregroundColor(theme.text.secondary)
                             .textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
-                .padding(8)
-                .background(
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(Color.teal.opacity(0.06))
-                )
+                .padding(theme.space.s8)
+                .settingsChrome(.status(.info), radius: theme.radius.small)
             }
         }
     }
 
     private var roleBadge: some View {
-        HStack(spacing: 5) {
-            Image(systemName: role.icon)
-                .font(.system(size: 9, weight: .bold))
-            Text(role.displayName)
-                .font(.system(size: 10, weight: .bold))
-        }
-        .foregroundColor(role.color)
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
-        .background(Capsule().fill(role.color.opacity(0.15)))
+        StatusChip(role.displayName, tint: roleColor, icon: role.icon)
     }
 
     private func copyContent() {
@@ -795,22 +756,22 @@ private struct ToolCard: View {
     @State private var isExpanded: Bool = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Button(action: { withAnimation(.easeInOut(duration: 0.15)) { isExpanded.toggle() } }) {
-                HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            Button(action: { withAnimation(theme.motion.quick) { isExpanded.toggle() } }) {
+                HStack(spacing: theme.space.s8) {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText.opacity(0.7))
+                        .glyphSize(.tiny, weight: .semibold)
+                        .foregroundColor(theme.text.tertiary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                     Text(tool.name)
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.primary)
                     if let desc = tool.description, !desc.isEmpty {
                         Text("·")
-                            .foregroundColor(theme.tertiaryText)
+                            .foregroundColor(theme.text.tertiary)
                         Text(desc)
-                            .font(.system(size: 10))
-                            .foregroundColor(theme.secondaryText)
+                            .font(SettingsFont.footnote)
+                            .foregroundColor(theme.text.secondary)
                             .lineLimit(isExpanded ? nil : 1)
                     }
                     Spacer()
@@ -821,26 +782,16 @@ private struct ToolCard: View {
 
             if isExpanded, let params = tool.parametersJSON, !params.isEmpty {
                 Text(params)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.secondary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(theme.codeBlockBackground)
-                    )
+                    .padding(theme.space.s8)
+                    .settingsChrome(.inset)
             }
         }
-        .padding(8)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(Color.teal.opacity(0.05))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.teal.opacity(0.15), lineWidth: 1)
-                )
-        )
+        .padding(theme.space.s8)
+        .settingsChrome(.status(.info))
     }
 }
 
@@ -925,32 +876,25 @@ private struct BodyTab: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: theme.space.s10) {
                 if hasBothSources {
                     sourcePicker
                     captionRow
                 }
                 if let text = activeBody {
                     Text(text)
-                        .font(.system(size: 12, design: .monospaced))
+                        .font(SettingsFont.monoSmall)
                         .foregroundColor(textColor)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(14)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.codeBlockBackground)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(borderColor, lineWidth: 1)
-                                )
-                        )
+                        .padding(theme.space.s12)
+                        .settingsChrome(.subtle)
                 } else {
                     emptyState
                 }
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 20)
+            .padding(.horizontal, theme.space.s24)
+            .padding(.vertical, theme.space.s16)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
     }
@@ -959,34 +903,35 @@ private struct BodyTab: View {
     /// exist; the visual is intentionally similar to the parent
     /// tab strip so the relationship reads as "tab > sub-tab".
     private var sourcePicker: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: theme.space.s4) {
             sourcePill(.server, label: Text("insights.body.source.server", bundle: .module))
             sourcePill(.local, label: Text("insights.body.source.local", bundle: .module))
             Spacer()
         }
-        .padding(4)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.tertiaryBackground.opacity(0.4))
-        )
+        .padding(theme.space.s4)
+        .settingsChrome(.inset)
     }
 
     private func sourcePill(_ value: InsightsBodySource, label: Text) -> some View {
         let isSelected = source == value
         let isServer = value == .server
         return Button(action: { source = value }) {
-            HStack(spacing: 5) {
+            HStack(spacing: theme.space.s4) {
                 Image(systemName: isServer ? "shield.lefthalf.filled" : "laptopcomputer")
-                    .font(.system(size: 10, weight: .semibold))
+                    .glyphSize(.micro, weight: .semibold)
                 label
-                    .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
+                    .textStyle(.footnote, weight: isSelected ? 600 : 500)
             }
-            .foregroundColor(isSelected ? .white : theme.secondaryText)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
+            .foregroundColor(isSelected ? theme.text.primary : theme.text.secondary)
+            .padding(.horizontal, theme.space.s8)
+            .padding(.vertical, theme.space.s6)
             .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(isSelected ? theme.accentColor.opacity(0.85) : Color.clear)
+                RoundedRectangle(cornerRadius: theme.radius.medium)
+                    .fill(isSelected ? theme.surface.selected : Color.clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: theme.radius.medium)
+                    .strokeBorder(isSelected ? theme.selectionBorder : .clear, lineWidth: theme.selectionStroke)
             )
             .contentShape(Rectangle())
         }
@@ -995,13 +940,13 @@ private struct BodyTab: View {
 
     @ViewBuilder
     private var captionRow: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: theme.space.s6) {
             Image(systemName: source == .server ? "shield.lefthalf.filled" : "laptopcomputer")
-                .font(.system(size: 9, weight: .semibold))
-                .foregroundColor(source == .server ? theme.accentColor : theme.tertiaryText)
+                .glyphSize(.tiny, weight: .semibold)
+                .foregroundColor(source == .server ? theme.text.link : theme.text.tertiary)
             captionText
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
+                .glyphSize(.footnote)
+                .foregroundColor(theme.text.secondary)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer()
@@ -1025,24 +970,24 @@ private struct BodyTab: View {
     private var emptyState: some View {
         HStack {
             Spacer()
-            VStack(spacing: 8) {
+            VStack(spacing: theme.space.s8) {
                 Image(systemName: kind.emptyIcon)
-                    .font(.system(size: 28))
-                    .foregroundColor(theme.tertiaryText.opacity(0.5))
+                    .glyphSize(.display)
+                    .foregroundColor(theme.text.tertiary)
                 kind.emptyMessage(source: source)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.tertiaryText)
+                    .textStyle(.caption)
+                    .foregroundColor(theme.text.tertiary)
             }
-            .padding(.vertical, 40)
+            .padding(.vertical, theme.space.s40)
             Spacer()
         }
     }
 
     private var textColor: Color {
         switch kind {
-        case .request: return theme.primaryText
+        case .request: return theme.text.primary
         case .response:
-            return log.isSuccess ? theme.primaryText : theme.errorColor
+            return log.isSuccess ? theme.text.primary : theme.status.error.foreground
         }
     }
 
@@ -1051,12 +996,12 @@ private struct BodyTab: View {
     /// keeps the existing green/red status tinting.
     private var borderColor: Color {
         if source == .server {
-            return theme.accentColor.opacity(0.35)
+            return theme.border.strong
         }
         switch kind {
-        case .request: return theme.primaryBorder.opacity(0.2)
+        case .request: return theme.border.subtle
         case .response:
-            return log.isSuccess ? Color.green.opacity(0.2) : Color.red.opacity(0.2)
+            return log.isSuccess ? theme.status.success.background : theme.status.error.background
         }
     }
 }
@@ -1079,7 +1024,7 @@ private struct OverviewTab: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: theme.space.s16) {
                 if let error = log.errorMessage {
                     errorSection(error)
                 }
@@ -1090,8 +1035,8 @@ private struct OverviewTab: View {
                 }
 
                 Text(summaryHeadline)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.caption)
+                    .foregroundColor(theme.text.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
 
@@ -1130,7 +1075,7 @@ private struct OverviewTab: View {
                 }
             }
             .padding(.horizontal, hInset)
-            .padding(.vertical, 18)
+            .padding(.vertical, theme.space.s16)
             .frame(maxWidth: 920, alignment: .topLeading)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
@@ -1232,8 +1177,38 @@ private struct OverviewTab: View {
             return isRemote
                 ? L("Media request sent to \(log.destinationDisplay) — \(outcome).")
                 : L("Media generated on this Mac — \(outcome).")
+        case .workflowRun:
+            let status = details["status"].map(RequestLog.workflowStatusLabel) ?? outcome
+            return L("Workflow \(details["workflow"] ?? log.path) ran for \(log.source.displayName) — \(status).")
+        case .workflowNode:
+            return L("Step \(details["node_name"] ?? log.workflowNodeId ?? log.path) of \(details["workflow"] ?? L("a workflow")) — \(outcome).")
+        case .event:
+            let status = details["status"].map { EventRunStatus(rawValue: $0)?.displayName ?? $0 } ?? outcome
+            return L("Automation \(details["event"] ?? log.path) ran from \(log.source.displayName) — \(status).")
+        case .task:
+            let state = details["state"].map { TaskState(rawValue: $0)?.displayName ?? $0 } ?? outcome
+            let kind = details["work"].map { TaskWorkKind(rawValue: $0)?.displayName ?? $0 } ?? L("Task")
+            let onDefault =
+                details["queue_id"].map { UUID(uuidString: $0) == TaskQueue.defaultID }
+                ?? (details["queue"] == nil || details["queue"] == L("Default"))
+            if onDefault && !TaskStore.shared.hasMultipleQueues {
+                return L("\(kind) from \(log.source.displayName) — \(state).")
+            }
+            return L("\(kind) from \(log.source.displayName) on \(details["queue"] ?? L("Default")) — \(state).")
         case .system:
             return log.systemEventSummary ?? log.title
+        case .interaction:
+            guard let asker = details["requester"] ?? details["agent"], let decider = details["decided_by"] else {
+                return "\(log.title)."
+            }
+            let wait = details["wait_ms"].flatMap(Double.init).map { RequestLog.formattedDuration(ms: $0) }
+            let ownAnswer = ["owner", "owner_device"].contains(details["decided_by_kind"] ?? "owner")
+            switch (ownAnswer, wait) {
+            case (true, let wait?): return L("Asked by \(asker); you answered after \(wait).")
+            case (true, nil): return L("Asked by \(asker); you answered.")
+            case (false, let wait?): return L("Asked by \(asker); \(decider) answered after \(wait).")
+            case (false, nil): return L("Asked by \(asker); \(decider) answered.")
+            }
         }
     }
 
@@ -1254,7 +1229,7 @@ private struct OverviewTab: View {
         DetailRow(
             label: Text("Locality", bundle: .module),
             value: isRemote ? L("Left this Mac (cloud)") : L("Stayed on this Mac"),
-            valueColor: isRemote ? theme.warningColor : theme.successColor
+            valueColor: isRemote ? theme.status.warning.foreground : theme.status.success.foreground
         )
         if isRemote {
             DetailRow(label: Text("Destination", bundle: .module), value: log.destinationDisplay)
@@ -1281,13 +1256,13 @@ private struct OverviewTab: View {
                     DetailRow(
                         label: Text("Privacy Filter", bundle: .module),
                         value: L("Applied — \(e.redactedSpanCount ?? 0) item(s) redacted before send"),
-                        valueColor: theme.successColor
+                        valueColor: theme.status.success.foreground
                     )
                 } else if log.category == .inference || log.category == .compaction {
                     DetailRow(
                         label: Text("Privacy Filter", bundle: .module),
                         value: L("Not applied"),
-                        valueColor: theme.secondaryText
+                        valueColor: theme.text.secondary
                     )
                 }
             }
@@ -1327,7 +1302,116 @@ private struct OverviewTab: View {
         case .speechSynthesis: speechSection
         case .mediaGeneration: mediaSection
         case .system: systemEventSection
-        case .inboundAPI, .pluginCall, .pluginLog: genericDetailsSection
+        case .workflowRun, .workflowNode: workflowSection
+        case .inboundAPI, .pluginCall, .pluginLog, .event, .task: genericDetailsSection
+        case .interaction: interactionSection
+        }
+    }
+
+    @ViewBuilder
+    private var interactionSection: some View {
+        FlatGroup(icon: log.category.icon, title: Text("Interaction", bundle: .module)) {
+            if let kind = details["kind"] {
+                DetailRow(label: Text("Kind", bundle: .module), value: RequestLog.interactionKindLabel(kind) ?? kind)
+            }
+            if let tool = details["tool"] { DetailRow(label: Text("Tool", bundle: .module), value: tool) }
+            if log.participant == nil, let requester = details["requester"] {
+                DetailRow(label: Text("Requested by", bundle: .module), value: requester)
+            }
+            if log.agentName == nil, let agent = details["agent"] {
+                DetailRow(label: Text("Agent", bundle: .module), value: agent)
+            }
+            if let address = details["agent_address"] {
+                IdentifierRow(label: Text("Agent address", bundle: .module), value: address)
+            }
+            DetailRow(
+                label: Text("Outcome", bundle: .module),
+                value: RequestLog.interactionOutcomeLabel(log.method),
+                valueColor: log.isError ? theme.status.error.foreground : nil
+            )
+            if let decider = details["decided_by"] {
+                DetailRow(label: Text("Answered by", bundle: .module), value: decider)
+            }
+            if let surface = details["surface"] {
+                DetailRow(
+                    label: Text("Answered from", bundle: .module),
+                    value: AttentionSurface(rawValue: surface)?.displayName ?? surface
+                )
+            }
+            if details["scope"] == "conversation" {
+                DetailRow(label: Text("Applies to", bundle: .module), value: L("The rest of this conversation"))
+            }
+            if let wait = details["wait_ms"].flatMap(Double.init) {
+                DetailRow(label: Text("Waited", bundle: .module), value: RequestLog.formattedDuration(ms: wait))
+            }
+            if let delivered = details["delivered_to"] {
+                DetailRow(
+                    label: Text("Notified on", bundle: .module),
+                    value: delivered.split(separator: ",").map {
+                        NotificationChannelID(rawValue: String($0))?.displayName ?? String($0)
+                    }.joined(separator: ", ")
+                )
+            }
+            if let message = details["message"] {
+                DetailRow(label: Text("Reply", bundle: .module), value: message)
+            }
+            if let id = details["attention_id"] {
+                IdentifierRow(label: Text("Attention ID", bundle: .module), value: id)
+            }
+            if let address = details["agent_address"] {
+                AgentAddressLinks(address: address)
+            }
+        }
+        let timeline = InteractionTimeline.steps(details: details, method: log.method)
+        if !timeline.isEmpty {
+            FlatGroup(icon: "clock", title: Text("Timeline", bundle: .module)) {
+                ForEach(timeline) { step in
+                    DetailRow(label: Text(verbatim: step.label), value: step.value)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var workflowSection: some View {
+        FlatGroup(icon: log.category.icon, title: Text("Workflow", bundle: .module)) {
+            if let name = details["workflow"] { DetailRow(label: Text("Workflow", bundle: .module), value: name) }
+            if let step = details["node_name"] { DetailRow(label: Text("Step", bundle: .module), value: step) }
+            if let kind = details["kind"] { DetailRow(label: Text("Step kind", bundle: .module), value: kind) }
+            if let status = details["status"] {
+                DetailRow(label: Text("Status", bundle: .module), value: RequestLog.workflowStatusLabel(status))
+            }
+            if let caller = details["caller"] { DetailRow(label: Text("Started by", bundle: .module), value: caller) }
+            if let steps = details["steps"] { DetailRow(label: Text("Steps run", bundle: .module), value: steps) }
+            if let failed = details["failed_step"] {
+                DetailRow(
+                    label: Text("Failed at", bundle: .module),
+                    value: failed,
+                    valueColor: theme.status.error.foreground
+                )
+            }
+            if let attempts = details["attempts"], attempts != "1" {
+                DetailRow(label: Text("Attempts", bundle: .module), value: attempts)
+            }
+            if let folder = details["folder"] { DetailRow(label: Text("Folder", bundle: .module), value: folder) }
+            if let urls = details["urls"], !urls.isEmpty {
+                DetailRow(label: Text("Requests", bundle: .module), value: urls)
+            }
+            if let logs = details["logs"], !logs.isEmpty {
+                DetailRow(label: Text("Log", bundle: .module), value: logs)
+            }
+            if let runID = log.workflowRunId { WorkflowRunLinks(runID: runID) }
+        }
+        if let tools = log.toolCalls, !tools.isEmpty {
+            FlatGroup(icon: "wrench.and.screwdriver", title: Text("Tool calls", bundle: .module)) {
+                ForEach(tools) { call in
+                    DetailRow(
+                        label: Text(verbatim: call.name),
+                        value: [call.arguments, call.result].compactMap { $0 }.joined(separator: "\n→ "),
+                        valueColor: call.isError ? theme.status.error.foreground : nil
+                    )
+                }
+            }
         }
     }
 
@@ -1348,7 +1432,11 @@ private struct OverviewTab: View {
                 DetailRow(label: Text("Note", bundle: .module), value: L("Provider test run from Settings"))
             }
             if let f = details["failures"] {
-                DetailRow(label: Text("Failures", bundle: .module), value: f, valueColor: theme.errorColor.opacity(0.85))
+                DetailRow(
+                    label: Text("Failures", bundle: .module),
+                    value: f,
+                    valueColor: theme.status.error.foreground
+                )
             }
         }
         if let preview = details["result_preview"], !preview.isEmpty {
@@ -1376,7 +1464,11 @@ private struct OverviewTab: View {
             if let w = details["word_count"] { DetailRow(label: Text("Words", bundle: .module), value: w) }
             if let m = details["message"] { DetailRow(label: Text("Message", bundle: .module), value: m) }
             if let f = details["failures"] {
-                DetailRow(label: Text("Failures", bundle: .module), value: f, valueColor: theme.errorColor.opacity(0.85))
+                DetailRow(
+                    label: Text("Failures", bundle: .module),
+                    value: f,
+                    valueColor: theme.status.error.foreground
+                )
             }
         }
         if let urls = details["urls"], !urls.isEmpty {
@@ -1389,12 +1481,12 @@ private struct OverviewTab: View {
     private func urlList(_ joined: String) -> some View {
         ForEach(joined.split(separator: "\n").map(String.init), id: \.self) { url in
             Text(url)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.monoSmall)
+                .foregroundColor(theme.text.primary)
                 .textSelection(.enabled)
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .padding(.vertical, 3)
+                .padding(.vertical, theme.space.s4)
         }
     }
 
@@ -1436,7 +1528,7 @@ private struct OverviewTab: View {
             DetailRow(
                 label: Text("Content", bundle: .module),
                 value: L("Not stored here — see the channel outbox / audit ledger"),
-                valueColor: theme.secondaryText
+                valueColor: theme.text.secondary
             )
         }
     }
@@ -1460,7 +1552,7 @@ private struct OverviewTab: View {
             DetailRow(
                 label: Text("Texts", bundle: .module),
                 value: L("Not copied into the log — only counts and sizes"),
-                valueColor: theme.secondaryText
+                valueColor: theme.text.secondary
             )
         }
     }
@@ -1584,12 +1676,20 @@ private struct OverviewTab: View {
         if let parent = details["parent_turn_id"] {
             parts.append(String(format: L("Delegated from turn %@"), IdentifierRow.shortened(parent)))
         }
+        if log.workflowRunId != nil, log.category != .workflowRun { parts.append(L("Workflow run")) }
         return parts.joined(separator: " · ")
     }
 
     @ViewBuilder
     private var whoRows: some View {
         DetailRow(label: Text("Source", bundle: .module), value: log.source.displayName)
+        if let participant = log.participant {
+            DetailRow(label: Text("Who", bundle: .module), value: ParticipantFormatter.short(participant))
+            ForEach(Array(ParticipantFormatter.full(participant).enumerated()), id: \.offset) { _, row in
+                DetailRow(label: Text(verbatim: row.label), value: row.value)
+            }
+            ParticipantLinks(key: participant.key)
+        }
         if let name = log.agentName {
             DetailRow(label: Text("Agent", bundle: .module), value: name)
         } else if let id = log.agentId {
@@ -1597,6 +1697,19 @@ private struct OverviewTab: View {
         }
         if let session = log.sessionId {
             IdentifierRow(label: Text("Session", bundle: .module), value: session.uuidString)
+        }
+        if let runID = log.workflowRunId {
+            IdentifierRow(label: Text("Workflow run", bundle: .module), value: runID.uuidString)
+            if let step = log.workflowNodeId, log.category != .workflowNode {
+                DetailRow(label: Text("Workflow step", bundle: .module), value: step)
+            }
+            if log.category != .workflowRun && log.category != .workflowNode {
+                WorkflowRunLinks(runID: runID)
+            }
+        }
+        if let taskID = log.taskId {
+            IdentifierRow(label: Text("Task", bundle: .module), value: taskID.uuidString)
+            TaskLinks(taskID: taskID)
         }
         if let turn = log.turnId {
             IdentifierRow(label: Text("Turn", bundle: .module), value: turn.uuidString)
@@ -1657,24 +1770,28 @@ private struct OverviewTab: View {
             }
         }
         if let toolCalls = log.toolCalls, !toolCalls.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 Text("Tool calls", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
-                    .padding(.top, 6)
+                    .font(SettingsFont.smallLabel)
+                    .foregroundColor(theme.text.tertiary)
+                    .padding(.top, theme.space.s6)
                 ForEach(toolCalls) { tool in
-                    HStack(alignment: .top, spacing: 8) {
+                    HStack(alignment: .top, spacing: theme.space.s8) {
                         Image(systemName: tool.isError ? "xmark.circle.fill" : "checkmark.circle.fill")
-                            .font(.system(size: 10))
-                            .foregroundColor(tool.isError ? theme.errorColor.opacity(0.8) : theme.successColor.opacity(0.8))
-                        VStack(alignment: .leading, spacing: 2) {
+                            .glyphSize(.micro)
+                            .foregroundColor(
+                                tool.isError
+                                    ? theme.status.error.foreground
+                                    : theme.status.success.foreground
+                            )
+                        VStack(alignment: .leading, spacing: theme.space.s2) {
                             Text(tool.name)
-                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                                .foregroundColor(theme.primaryText)
+                                .font(SettingsFont.monoSmall)
+                                .foregroundColor(theme.text.primary)
                             if !tool.arguments.isEmpty && tool.arguments != "{}" {
                                 Text(tool.arguments)
-                                    .font(.system(size: 10, design: .monospaced))
-                                    .foregroundColor(theme.secondaryText)
+                                    .font(SettingsFont.monoSmall)
+                                    .foregroundColor(theme.text.secondary)
                                     .textSelection(.enabled)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             }
@@ -1682,12 +1799,12 @@ private struct OverviewTab: View {
                         Spacer()
                         if let duration = tool.durationMs {
                             Text(String(format: "%.0fms", duration))
-                                .font(.system(size: 9, design: .monospaced))
-                                .foregroundColor(theme.tertiaryText)
+                                .font(SettingsFont.monoSmall)
+                                .foregroundColor(theme.text.tertiary)
                         }
                     }
-                    .padding(8)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(theme.tertiaryBackground.opacity(0.35)))
+                    .padding(theme.space.s8)
+                    .settingsChrome(.inset)
                 }
             }
         }
@@ -1713,50 +1830,49 @@ private struct OverviewTab: View {
         if let prev = log.prevHash {
             IdentifierRow(label: Text("Previous", bundle: .module), value: prev)
         }
-        Text("Each record is chained to the one before it with SHA-256. Use Verify Integrity from the Insights menu to check the whole log.", bundle: .module)
-            .font(.system(size: 10))
-            .foregroundColor(theme.tertiaryText)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.top, 6)
+        Text(
+            "Each record is chained to the one before it with SHA-256. Use Verify Integrity from the Insights menu to check the whole log.",
+            bundle: .module
+        )
+        .font(SettingsFont.footnote)
+        .foregroundColor(theme.text.tertiary)
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.top, theme.space.s6)
     }
 
     // MARK: Error
 
     private func errorSection(_ message: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: theme.space.s10) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 12))
-                .foregroundColor(theme.errorColor)
-            VStack(alignment: .leading, spacing: 4) {
+                .glyphSize(.caption)
+                .foregroundColor(theme.status.error.foreground)
+            VStack(alignment: .leading, spacing: theme.space.s4) {
                 Text("Error", bundle: .module)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.errorColor)
+                    .font(SettingsFont.smallLabel)
+                    .foregroundColor(theme.status.error.foreground)
                 Text(message)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.primary)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: 0)
         }
-        .padding(12)
+        .padding(theme.space.s12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.errorColor.opacity(0.07))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.errorColor.opacity(0.25), lineWidth: 1))
-        )
+        .settingsChrome(.status(.error))
     }
 
     private func codeBlock(icon: String, title: Text, code: String) -> some View {
         FlatGroup(icon: icon, title: title) {
             Text(code)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.monoSmall)
+                .foregroundColor(theme.text.primary)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(10)
-                .background(RoundedRectangle(cornerRadius: 6).fill(theme.codeBlockBackground))
+                .padding(theme.space.s8)
+                .settingsChrome(.inset)
         }
     }
 }
@@ -1777,16 +1893,15 @@ private struct FactsGrid: View {
     private let columns = [GridItem(.flexible(), alignment: .topLeading), GridItem(.flexible(), alignment: .topLeading)]
 
     var body: some View {
-        LazyVGrid(columns: columns, alignment: .leading, spacing: 12) {
+        LazyVGrid(columns: columns, alignment: .leading, spacing: theme.space.s12) {
             ForEach(facts) { fact in
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text(fact.label)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(theme.tertiaryText)
-                        .textCase(.uppercase)
+                        .font(SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.tertiary)
                     Text(fact.value)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.primary)
                         .lineLimit(2)
                         .truncationMode(.middle)
                         .textSelection(.enabled)
@@ -1795,12 +1910,8 @@ private struct FactsGrid: View {
                 .help(Text(verbatim: fact.help ?? fact.value))
             }
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.secondaryBackground.opacity(0.5))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.primaryBorder.opacity(0.25), lineWidth: 1))
-        )
+        .padding(theme.space.s12)
+        .settingsChrome(.surface)
     }
 }
 
@@ -1815,20 +1926,20 @@ private struct FlatGroup<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: icon)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
+                    .glyphSize(.micro, weight: .semibold)
+                    .foregroundColor(theme.text.tertiary)
                 title
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
+                    .glyphSize(.footnote, weight: .semibold)
+                    .foregroundColor(theme.text.secondary)
                 Spacer()
             }
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: theme.space.s0) {
                 content()
             }
-            .padding(.leading, 16)
+            .padding(.leading, theme.space.s16)
         }
     }
 }
@@ -1858,27 +1969,27 @@ private struct CollapsibleGroup<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Button(action: { withAnimation(.easeInOut(duration: 0.16)) { isExpanded.toggle() } }) {
-                HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            Button(action: { withAnimation(theme.motion.quick) { isExpanded.toggle() } }) {
+                HStack(spacing: theme.space.s6) {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText.opacity(0.8))
+                        .glyphSize(.tiny, weight: .semibold)
+                        .foregroundColor(theme.text.tertiary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                         .frame(width: 10)
                     Image(systemName: icon)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
+                        .glyphSize(.micro, weight: .semibold)
+                        .foregroundColor(theme.text.tertiary)
                     title
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
+                        .glyphSize(.footnote, weight: .semibold)
+                        .foregroundColor(theme.text.secondary)
                     if !isExpanded, !summary.isEmpty {
                         Text(summary)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
+                            .font(SettingsFont.rowDescription)
+                            .foregroundColor(theme.text.tertiary)
                             .lineLimit(1)
                             .truncationMode(.middle)
-                            .padding(.leading, 4)
+                            .padding(.leading, theme.space.s4)
                     }
                     Spacer(minLength: 0)
                 }
@@ -1887,20 +1998,156 @@ private struct CollapsibleGroup<Content: View>: View {
             .buttonStyle(PlainButtonStyle())
 
             if isExpanded {
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: theme.space.s0) {
                     content()
                 }
-                .padding(.leading, 16)
+                .padding(.leading, theme.space.s16)
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, theme.space.s2)
         .overlay(alignment: .top) {
-            Divider().background(theme.primaryBorder.opacity(0.2)).offset(y: -9)
+            Divider().background(theme.border.subtle).offset(y: -9)
         }
     }
 }
 
 // MARK: - Rows
+
+/// Open the run this row belongs to, or list every row of it.
+private struct WorkflowRunLinks: View {
+    @Environment(\.theme) private var theme
+    let runID: UUID
+
+    var body: some View {
+        HStack(spacing: theme.space.s8) {
+            if WorkflowRunStore.shared.run(id: runID) != nil {
+                InsightsLink(title: "Open Run", icon: "arrow.up.forward.square") {
+                    WorkflowRunLauncher.open(runID: runID)
+                }
+            }
+            InsightsLink(title: "All Events for This Run", icon: "line.3.horizontal.decrease.circle") {
+                InsightsService.shared.showRun(runID)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, theme.space.s6)
+    }
+}
+
+private struct TaskLinks: View {
+    @Environment(\.theme) private var theme
+    let taskID: UUID
+
+    var body: some View {
+        HStack(spacing: theme.space.s8) {
+            InsightsLink(title: "Open Task", icon: "arrow.up.forward.square") {
+                TaskControl.showDetail(taskID)
+            }
+            InsightsLink(title: "All Events for This Task", icon: "line.3.horizontal.decrease.circle") {
+                InsightsService.shared.showTask(taskID)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+private struct AgentAddressLinks: View {
+    @Environment(\.theme) private var theme
+    let address: String
+
+    var body: some View {
+        HStack(spacing: theme.space.s8) {
+            InsightsLink(title: "All Events for This Agent", icon: "line.3.horizontal.decrease.circle") {
+                InsightsService.shared.showAgent(address: address)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+/// Raised, delivered and settled times of an interaction, each with the
+/// time since it was raised.
+enum InteractionTimeline {
+    struct Step: Identifiable, Equatable {
+        let id: String
+        let label: String
+        let value: String
+    }
+
+    static func steps(details: [String: String], method: String, timeZone: TimeZone = .current) -> [Step] {
+        func date(_ key: String) -> Date? {
+            details[key].flatMap(Double.init).map { Date(timeIntervalSince1970: $0 / 1000) }
+        }
+        guard let raised = date("raised_at_ms") else { return [] }
+        let formatter = DateFormatter()
+        formatter.timeZone = timeZone
+        formatter.dateStyle = .none
+        formatter.timeStyle = .medium
+        /// "12:00:42 · Paired phone · +42.0s": the time, then where, then
+        /// how long after the ask.
+        func value(_ at: Date, where place: String? = nil) -> String {
+            var parts = [formatter.string(from: at)]
+            if let place, !place.isEmpty { parts.append(place) }
+            let offset = at.timeIntervalSince(raised)
+            if offset >= 0.5 { parts.append("+\(RequestLog.formattedDuration(ms: offset * 1000))") }
+            return parts.joined(separator: " · ")
+        }
+        var steps = [Step(id: "raised", label: L("Asked"), value: formatter.string(from: raised))]
+        if let delivered = date("delivered_at_ms") {
+            let channels = details["delivered_to"].map {
+                $0.split(separator: ",").map { NotificationChannelID(rawValue: String($0))?.displayName ?? String($0) }
+                    .joined(separator: ", ")
+            }
+            steps.append(Step(id: "delivered", label: L("Notified"), value: value(delivered, where: channels)))
+        }
+        if let settled = date("settled_at_ms") {
+            let surface = details["surface"].flatMap(AttentionSurface.init(rawValue:)).flatMap {
+                $0 == .system ? nil : $0.displayName
+            }
+            steps.append(
+                Step(
+                    id: "settled", label: RequestLog.interactionOutcomeLabel(method),
+                    value: value(settled, where: surface)))
+        }
+        return steps
+    }
+}
+
+private struct ParticipantLinks: View {
+    @Environment(\.theme) private var theme
+    let key: String
+
+    var body: some View {
+        HStack(spacing: theme.space.s8) {
+            InsightsLink(title: "All Events for This Person", icon: "line.3.horizontal.decrease.circle") {
+                InsightsService.shared.showParticipant(key)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+private struct InsightsLink: View {
+    @Environment(\.theme) private var theme
+    let title: LocalizedStringKey
+    let icon: String
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: theme.space.s4) {
+                Image(systemName: icon).glyphSize(.micro, weight: .semibold)
+                Text(title, bundle: .module).font(SettingsFont.smallLabel)
+            }
+            .foregroundColor(theme.text.link)
+            .padding(.horizontal, theme.space.s8)
+            .padding(.vertical, theme.space.s4)
+            .settingsChrome(.selected)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PlainButtonStyle())
+    }
+}
 
 private struct DetailRow: View {
     @Environment(\.theme) private var theme
@@ -1910,18 +2157,18 @@ private struct DetailRow: View {
     var valueColor: Color?
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
+        HStack(alignment: .firstTextBaseline, spacing: theme.space.s12) {
             label
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
+                .textStyle(.footnote, weight: 500)
+                .foregroundColor(theme.text.tertiary)
                 .frame(width: 104, alignment: .leading)
             Text(value)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(valueColor ?? theme.primaryText)
+                .font(SettingsFont.monoSmall)
+                .foregroundColor(valueColor ?? theme.text.primary)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, theme.space.s4)
     }
 }
 
@@ -1942,19 +2189,19 @@ private struct IdentifierRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 12) {
+        HStack(alignment: .firstTextBaseline, spacing: theme.space.s12) {
             label
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
+                .textStyle(.footnote, weight: 500)
+                .foregroundColor(theme.text.tertiary)
                 .frame(width: 104, alignment: .leading)
             Button(action: copy) {
-                HStack(spacing: 5) {
+                HStack(spacing: theme.space.s4) {
                     Text(Self.shortened(value))
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.primary)
                     Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(copied ? theme.successColor : theme.tertiaryText.opacity(0.7))
+                        .glyphSize(.tiny, weight: .semibold)
+                        .foregroundColor(copied ? theme.status.success.foreground : theme.text.tertiary)
                 }
                 .contentShape(Rectangle())
             }
@@ -1962,15 +2209,15 @@ private struct IdentifierRow: View {
             .help(Text(verbatim: value))
             Spacer(minLength: 0)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, theme.space.s4)
     }
 
     private func copy() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(value, forType: .string)
-        withAnimation(.easeOut(duration: 0.15)) { copied = true }
+        withAnimation(theme.motion.quick) { copied = true }
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-            withAnimation(.easeOut(duration: 0.2)) { copied = false }
+            withAnimation(theme.motion.quick) { copied = false }
         }
     }
 }

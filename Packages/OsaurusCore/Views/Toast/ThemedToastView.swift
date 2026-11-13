@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Lightweight themed toast component for inline notifications.
-//  Uses the same glass-based styling as ToastView but with a simpler API.
+//  Uses the same opaque styling as ToastView but with a simpler API.
 //
 
 import SwiftUI
@@ -31,9 +31,11 @@ enum SimpleToastType {
 // MARK: - Themed Toast View
 
 /// A lightweight themed toast for inline notifications
-/// Uses glass-based styling consistent with the app's toast system
+/// Uses opaque styling consistent with the app's toast system
 struct ThemedToastView: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var baseTheme
+    @Environment(\.isEnabled) private var componentEnabled
+    private var theme: any ThemeProtocol { baseTheme.catalogFamily(18, enabled: componentEnabled) }
 
     let message: String
     let type: SimpleToastType
@@ -46,35 +48,32 @@ struct ThemedToastView: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
-            ToastIcon(iconName: type.iconName, accentColor: accentColor, size: 24)
+        HStack(spacing: theme.catalogLayoutMetric("component.library.18.elements.layout.themedToastView.body.horizontalGap", inheriting: theme.catalogMetric("gap", fallback: theme.space.s10))) {
+            ToastIcon(iconName: type.iconName, tone: tone, size: 24)
 
             Text(message)
-                .font(.system(size: 12.5, weight: .medium))
-                .foregroundColor(theme.primaryText)
+                .assignedTypography("component.library.18.text", fallback: SettingsFont.caption)
+                .foregroundColor(theme.text.primary)
                 .lineLimit(2)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(ToastBackground(accentColor: accentColor))
-        .clipShape(RoundedRectangle(cornerRadius: ToastStyle.compactCornerRadius, style: .continuous))
-        .overlay(
-            ToastBorder(cornerRadius: ToastStyle.compactCornerRadius, accentColor: accentColor, isHovering: isHovering)
-        )
+        }.catalogLayoutTarget("component.library.18.elements.layout.themedToastView.body.horizontalGap")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.18.elements.layout.themedToastView.body.paddingX", inheriting: theme.catalogMetric("padding", fallback: theme.space.s14))).catalogLayoutTarget("component.library.18.elements.layout.themedToastView.body.paddingX")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.18.elements.layout.themedToastView.body.paddingY", inheriting: theme.catalogMetric("padding", fallback: theme.space.s10))).catalogLayoutTarget("component.library.18.elements.layout.themedToastView.body.paddingY")
+        .frame(minHeight: theme.catalogMetric("height", fallback: 0))
+        .assignedBaseChrome(18)
         .toastShadow(theme: theme, isHovering: isHovering)
         .onHover { hovering in
-            withAnimation(theme.animationQuick()) {
+            withAnimation(theme.motion.quick) {
                 isHovering = hovering
             }
         }
     }
 
-    private var accentColor: Color {
+    private var tone: ThemeStatusSet<Color> {
         switch type {
-        case .success: return theme.successColor
-        case .error: return theme.errorColor
-        case .warning: return theme.warningColor
-        case .info: return theme.infoColor
+        case .success: return theme.status.success
+        case .error: return theme.status.error
+        case .warning: return theme.status.warning
+        case .info: return theme.status.info
         }
     }
 }
@@ -83,8 +82,10 @@ struct ThemedToastView: View {
 
 #if DEBUG
     struct ThemedToastView_Previews: PreviewProvider {
+        @MainActor private static var theme: any ThemeProtocol { ThemeManager.shared.currentTheme }
+
         static var previews: some View {
-            VStack(spacing: 16) {
+            VStack(spacing: theme.space.s16) {
                 ThemedToastView("Theme saved successfully", type: .success)
                 ThemedToastView("Failed to load configuration", type: .error)
                 ThemedToastView("Connection is unstable", type: .warning)
@@ -92,7 +93,7 @@ struct ThemedToastView: View {
             }
             .padding()
             .frame(width: 400)
-            .background(Color.black.opacity(0.8))
+            .background(CustomizableTheme.dark().surface.canvas)
         }
     }
 #endif

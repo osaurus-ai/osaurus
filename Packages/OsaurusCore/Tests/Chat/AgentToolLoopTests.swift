@@ -1865,6 +1865,27 @@ struct AgentToolLoopTests {
         #expect(AgentToolLoop.shouldStopAfterToolOutcome(outcome))
     }
 
+    /// Reading a failed workflow test run succeeds; the run's own `error`
+    /// and `retryable` fields must not end the Architect's turn.
+    @Test func successDescribingAFailedRunDoesNotEndTheTurn() {
+        let result = ToolEnvelope.success(
+            tool: "workflow_runs",
+            result: [
+                "error": ["node_id": "parse_repo", "reason": "Enter a valid GitHub repository URL."],
+                "failure": ["kind": "code", "retryable": false, "fix_in": "workflow"],
+                "status": "failed",
+            ])
+        let outcome = AgentLoopToolOutcome(
+            invocation: inv("workflow_runs"),
+            callId: "read-failed-run",
+            result: result,
+            wasDeduped: false,
+            wasError: ToolEnvelope.isError(result)
+        )
+        #expect(!outcome.wasError)
+        #expect(!AgentToolLoop.shouldStopAfterToolOutcome(outcome))
+    }
+
     @Test func terminalComputerUseEnvelopeStopsChatWithoutParentFollowUp() async throws {
         let surface = ScriptedLoopSurface(steps: [
             .toolCalls([inv("computer_use")]),

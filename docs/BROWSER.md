@@ -8,7 +8,7 @@ access), and every action passes through the **same safe-by-default autonomy
 gate as Computer Use** before it runs.
 
 Browser Use is the native replacement for the retired `osaurus.browser`
-plugin. Existing plugin installs keep working as a card in Settings… (⌘,) → Tools → Native Plugins
+plugin. Existing plugin installs keep working as a card in Settings… (⌘,) → Tools & MCP → Plugins
 with a "Built into Osaurus" banner, but their tools and skill no longer load;
 each agent's WebKit profile is migrated so sign-ins carry over (see
 [Migration](#migration-from-the-osaurusbrowser-plugin)).
@@ -131,7 +131,7 @@ actions into one call with one final snapshot.
 `Browser/Tool/BrowserToolExecutor.swift` (`BrowserGate`)
 
 Every primitive is classified into the same `EffectClass` ladder as Computer
-Use and gated by the **shared** `AutonomyPolicy` (Settings → Computer Use →
+Use and gated by the **shared** `AutonomyPolicy` (Settings → Computer & Browser Use →
 Autonomy) plus the agent's own autonomy ceiling:
 
 | Class | Browser actions | Default (Cautious) |

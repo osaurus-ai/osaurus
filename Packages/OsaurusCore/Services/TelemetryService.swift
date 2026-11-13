@@ -11,6 +11,61 @@ import Aptabase
 import CryptoKit
 import Foundation
 
+/// Observe consent changes without consulting cfprefsd on every event. A
+/// separate refresh lock serializes the infrequent reads/publications. The
+/// value lock never spans preference I/O, so an event cannot wait behind it.
+private final class TelemetryConsentPreference: NSObject, @unchecked Sendable {
+    private let defaults: UserDefaults
+    private let key: String
+    private let refreshLock = NSRecursiveLock()
+    private let valueLock = NSLock()
+    private var decided: Bool?
+
+    init(defaults: UserDefaults, key: String) {
+        self.defaults = defaults
+        self.key = key
+        super.init()
+        // Subscribe before reading the initial value so a concurrent change
+        // cannot fall between the snapshot and observer registration.
+        defaults.addObserver(self, forKeyPath: key, options: [.new], context: nil)
+        refresh()
+    }
+
+    deinit {
+        defaults.removeObserver(self, forKeyPath: key)
+    }
+
+    var value: Bool? {
+        valueLock.lock()
+        defer { valueLock.unlock() }
+        return decided
+    }
+
+    override func observeValue(
+        forKeyPath keyPath: String?,
+        of object: Any?,
+        change: [NSKeyValueChangeKey: Any]?,
+        context: UnsafeMutableRawPointer?
+    ) {
+        guard keyPath == key else {
+            super.observeValue(forKeyPath: keyPath, of: object, change: change, context: context)
+            return
+        }
+        // Concurrent writers can deliver an older callback after a later
+        // decision. Its .new payload is not necessarily the current value.
+        refresh()
+    }
+
+    private func refresh() {
+        refreshLock.lock()
+        defer { refreshLock.unlock() }
+        let value = defaults.object(forKey: key) as? Bool
+        valueLock.lock()
+        decided = value
+        valueLock.unlock()
+    }
+}
+
 @MainActor
 public final class TelemetryService {
     public static let shared = TelemetryService()
@@ -53,6 +108,9 @@ public final class TelemetryService {
     /// Where the consent decision is persisted. Injectable so unit tests
     /// can use an isolated suite instead of polluting `.standard`.
     private let defaults: UserDefaults
+    private lazy var consentPreference = TelemetryConsentPreference(
+        defaults: defaults, key: TelemetryService.consentKey
+    )
 
     /// Performs the actual event send. Production points at the Aptabase
     /// SDK; tests inject a capture closure so the consent + buffering
@@ -92,6 +150,12 @@ public final class TelemetryService {
         )
         started = true
 
+        // Build the observed consent cache here, at launch, so its one
+        // synchronous cfprefsd read never lands on the main actor mid-session
+        // (APPLE-MACOS-3QJ: a per-event read hung main for >3s). Explicit so
+        // it doesn't depend on `app_launched` happening to read consent first.
+        _ = consentPreference
+
         // Baseline launch signal
         track("app_launched", launchProps)
     }
@@ -130,7 +194,7 @@ public final class TelemetryService {
     }
 
     private var consent: Consent {
-        guard let decided = defaults.object(forKey: Self.consentKey) as? Bool else {
+        guard let decided = consentPreference.value else {
             return .undecided
         }
         return decided ? .granted : .declined
@@ -160,6 +224,9 @@ public final class TelemetryService {
     /// drops it. Both paths make all future `track()` calls send or no-op
     /// with no other code changes.
     public func setEnabled(_ enabled: Bool) {
+        // Subscribe before the explicit write, so subsequent event reads use
+        // the observed decision. Keyless track calls still perform no I/O.
+        _ = consentPreference
         defaults.set(enabled, forKey: Self.consentKey)
         if enabled {
             flushPending()
@@ -199,6 +266,9 @@ public final class TelemetryService {
         if enriched["total_memory_gb"] == nil {
             enriched["total_memory_gb"] = Self.totalMemoryBucketLabel
         }
+        if enriched["build_channel"] == nil {
+            enriched["build_channel"] = Self.buildChannelLabel
+        }
 
         switch consent {
         case .granted:
@@ -227,6 +297,40 @@ public final class TelemetryService {
         }
         return "128+"
     }()
+
+    /// Every value `buildChannel(...)` can return.
+    nonisolated static let buildChannels = ["release", "beta", "proof", "dev", "debug"]
+
+    /// Closed build-channel token attached to every event so live-proof and
+    /// locally built Release apps, which report to the production bucket,
+    /// can be filtered out of real-user metrics.
+    nonisolated static let buildChannelLabel: String = {
+        #if DEBUG
+            let isDebug = true
+        #else
+            let isDebug = false
+        #endif
+        return buildChannel(
+            bundleID: Bundle.main.bundleIdentifier,
+            bundlePath: Bundle.main.bundlePath,
+            isDebug: isDebug
+        )
+    }()
+
+    /// `release` / `beta`: the shipped Osaurus and Osaurus Beta apps.
+    /// `proof`: a re-bundled live-proof app (`com.dinoki.osaurus.<id>`).
+    /// `dev`: any other bundle id, or a build run from Xcode DerivedData or
+    /// a SwiftPM `.build` directory.
+    nonisolated static func buildChannel(bundleID: String?, bundlePath: String, isDebug: Bool) -> String {
+        if isDebug { return "debug" }
+        if bundlePath.contains("/DerivedData/") || bundlePath.contains("/.build/") { return "dev" }
+        switch bundleID {
+        case SiblingAppGuard.stableBundleId: return "release"
+        case SiblingAppGuard.betaBundleId: return "beta"
+        case let id? where id.hasPrefix(SiblingAppGuard.stableBundleId + "."): return "proof"
+        default: return "dev"
+        }
+    }
 
     // MARK: - Anonymization
 

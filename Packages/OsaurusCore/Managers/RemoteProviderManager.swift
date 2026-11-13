@@ -47,15 +47,18 @@ public enum RemoteProviderError: LocalizedError {
 public final class RemoteProviderManager: ObservableObject {
     public static let shared = RemoteProviderManager()
     public static let osaurusRouterProviderId = UUID(uuidString: "2CFBD528-62FD-4EF0-A143-3FE532F03840")!
-    /// Product-selected temporary model for the first-run local-download
-    /// experience: DeepSeek V4.1 Flash on Osaurus Cloud. Match by final path
-    /// component because Router ids are provider-prefixed (for example
+    /// Product-selected first-run model on Osaurus Cloud: the newest DeepSeek
+    /// Flash, never older than this one. Match by final path component
+    /// because Router ids are provider-prefixed (for example
     /// `osaurus/deepseek-v4-1-flash`).
-    static let firstRunOsaurusModelSlug = "deepseek-v4-1-flash"
+    nonisolated static let firstRunOsaurusModelSlug = "deepseek-v4-1-flash"
 
     /// Current configuration
     @Published public private(set) var configuration: RemoteProviderConfiguration {
-        didSet { Self.refreshProviderNameCache(configuration.providers) }
+        didSet {
+            Self.refreshProviderNameCache(configuration.providers)
+            invalidateConnectedSpawnModelTargetIndex()
+        }
     }
 
     /// Lock-protected id → display-name mirror so nonisolated loggers
@@ -87,7 +90,9 @@ public final class RemoteProviderManager: ObservableObject {
     @Published public private(set) var isOsaurusRouterEnabled: Bool = OsaurusRouter.isEnabled
 
     /// Runtime state for each provider
-    @Published public private(set) var providerStates: [UUID: RemoteProviderState] = [:]
+    @Published public private(set) var providerStates: [UUID: RemoteProviderState] = [:] {
+        didSet { invalidateConnectedSpawnModelTargetIndex() }
+    }
 
     /// Connectivity-driven offline mode, fed by the network path monitor
     /// below. While true, the manager exposes no remote chat services or
@@ -96,12 +101,29 @@ public final class RemoteProviderManager: ObservableObject {
     /// catalogs — they come back as-is on the recovery edge. Starts false
     /// (the monitor's baseline reading arrives asynchronously) so launch
     /// never flickers through a spurious offline state.
-    @Published public private(set) var isOffline: Bool = false
+    @Published public private(set) var isOffline: Bool = false {
+        didSet { invalidateConnectedSpawnModelTargetIndex() }
+    }
 
     /// Active service instances keyed by provider ID
-    private var services: [UUID: RemoteProviderService] = [:]
+    private var services: [UUID: RemoteProviderService] = [:] {
+        didSet { invalidateConnectedSpawnModelTargetIndex() }
+    }
 
-    /// Provider IDs created from Bonjour discovery — not persisted to disk
+    /// Memoized spawn catalog index. Rebuilding it walks every discovered
+    /// model of every connected provider, and the synchronous context-budget
+    /// preview asks for it several times per compose across every open chat
+    /// session on the main thread (APPLE-MACOS-1WN app hang). Cleared by the
+    /// `didSet` observers on every input it derives from; the workspace
+    /// address set (owned by `RemoteAgentManager`) is checked per read.
+    private var cachedConnectedSpawnModelTargetIndex:
+        (workspaceManagedAddresses: Set<String>, index: ConnectedSpawnModelTargetIndex)?
+
+    private func invalidateConnectedSpawnModelTargetIndex() {
+        cachedConnectedSpawnModelTargetIndex = nil
+    }
+
+    /// Provider IDs held only in memory — not persisted to disk
     private var ephemeralProviderIds: Set<UUID> = []
 
     /// Per-model metadata for the managed Osaurus Router, keyed by unprefixed
@@ -198,13 +220,13 @@ public final class RemoteProviderManager: ObservableObject {
 
     // MARK: - Provider Management
 
-    /// Returns true if the provider was created ephemerally from Bonjour discovery
+    /// Returns true if the provider is held only in memory
     public func isEphemeral(id: UUID) -> Bool {
         ephemeralProviderIds.contains(id)
     }
 
-    /// Add a new provider. Pass `isEphemeral: true` for Bonjour-discovered providers so they
-    /// are held only in memory and removed when the agent is deselected or goes offline.
+    /// Add a new provider. Pass `isEphemeral: true` for runtime providers (the eval
+    /// harness's) so they are held only in memory and never persisted.
     public func addProvider(
         _ provider: RemoteProvider,
         apiKey: String?,
@@ -216,8 +238,8 @@ public final class RemoteProviderManager: ObservableObject {
             ephemeralProviderIds.insert(provider.id)
         } else {
             // KPI: a user-configured remote provider. Only the closed-enum
-            // type is captured. Ephemeral Bonjour-discovered providers are
-            // excluded — they aren't a deliberate configuration action.
+            // type is captured. Ephemeral providers are excluded — they
+            // aren't a deliberate configuration action.
             FeatureTelemetry.remoteProviderAdded(providerType: provider.providerType.rawValue)
         }
 
@@ -268,7 +290,7 @@ public final class RemoteProviderManager: ObservableObject {
         persistsToDisk: Bool,
         connect shouldConnect: Bool
     ) {
-        if !credentialsDurable, !KeychainQueryHelpers.disablesKeychainForProcess {
+        if !credentialsDurable, !RemoteProviderKeychain.isStorageDisabled {
             providerStates[providerId]?.lastError =
                 "Could not save credentials to the Keychain — they may not survive relaunch."
             notifyStatusChanged()
@@ -406,7 +428,7 @@ public final class RemoteProviderManager: ObservableObject {
                     let refreshed = try await OpenAICodexOAuthService.refresh(tokens)
                     if !(await RemoteProviderKeychain.saveOAuthTokensOffMainActor(
                         refreshed, for: provider.id)),
-                        !KeychainQueryHelpers.disablesKeychainForProcess {
+                        !RemoteProviderKeychain.isStorageDisabled {
                         NSLog("RemoteProviderManager: failed to persist refreshed OAuth tokens")
                     }
                 }
@@ -415,7 +437,7 @@ public final class RemoteProviderManager: ObservableObject {
                     let refreshed = try await XAIOAuthService.refresh(tokens)
                     if !(await RemoteProviderKeychain.saveOAuthTokensOffMainActor(
                         refreshed, for: provider.id)),
-                        !KeychainQueryHelpers.disablesKeychainForProcess {
+                        !RemoteProviderKeychain.isStorageDisabled {
                         NSLog("RemoteProviderManager: failed to persist refreshed OAuth tokens")
                     }
                 }
@@ -892,6 +914,31 @@ public final class RemoteProviderManager: ObservableObject {
         notifyModelsChanged()
     }
 
+    /// Signs a sign-in session of an OAuth provider in. The primary session
+    /// is the provider's own sign-in; any other keeps its tokens in its own
+    /// Keychain account and is used by the agents assigned it.
+    public func oauthSignIn(providerId: UUID, session: SignInSession) async throws {
+        guard session.service == .modelProvider(providerId),
+            let provider = configuration.provider(id: providerId)
+        else { throw RemoteProviderServiceError.notConnected }
+        let tokens: RemoteProviderOAuthTokens
+        switch provider.authType {
+        case .openAICodexOAuth: tokens = try await OpenAICodexOAuthService.signIn()
+        case .xaiOAuth: tokens = try await XAIOAuthService.signIn()
+        default: throw RemoteProviderServiceError.requestFailed(L("This provider doesn't use a sign-in."))
+        }
+        if let sessionId = session.keychainSession {
+            RemoteProviderKeychain.saveOAuthTokens(tokens, for: providerId, session: sessionId)
+        } else {
+            let wasConnected = providerStates[providerId]?.isConnected ?? false
+            updateProvider(provider, apiKey: nil, oauthTokens: tokens)
+            if !wasConnected, provider.enabled {
+                Task { try? await connect(providerId: providerId) }
+            }
+        }
+        NotificationCenter.default.post(name: .signInSessionsDidChange, object: nil)
+    }
+
     /// Observe identity creation/wipe, app re-activation, and wake-from-sleep
     /// so providers (re)connect without waiting for a user-driven refresh.
     private func registerIdentityAndActivationObservers() {
@@ -967,6 +1014,15 @@ public final class RemoteProviderManager: ObservableObject {
     /// on repeated satisfied updates (interface changes, DNS churn, …).
     private var lastNetworkPathWasSatisfied: Bool?
     private var networkRecoveryTask: Task<Void, Never>?
+    /// Pending debounced application of the latest path reading. Replaced on
+    /// every monitor callback so only the most recent value is applied.
+    private var pendingNetworkPathUpdateTask: Task<Void, Never>?
+    /// Coalescing window for path readings. Flapping links (wifi ↔ none) and
+    /// sleep/wake transitions emit bursts of updates; publishing `isOffline`
+    /// for each one fires the whole Combine/SwiftUI/AppKit fan-out
+    /// synchronously and showed up as a main-thread hang blocked on AppKit's
+    /// display-cycle transaction lock (Sentry APPLE-MACOS-1DA).
+    nonisolated static let networkPathDebounceNanoseconds: UInt64 = 250_000_000
 
     private func startNetworkRecoveryMonitor() {
         let monitor = NWPathMonitor()
@@ -974,16 +1030,32 @@ public final class RemoteProviderManager: ObservableObject {
         monitor.pathUpdateHandler = { [weak self] path in
             let satisfied = path.status == .satisfied
             Task { @MainActor [weak self] in
-                self?.handleNetworkPathUpdate(satisfied: satisfied)
+                self?.scheduleNetworkPathUpdate(satisfied: satisfied)
             }
         }
         monitor.start(queue: DispatchQueue(label: "ai.osaurus.provider.pathmonitor"))
+    }
+
+    /// Debounce path readings: never mutate `@Published` state directly from
+    /// the monitor hop. Each reading cancels the previous pending one, and the
+    /// surviving (latest) value is applied after the settle window on a fresh
+    /// main-actor turn, so a burst of edges produces at most one publish.
+    private func scheduleNetworkPathUpdate(satisfied: Bool) {
+        pendingNetworkPathUpdateTask?.cancel()
+        pendingNetworkPathUpdateTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: Self.networkPathDebounceNanoseconds)
+            guard !Task.isCancelled, let self else { return }
+            self.pendingNetworkPathUpdateTask = nil
+            self.handleNetworkPathUpdate(satisfied: satisfied)
+        }
     }
 
     /// Internal (not private) so offline-mode tests can drive connectivity
     /// edges without a real `NWPath`.
     func handleNetworkPathUpdate(satisfied: Bool) {
         defer { lastNetworkPathWasSatisfied = satisfied }
+        // Only publish on a real edge — assigning an unchanged `@Published`
+        // value would still fire the full SwiftUI invalidation fan-out.
         if isOffline == satisfied {
             isOffline = !satisfied
             // Remote models are gated on `isOffline` (see
@@ -1391,17 +1463,28 @@ public final class RemoteProviderManager: ObservableObject {
     /// service is not dispatchable, so it is deliberately omitted.
     func connectedSpawnModelTargets() -> [ConnectedSpawnModelTarget] {
         guard !isOffline else { return [] }
-        // Providers minted by pairing a teammate's WORKSPACE agent are Mode 2
-        // endpoints (the host runs its own agent), not a bare-model
-        // catalog. They also connect/disconnect with the teammate's presence,
-        // and this index feeds the composed prompt + spawn schema — so
-        // including them would reset the prefix cache every time a teammate's
-        // Mac slept. Their `spawn_agent` path is `spawnableWorkspaceAgents`.
-        let workspaceManagedAddresses = Set(
+        return connectedSpawnModelTargets(
+            excludingWorkspaceManagedAddresses: Self.currentWorkspaceManagedAddresses()
+        )
+    }
+
+    /// Lowercased addresses of teammate WORKSPACE agents. Providers minted by
+    /// pairing one are Mode 2 endpoints (the host runs its own agent), not a
+    /// bare-model catalog. They also connect/disconnect with the teammate's
+    /// presence, and this index feeds the composed prompt + spawn schema — so
+    /// including them would reset the prefix cache every time a teammate's
+    /// Mac slept. Their `spawn_agent` path is `spawnableWorkspaceAgents`.
+    private static func currentWorkspaceManagedAddresses() -> Set<String> {
+        Set(
             RemoteAgentManager.shared.remoteAgents
                 .filter(\.isWorkspaceManaged)
                 .map { $0.agentAddress.lowercased() }
         )
+    }
+
+    private func connectedSpawnModelTargets(
+        excludingWorkspaceManagedAddresses workspaceManagedAddresses: Set<String>
+    ) -> [ConnectedSpawnModelTarget] {
         return configuration.providers.flatMap { provider -> [ConnectedSpawnModelTarget] in
             if let address = provider.remoteAgentAddress?.lowercased(),
                 workspaceManagedAddresses.contains(address)
@@ -1437,8 +1520,24 @@ public final class RemoteProviderManager: ObservableObject {
     }
 
     /// Capture one indexed view of the current connected spawn catalog.
+    ///
+    /// Memoized: rebuilt only after provider configuration, connection state,
+    /// services, offline mode, or the workspace-agent roster changes.
     func connectedSpawnModelTargetIndex() -> ConnectedSpawnModelTargetIndex {
-        ConnectedSpawnModelTargetIndex(targets: connectedSpawnModelTargets())
+        guard !isOffline else { return .empty }
+        let workspaceManagedAddresses = Self.currentWorkspaceManagedAddresses()
+        if let cached = cachedConnectedSpawnModelTargetIndex,
+            cached.workspaceManagedAddresses == workspaceManagedAddresses
+        {
+            return cached.index
+        }
+        let index = ConnectedSpawnModelTargetIndex(
+            targets: connectedSpawnModelTargets(
+                excludingWorkspaceManagedAddresses: workspaceManagedAddresses
+            )
+        )
+        cachedConnectedSpawnModelTargetIndex = (workspaceManagedAddresses, index)
+        return index
     }
 
     /// Resolve a canonical UUID-backed spawn id, or one unambiguous legacy
@@ -1488,21 +1587,57 @@ public final class RemoteProviderManager: ObservableObject {
             ?? entry.models.first
     }
 
-    /// DeepSeek V4.1 Flash for first-run Cloud, with the normal chat-capable
-    /// provider fallback if the Router temporarily omits that model.
+    /// The newest DeepSeek Flash for first-run Cloud, with the normal
+    /// chat-capable provider fallback if the Router temporarily offers none.
     public func firstRunOsaurusRouterModelId() -> String? {
         guard
             let entry = cachedAvailableModels().first(where: {
                 $0.providerId == Self.osaurusRouterProviderId
             })
         else { return nil }
-        return entry.models.first(where: Self.isFirstRunOsaurusModelId)
+        return Self.newestFirstRunOsaurusModelId(in: entry.models)
             ?? entry.models.first { !ModelPickerItem.isLikelyEmbeddingOrRerankerID($0) }
             ?? entry.models.first
     }
 
-    static func isFirstRunOsaurusModelId(_ id: String) -> Bool {
-        id.split(separator: "/").last?.lowercased() == firstRunOsaurusModelSlug
+    /// The highest-version `deepseek-v<major>[-<minor>]-flash` id at or above
+    /// `firstRunOsaurusModelSlug`; retired older Flash ids never qualify.
+    nonisolated static func newestFirstRunOsaurusModelId(in ids: [String]) -> String? {
+        ids.compactMap { id in firstRunOsaurusModelVersion(id).map { (id: id, version: $0) } }
+            .max { $0.version.lexicographicallyPrecedes($1.version) }?.id
+    }
+
+    nonisolated static func isFirstRunOsaurusModelId(_ id: String) -> Bool {
+        firstRunOsaurusModelVersion(id) != nil
+    }
+
+    /// "DeepSeek V4.2 Flash" for `…/deepseek-v4-2-flash`.
+    nonisolated static func firstRunOsaurusModelDisplayName(_ id: String) -> String? {
+        guard let parts = deepSeekFlashVersionParts(id) else { return nil }
+        return "DeepSeek V\(parts.map(String.init).joined(separator: ".")) Flash"
+    }
+
+    /// `[major, minor]` of a DeepSeek Flash id at or above the first-run floor.
+    private nonisolated static func firstRunOsaurusModelVersion(_ id: String) -> [Int]? {
+        guard let parts = deepSeekFlashVersionParts(id), let floor = deepSeekFlashVersionParts(firstRunOsaurusModelSlug)
+        else { return nil }
+        let version = parts.count == 1 ? parts + [0] : parts
+        let minimum = floor.count == 1 ? floor + [0] : floor
+        return minimum.lexicographicallyPrecedes(version) || version == minimum ? version : nil
+    }
+
+    private nonisolated static func deepSeekFlashVersionParts(_ id: String) -> [Int]? {
+        let slug = (id.split(separator: "/").last.map(String.init) ?? id).lowercased()
+        let prefix = "deepseek-v"
+        let suffix = "-flash"
+        guard slug.hasPrefix(prefix), slug.hasSuffix(suffix), slug.count > prefix.count + suffix.count else {
+            return nil
+        }
+        let core = slug.dropFirst(prefix.count).dropLast(suffix.count)
+        let pieces = core.split(separator: "-", omittingEmptySubsequences: false)
+        guard (1 ... 2).contains(pieces.count) else { return nil }
+        let numbers = pieces.compactMap { Int($0) }
+        return numbers.count == pieces.count ? numbers : nil
     }
 
     /// Metadata for an Osaurus Router model by its unprefixed id (the id as it
@@ -1917,6 +2052,8 @@ public final class RemoteProviderManager: ObservableObject {
         // simulated path edges (or a pending recovery sweep) into later tests.
         networkRecoveryTask?.cancel()
         networkRecoveryTask = nil
+        pendingNetworkPathUpdateTask?.cancel()
+        pendingNetworkPathUpdateTask = nil
         lastNetworkPathWasSatisfied = nil
         isOffline = false
         // Restore the master switch to its default (on) so a test that toggled

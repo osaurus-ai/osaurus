@@ -8,217 +8,6 @@
 import AppKit
 import SwiftUI
 
-// MARK: - Minimalistic Card Background
-struct MinimalCard: View {
-    @Environment(\.theme) private var theme
-    var cornerRadius: CGFloat = 12
-    var borderWidth: CGFloat = 1
-    var isHovering: Bool = false
-    var isPressed: Bool = false
-
-    var body: some View {
-        RoundedRectangle(cornerRadius: cornerRadius)
-            .fill(theme.cardBackground)
-            .overlay(
-                RoundedRectangle(cornerRadius: cornerRadius)
-                    .stroke(
-                        isPressed ? theme.focusBorder : isHovering ? theme.primaryBorder : theme.cardBorder,
-                        lineWidth: borderWidth
-                    )
-            )
-            .shadow(
-                color: theme.shadowColor.opacity(theme.shadowOpacity),
-                radius: isHovering ? 12 : 8,
-                x: 0,
-                y: isHovering ? 4 : 2
-            )
-            .animation(.easeInOut(duration: 0.2), value: isHovering)
-            .animation(.easeInOut(duration: 0.1), value: isPressed)
-    }
-}
-
-// MARK: - Simple Card
-struct SimpleCard<Content: View>: View {
-    @Environment(\.theme) private var theme
-    let content: Content
-    let padding: CGFloat
-    @State private var isHovering = false
-    @State private var isPressed = false
-
-    init(padding: CGFloat = 20, @ViewBuilder content: () -> Content) {
-        self.padding = padding
-        self.content = content()
-    }
-
-    var body: some View {
-        content
-            .padding(padding)
-            .background(MinimalCard(isHovering: isHovering, isPressed: isPressed))
-            .onHover { hovering in
-                isHovering = hovering
-            }
-            .onLongPressGesture(
-                minimumDuration: .infinity,
-                maximumDistance: .infinity,
-                pressing: { pressing in
-                    isPressed = pressing
-                },
-                perform: {}
-            )
-    }
-}
-
-// MARK: - Minimal Outline Button (formerly GradientButton)
-struct GradientButton: View {
-    @Environment(\.theme) private var theme
-    let title: String
-    let icon: String?
-    let action: () -> Void
-    var isDestructive: Bool = false
-    var isPrimary: Bool = true
-
-    @State private var isPressed = false
-    @State private var isHovering = false
-
-    var buttonColor: Color {
-        if isDestructive {
-            return theme.errorColor
-        }
-        return theme.accentColor
-    }
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                if let icon = icon {
-                    Image(systemName: icon)
-                        .font(.system(size: 14, weight: .medium))
-                }
-                Text(LocalizedStringKey(title), bundle: .module)
-                    .font(.system(size: 14, weight: .semibold))
-            }
-            .foregroundColor(isPrimary ? .white : buttonColor)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 10)
-            .background(
-                Group {
-                    if isPrimary {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(buttonColor)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(buttonColor, lineWidth: 1.5)
-                            )
-                    } else {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.buttonBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(
-                                        isPressed
-                                            ? buttonColor : isHovering ? buttonColor.opacity(0.8) : theme.buttonBorder,
-                                        lineWidth: 1.5
-                                    )
-                            )
-                    }
-                }
-            )
-            .shadow(
-                color: theme.shadowColor.opacity(
-                    isHovering ? theme.shadowOpacity * 2 : theme.shadowOpacity
-                ),
-                radius: isHovering ? 6 : 4,
-                x: 0,
-                y: 2
-            )
-        }
-        .buttonStyle(PlainButtonStyle())
-        .scaleEffect(isPressed ? 0.97 : 1.0)
-        .animation(.easeInOut(duration: 0.1), value: isPressed)
-        .animation(.easeInOut(duration: 0.2), value: isHovering)
-        .onHover { hovering in
-            isHovering = hovering
-        }
-        .onLongPressGesture(
-            minimumDuration: .infinity,
-            maximumDistance: .infinity,
-            pressing: { pressing in
-                isPressed = pressing
-            },
-            perform: {}
-        )
-    }
-}
-
-// MARK: - Simple Toggle Button
-struct SimpleToggleButton: View {
-    @Environment(\.theme) private var theme
-    let isOn: Bool
-    let title: String
-    let icon: String
-    let action: () -> Void
-
-    @State private var isHovering = false
-    @State private var isPressed = false
-
-    var buttonColor: Color {
-        isOn ? theme.errorColor : theme.successColor
-    }
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.system(size: 16, weight: .medium))
-                    .rotationEffect(.degrees(isHovering ? 8 : 0))
-                    .scaleEffect(isHovering ? 1.06 : 1.0)
-                    .animation(.easeInOut(duration: 0.2), value: isHovering)
-                Text(LocalizedStringKey(title), bundle: .module)
-                    .font(.system(size: 14, weight: .semibold))
-            }
-            .foregroundColor(buttonColor)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.buttonBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(
-                                isPressed
-                                    ? buttonColor
-                                    : (isHovering ? buttonColor.opacity(0.95) : buttonColor.opacity(0.75)),
-                                lineWidth: 1.8
-                            )
-                    )
-            )
-            .shadow(
-                color: theme.shadowColor.opacity(
-                    isHovering ? theme.shadowOpacity * 2 : theme.shadowOpacity
-                ),
-                radius: isHovering ? 6 : 4,
-                x: 0,
-                y: 2
-            )
-        }
-        .buttonStyle(PlainButtonStyle())
-        .scaleEffect(isPressed ? 0.97 : 1.0)
-        .animation(.easeInOut(duration: 0.1), value: isPressed)
-        .animation(.easeInOut(duration: 0.2), value: isHovering)
-        .onHover { hovering in
-            isHovering = hovering
-        }
-        .onLongPressGesture(
-            minimumDuration: .infinity,
-            maximumDistance: .infinity,
-            pressing: { pressing in
-                isPressed = pressing
-            },
-            perform: {}
-        )
-    }
-}
-
 // MARK: - Copy URL Field
 struct CopyableURLField: View {
     @Environment(\.theme) private var theme
@@ -228,44 +17,37 @@ struct CopyableURLField: View {
     @State private var isHovering = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             Text(LocalizedStringKey(label), bundle: .module)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.compactLabel)
+                .foregroundColor(theme.text.secondary)
 
-            HStack(spacing: 12) {
+            HStack(spacing: theme.space.s12) {
                 Text(url)
-                    .font(.system(size: 13, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.mono)
+                    .foregroundColor(theme.text.primary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.inputBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(theme.inputBorder, lineWidth: 1)
-                            )
-                    )
+                    .padding(.horizontal, theme.space.s12)
+                    .padding(.vertical, theme.space.s8)
+                    .settingsChrome(.control)
 
                 Button(action: copyURL) {
                     ZStack {
                         Image(systemName: showCopied ? "checkmark" : "doc.on.doc")
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(showCopied ? theme.successColor : theme.primaryText)
+                            .glyphSize(.body, weight: .medium)
+                            .foregroundColor(showCopied ? theme.status.success.foreground : theme.text.primary)
                     }
                     .frame(width: 36, height: 36)
                     .background(
                         Circle()
-                            .fill(theme.buttonBackground)
+                            .fill(theme.action.secondary.default.background)
                             .overlay(
                                 Circle()
                                     .stroke(
-                                        isHovering ? theme.focusBorder : theme.buttonBorder,
-                                        lineWidth: 1
+                                        isHovering ? theme.border.focus : theme.action.border,
+                                        lineWidth: theme.stroke.default
                                     )
                             )
                     )
@@ -283,211 +65,16 @@ struct CopyableURLField: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(url, forType: .string)
 
-        withAnimation(.easeInOut(duration: 0.2)) {
+        withAnimation(theme.motion.quick) {
             showCopied = true
         }
 
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 2_000_000_000)
-            withAnimation(.easeInOut(duration: 0.2)) {
+            withAnimation(theme.motion.quick) {
                 showCopied = false
             }
         }
-    }
-}
-
-// MARK: - Status Badge
-struct StatusBadge: View {
-    @Environment(\.theme) private var theme
-    let status: String
-    let color: Color
-    let isAnimating: Bool
-
-    var body: some View {
-        HStack(spacing: 6) {
-            ZStack {
-                // Pulse ring
-                Circle()
-                    .stroke(color.opacity(0.3), lineWidth: 2)
-                    .frame(width: 12, height: 12)
-                    .scaleEffect(isAnimating ? 1.6 : 1.0)
-                    .opacity(isAnimating ? 0 : 0.6)
-                    .animation(
-                        isAnimating ? .easeOut(duration: 1.2).repeatForever(autoreverses: false) : .default,
-                        value: isAnimating
-                    )
-
-                // Core dot
-                Circle()
-                    .fill(color)
-                    .frame(width: 8, height: 8)
-                    .shadow(color: color.opacity(0.4), radius: 2, x: 0, y: 0)
-            }
-
-            Text(status)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(color)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(
-            ZStack {
-                Capsule()
-                    .fill(theme.cardBackground.opacity(0.9))
-
-                Capsule()
-                    .fill(
-                        LinearGradient(
-                            colors: [color.opacity(0.08), Color.clear],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-            }
-        )
-        .overlay(
-            Capsule()
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [color.opacity(0.4), color.opacity(0.15)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1
-                )
-        )
-    }
-}
-
-// MARK: - Simple Progress Bar
-struct SimpleProgressBar: View {
-    @Environment(\.theme) private var theme
-    let progress: Double
-
-    var body: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(theme.cardBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 4)
-                            .stroke(theme.cardBorder, lineWidth: 1)
-                    )
-                    .frame(height: 8)
-
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(theme.accentColor)
-                    .frame(width: max(0, geometry.size.width * progress - 2), height: 6)
-                    .offset(x: 1)
-                    .animation(.easeInOut(duration: 0.3), value: progress)
-            }
-        }
-        .frame(height: 8)
-    }
-}
-
-// MARK: - Icon Badge
-struct IconBadge: View {
-    @Environment(\.theme) private var theme
-    let icon: String
-    let color: Color
-    var size: CGFloat = 50
-
-    var body: some View {
-        ZStack {
-            Circle()
-                .fill(theme.cardBackground)
-                .overlay(
-                    Circle()
-                        .stroke(color.opacity(0.3), lineWidth: 1.5)
-                )
-
-            Image(systemName: icon)
-                .font(.system(size: size * 0.5, weight: .medium))
-                .foregroundColor(color)
-        }
-        .frame(width: size, height: size)
-    }
-}
-
-// MARK: - Tag Badge
-struct TagBadge: View {
-    @Environment(\.theme) private var theme
-    let text: String
-
-    var body: some View {
-        Text(text)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundColor(theme.secondaryText)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(
-                Capsule()
-                    .fill(theme.cardBackground)
-                    .overlay(
-                        Capsule()
-                            .stroke(theme.cardBorder, lineWidth: 1)
-                    )
-            )
-    }
-}
-
-// MARK: - Custom Tab Picker
-struct ThemedTabPicker<SelectionValue: Hashable>: View {
-    @Environment(\.theme) private var theme
-    @Binding var selection: SelectionValue
-    let tabs: [(SelectionValue, String)]
-
-    var body: some View {
-        HStack(spacing: 0) {
-            ForEach(tabs, id: \.0) { value, title in
-                TabButton(
-                    title: title,
-                    isSelected: selection == value,
-                    action: { selection = value }
-                )
-            }
-        }
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
-    }
-}
-
-private struct TabButton: View {
-    @Environment(\.theme) private var theme
-    let title: String
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            Text(LocalizedStringKey(title), bundle: .module)
-                .font(.system(size: 14, weight: isSelected ? .semibold : .medium))
-                .foregroundColor(isSelected ? theme.primaryText : theme.secondaryText)
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(isSelected ? theme.accentColor.opacity(0.1) : Color.clear)
-                )
-                .contentShape(Rectangle())
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(
-                            isSelected ? theme.accentColor : Color.clear,
-                            lineWidth: 1.5
-                        )
-                )
-                .animation(.easeInOut(duration: 0.2), value: isSelected)
-        }
-        .buttonStyle(PlainButtonStyle())
     }
 }
 
@@ -497,31 +84,28 @@ struct SystemResourceMonitor: View {
     @ObservedObject private var monitor = SystemMonitorService.shared
     @State private var isHoveringCPU = false
     @State private var isHoveringRAM = false
-    @State private var isHoveringModels = false
     @State private var showResourcePopover = false
     @State private var cachedModelCount: Int = 0
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             // CPU Usage
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 4) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
+                HStack(spacing: theme.space.s4) {
                     Image(systemName: "cpu")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                        .glyphSize(.footnote, weight: .medium)
+                        .foregroundColor(theme.text.secondary)
                     Text("CPU", bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.smallLabel)
+                        .foregroundColor(theme.text.secondary)
                     Spacer()
                     Text("\(Int(monitor.cpuUsage))%", bundle: .module)
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .font(SettingsFont.monoSmall)
                         .foregroundColor(colorForUsage(monitor.cpuUsage))
                         .contentTransition(.numericText())
                 }
 
-                ProgressView(value: monitor.cpuUsage / 100.0)
-                    .progressViewStyle(MinimalProgressViewStyle(color: colorForUsage(monitor.cpuUsage)))
-                    .frame(height: 4)
+                SettingsProgressBar(value: monitor.cpuUsage / 100, tint: colorForUsage(monitor.cpuUsage))
                     .help(Text(localized: "CPU Usage: \(String(format: "%.1f", monitor.cpuUsage))%"))
                     .onHover { hovering in
                         isHoveringCPU = hovering
@@ -530,18 +114,18 @@ struct SystemResourceMonitor: View {
                         Group {
                             if isHoveringCPU {
                                 Text("\(String(format: "%.1f", monitor.cpuUsage))%", bundle: .module)
-                                    .font(.system(size: 10, weight: .medium, design: .monospaced))
-                                    .foregroundColor(theme.primaryText)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
+                                    .font(SettingsFont.monoSmall)
+                                    .foregroundColor(theme.text.primary)
+                                    .padding(.horizontal, theme.space.s8)
+                                    .padding(.vertical, theme.space.s4)
                                     .background(
                                         ZStack {
-                                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                                .fill(theme.cardBackground.opacity(0.95))
-                                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                                .strokeBorder(theme.glassEdgeLight.opacity(0.15), lineWidth: 1)
+                                            RoundedRectangle(cornerRadius: theme.radius.small, style: .continuous)
+                                                .fill(theme.surface.overlay)
+                                            RoundedRectangle(cornerRadius: theme.radius.small, style: .continuous)
+                                                .strokeBorder(theme.border.default, lineWidth: theme.stroke.default)
                                         }
-                                        .shadow(color: theme.shadowColor.opacity(0.15), radius: 4, x: 0, y: 2)
+                                        .themeElevation(theme.elevation.overlay)
                                     )
                                     .offset(y: -20)
                                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
@@ -552,61 +136,40 @@ struct SystemResourceMonitor: View {
             .frame(minWidth: 50)
 
             // RAM Usage
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 4) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
+                HStack(spacing: theme.space.s4) {
                     Image(systemName: "memorychip")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                        .glyphSize(.footnote, weight: .medium)
+                        .foregroundColor(theme.text.secondary)
                     Text("RAM", bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.smallLabel)
+                        .foregroundColor(theme.text.secondary)
 
                     // Models indicator button
                     Button(action: { showResourcePopover.toggle() }) {
-                        HStack(spacing: 2) {
+                        HStack(spacing: theme.space.s2) {
                             Image(systemName: "cube.box")
-                                .font(.system(size: 9, weight: .medium))
+                                .glyphSize(.tiny, weight: .medium)
 
                             if cachedModelCount > 0 {
                                 Text("\(cachedModelCount)", bundle: .module)
-                                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                                    .font(SettingsFont.monoSmall)
                                     .contentTransition(.numericText())
                             }
                         }
-                        .foregroundColor(isHoveringModels ? theme.accentColor : theme.tertiaryText)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 2)
-                        .background(
-                            Capsule()
-                                .fill(isHoveringModels ? theme.accentColor.opacity(0.12) : Color.clear)
-                        )
-                        .overlay(
-                            Capsule()
-                                .strokeBorder(
-                                    isHoveringModels ? theme.accentColor.opacity(0.3) : Color.clear,
-                                    lineWidth: 1
-                                )
-                        )
                     }
-                    .buttonStyle(PlainButtonStyle())
-                    .onHover { hovering in
-                        withAnimation(.easeOut(duration: 0.15)) {
-                            isHoveringModels = hovering
-                        }
-                    }
+                    .assignedSettingsButtonStyle(.tertiary, size: .extraExtraSmall)
                     .help(Text(localized: "Loaded Models\(cachedModelCount > 0 ? " (\(cachedModelCount))" : "")"))
 
                     Spacer()
 
                     Text("\(Int(monitor.memoryUsage))%", bundle: .module)
-                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .font(SettingsFont.monoSmall)
                         .foregroundColor(colorForUsage(monitor.memoryUsage))
                         .contentTransition(.numericText())
                 }
 
-                ProgressView(value: monitor.memoryUsage / 100.0)
-                    .progressViewStyle(MinimalProgressViewStyle(color: colorForUsage(monitor.memoryUsage)))
-                    .frame(height: 4)
+                SettingsProgressBar(value: monitor.memoryUsage / 100, tint: colorForUsage(monitor.memoryUsage))
                     .help(
                         Text(
                             "Memory: \(String(format: "%.1f", monitor.usedMemoryGB)) GB / \(String(format: "%.1f", monitor.totalMemoryGB)) GB",
@@ -623,18 +186,18 @@ struct SystemResourceMonitor: View {
                                     "\(String(format: "%.1f", monitor.usedMemoryGB)) / \(String(format: "%.1f", monitor.totalMemoryGB)) GB",
                                     bundle: .module
                                 )
-                                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                                .foregroundColor(theme.primaryText)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
+                                .font(SettingsFont.monoSmall)
+                                .foregroundColor(theme.text.primary)
+                                .padding(.horizontal, theme.space.s8)
+                                .padding(.vertical, theme.space.s4)
                                 .background(
                                     ZStack {
-                                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                            .fill(theme.cardBackground.opacity(0.95))
-                                        RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                            .strokeBorder(theme.glassEdgeLight.opacity(0.15), lineWidth: 1)
+                                        RoundedRectangle(cornerRadius: theme.radius.small, style: .continuous)
+                                            .fill(theme.surface.overlay)
+                                        RoundedRectangle(cornerRadius: theme.radius.small, style: .continuous)
+                                            .strokeBorder(theme.border.default, lineWidth: theme.stroke.default)
                                     }
-                                    .shadow(color: theme.shadowColor.opacity(0.15), radius: 4, x: 0, y: 2)
+                                    .themeElevation(theme.elevation.overlay)
                                 )
                                 .offset(y: -20)
                                 .transition(.opacity.combined(with: .scale(scale: 0.9)))
@@ -644,34 +207,17 @@ struct SystemResourceMonitor: View {
             }
             .frame(minWidth: 50)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, theme.space.s12)
+        .padding(.vertical, theme.space.s8)
         .background(
-            ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(theme.secondaryBackground.opacity(0.8))
-
-                // Subtle accent gradient at top
-                LinearGradient(
-                    colors: [theme.accentColor.opacity(0.03), Color.clear],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            }
+            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                .fill(theme.surface.subtle)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
                 .strokeBorder(
-                    LinearGradient(
-                        colors: [
-                            theme.glassEdgeLight.opacity(0.12),
-                            theme.cardBorder.opacity(0.8),
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1
+                    theme.border.default,
+                    lineWidth: theme.stroke.default
                 )
         )
         .onAppear {
@@ -692,7 +238,7 @@ struct SystemResourceMonitor: View {
                 Task { await refreshModelCount() }
             })
             .frame(minWidth: 300)
-            .padding(14)
+            .padding(theme.space.s12)
         }
     }
 
@@ -705,36 +251,13 @@ struct SystemResourceMonitor: View {
     private func colorForUsage(_ usage: Double) -> Color {
         switch usage {
         case 0 ..< 50:
-            return theme.successColor
+            return theme.status.success.foreground
         case 50 ..< 80:
-            return theme.warningColor
+            return theme.status.warning.foreground
         default:
-            return theme.errorColor
+            return theme.status.error.foreground
         }
     }
 }
 
-// MARK: - Minimal Progress View Style
-struct MinimalProgressViewStyle: ProgressViewStyle {
-    @Environment(\.theme) private var theme
-    let color: Color
 
-    func makeBody(configuration: Configuration) -> some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .leading) {
-                // Tint the track with the fill color so it stays visible on
-                // any background. `tertiaryBackground` sits too close to
-                // `primaryBackground` in the dark themes to read as a track.
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(color.opacity(0.18))
-                    .frame(height: 4)
-
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(color)
-                    .frame(width: geometry.size.width * (configuration.fractionCompleted ?? 0), height: 4)
-                    .animation(.easeInOut(duration: 0.3), value: configuration.fractionCompleted)
-            }
-        }
-        .frame(height: 4)
-    }
-}

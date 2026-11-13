@@ -145,6 +145,12 @@ enum RequestSource: String, Sendable, CaseIterable, Codable {
     case schedule = "Schedule"
     /// File-system watcher trigger.
     case watcher = "Watcher"
+    /// Webhook event fired by an external caller.
+    case webhook = "Webhook"
+    /// Email event: new mail in a watched mailbox.
+    case email = "Email"
+    /// Automation of another kind (feed, stream, failed run, app event).
+    case automation = "Automation"
     /// Agent-authored wake-up.
     case selfSchedule = "Self-scheduled"
     /// Egress performed by a tool on behalf of whatever run invoked it
@@ -165,6 +171,9 @@ enum RequestSource: String, Sendable, CaseIterable, Codable {
         case .channel: return L("Channel")
         case .schedule: return L("Schedule")
         case .watcher: return L("Watcher")
+        case .webhook: return L("Webhook")
+        case .email: return L("Email")
+        case .automation: return L("Automation")
         case .selfSchedule: return L("Self-scheduled")
         case .tool: return L("Tool")
         case .system: return L("System")
@@ -183,6 +192,9 @@ enum RequestSource: String, Sendable, CaseIterable, Codable {
         case .channel: return "Channel"
         case .schedule: return "Schedule"
         case .watcher: return "Watcher"
+        case .webhook: return "Webhook"
+        case .email: return "Email"
+        case .automation: return "Automation"
         case .selfSchedule: return "Self-scheduled"
         case .tool: return "Tool"
         case .system: return "System"
@@ -201,6 +213,9 @@ enum RequestSource: String, Sendable, CaseIterable, Codable {
         case .channel: return "bubble.left.and.bubble.right.fill"
         case .schedule: return "calendar.badge.clock"
         case .watcher: return "eye.fill"
+        case .webhook: return "link"
+        case .email: return "envelope.fill"
+        case .automation: return "bolt.fill"
         case .selfSchedule: return "clock.badge.checkmark.fill"
         case .tool: return "wrench.and.screwdriver.fill"
         case .system: return "gearshape.fill"
@@ -260,7 +275,7 @@ struct RequestConnectionInfo: Sendable, Equatable, Codable {
     var transport: RequestTransport?
     var mode: RequestMode?
     /// (inbound / host only) Access-key id (`AccessKeyInfo.id`) the request
-    /// authenticated with, so the host's Remote Connections view can attribute
+    /// authenticated with, so the host's Guests list can attribute
     /// usage to a specific paired peer. nil for loopback / master-scoped.
     var accessKeyId: String?
     /// (inbound / host only) The agent-address audience the key is scoped to.
@@ -321,9 +336,23 @@ enum ActivityCategory: String, Sendable, Codable, CaseIterable {
     case speechSynthesis = "speech_synthesis"
     /// Image / video generation, editing or upscaling (local or cloud).
     case mediaGeneration = "media_generation"
+    /// One workflow run, written when it ends: caller, status, input, output.
+    case workflowRun = "workflow_run"
+    /// One step of a workflow run, written when it ends, with its tool calls.
+    case workflowNode = "workflow_node"
+    /// One event occurrence (schedule, folder, webhook, channel message),
+    /// written when it settles: source, action, status. Metadata only.
+    case event
+    /// One task (automation run, background agent turn, workflow run,
+    /// subagent), written when it ends: queue, origin, state. Metadata only.
+    case task
     /// Store-level events (cleared, pruned, verified, exported, settings
     /// changed, recovered). Chain-of-custody rows for reviewers.
     case system
+    /// Someone acting on an agent's request: an owner approval or denial, a
+    /// reply, a dismissal, a timeout, a notification delivered. Metadata;
+    /// reply text only under the `message` content key.
+    case interaction
 
     var displayName: String {
         switch self {
@@ -341,7 +370,12 @@ enum ActivityCategory: String, Sendable, Codable, CaseIterable {
         case .audioTranscription: return L("Transcription")
         case .speechSynthesis: return L("Speech")
         case .mediaGeneration: return L("Media")
+        case .workflowRun: return L("Workflow run")
+        case .workflowNode: return L("Workflow step")
+        case .event: return L("Automation")
+        case .task: return L("Task")
         case .system: return L("System")
+        case .interaction: return L("Interaction")
         }
     }
 
@@ -361,7 +395,12 @@ enum ActivityCategory: String, Sendable, Codable, CaseIterable {
         case .audioTranscription: return "waveform"
         case .speechSynthesis: return "speaker.wave.2"
         case .mediaGeneration: return "photo.on.rectangle.angled"
+        case .workflowRun: return "point.3.filled.connected.trianglepath.dotted"
+        case .workflowNode: return "square.stack.3d.up"
+        case .event: return "bolt.fill"
+        case .task: return "checklist"
         case .system: return "gearshape"
+        case .interaction: return "hand.raised"
         }
     }
 
@@ -435,7 +474,9 @@ struct EgressInfo: Sendable, Equatable, Codable {
 
     /// `details` keys that carry user content (as opposed to metadata) and
     /// are withheld when content storage is disabled.
-    static let contentDetailKeys: Set<String> = ["query", "urls", "arguments", "result_preview", "message"]
+    static let contentDetailKeys: Set<String> = [
+        "query", "urls", "arguments", "result_preview", "message", "logs", "task_title", "attention_title",
+    ]
 
     /// Host component of an endpoint string, or the string itself when it
     /// is not a URL.
@@ -480,6 +521,28 @@ struct RequestLog: Identifiable, Sendable, Codable {
     let sessionId: UUID?
     /// (inbound only) Remote client address that made the request.
     let clientIP: String?
+    /// The workflow run, and the step within it, that produced this row.
+    /// A `workflowRun` row carries only the run.
+    let workflowRunId: UUID?
+    let workflowNodeId: String?
+    /// The task that produced this row (`ChatExecutionContext.currentTaskId`).
+    /// A `task` row carries its own id.
+    let taskId: UUID?
+    /// Who the work was for or who acted: the caller of a shared-agent run,
+    /// a channel sender, the owner answering an approval. Snapshot as
+    /// written; nil for rows nobody in particular drove.
+    let participant: ParticipantRef?
+
+    /// The agent address this row is about: a calling agent, else the shared
+    /// agent an interaction was on. Derived, never stored in the payload.
+    var relatedAgentAddress: String? {
+        if let participant, participant.kind == .remoteAgent || participant.kind == .agent,
+            let address = participant.agentAddress, !address.isEmpty
+        {
+            return address.lowercased()
+        }
+        return egress?.details["agent_address"].flatMap { $0.isEmpty ? nil : $0.lowercased() }
+    }
 
     /// Hash-chain position, assigned by `ActivityLogStore` on append. nil
     /// until persisted.
@@ -584,11 +647,19 @@ struct RequestLog: Identifiable, Sendable, Codable {
         agentId: UUID? = nil,
         agentName: String? = nil,
         sessionId: UUID? = nil,
-        clientIP: String? = nil
+        clientIP: String? = nil,
+        workflowRunId: UUID? = nil,
+        workflowNodeId: String? = nil,
+        taskId: UUID? = nil,
+        participant: ParticipantRef? = nil
     ) {
         self.id = id
+        self.participant = participant
         self.timestamp = timestamp
         self.source = source
+        self.workflowRunId = workflowRunId
+        self.workflowNodeId = workflowNodeId
+        self.taskId = taskId
         let resolvedConnection = (connection?.isEmpty == true) ? nil : connection
         self.category =
             category
@@ -780,7 +851,11 @@ struct RequestLog: Identifiable, Sendable, Codable {
             agentId: agentId,
             agentName: agentName,
             sessionId: sessionId,
-            clientIP: clientIP
+            clientIP: clientIP,
+            workflowRunId: workflowRunId,
+            workflowNodeId: workflowNodeId,
+            taskId: taskId,
+            participant: participant
         )
         copy.seq = seq
         copy.prevHash = prevHash
@@ -877,6 +952,19 @@ struct RequestLog: Identifiable, Sendable, Codable {
             }
             let base = "\(verb) \(count) \(noun)"
             return model != nil ? "\(base) · \(shortModelName)" : base
+        case .workflowRun:
+            let name = d["workflow"] ?? path
+            return d["status"].map { "\(name) · \(Self.workflowStatusLabel($0))" } ?? name
+        case .workflowNode:
+            let step = d["node_name"] ?? workflowNodeId ?? path
+            if let workflow = d["workflow"] { return "\(workflow) › \(step)" }
+            return step
+        case .event:
+            let name = d["event"] ?? path
+            return d["status"].map { "\(name) · \(EventRunStatus(rawValue: $0)?.displayName ?? $0)" } ?? name
+        case .task:
+            let name = d["task_title"].flatMap { RequestLog.isWithheldContent($0) ? nil : $0 } ?? path
+            return d["state"].map { "\(name) · \(TaskState(rawValue: $0)?.displayName ?? $0)" } ?? name
         case .system:
             if let event = d["event"] {
                 switch event {
@@ -891,6 +979,88 @@ struct RequestLog: Identifiable, Sendable, Codable {
             }
             if let reason = d["reason"], reason.hasPrefix("cleared") { return L("Activity log cleared") }
             return errorMessage ?? path
+        case .interaction:
+            // "Allowed web_fetch", "Replied to a question". Who, where and
+            // how long are in the detail.
+            switch method {
+            case "MESSAGE":
+                return d["requester"].map { L("You wrote to \($0)") } ?? L("You wrote in the conversation")
+            case "DELIVER":
+                return d["tool"] ?? Self.interactionKindLabel(d["kind"]) ?? path
+            default:
+                let subject = d["tool"] ?? Self.interactionKindPhrase(d["kind"]) ?? path
+                return Self.interactionTitle(method: method, subject: subject)
+            }
+        }
+    }
+
+    /// The answer and what it answered, as one phrase.
+    static func interactionTitle(method: String, subject: String) -> String {
+        switch method {
+        case "APPROVE": return L("Allowed \(subject)")
+        case "DENY": return L("Denied \(subject)")
+        case "ALLOW_CONVERSATION": return L("Allowed \(subject) for this conversation")
+        case "REPLY": return L("Replied to \(subject)")
+        case "DISMISS": return L("Dismissed \(subject)")
+        case "TIMEOUT": return L("No answer to \(subject) in time")
+        case "ABANDON": return L("Run ended before you answered \(subject)")
+        case "RETRACT": return L("Withdrawn before you answered \(subject)")
+        default: return "\(interactionOutcomeLabel(method)) \(subject)"
+        }
+    }
+
+    /// "a question", "a workflow form", … for a request with no tool name.
+    static func interactionKindPhrase(_ raw: String?) -> String? {
+        guard let raw, let kind = AttentionKind(rawValue: raw) else { return nil }
+        switch kind {
+        case .toolApproval: return L("a tool call")
+        case .ownerApproval: return L("a teammate's tool call")
+        case .clarification: return L("a question")
+        case .workflowDialog: return L("a workflow form")
+        case .configApproval: return L("a configuration change")
+        case .computerUse: return L("a Computer Use step")
+        case .secretRequest: return L("a secret request")
+        case .elicitation: return L("an MCP form")
+        case .privacyReview: return L("a privacy review")
+        case .inboundMessage: return L("a message")
+        case .inboundSharedRun: return L("a shared conversation")
+        case .agentNotice: return L("a notice")
+        }
+    }
+
+    /// "Approval for a shared agent", "Owner message", … for an
+    /// `interaction` row's `kind` detail.
+    static func interactionKindLabel(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        if raw == "participant_message" { return L("Owner message") }
+        return AttentionKind(rawValue: raw)?.displayName ?? raw
+    }
+
+    /// "Allowed", "Denied", … for an `interaction` row's method.
+    static func interactionOutcomeLabel(_ method: String) -> String {
+        switch method {
+        case "APPROVE": return L("Allowed")
+        case "DENY": return L("Denied")
+        case "ALLOW_CONVERSATION": return L("Allowed for this conversation")
+        case "REPLY": return L("Replied")
+        case "DISMISS": return L("Dismissed")
+        case "TIMEOUT": return L("Timed out")
+        case "ABANDON": return L("Run ended first")
+        case "RETRACT": return L("Withdrawn")
+        case "DELIVER": return L("Delivered")
+        case "MESSAGE": return L("You wrote in the conversation")
+        default: return method.capitalized
+        }
+    }
+
+    /// "Completed", "Failed", … for a workflow run or step status raw value.
+    static func workflowStatusLabel(_ raw: String) -> String {
+        switch raw {
+        case "completed", "done": return L("Completed")
+        case "failed": return L("Failed")
+        case "cancelled": return L("Cancelled")
+        case "needs_setup": return L("Needs setup")
+        default: return raw.replacingOccurrences(of: "_", with: " ").capitalized
         }
     }
 
@@ -989,7 +1159,10 @@ struct RequestLog: Identifiable, Sendable, Codable {
 
     /// Is this an error state?
     var isError: Bool {
-        !isSuccess || finishReason == .error || errorMessage != nil
+        // A denial is an answer, not a failure; only an unanswered
+        // interaction counts as one.
+        if category == .interaction { return statusCode == 408 }
+        return !isSuccess || finishReason == .error || errorMessage != nil
     }
 
     /// Formatted timestamp for display
@@ -1000,12 +1173,17 @@ struct RequestLog: Identifiable, Sendable, Codable {
     }
 
     /// Formatted duration for display
-    var formattedDuration: String {
-        if durationMs < 1000 {
-            return String(format: "%.0fms", durationMs)
-        } else {
-            return String(format: "%.1fs", durationMs / 1000)
-        }
+    var formattedDuration: String { Self.formattedDuration(ms: durationMs) }
+
+    /// The one duration format in Insights: "420ms", "4.2s", "2m 5s".
+    static func formattedDuration(ms: Double) -> String {
+        let ms = max(0, ms)
+        if ms < 1000 { return String(format: "%.0fms", ms) }
+        if ms < 60_000 { return String(format: "%.1fs", ms / 1000) }
+        let formatter = DateComponentsFormatter()
+        formatter.allowedUnits = [.hour, .minute, .second]
+        formatter.unitsStyle = .abbreviated
+        return formatter.string(from: (ms / 1000).rounded()) ?? String(format: "%.0fs", ms / 1000)
     }
 
     /// Formatted tokens per second

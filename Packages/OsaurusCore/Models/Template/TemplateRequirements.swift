@@ -3,9 +3,10 @@
 //  osaurus
 //
 //  What a template needs from the Mac it is installed on. Requirements are
-//  derived from the payload, never hand-written: a designer can annotate
-//  one with a note but cannot leave one out. The setup checker and the
-//  setup wizard read this one shape.
+//  derived from the payload (an agent entry or a workflow graph), never
+//  hand-written: a designer can annotate one with a note but cannot leave
+//  one out. The setup checker and the setup wizard read this one shape for
+//  both template kinds.
 //
 
 import Foundation
@@ -157,10 +158,18 @@ public struct OAuth2Spec: Codable, Equatable, Sendable {
     /// Extra authorize-URL query items some services need (e.g. Google's
     /// `access_type=offline`).
     public var authorizeParameters: [String: String]
+    /// What joins `scopes` in the authorize URL; Slack documents a comma.
+    public var scopeSeparator: String
+    /// The token endpoint takes the client secret as HTTP Basic auth
+    /// rather than in the body (Notion).
+    public var clientSecretBasic: Bool
+    /// The token endpoint takes a JSON body rather than a form (Notion).
+    public var jsonTokenBody: Bool
 
     public init(
         authorizeURL: String, tokenURL: String, scopes: [String] = [], clientID: String? = nil,
-        requiresClientSecret: Bool = false, authorizeParameters: [String: String] = [:]
+        requiresClientSecret: Bool = false, authorizeParameters: [String: String] = [:],
+        scopeSeparator: String = " ", clientSecretBasic: Bool = false, jsonTokenBody: Bool = false
     ) {
         self.authorizeURL = authorizeURL
         self.tokenURL = tokenURL
@@ -168,6 +177,9 @@ public struct OAuth2Spec: Codable, Equatable, Sendable {
         self.clientID = clientID
         self.requiresClientSecret = requiresClientSecret
         self.authorizeParameters = authorizeParameters
+        self.scopeSeparator = scopeSeparator
+        self.clientSecretBasic = clientSecretBasic
+        self.jsonTokenBody = jsonTokenBody
     }
 
     enum CodingKeys: String, CodingKey {
@@ -177,6 +189,9 @@ public struct OAuth2Spec: Codable, Equatable, Sendable {
         case clientID = "client_id"
         case requiresClientSecret = "requires_client_secret"
         case authorizeParameters = "authorize_parameters"
+        case scopeSeparator = "scope_separator"
+        case clientSecretBasic = "client_secret_basic"
+        case jsonTokenBody = "json_token_body"
     }
 
     public init(from decoder: Decoder) throws {
@@ -187,6 +202,10 @@ public struct OAuth2Spec: Codable, Equatable, Sendable {
         clientID = try c.decodeIfPresent(String.self, forKey: .clientID)
         requiresClientSecret = try c.decodeIfPresent(Bool.self, forKey: .requiresClientSecret) ?? false
         authorizeParameters = try c.decodeIfPresent([String: String].self, forKey: .authorizeParameters) ?? [:]
+        let separator = try c.decodeIfPresent(String.self, forKey: .scopeSeparator) ?? ""
+        scopeSeparator = separator.isEmpty ? " " : separator
+        clientSecretBasic = try c.decodeIfPresent(Bool.self, forKey: .clientSecretBasic) ?? false
+        jsonTokenBody = try c.decodeIfPresent(Bool.self, forKey: .jsonTokenBody) ?? false
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -197,6 +216,9 @@ public struct OAuth2Spec: Codable, Equatable, Sendable {
         try c.encodeIfPresent(clientID, forKey: .clientID)
         if requiresClientSecret { try c.encode(true, forKey: .requiresClientSecret) }
         if !authorizeParameters.isEmpty { try c.encode(authorizeParameters, forKey: .authorizeParameters) }
+        if scopeSeparator != " " { try c.encode(scopeSeparator, forKey: .scopeSeparator) }
+        if clientSecretBasic { try c.encode(true, forKey: .clientSecretBasic) }
+        if jsonTokenBody { try c.encode(true, forKey: .jsonTokenBody) }
     }
 
     /// The service the token is for, from the authorize URL's host.
@@ -239,6 +261,15 @@ public struct TemplateRequirements: Codable, Equatable, Sendable {
     /// Built-in tools tool and agentic nodes call (MCP and plugin tools are
     /// covered by `mcpServers` / `plugins`).
     public var tools: [String]
+    /// Workflow only: packages its shell steps need in its sandbox
+    /// environment, one per package manager.
+    public var dependencies: [WorkflowDependency]
+    /// Workflow only: fixed folders its steps use, bound per Mac.
+    public var folders: [FolderRequirement]
+    /// Workflow only: image and video models its media steps run on.
+    public var mediaModels: [MediaModelRequirement]
+    /// Workflow only: the agents its agent steps hand work to.
+    public var agents: [AgentRequirement]
     /// Agent only: knowledge collection names.
     public var knowledge: [String]
     /// Agent only: the skill allow-list (`agents[].skills`), by name or slug.
@@ -256,12 +287,20 @@ public struct TemplateRequirements: Codable, Equatable, Sendable {
         permissions: [String] = [],
         network: [String] = [],
         tools: [String] = [],
+        dependencies: [WorkflowDependency] = [],
+        folders: [FolderRequirement] = [],
+        mediaModels: [MediaModelRequirement] = [],
+        agents: [AgentRequirement] = [],
         knowledge: [String] = [],
         skills: [String] = [],
         workingFolder: PathHint? = nil,
         notes: [String: String] = [:]
     ) {
+        self.mediaModels = mediaModels
+        self.agents = agents
         self.tools = tools
+        self.dependencies = dependencies
+        self.folders = folders
         self.skills = skills
         self.models = models
         self.secrets = secrets
@@ -274,10 +313,16 @@ public struct TemplateRequirements: Codable, Equatable, Sendable {
         self.notes = notes
     }
 
+    /// A workflow with dependencies runs its shell steps in its own sandbox
+    /// environment.
+    public var usesSandbox: Bool { !dependencies.isEmpty }
+
     enum CodingKeys: String, CodingKey {
-        case models, secrets, permissions, network, knowledge, notes, plugins, tools, skills
+        case models, secrets, permissions, network, knowledge, notes, plugins, tools, dependencies, folders, skills
         case mcpServers = "mcp_servers"
         case workingFolder = "working_folder"
+        case mediaModels = "media_models"
+        case agents
     }
 
     public init(from decoder: Decoder) throws {
@@ -289,14 +334,19 @@ public struct TemplateRequirements: Codable, Equatable, Sendable {
         permissions = try c.decodeIfPresent([String].self, forKey: .permissions) ?? []
         network = try c.decodeIfPresent([String].self, forKey: .network) ?? []
         tools = try c.decodeIfPresent([String].self, forKey: .tools) ?? []
+        dependencies = try c.decodeIfPresent([WorkflowDependency].self, forKey: .dependencies) ?? []
+        folders = try c.decodeIfPresent([FolderRequirement].self, forKey: .folders) ?? []
+        mediaModels = try c.decodeIfPresent([MediaModelRequirement].self, forKey: .mediaModels) ?? []
+        agents = try c.decodeIfPresent([AgentRequirement].self, forKey: .agents) ?? []
         knowledge = try c.decodeIfPresent([String].self, forKey: .knowledge) ?? []
         skills = try c.decodeIfPresent([String].self, forKey: .skills) ?? []
         workingFolder = try c.decodeIfPresent(PathHint.self, forKey: .workingFolder)
         notes = try c.decodeIfPresent([String: String].self, forKey: .notes) ?? [:]
     }
 
-    /// `tools` and `skills` are left out when empty so templates without
-    /// them keep their content hash.
+    /// `tools`, `dependencies`, `folders`, `media_models`, `agents`, and
+    /// `skills` are left out when empty so templates without them keep
+    /// their content hash.
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(models, forKey: .models)
@@ -306,6 +356,10 @@ public struct TemplateRequirements: Codable, Equatable, Sendable {
         try c.encode(permissions, forKey: .permissions)
         try c.encode(network, forKey: .network)
         if !tools.isEmpty { try c.encode(tools, forKey: .tools) }
+        if !dependencies.isEmpty { try c.encode(dependencies, forKey: .dependencies) }
+        if !folders.isEmpty { try c.encode(folders, forKey: .folders) }
+        if !mediaModels.isEmpty { try c.encode(mediaModels, forKey: .mediaModels) }
+        if !agents.isEmpty { try c.encode(agents, forKey: .agents) }
         try c.encode(knowledge, forKey: .knowledge)
         if !skills.isEmpty { try c.encode(skills, forKey: .skills) }
         try c.encodeIfPresent(workingFolder, forKey: .workingFolder)
@@ -318,8 +372,9 @@ public struct TemplateRequirements: Codable, Equatable, Sendable {
         permissions.compactMap(SystemPermission.init(rawValue:))
     }
 
-    /// Union of two requirement sets, deduplicated by key, so a secret,
-    /// server, or permission several templates need is asked once.
+    /// Union of two requirement sets, deduplicated by key. Used when one
+    /// wizard pass covers an agent template and the workflows it bundles:
+    /// a secret, server, or permission several templates need is asked once.
     public func merged(with other: TemplateRequirements) -> TemplateRequirements {
         func union(_ a: [String], _ b: [String]) -> [String] {
             var seen = Set<String>()
@@ -331,6 +386,15 @@ public struct TemplateRequirements: Codable, Equatable, Sendable {
             secretsByKey[s.key] = s
             secretOrder.append(s.key)
         }
+        var mergedDependencies = dependencies
+        for dep in other.dependencies {
+            if let i = mergedDependencies.firstIndex(where: { $0.manager == dep.manager }) {
+                mergedDependencies[i].packages = union(mergedDependencies[i].packages, dep.packages)
+                mergedDependencies[i].binaries = union(mergedDependencies[i].binaries, dep.binaries)
+            } else {
+                mergedDependencies.append(dep)
+            }
+        }
         return TemplateRequirements(
             models: models + other.models,
             secrets: secretOrder.compactMap { secretsByKey[$0] },
@@ -339,6 +403,16 @@ public struct TemplateRequirements: Codable, Equatable, Sendable {
             permissions: union(permissions, other.permissions),
             network: union(network, other.network),
             tools: union(tools, other.tools),
+            dependencies: mergedDependencies,
+            folders: (folders + other.folders).reduce(into: [FolderRequirement]()) { out, folder in
+                if !out.contains(where: { $0.key == folder.key }) { out.append(folder) }
+            },
+            mediaModels: (mediaModels + other.mediaModels).reduce(into: [MediaModelRequirement]()) { out, req in
+                if !out.contains(where: { $0.id == req.id }) { out.append(req) }
+            },
+            agents: (agents + other.agents).reduce(into: [AgentRequirement]()) { out, req in
+                if !out.contains(where: { $0.id == req.id }) { out.append(req) }
+            },
             knowledge: union(knowledge, other.knowledge),
             skills: union(skills, other.skills),
             workingFolder: workingFolder ?? other.workingFolder,
@@ -377,6 +451,29 @@ public struct TemplateRequirements: Codable, Equatable, Sendable {
         }
         for host in network { out.append(note(TemplateRequirement(kind: .network, value: host))) }
         for name in tools { out.append(note(TemplateRequirement(kind: .tool, value: name))) }
+        for dep in dependencies {
+            for package in dep.packages {
+                out.append(
+                    note(
+                        TemplateRequirement(
+                            kind: .dependency,
+                            value: WorkflowDependency.requirementValue(manager: dep.manager, package: package),
+                            label: "\(package) (\(dep.manager.displayName))")))
+            }
+        }
+        for folder in folders {
+            out.append(note(TemplateRequirement(kind: .folder, value: folder.key, label: folder.label)))
+        }
+        for media in mediaModels {
+            out.append(note(TemplateRequirement(kind: .mediaModel, value: media.id, label: media.label)))
+        }
+        for agent in agents {
+            out.append(
+                note(
+                    TemplateRequirement(
+                        kind: .agent, value: agent.id,
+                        label: agent.isShared ? L("\(agent.name) (shared in a workspace)") : agent.name)))
+        }
         for name in knowledge {
             out.append(note(TemplateRequirement(kind: .knowledgeCollection, value: name)))
         }
@@ -403,7 +500,18 @@ public struct TemplateRequirement: Codable, Equatable, Sendable, Identifiable {
         case secret
         case network
         case tool
+        /// Workflow only: a package installed in its sandbox environment.
+        case dependency
+        /// Workflow only: a declared folder bound to a folder on this Mac.
+        case folder
+        /// Workflow only: an image or video model a media step runs on.
+        case mediaModel = "media_model"
+        /// Workflow only: an agent an agent step hands work to.
+        case agent
+        /// Agent only: a skill on the agent's allow-list.
         case skill
+        /// Installed workflow only: its file changed outside Osaurus.
+        case integrity
     }
 
     /// Kept for agent-template call sites that name the policy directly.

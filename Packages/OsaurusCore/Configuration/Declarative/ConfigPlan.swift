@@ -59,6 +59,9 @@ public struct ConfigPlan: Equatable, Sendable {
     public var actions: [ConfigPlanAction]
     /// Non-fatal notes (e.g. "3 agents already match — no change").
     public var notes: [String]
+    /// Unified diff of the canonical document before and after this plan,
+    /// computed by the planner; nil when a section has no exporter.
+    public var diffText: String?
 
     public init(actions: [ConfigPlanAction] = [], notes: [String] = []) {
         self.actions = actions
@@ -91,7 +94,12 @@ public struct ConfigPlan: Equatable, Sendable {
         }
         var lines: [String] = []
         var currentSection = ""
-        for action in actions {
+        // One heading per section, in first-seen order (channel config and
+        // channel routing are planned at different points).
+        var sectionOrder: [String] = []
+        for action in actions where !sectionOrder.contains(action.section) { sectionOrder.append(action.section) }
+        let grouped = sectionOrder.flatMap { section in actions.filter { $0.section == section } }
+        for action in grouped {
             if action.section != currentSection {
                 currentSection = action.section
                 lines.append("\(action.section):")

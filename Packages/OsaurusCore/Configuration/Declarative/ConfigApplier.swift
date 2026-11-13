@@ -71,15 +71,42 @@ enum ConfigApplier {
     /// validated it via `ConfigPlanner.plan` and obtained user approval.
     /// Applies are serialized process-wide: a second apply waits for the
     /// first to finish rather than interleaving with it.
+    ///
+    /// Every production caller passes `caller`: the apply then writes
+    /// configuration history (a drift row first when the document changed
+    /// outside any apply, then the landed result). Tests that exercise a
+    /// section in isolation omit it and write none.
     static func apply(
         document: OsaurusConfigDocument,
         prune: Bool,
-        options: ConfigApplyOptions = .default
+        options: ConfigApplyOptions = .default,
+        caller: ConfigChangeCaller? = nil,
+        approvalId: UUID? = nil,
+        requestText: String? = nil
     ) async -> [ConfigApplyResult] {
         await ConfigApplySerialQueue.shared.acquire()
-        let results = await applyLocked(document: document, prune: prune, options: options)
+        if caller != nil { await ConfigHistoryRecorder.noticeDrift(.beforeApply) }
+        let results = await TelemetryContext.$agentCreationOrigin.withValue(
+            TelemetryContext.agentCreationOrigin ?? FeatureTelemetry.agentCreationOrigin(for: caller)
+        ) {
+            await applyLocked(document: document, prune: prune, options: options)
+        }
+        if let caller {
+            await ConfigHistoryRecorder.recordApply(
+                results, caller: caller, approvalId: approvalId, requestText: requestText)
+        }
         await ConfigApplySerialQueue.shared.release()
         return results
+    }
+
+    /// The drift check outside an apply (launch, opening History), under the
+    /// apply lock so it never snapshots a half-applied document.
+    @discardableResult
+    static func noticeConfigDrift(_ noticedAt: ConfigChangeCaller.NoticedAt) async -> ConfigSnapshot? {
+        await ConfigApplySerialQueue.shared.acquire()
+        let snapshot = await ConfigHistoryRecorder.noticeDrift(noticedAt)
+        await ConfigApplySerialQueue.shared.release()
+        return snapshot
     }
 
     private static func applyLocked(
@@ -88,6 +115,7 @@ enum ConfigApplier {
         options: ConfigApplyOptions
     ) async -> [ConfigApplyResult] {
         var results: [ConfigApplyResult] = []
+        let document = await MainActor.run { document.translatingLegacyEvents().document }
 
         // Captured BEFORE any section mutates state: the live chat
         // conversation's effective spawn pool, so the post-apply hook can
@@ -105,6 +133,18 @@ enum ConfigApplier {
         if let section = document.defaultAgent {
             results.append(await applyDefaultAgent(section, pendingModelIds: document.models ?? []))
         }
+        if let section = document.configurator {
+            results.append(await applyConfigurator(section, pendingModelIds: document.models ?? []))
+        }
+        if let section = document.modelDefaults {
+            results.append(await applyModelDefaults(section, pendingModelIds: document.models ?? []))
+        }
+        if let section = document.chat {
+            results.append(await applyChat(section))
+        }
+        if let section = document.app {
+            results.append(await applyApp(section))
+        }
         if let entries = document.agents {
             results.append(
                 contentsOf: await applyAgents(
@@ -119,8 +159,6 @@ enum ConfigApplier {
         if let entries = document.knowledgeCollections {
             results.append(contentsOf: await applyKnowledgeCollections(entries, prune: prune))
         }
-        // After agents: channel inbound dispatch may target an agent this
-        // same document just created.
         if let section = document.channels {
             results.append(contentsOf: await applyChannels(section))
         }
@@ -144,12 +182,28 @@ enum ConfigApplier {
         if let section = document.searchProviders {
             results.append(contentsOf: await applySearchProviders(section, prune: prune))
         }
-        if let entries = document.schedules {
-            results.append(contentsOf: await applySchedules(entries, prune: prune))
+        // After agents and channels: an event may run an agent this same
+        // document created, on a connection it configured.
+        if let entries = document.automations {
+            results.append(contentsOf: await MainActor.run { ConfigEvents.apply(entries, prune: prune) })
         }
-        if let entries = document.watchers {
-            results.append(contentsOf: await applyWatchers(entries, prune: prune))
-        }
+        // Channel rules are automations too; posting after them so an agent
+        // the rules name already exists.
+        results.append(
+            contentsOf: await MainActor.run {
+                var out: [ConfigApplyResult] = []
+                for scoped in ConfigChannelRouting.scopes(in: document) {
+                    guard let scope = scoped.scope else { continue }
+                    out += ConfigEvents.apply(scoped.entries, scope: scope, prune: prune)
+                }
+                for target in ConfigChannelPlatform.targets(in: document.channels) {
+                    guard target.platform.supportsPosting, let posting = target.section.posting,
+                        ConfigChannelAccounts.isKnown(target)
+                    else { continue }
+                    out += ConfigChannelPosting.apply(posting, target: target, prune: prune)
+                }
+                return out
+            })
         // Last: activation may reference an agent created above.
         if let name = document.activeAgent {
             results.append(await applyActiveAgent(name))
@@ -212,6 +266,7 @@ enum ConfigApplier {
             guard let session = ChatExecutionContext.currentChatSessionBox?.session
             else { return [] }
             let launchingAgentId = session.agentId ?? Agent.defaultId
+            guard launchingAgentId != Agent.defaultId else { return [] }
             let allowedAgentIDs = effectiveSpawnableAgentIDs(for: launchingAgentId)
             guard !allowedAgentIDs.isEmpty,
                 !Set(allowedAgentIDs).subtracting(baseline).isEmpty
@@ -360,6 +415,145 @@ enum ConfigApplier {
         return ConfigApplyResult(section: "default_agent", target: "default_agent", status: .done)
     }
 
+    /// Same resolve-then-store contract as `default_agent.model`, stored as
+    /// the provider / name pair `ChatModelRolePicker` writes.
+    @MainActor
+    private static func applyModelDefaults(
+        _ desired: ModelDefaultsSection, pendingModelIds: [String]
+    ) -> ConfigApplyResult {
+        let section = ConfigSectionID.modelDefaults.rawValue
+        var config = ChatConfigurationStore.load()
+        let roles: [(String, ConfigField<String>, WritableKeyPath<ChatConfiguration, String?>,
+                     WritableKeyPath<ChatConfiguration, String?>)] = [
+            ("core_model", desired.coreModel, \.coreModelProvider, \.coreModelName),
+            ("compaction_model", desired.compactionModel, \.compactionModelProvider, \.compactionModelName),
+        ]
+        for (key, field, providerPath, namePath) in roles where field.isSpecified {
+            let current = ChatModelRolePicker.identifier(
+                provider: config[keyPath: providerPath], name: config[keyPath: namePath])
+            let trimmed = field.valueOrNil?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            var stored = ""
+            if !trimmed.isEmpty {
+                switch ConfigModelReference.resolve(
+                    trimmed, catalog: ConfigModelReference.liveCatalog(), pendingLocalIds: pendingModelIds)
+                {
+                case .resolved(let canonical):
+                    stored = canonical
+                case .invalid(let message):
+                    guard current.caseInsensitiveCompare(trimmed) == .orderedSame else {
+                        return ConfigApplyResult(
+                            section: section, target: section, status: .failed, message: "\(key): \(message)")
+                    }
+                    stored = current
+                }
+            }
+            let (provider, name) = ChatModelRolePicker.split(stored)
+            config[keyPath: providerPath] = provider
+            config[keyPath: namePath] = name
+        }
+        ChatConfigurationStore.save(config)
+        return ConfigApplyResult(section: section, target: section, status: .done)
+    }
+
+    @MainActor
+    private static func applyConfigurator(
+        _ desired: ConfiguratorSection, pendingModelIds: [String]
+    ) -> ConfigApplyResult {
+        let section = ConfigSectionID.configurator.rawValue
+        var config = ConfiguratorConfigurationStore.load()
+        if desired.model.isSpecified {
+            let trimmed = desired.model.valueOrNil?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            if trimmed.isEmpty {
+                config.model = nil
+            } else {
+                let unchanged = config.resolvedModel?.caseInsensitiveCompare(trimmed) == .orderedSame
+                switch ConfigModelReference.resolve(
+                    trimmed, catalog: ConfigModelReference.liveCatalog(), pendingLocalIds: pendingModelIds)
+                {
+                case .resolved(let canonical):
+                    config.model = canonical
+                case .invalid(let message):
+                    if !unchanged {
+                        return ConfigApplyResult(
+                            section: section, target: section, status: .failed, message: "model: \(message)")
+                    }
+                }
+            }
+        }
+        if desired.temperature.isSpecified {
+            config.temperature = desired.temperature.valueOrNil.map(Float.init)
+        }
+        if let prompt = desired.systemPrompt { config.systemPrompt = prompt }
+        ConfiguratorConfigurationStore.save(config)
+        return ConfigApplyResult(section: section, target: section, status: .done)
+    }
+
+    @MainActor
+    private static func applyChat(_ desired: ChatSection) -> ConfigApplyResult {
+        let defaults = UserDefaults.standard
+        if let v = desired.smoothStreaming { defaults.set(v, forKey: ChatSection.smoothStreamingKey) }
+        if let v = desired.expandThinking { defaults.set(v, forKey: ChatSection.expandThinkingKey) }
+        if let v = desired.spellCheck { defaults.set(v, forKey: ComposerSpellCheckSetting.defaultsKey) }
+        if let v = desired.groupActivity {
+            defaults.set(v, forKey: ContentBlock.ActivityRollupSetting.defaultsKey)
+            NotificationCenter.default.post(name: ContentBlock.activityRollupSettingChanged, object: nil)
+        }
+        if let v = desired.keepMacAwake {
+            defaults.set(v, forKey: AgentRunPowerManager.keepAwakeDefaultsKey)
+            BackgroundTaskManager.shared.refreshPowerAssertion()
+        }
+
+        let previous = ChatConfigurationStore.load()
+        var config = previous
+        if let v = desired.autoTitles { config.autoGenerateChatTitles = v }
+        if let v = desired.followUpSuggestions { config.generateFollowUpSuggestions = v }
+        if let v = desired.clipboardMonitoring { config.enableClipboardMonitoring = v }
+        if config != previous { ChatConfigurationStore.save(config) }
+        return ConfigApplyResult(section: "chat", target: "chat", status: .done)
+    }
+
+    /// Mirrors the General page's save: hotkey re-registration and the login
+    /// item run only when their value changed.
+    @MainActor
+    private static func applyApp(_ desired: AppSection) -> ConfigApplyResult {
+        if desired.hotkey.isSpecified {
+            var chat = ChatConfigurationStore.load()
+            let previous = chat.hotkey
+            if let text = desired.hotkey.valueOrNil {
+                switch HotkeyText.parse(text) {
+                case .success(let hotkey): chat.hotkey = hotkey
+                case .failure(let error):
+                    if text != ConfigExporter.currentHotkeyText() {
+                        return ConfigApplyResult(
+                            section: "app", target: "app", status: .failed, message: "hotkey: \(error.message)")
+                    }
+                }
+            } else {
+                chat.hotkey = nil
+            }
+            if chat.hotkey != previous {
+                ChatConfigurationStore.save(chat)
+                AppDelegate.shared?.applyChatHotkey()
+            }
+        }
+        if let v = desired.startAtLogin {
+            var server = ServerConfigurationStore.load() ?? .default
+            if server.startAtLogin != v {
+                server.startAtLogin = v
+                ServerConfigurationStore.save(server)
+                LoginItemService.shared.applyStartAtLogin(v)
+                AppDelegate.shared?.serverController.configuration = server
+            }
+        }
+        if let v = desired.showNotifications, ToastManager.shared.configuration.enabled != v {
+            var toast = ToastManager.shared.configuration
+            toast.enabled = v
+            ToastManager.shared.updateConfiguration(toast)
+        }
+        NotificationCenter.default.post(name: .appConfigurationChanged, object: nil)
+        return ConfigApplyResult(section: "app", target: "app", status: .done)
+    }
+
     @MainActor
     private static func applyActiveAgent(_ name: String) -> ConfigApplyResult {
         // `new_chat_agent` sets which agent NEW chats open with — and only
@@ -403,47 +597,11 @@ enum ConfigApplier {
                 // Every validation failure must preserve an existing match
                 // during prune, including invalid templates.
                 if let agent = existing { matchedIds.insert(agent.id) }
-                // `template:` seeds description + prompt for a one-line
-                // agent; explicit fields in the entry still win.
-                if let rawTemplate = entry.template?.trimmingCharacters(in: .whitespacesAndNewlines),
-                    !rawTemplate.isEmpty
+                if let message = normalizeAgentEntry(
+                    &entry, existingModel: existing?.defaultModel, pendingModelIds: pendingModelIds)
                 {
-                    guard let template = AgentStarterTemplate(rawValue: rawTemplate.lowercased()),
-                        template != .blank
-                    else {
-                        return ConfigApplyResult(
-                            section: "agents", target: entry.name, status: .failed,
-                            message: "template: `\(rawTemplate)` is not a starter template. Valid: "
-                                + AgentStarterTemplate.configTemplateIds.joined(separator: ", ") + ".")
-                    }
-                    if entry.systemPrompt?.isEmpty ?? true { entry.systemPrompt = template.systemPrompt }
-                    if entry.description?.isEmpty ?? true { entry.description = template.routingDescription }
-                }
-                if let description = entry.description {
-                    entry.description = AgentDescriptionPolicy.normalized(description)
-                }
-                let rawModel = entry.model.valueOrNil?
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if let raw = rawModel, !raw.isEmpty {
-                    switch ConfigModelReference.resolve(
-                        raw,
-                        catalog: ConfigModelReference.liveCatalog(),
-                        pendingLocalIds: pendingModelIds
-                    ) {
-                    case .resolved(let canonical):
-                        entry.model = .value(canonical)
-                    case .invalid(let message):
-                        // Unchanged-but-stale values are a no-op so exported
-                        // snapshots always re-apply; only new/changed
-                        // references must ground.
-                        if existing?.defaultModel?.caseInsensitiveCompare(raw) == .orderedSame {
-                            entry.model = .absent
-                        } else {
-                            return ConfigApplyResult(
-                                section: "agents", target: entry.name,
-                                status: .failed, message: "model: \(message)")
-                        }
-                    }
+                    return ConfigApplyResult(
+                        section: "agents", target: entry.name, status: .failed, message: message)
                 }
                 if var agent = existing {
                     let outcome = patch(&agent, from: entry, options: options, preparedFolder: preparedFolder)
@@ -507,7 +665,7 @@ enum ConfigApplier {
                     } else if !joinsPool {
                         message =
                             "Created. `\(agent.name)` is not in the Orchestrator's delegation list "
-                            + "(`orchestrator_spawnable: false`); add it in Settings → Subagents to delegate to it."
+                            + "(`orchestrator_spawnable: false`); add it in Settings → Agents → Delegation to delegate to it."
                     } else {
                         message =
                             "Created. `\(agent.name)` is spawnable now — "
@@ -559,13 +717,83 @@ enum ConfigApplier {
             name: entry.name,
             description: entry.description ?? "",
             systemPrompt: entry.systemPrompt ?? "",
-            themeId: nil,
             defaultModel: entry.model.valueOrNil,
             temperature: entry.temperature.valueOrNil.map(Float.init),
             maxTokens: entry.maxTokens.valueOrNil
         )
         let outcome = patch(&agent, from: entry)
         return (agent, outcome)
+    }
+
+    /// `template` seeding, the description policy, and model grounding,
+    /// shared by apply and the New Agent draft. Returns the failure message
+    /// for an entry that cannot apply.
+    @MainActor
+    static func normalizeAgentEntry(
+        _ entry: inout AgentEntry, existingModel: String?, pendingModelIds: [String]
+    ) -> String? {
+        // `template:` seeds description + prompt for a one-line agent;
+        // explicit fields in the entry still win.
+        if let rawTemplate = entry.template?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !rawTemplate.isEmpty
+        {
+            guard let template = AgentStarterTemplate(rawValue: rawTemplate.lowercased()),
+                template != .blank
+            else {
+                return "template: `\(rawTemplate)` is not a starter template. Valid: "
+                    + AgentStarterTemplate.configTemplateIds.joined(separator: ", ") + "."
+            }
+            if entry.systemPrompt?.isEmpty ?? true { entry.systemPrompt = template.systemPrompt }
+            if entry.description?.isEmpty ?? true { entry.description = template.routingDescription }
+        }
+        if let description = entry.description {
+            entry.description = AgentDescriptionPolicy.normalized(description)
+        }
+        if let avatar = entry.avatar?.trimmingCharacters(in: .whitespacesAndNewlines), !avatar.isEmpty,
+            AgentMascot(storedID: avatar) == nil
+        {
+            return "avatar: `\(avatar)` is not a mascot. Valid: "
+                + AgentMascot.allCases.map(\.rawValue).joined(separator: ", ") + ", or \"\" for the name's initial."
+        }
+        let rawModel = entry.model.valueOrNil?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let raw = rawModel, !raw.isEmpty {
+            switch ConfigModelReference.resolve(
+                raw,
+                catalog: ConfigModelReference.liveCatalog(),
+                pendingLocalIds: pendingModelIds
+            ) {
+            case .resolved(let canonical):
+                entry.model = .value(canonical)
+            case .invalid(let message):
+                // Unchanged-but-stale values are a no-op so exported
+                // snapshots always re-apply; only new/changed references
+                // must ground.
+                if existingModel?.caseInsensitiveCompare(raw) == .orderedSame {
+                    entry.model = .absent
+                } else {
+                    return "model: \(message)"
+                }
+            }
+        }
+        return nil
+    }
+
+    struct DraftPatchError: Error {
+        let message: String
+    }
+
+    /// Patches an UNSAVED New Agent draft with the same mapping apply uses.
+    /// Unlike apply, the entry's name renames the draft instead of picking
+    /// the agent to change.
+    @MainActor
+    static func patchDraft(_ agent: inout Agent, with entry: AgentEntry) throws -> AgentPatchOutcome {
+        var entry = entry
+        if let message = normalizeAgentEntry(&entry, existingModel: agent.defaultModel, pendingModelIds: []) {
+            throw DraftPatchError(message: message)
+        }
+        let name = entry.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty { agent.name = name }
+        return patch(&agent, from: entry)
     }
 
     @MainActor
@@ -577,12 +805,17 @@ enum ConfigApplier {
         var outcome = AgentPatchOutcome()
         if let v = entry.description { agent.description = v }
         if let v = entry.systemPrompt { agent.systemPrompt = v }
+        if let raw = entry.avatar {
+            let avatar = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            agent.avatar = AgentMascot(storedID: avatar)?.rawValue
+        }
         if entry.model.isSpecified { agent.defaultModel = entry.model.valueOrNil }
         if entry.temperature.isSpecified {
             agent.temperature = entry.temperature.valueOrNil.map(Float.init)
         }
         if entry.maxTokens.isSpecified { agent.maxTokens = entry.maxTokens.valueOrNil }
         if let show = entry.showResponseMetrics { agent.settings.showResponseMetrics = show }
+        if let on = entry.followUpSuggestions { agent.settings.followUp.enabled = on }
         if entry.generationSettings.isSpecified {
             agent.generationSettings = entry.generationSettings.valueOrNil
         }
@@ -599,10 +832,22 @@ enum ConfigApplier {
             &agent, from: entry.workingFolder,
             prepared: preparedFolder ?? prepareWorkingFolder(entry.workingFolder),
             outcome: &outcome)
+        if let readOnly = entry.workingFolderReadOnly { agent.settings.workingFolderReadOnly = readOnly }
         if let source = entry.sourceTemplate {
             agent.sourceTemplateName = source.isEmpty ? nil : source
         }
+        if let names = entry.workflows {
+            var ids: [UUID] = []
+            for name in names {
+                guard let id = InstalledWorkflowStore.shared.workflow(named: name)?.id, !ids.contains(id) else { continue }
+                ids.append(id)
+            }
+            agent.settings.enabledWorkflowIDs = ids
+        }
         patchRuntime(&agent, from: entry, outcome: &outcome)
+        if let policy = entry.sharedToolApproval {
+            agent.sharedToolApproval = policy == .deny ? nil : policy
+        }
         guard let caps = entry.capabilities else { return outcome }
         patchCapabilities(&agent, from: caps)
         return outcome
@@ -625,7 +870,7 @@ enum ConfigApplier {
             } else {
                 outcome.notes.append(
                     "runtime: `\(raw)` is not registered on this Mac, so the agent runs on Osaurus's "
-                        + "own loop. Add it under Agents → Runtimes, then pick it in the chat model picker.")
+                        + "own loop. Add it under Settings → Runtimes, then pick it in the chat model picker.")
             }
         }
         if var entry = entry.claudeCode {
@@ -932,8 +1177,14 @@ enum ConfigApplier {
     @MainActor
     private static func applyRelay(_ desired: Bool?, to agentId: UUID) {
         guard let desired else { return }
-        guard RelayConfigurationStore.load().isEnabled(for: agentId) != desired else { return }
-        RelayTunnelManager.shared.setTunnelEnabled(desired, for: agentId)
+        guard desired else {
+            // Recorded even when already off: a new agent gets its address
+            // later, and a paired phone must not turn it on then.
+            RelayTunnelManager.shared.keepTunnelOff(for: agentId)
+            return
+        }
+        guard !RelayConfigurationStore.load().isEnabled(for: agentId) else { return }
+        RelayTunnelManager.shared.setTunnelEnabled(true, for: agentId)
     }
 
     // MARK: - Tools
@@ -959,7 +1210,9 @@ enum ConfigApplier {
                 skipped.append(tool)
                 continue
             }
-            if (registry.configuredPolicy(for: tool) ?? .ask) != policy {
+            if (registry.configuredPolicy(for: tool) ?? registry.policyInfo(for: tool)?.defaultPolicy ?? .ask)
+                != policy
+            {
                 registry.setPolicy(policy, for: tool)
                 changed += 1
             }
@@ -1244,8 +1497,18 @@ enum ConfigApplier {
         }
 
         var touchedPlatforms: [ConfigChannelPlatform] = []
-        for platform in ConfigChannelPlatform.allCases {
-            guard let section = platform.section(in: desired) else { continue }
+        for target in ConfigChannelPlatform.targets(in: desired) {
+            let platform = target.platform
+            let section = target.section
+            // `routing` / `posting` alone apply with the automations.
+            guard section.hasPolicyKeys else { continue }
+            guard ConfigChannelAccounts.isKnown(target) else {
+                results.append(
+                    ConfigApplyResult(
+                        section: "channels", target: target.label, status: .failed,
+                        message: ConfigChannelAccounts.unknownAccountIssue(target)))
+                continue
+            }
 
             // Secret references resolve first so a bad reference fails the
             // platform before any partial store write. Values never appear
@@ -1256,7 +1519,7 @@ enum ConfigApplier {
                 guard let secret else {
                     results.append(
                         ConfigApplyResult(
-                            section: "channels", target: platform.rawValue, status: .failed,
+                            section: "channels", target: target.label, status: .failed,
                             message: "bot_token_ref: could not resolve \(display) — nothing "
                                 + "was changed."))
                     continue
@@ -1269,36 +1532,12 @@ enum ConfigApplier {
                 guard let secret else {
                     results.append(
                         ConfigApplyResult(
-                            section: "channels", target: platform.rawValue, status: .failed,
+                            section: "channels", target: target.label, status: .failed,
                             message: "app_token_ref: could not resolve \(display) — nothing "
                                 + "was changed."))
                     continue
                 }
                 appToken = (secret, display)
-            }
-
-            // The inbound agent name resolves first so an unknown name fails
-            // the platform before any partial store write.
-            var inboundTarget: ConfigField<AgentDispatchTarget> = .absent
-            switch section.inboundAgent {
-            case .absent:
-                break
-            case .null:
-                inboundTarget = .null
-            case .value(let name):
-                if let ref = ConfigAgentTargetReference.workspaceRef(name) {
-                    // Shared workspace agent; membership/liveness is live
-                    // relay state checked when a message arrives.
-                    inboundTarget = .value(.workspace(ref))
-                } else if let id = customAgentId(named: name) {
-                    inboundTarget = .value(.local(id))
-                } else {
-                    results.append(
-                        ConfigApplyResult(
-                            section: "channels", target: platform.rawValue, status: .failed,
-                            message: "inbound_agent: no custom agent named `\(name)`."))
-                    continue
-                }
             }
 
             var mutation = ConfigChannelMutation()
@@ -1308,15 +1547,10 @@ enum ConfigApplier {
             mutation.readAllowlist = section.readAllowlist
             mutation.writeAllowlist = section.writeAllowlist
             mutation.senderAllowlist = section.senderAllowlist
-            mutation.inboundEnabled = section.inboundEnabled
-            mutation.inboundTarget = inboundTarget
-            mutation.requireMention = section.requireMention
-            mutation.continueThreads = section.continueThreads
-            mutation.autoReplyEnabled = section.autoReplyEnabled
 
             do {
-                try platform.apply(mutation)
-                touchedPlatforms.append(platform)
+                try platform.apply(mutation, connectionId: target.connectionId)
+                if !touchedPlatforms.contains(platform) { touchedPlatforms.append(platform) }
                 var messages: [String] = []
                 var tokenFailed = false
                 if let botToken {
@@ -1341,13 +1575,13 @@ enum ConfigApplier {
                 }
                 results.append(
                     ConfigApplyResult(
-                        section: "channels", target: platform.rawValue,
+                        section: "channels", target: target.label,
                         status: tokenFailed ? .needsUserAction : .done,
                         message: messages.isEmpty ? nil : messages.joined(separator: " ")))
             } catch {
                 results.append(
                     ConfigApplyResult(
-                        section: "channels", target: platform.rawValue, status: .failed,
+                        section: "channels", target: target.label, status: .failed,
                         message: "Could not save the configuration: \(error.localizedDescription)"))
             }
         }
@@ -1390,7 +1624,7 @@ enum ConfigApplier {
             if !provider.secretHeaderKeys.contains(ref.key) { provider.secretHeaderKeys.append(ref.key) }
             provider.customHeaders.removeValue(forKey: ref.key)
             if let secret = ref.secret,
-                !MCPProviderKeychain.saveHeaderSecret(secret, key: ref.key, for: provider.id)
+                !MCPCredentials.saveHeader(secret, provider: provider, header: ref.key)
             {
                 failures.append(ref.key)
             }
@@ -1442,7 +1676,7 @@ enum ConfigApplier {
                     if case let (secret, display)? = resolvedToken {
                         if let secret {
                             provider.authType = .bearerToken
-                            if MCPProviderKeychain.saveToken(secret, for: provider.id) {
+                            if MCPCredentials.saveToken(secret, provider: provider) {
                                 authChangedToKeyed = false
                                 secretMessages.append("Stored the bearer token from \(display).")
                             } else {
@@ -1505,7 +1739,7 @@ enum ConfigApplier {
                             }
                             continue
                         }
-                        if MCPProviderKeychain.saveEnvSecret(secret, key: ref.key, for: provider.id) {
+                        if MCPCredentials.saveEnv(secret, provider: provider, name: ref.key) {
                             if !provider.secretEnvKeys.contains(ref.key) {
                                 provider.secretEnvKeys.append(ref.key)
                             }
@@ -1593,7 +1827,7 @@ enum ConfigApplier {
                 var storeFailures: [String] = []
                 for ref in resolvedEnvRefs {
                     guard let secret = ref.secret else { continue }
-                    if !MCPProviderKeychain.saveEnvSecret(secret, key: ref.key, for: provider.id) {
+                    if !MCPCredentials.saveEnv(secret, provider: provider, name: ref.key) {
                         storeFailures.append(ref.key)
                     }
                 }
@@ -1744,8 +1978,7 @@ enum ConfigApplier {
                 return secrets
                     .filter { spec in
                         spec.required
-                            && !ToolSecretsKeychain.hasSecret(
-                                id: spec.id, for: pluginId, agentId: Agent.defaultId)
+                            && !PluginCredentials.isSatisfied(pluginId: pluginId, specId: spec.id, agentId: nil)
                     }
                     .map { $0.label }
             }
@@ -1968,7 +2201,7 @@ enum ConfigApplier {
             // round-trip has stalled the app for seconds when securityd was
             // slow. Hop off the cooperative executor for the read. Env refs
             // are a dictionary lookup and stay inline.
-            if case .keychain = ref.source {
+            if ref.readsKeychain {
                 let secret = await Task.detached(priority: .userInitiated) {
                     ref.resolve()
                 }.value
@@ -2357,203 +2590,6 @@ enum ConfigApplier {
             manager.setDefaultRanking(ranking)
             results.append(
                 ConfigApplyResult(section: "search_providers", target: "ranking", status: .done))
-        }
-        return results
-    }
-
-    // MARK: - Schedules
-
-    @MainActor
-    private static func customAgentId(named name: String) -> UUID? {
-        AgentManager.shared.agents.first {
-            !$0.isBuiltIn && $0.name.lowercased() == name.lowercased()
-        }?.id
-    }
-
-    @MainActor
-    private static func applySchedules(
-        _ entries: [ScheduleEntry], prune: Bool
-    ) -> [ConfigApplyResult] {
-        var results: [ConfigApplyResult] = []
-        let manager = ScheduleManager.shared
-        var matched = Set<UUID>()
-
-        for entry in entries {
-            let existing = manager.schedules.first {
-                $0.name.lowercased() == entry.name.lowercased()
-            }
-
-            var frequency: ScheduleFrequency?
-            if let raw = entry.frequency {
-                switch ConfigScheduleFrequency.parse(
-                    frequency: raw, value: entry.frequencyValue, timeOfDay: entry.frequencyTimeOfDay)
-                {
-                case .success(let f): frequency = f
-                case .failure(let error):
-                    results.append(
-                        ConfigApplyResult(
-                            section: "schedules", target: entry.name, status: .failed,
-                            message: error.message))
-                    continue
-                }
-            }
-
-            var target: AgentDispatchTarget?
-            if let agentName = entry.agent {
-                if let ref = ConfigAgentTargetReference.workspaceRef(agentName) {
-                    target = .workspace(ref)
-                } else if let id = customAgentId(named: agentName) {
-                    target = .local(id)
-                } else {
-                    results.append(
-                        ConfigApplyResult(
-                            section: "schedules", target: entry.name, status: .failed,
-                            message: "No custom agent named `\(agentName)`."))
-                    continue
-                }
-            }
-
-            if var schedule = existing {
-                matched.insert(schedule.id)
-                if let target { schedule.target = target }
-                if let v = entry.instructions { schedule.instructions = v }
-                if let frequency { schedule.frequency = frequency }
-                if let v = entry.enabled { schedule.isEnabled = v }
-                manager.update(schedule)
-                results.append(
-                    ConfigApplyResult(section: "schedules", target: entry.name, status: .done))
-            } else {
-                guard let target, let instructions = entry.instructions, let frequency else {
-                    results.append(
-                        ConfigApplyResult(
-                            section: "schedules", target: entry.name, status: .failed,
-                            message: "Creating a schedule needs `agent`, `instructions`, and `frequency`."))
-                    continue
-                }
-                // Chat/document-created schedules attach no security-scoped
-                // folder context; the Schedules tab is the place for that.
-                let schedule = manager.create(
-                    name: entry.name,
-                    instructions: instructions,
-                    target: target,
-                    parameters: [:],
-                    folderPath: nil,
-                    folderBookmark: nil,
-                    frequency: frequency,
-                    isEnabled: entry.enabled ?? true
-                )
-                matched.insert(schedule.id)
-                results.append(
-                    ConfigApplyResult(section: "schedules", target: entry.name, status: .done))
-            }
-        }
-
-        if prune {
-            for schedule in manager.schedules where !matched.contains(schedule.id) {
-                _ = manager.delete(id: schedule.id)
-                results.append(
-                    ConfigApplyResult(section: "schedules", target: schedule.name, status: .done))
-            }
-        }
-        return results
-    }
-
-    // MARK: - Watchers
-
-    @MainActor
-    private static func applyWatchers(_ entries: [WatcherEntry], prune: Bool) -> [ConfigApplyResult] {
-        var results: [ConfigApplyResult] = []
-        let manager = WatcherManager.shared
-        var matched = Set<UUID>()
-
-        for entry in entries {
-            let existing = manager.watchers.first { $0.name.lowercased() == entry.name.lowercased() }
-
-            var target: AgentDispatchTarget?
-            if let agentName = entry.agent {
-                if let ref = ConfigAgentTargetReference.workspaceRef(agentName) {
-                    target = .workspace(ref)
-                } else if let id = customAgentId(named: agentName) {
-                    target = .local(id)
-                } else {
-                    results.append(
-                        ConfigApplyResult(
-                            section: "watchers", target: entry.name, status: .failed,
-                            message: "No custom agent named `\(agentName)`."))
-                    continue
-                }
-            }
-
-            var path: String?
-            if let raw = entry.path {
-                let expanded = (raw as NSString).expandingTildeInPath
-                var isDirectory: ObjCBool = false
-                guard FileManager.default.fileExists(atPath: expanded, isDirectory: &isDirectory),
-                    isDirectory.boolValue
-                else {
-                    results.append(
-                        ConfigApplyResult(
-                            section: "watchers", target: entry.name, status: .failed,
-                            message: "`\(expanded)` is not an existing directory."))
-                    continue
-                }
-                path = expanded
-            }
-
-            let responsiveness = entry.responsiveness.flatMap {
-                Responsiveness(rawValue: $0.lowercased())
-            }
-
-            if var watcher = existing {
-                matched.insert(watcher.id)
-                if let target { watcher.target = target }
-                if let v = entry.instructions { watcher.instructions = v }
-                if let path {
-                    // A document-supplied path replaces any picker-granted
-                    // bookmark; the old bookmark points at the old folder and
-                    // must not win over the new path in resolveWatchPath.
-                    watcher.watchPath = path
-                    watcher.watchBookmark = nil
-                }
-                if let v = entry.recursive { watcher.recursive = v }
-                if let responsiveness { watcher.responsiveness = responsiveness }
-                if let v = entry.enabled { watcher.isEnabled = v }
-                manager.update(watcher)
-                results.append(
-                    ConfigApplyResult(section: "watchers", target: entry.name, status: .done))
-            } else {
-                guard let target, let instructions = entry.instructions, let path else {
-                    results.append(
-                        ConfigApplyResult(
-                            section: "watchers", target: entry.name, status: .failed,
-                            message: "Creating a watcher needs `agent`, `instructions`, and `path`."))
-                    continue
-                }
-                let watcher = manager.create(
-                    name: entry.name,
-                    instructions: instructions,
-                    target: target,
-                    watchPath: path,
-                    watchBookmark: nil,
-                    isEnabled: entry.enabled ?? true,
-                    recursive: entry.recursive ?? false,
-                    responsiveness: responsiveness ?? .balanced
-                )
-                matched.insert(watcher.id)
-                results.append(
-                    ConfigApplyResult(
-                        section: "watchers", target: entry.name, status: .done,
-                        message: "Uses a plain folder path — if macOS blocks access, re-pick the "
-                            + "folder in the Watchers tab."))
-            }
-        }
-
-        if prune {
-            for watcher in manager.watchers where !matched.contains(watcher.id) {
-                _ = manager.delete(id: watcher.id)
-                results.append(
-                    ConfigApplyResult(section: "watchers", target: watcher.name, status: .done))
-            }
         }
         return results
     }

@@ -25,7 +25,7 @@ public enum RemoteAgentConnectionPhase: Equatable, Sendable {
 }
 
 /// The display identity (name + avatar) of whoever currently "owns" the chat
-/// thread: the local agent in Mode 1, or the paired/discovered remote agent in
+/// thread: the local agent in Mode 1, or the paired remote agent in
 /// Mode 2. Lets message bubbles, the empty state, and the toolbar pill render a
 /// single coherent identity instead of always showing the local agent.
 public struct ChatThreadIdentity: Equatable, Sendable {
@@ -60,12 +60,15 @@ public enum ComposerLock: Equatable, Sendable {
     /// owner unshared it, or the user is no longer a member. History stays
     /// readable; there is nothing to retry.
     case agentUnavailable(agentName: String, reason: String)
+    /// The user's other Mac that runs this chat's agent isn't connected.
+    /// Sending waits for it to be awake and online.
+    case hostOffline(hostName: String)
 
     /// Whether the user may retry a connection from the notice.
     public var offersRetry: Bool {
         switch self {
         case .agentOffline, .agentNotConnected: return true
-        case .connecting, .teammateConversation, .agentUnavailable: return false
+        case .connecting, .teammateConversation, .agentUnavailable, .hostOffline: return false
         }
     }
 }
@@ -95,6 +98,9 @@ struct PendingRelayConnect: Equatable {
 struct ChatTab: Identifiable, Equatable {
     let id: UUID
     var session: ChatSession
+    /// What the tab shows. Workflow tabs keep a blank session only for
+    /// their agent scope; they are never hibernated or saved to History.
+    var kind: ChatTabKind = .chat
     /// LRU stamp: when this tab last became the active tab. Drives which
     /// idle tabs get hibernated when the window holds too many.
     var lastActivatedAt: Date = Date()
@@ -104,8 +110,19 @@ struct ChatTab: Identifiable, Equatable {
     var isHibernated: Bool = false
 
     static func == (lhs: ChatTab, rhs: ChatTab) -> Bool {
-        lhs.id == rhs.id && lhs.session === rhs.session
+        lhs.id == rhs.id && lhs.session === rhs.session && lhs.kind == rhs.kind
     }
+
+    var workflowID: UUID? {
+        if case .workflowRun(let id, _) = kind { return id }
+        return nil
+    }
+}
+
+enum ChatTabKind: Equatable, Codable {
+    case chat
+    /// A workflow's input form, one of its runs, and the result.
+    case workflowRun(workflowID: UUID, runID: UUID?)
 }
 
 /// Which agent a tab belongs to. The tab strip is scoped to the window's
@@ -117,9 +134,19 @@ struct ChatTab: Identifiable, Equatable {
 enum ChatTabScope: Hashable {
     case local(UUID)
     case workspace(String, workspaceId: String = "")
+    /// An agent another of the user's Macs runs (`device`), by its id there.
+    case hosted(device: String, agentId: UUID)
+
+    var isHosted: Bool {
+        if case .hosted = self { return true }
+        return false
+    }
 
     @MainActor
     static func of(_ session: ChatSession) -> ChatTabScope {
+        if let device = session.hostDeviceElsewhere ?? session.servedElsewhere, let agentId = session.agentId {
+            return .hosted(device: device, agentId: agentId)
+        }
         if let context = session.workspaceContext, !context.isServedForTeammate {
             return .workspace(context.agentAddress.lowercased(), workspaceId: context.workspaceId)
         }
@@ -127,13 +154,34 @@ enum ChatTabScope: Hashable {
     }
 }
 
-/// The panes of the chat window's right-hand inspector. One rail, two
-/// contents, both about the tab on screen.
+/// The panes of the chat window's right-hand inspector, all about the tab
+/// on screen.
 enum ChatInspectorPane: Hashable {
     /// This chat's file history: timeline, per-file net state, revert.
     case fileChanges
-    /// The past chats of this chat's agent (search, filters, import).
-    case history
+    /// The workflows this chat's agent can run, and the starters. In The
+    /// Architect's chats: every workflow on this Mac, to pick one to edit.
+    case workflows
+    /// The Architect's draft for this chat. Only the Architect's chats
+    /// have it, in place of File Changes.
+    case draft
+
+    /// `self`, or the lens that stands in for it in a chat that lacks it.
+    func resolved(isArchitect: Bool) -> ChatInspectorPane {
+        switch self {
+        case .fileChanges where isArchitect: return .draft
+        case .draft where !isArchitect: return .workflows
+        default: return self
+        }
+    }
+}
+
+/// The two halves of the inspector's History lens.
+enum ChatHistoryTab: Hashable {
+    /// The past chats of this chat's agent.
+    case chats
+    /// The workflow runs of this chat's agent.
+    case runs
 }
 
 /// Per-window state container for ChatView - each window creates its own instance
@@ -174,10 +222,13 @@ final class ChatWindowState: ObservableObject {
     /// purely imperative, no view re-renders.
     var onTabLayoutChanged: (() -> Void)?
 
-    /// The agent whose tabs the strip currently shows: the workspace agent
-    /// the window's remote mode is bound to, else the window's local agent.
+    /// The agent whose tabs the strip currently shows: the active tab's
+    /// agent on another of the user's Macs, else the workspace agent the
+    /// window's remote mode is bound to, else the window's local agent.
     /// Both follow the active tab (`adoptTabSession` / `reconcileRemoteMode`).
     var activeScope: ChatTabScope {
+        let sessionScope = ChatTabScope.of(session)
+        if case .hosted = sessionScope { return sessionScope }
         if let address = workspaceAgentAddress { return .workspace(address.lowercased(), workspaceId: session.workspaceContext?.workspaceId ?? "") }
         return .local(agentId)
     }
@@ -222,66 +273,92 @@ final class ChatWindowState: ObservableObject {
     /// of `inspectorColumnWidth`.
     @Published var sidebarColumnWidth: CGFloat = 0
 
+    /// Width class of the window's content area (`ChatView` sets it from
+    /// its geometry through `updateShellBreakpoint`). Compact windows turn
+    /// the sidebar into a drawer and the context panel into an overlay.
+    @Published private(set) var shellBreakpoint: ChatShellBreakpoint = .regular
+
+    /// Whether the sidebar drawer is open over the content of a compact
+    /// window. Separate from `showSidebar` so narrowing the window never
+    /// rewrites the docked choice, and so the drawer always starts closed.
+    @Published var isCompactSidebarPresented: Bool = false
+
+    /// Record the window's breakpoint. Crossing into or out of compact
+    /// closes the overlays: a drawer or context overlay left open from a
+    /// wide layout would otherwise cover the conversation the moment the
+    /// window narrows. The docked sidebar choice is untouched, and a
+    /// docked context panel comes back when the window widens again.
+    func updateShellBreakpoint(_ breakpoint: ChatShellBreakpoint) {
+        guard breakpoint != shellBreakpoint else { return }
+        let crossesCompact = (breakpoint == .compact) != (shellBreakpoint == .compact)
+        shellBreakpoint = breakpoint
+        guard crossesCompact else { return }
+        isCompactSidebarPresented = false
+        if breakpoint == .compact {
+            contextPanelWantedBeforeCompact = inspectorPane != nil
+            inspectorPane = nil
+            settingsSidebarCollapsedBeforeCompact = isSettingsSidebarCollapsed
+            isSettingsSidebarCollapsed = true
+        } else {
+            if contextPanelWantedBeforeCompact { inspectorPane = lastInspectorPane }
+            if let before = settingsSidebarCollapsedBeforeCompact {
+                isSettingsSidebarCollapsed = before
+                settingsSidebarCollapsedBeforeCompact = nil
+            }
+        }
+    }
+
+    /// The Settings destination's sidebar shows icons only. A compact
+    /// window collapses it; widening again restores the person's choice.
+    @Published var isSettingsSidebarCollapsed = false
+    private var settingsSidebarCollapsedBeforeCompact: Bool?
+
+    /// Whether the docked context panel was wanted when the window
+    /// narrowed into compact, so widening brings it back.
+    private var contextPanelWantedBeforeCompact = false
+
+    /// Esc while a compact overlay is open: closes the drawer first, then
+    /// the context overlay. Returns whether anything closed, so the key
+    /// handler only swallows Esc when it did something.
+    @discardableResult
+    func dismissShellOverlay() -> Bool {
+        guard shellBreakpoint == .compact else { return false }
+        if isCompactSidebarPresented {
+            isCompactSidebarPresented = false
+            return true
+        }
+        if inspectorPane != nil {
+            inspectorPane = nil
+            return true
+        }
+        return false
+    }
+
     /// Whether the sidebar is on screen. The toolbar toggle and the tab
     /// strip inset read this, not `showSidebar`, so the chrome never claims
     /// a sidebar that the inspector has pushed aside.
-    var isSidebarVisible: Bool { showSidebar && !isSidebarAutoHidden }
+    var isSidebarVisible: Bool {
+        if shellBreakpoint == .compact { return isCompactSidebarPresented }
+        return showSidebar && !isSidebarAutoHidden
+    }
 
     /// Toolbar button / ⌘B. When the sidebar is stepping aside for the
     /// inspector, the user asking for it wins: the inspector closes and the
     /// sidebar (still "shown") comes back — a plain flip would hide nothing
-    /// visible and leave the button looking broken.
+    /// visible and leave the button looking broken. In a compact window it
+    /// opens or closes the drawer, which replaces any open context overlay.
     func toggleSidebar() {
+        if shellBreakpoint == .compact {
+            isCompactSidebarPresented.toggle()
+            if isCompactSidebarPresented { inspectorPane = nil }
+            return
+        }
         if showSidebar && isSidebarAutoHidden {
-            if isProjectPageVisible {
-                showProjectInspector = false
-            } else {
-                inspectorPane = nil
-            }
+            inspectorPane = nil
             return
         }
         showSidebar.toggle()
     }
-
-    /// The project whose detail page currently covers the chat surface, or
-    /// nil while the chat is showing. Owned here (not as `ChatView` state)
-    /// so window-level actions like ⌘N can both read it and dismiss it.
-    @Published var openProjectId: UUID?
-
-    /// True while the content area shows a project detail page instead of
-    /// the chat surface. Read by the toolbar item views so chat-specific
-    /// chrome (agent pill, window pin) hides with it.
-    var isProjectPageVisible: Bool { openProjectId != nil }
-
-    /// Whether the right rail shows Project Settings while a project is on
-    /// screen. The same toolbar toggle that opens the chat inspector drives
-    /// it there; the choice is remembered across projects and launches
-    /// (open by default: a project's settings are what the rail is for).
-    @Published var showProjectInspector: Bool =
-        UserDefaults.standard.object(forKey: projectInspectorDefaultsKey) as? Bool ?? true
-    {
-        didSet { UserDefaults.standard.set(showProjectInspector, forKey: Self.projectInspectorDefaultsKey) }
-    }
-
-    static let projectInspectorDefaultsKey = "chatWindow.showProjectInspector"
-
-    /// Toolbar toggle while a project is open (mirror of `toggleInspector()`).
-    func toggleProjectInspector() {
-        showProjectInspector.toggle()
-    }
-
-    /// True when a right rail is on screen for the current content: the
-    /// chat inspector for a chat, Project Settings for a project.
-    var isRightRailOpen: Bool {
-        isProjectPageVisible ? showProjectInspector : isInspectorOpen
-    }
-
-    /// True when the current chat was entered FROM its project's detail page
-    /// (as opposed to the sidebar's Chats tab). The toolbar's back-to-project
-    /// button uses this only to pick its icon: a back chevron when returning
-    /// retraces the user's path, a folder when the project page would be new
-    /// navigation. Set alongside `loadSession`/`startNewChat` by `ChatView`.
-    @Published var enteredChatFromProjectPage: Bool = false
 
     /// Drives the "a local model is already running in another window" alert
     /// raised when the user tries to start a second local generation. Only one
@@ -298,6 +375,9 @@ final class ChatWindowState: ObservableObject {
     /// no view re-renders.
     var cancelInlineEdit: (() -> Void)?
 
+    /// Cancels a title rename before the window-level Escape shortcut closes chat.
+    var cancelHistoryRename: (() -> Void)?
+
     /// Float-on-top state, driven by the toolbar overflow menu's Pin Window
     /// item (was local state inside the old PinButton).
     @Published var isWindowPinned: Bool = false
@@ -306,6 +386,260 @@ final class ChatWindowState: ObservableObject {
     /// key monitor (which cannot touch `ChatView`'s `@State`) and cleared by
     /// the bar's close button or the Esc dismissal chain.
     @Published var isFindBarVisible: Bool = false
+
+    /// Main navigation is independent of the live chat/session lifecycle.
+    enum MainSurface: String { case chat, workflows, settings }
+    @Published var mainSurface: MainSurface = .chat
+    @Published var showsWorkflowLibrary = true
+    /// Retain the unsent workflow brief when switching between main destinations.
+    /// This is the same chat-session model used by the shared composer, and is
+    /// separate from the user's active conversation until they explicitly send.
+    lazy var workflowCreationSession: ChatSession = {
+        let draft = ChatSession()
+        draft.agentId = Agent.architectId
+        return draft
+    }()
+
+    /// A page pushed over the Workflows window's home.
+    enum WorkflowsPage: Equatable, Hashable {
+        /// One workflow: its runs, what it does, and who can start it.
+        case workflow(UUID)
+        /// One run as it happens, or the form for a new one (`runID` nil).
+        /// `agentId` is the agent a new run there runs as.
+        case run(workflowID: UUID, runID: UUID?, agentId: UUID)
+        /// New Workflow: describe a task to the Architect, or add a
+        /// ready-made workflow.
+        case create
+
+        var workflowID: UUID? {
+            switch self {
+            case .workflow(let id): return id
+            case .run(let id, _, _): return id
+            case .create: return nil
+            }
+        }
+    }
+
+    /// The Workflows home's tabs over its one list: every installed
+    /// workflow, unfinished drafts, and what this Mac has published.
+    enum WorkflowsTab: String, CaseIterable { case all, drafts, published, workspaces }
+
+    static let workflowsTabDefaultsKey = "WorkflowsWindow.tab"
+
+    /// The tab last chosen; nil until one is. See `workflowsTab(chosen:hasDrafts:hasPublished:)`.
+    @Published var workflowsTab: WorkflowsTab? =
+        WorkflowsTab(rawValue: UserDefaults.standard.string(forKey: workflowsTabDefaultsKey) ?? "")
+    {
+        didSet { UserDefaults.standard.set(workflowsTab?.rawValue, forKey: Self.workflowsTabDefaultsKey) }
+    }
+
+    /// The tab the home shows: the one last chosen while it has anything,
+    /// else All. With drafts and nothing installed, Drafts. Workspaces is
+    /// offered while this Mac belongs to one.
+    static func workflowsTab(
+        chosen: WorkflowsTab?, hasInstalled: Bool, hasDrafts: Bool, hasPublished: Bool, hasWorkspaces: Bool = false
+    ) -> WorkflowsTab {
+        switch chosen {
+        case .drafts? where hasDrafts: return .drafts
+        case .published? where hasPublished: return .published
+        case .workspaces? where hasWorkspaces: return .workspaces
+        default: return !hasInstalled && hasDrafts ? .drafts : .all
+        }
+    }
+
+    /// Pages pushed over the home, oldest first; empty shows the home.
+    @Published var workflowsPath: [WorkflowsPage] = []
+    /// The workspace the Workspaces tab scrolls to, once.
+    @Published var workflowsWorkspaceFocus: String?
+    /// The run the Workflows home last started, so its row opens to show it.
+    @Published var workflowsSpotlightRunID: UUID?
+
+    /// Set by New Workflow until the Architect composer on screen takes
+    /// focus; the composer may appear only after it is set.
+    @Published private(set) var newWorkflowComposerWantsFocus = false
+
+    /// True once per New Workflow request.
+    func consumeNewWorkflowComposerFocus() -> Bool {
+        guard newWorkflowComposerWantsFocus else { return false }
+        newWorkflowComposerWantsFocus = false
+        return true
+    }
+
+    /// Where a Settings search row's `subTab` lands in the Workflows window:
+    /// `workflows` or `workflows.<tab>` for the home on a tab,
+    /// `workflows.workspaces.<id>` for one workspace's section, `new` for
+    /// the New Workflow page.
+    enum WorkflowsDestination: Equatable {
+        case home(WorkflowsTab?)
+        case workspace(String)
+        case newWorkflow
+
+        init?(subTab: String) {
+            if subTab == "new" {
+                self = .newWorkflow
+                return
+            }
+            let parts = subTab.split(separator: ".", maxSplits: 2).map(String.init)
+            guard parts.first == "workflows" else { return nil }
+            guard parts.count >= 2 else {
+                self = .home(nil)
+                return
+            }
+            guard let tab = WorkflowsTab(rawValue: parts[1]) else { return nil }
+            if parts.count == 3 {
+                guard tab == .workspaces, !parts[2].isEmpty else { return nil }
+                self = .workspace(parts[2])
+                return
+            }
+            self = .home(tab)
+        }
+
+        /// `osaurus://workflows[/<tab>[/<workspace id>]]`.
+        init?(url: URL) {
+            guard url.scheme == "osaurus", url.host == "workflows" else { return nil }
+            let path = url.pathComponents.filter { $0 != "/" }
+            self.init(subTab: (["workflows"] + path).joined(separator: "."))
+        }
+    }
+
+    /// Fires before any of what the Workflows window reads from this state
+    /// changes: its tab, its pages, the run it spotlights, the workspace
+    /// it scrolls to, and the window's agent. This state publishes on every chat change; the
+    /// Workflows window listens to this instead.
+    var workflowsRouteWillChange: AnyPublisher<Void, Never> {
+        Publishers.Merge(
+            Publishers.Merge4(
+                $workflowsTab.removeDuplicates().dropFirst().map { _ in () },
+                $workflowsPath.removeDuplicates().dropFirst().map { _ in () },
+                $workflowsSpotlightRunID.removeDuplicates().dropFirst().map { _ in () },
+                $agentId.removeDuplicates().dropFirst().map { _ in () }),
+            $workflowsWorkspaceFocus.removeDuplicates().dropFirst().map { _ in () })
+            .eraseToAnyPublisher()
+    }
+
+    /// The Workflows home (on `tab` when given), with nothing pushed.
+    func showWorkflowsHome(tab: WorkflowsTab? = nil) {
+        if let tab { workflowsTab = tab }
+        workflowsPath = []
+        showMainSurface(.workflows)
+    }
+
+    /// New Workflow (⌘N): its page over the home, its composer focused.
+    /// With no workflows and no drafts the home already is that page, so
+    /// nothing is pushed.
+    func showNewWorkflow() {
+        if WorkflowsView.isFirstRun(installed: .shared, drafts: .shared) {
+            workflowsPath = []
+        } else if workflowsPath != [.create] {
+            workflowsPath = [.create]
+        }
+        newWorkflowComposerWantsFocus = true
+        showMainSurface(.workflows)
+    }
+
+    /// Where a Settings search result for Workflows lands.
+    func showWorkflows(_ destination: WorkflowsDestination?) {
+        switch destination {
+        case .newWorkflow?: showNewWorkflow()
+        case .home(let tab)?: showWorkflowsHome(tab: tab)
+        case .workspace(let id)?:
+            workflowsWorkspaceFocus = id
+            showWorkflowsHome(tab: .workspaces)
+        case nil: showMainSurface(.workflows)
+        }
+    }
+
+    func pushWorkflowsPage(_ page: WorkflowsPage) {
+        if workflowsPath.last != page { workflowsPath.append(page) }
+        if mainSurface != .workflows || !showsWorkflowLibrary { showMainSurface(.workflows) }
+    }
+
+    func popWorkflowsPage() {
+        _ = workflowsPath.popLast()
+    }
+
+    /// One level back, as the title bar's back button: out of the editor
+    /// to the Workflows page under it, else the top pushed page. False at
+    /// the top of the window (Chat, or the Workflows home), where there
+    /// is nothing to go back to.
+    @discardableResult
+    func goBack() -> Bool {
+        guard mainSurface == .workflows else { return false }
+        if !showsWorkflowLibrary {
+            showMainSurface(.workflows)
+            return true
+        }
+        guard !workflowsPath.isEmpty else { return false }
+        popWorkflowsPage()
+        return true
+    }
+
+    /// Once New Workflow has started a draft, back from the draft returns
+    /// to what was under New Workflow, not to its emptied composer.
+    func leaveNewWorkflowPage() {
+        if workflowsPath.last == .create { workflowsPath.removeLast() }
+    }
+
+    /// A workflow's run (or its form when `runID` is nil) in the Workflows
+    /// window. From elsewhere in the app the run opens on its own; from the
+    /// workflow's page it pushes on top of it.
+    func showWorkflowRun(workflowID: UUID, runID: UUID?, agentId: UUID = Agent.defaultId) {
+        let page = WorkflowsPage.run(workflowID: workflowID, runID: runID, agentId: agentId)
+        let showingLibrary = mainSurface == .workflows && showsWorkflowLibrary
+        if showingLibrary, case .run(let shown, _, _)? = workflowsPath.last, shown == workflowID {
+            workflowsPath[workflowsPath.count - 1] = page
+        } else if showingLibrary {
+            workflowsPath.append(page)
+        } else {
+            workflowsPath = [page]
+        }
+        showMainSurface(.workflows)
+    }
+
+    func showMainSurface(_ surface: MainSurface) {
+        if surface == .workflows {
+            if mainSurface != .workflows { FeatureTelemetry.workflowsOpened(page: workflowsPageToken) }
+            showsWorkflowLibrary = true
+        } else if surface == .settings {
+            if mainSurface != .settings {
+                // Tab switches while Settings is up are counted by
+                // `ManagementView.handleTabChange`.
+                let tab = ManagementStateManager.shared.selectedTab
+                CrashReportingService.recordBreadcrumb(category: "navigation", message: "management.window \(tab.rawValue)")
+                FeatureTelemetry.settingsOpened(tab: tab)
+            }
+        } else if surface == .chat, activeTab?.workflowID != nil || agentId == Agent.architectId {
+            if let recent = tabs.filter({ $0.workflowID == nil && $0.session.agentId != Agent.architectId })
+                .max(by: { $0.lastActivatedAt < $1.lastActivatedAt }) {
+                selectTab(id: recent.id)
+            } else {
+                startNewChat(with: Agent.defaultId)
+            }
+        }
+        mainSurface = surface
+    }
+
+    /// Closed `workflows_opened` page token for the page the surface lands on.
+    private var workflowsPageToken: String {
+        switch workflowsPath.last {
+        case nil: return "home"
+        case .workflow?: return "workflow"
+        case .run?: return "run"
+        case .create?: return "new"
+        }
+    }
+
+    /// Settings, on `tab` when given. The page on screen is app-wide
+    /// (`ManagementStateManager.selectedTab`), so every window agrees.
+    func showSettings(tab: ManagementTab? = nil) {
+        if let tab { ManagementStateManager.shared.selectedTab = tab }
+        showMainSurface(.settings)
+    }
+
+    func showWorkflowDetail() {
+        if showsWorkflowLibrary { showsWorkflowLibrary = false }
+        if mainSurface != .workflows { mainSurface = .workflows }
+    }
 
     /// Bumped on every Cmd+F so the find bar re-focuses its text field even
     /// when the bar is already visible (e.g. focus wandered back to the
@@ -316,9 +650,7 @@ final class ChatWindowState: ObservableObject {
 
     @Published var agentId: UUID
     @Published private(set) var agents: [Agent] = []
-    @Published private(set) var discoveredAgents: [DiscoveredAgent] = []
-    @Published var selectedDiscoveredAgent: DiscoveredAgent?
-    @Published var selectedDiscoveredAgentProviderId: UUID?
+    @Published var selectedRemoteAgentProviderId: UUID?
     @Published private(set) var pairedRelayAgents: [PairedRelayAgent] = []
     @Published var selectedRelayAgent: PairedRelayAgent?
     /// Mode 2 only: the *unprefixed* live effective model id of the selected
@@ -379,7 +711,7 @@ final class ChatWindowState: ObservableObject {
 
     /// Lowercased address of the workspace teammate's shared agent the
     /// window's remote mode is currently bound to, or nil when the active
-    /// tab is a local chat (or a legacy Bonjour/relay Mode 2 chat). Drives
+    /// tab is a local chat (or a relay Mode 2 chat). Drives
     /// the sidebar's selected row and the composer lock; kept in step with
     /// the active tab's `session.workspaceContext` by `reconcileRemoteMode`.
     @Published private(set) var workspaceAgentAddress: String?
@@ -391,12 +723,13 @@ final class ChatWindowState: ObservableObject {
     /// lease); released in `cleanup()`.
     private var isObservingRoster = false
 
-    /// The size the chat layout is designed to fit into at minimum: with the
-    /// sidebar open (260pt) plus the tab strip, anything narrower squished
-    /// the chat column, and anything shorter left the composer and the
-    /// empty-state hero fighting for room. Windows on screens that can show
-    /// this much use it verbatim; see `minimumContentSize`.
-    static let designMinimumContentSize = CGSize(width: 800, height: 620)
+    /// The size the chat layout is designed to fit into at minimum. Below
+    /// the compact breakpoint the sidebar and context panel become
+    /// overlays, so the floor is set by the compact composer and the
+    /// empty-state hero rather than by docked columns (`ChatShellLayout`).
+    /// Windows on screens that can show this much use it verbatim; see
+    /// `minimumContentSize`.
+    static let designMinimumContentSize = ChatShellLayout.minimumWindowSize
 
     /// The effective minimum content size for THIS window: the design
     /// minimum, clamped to what its screen can actually show. The root view
@@ -431,70 +764,118 @@ final class ChatWindowState: ObservableObject {
 
     // MARK: - Inspector State
 
-    /// Which pane the right-hand inspector shows, or nil while it is closed.
-    /// Both panes are about the tab on screen: File Changes (this chat's
-    /// history, diffs, revert) and History (the past chats of this chat's
-    /// agent). They share the one rail so both open the same way from the
-    /// toolbar, beside the chat, never as a floating dialog.
-    @Published var inspectorPane: ChatInspectorPane? {
+    /// Which pane the right-hand inspector asks for, or nil once the user
+    /// closed it. On the chat surface any request means "show File Changes
+    /// when this chat has some" (`contextPane`), so it starts requested:
+    /// the panel appears with a chat's first file change and stays out of
+    /// the way until then. Past chats live in the sidebar, not here.
+    @Published var inspectorPane: ChatInspectorPane? = .fileChanges {
         didSet { if let inspectorPane { lastInspectorPane = inspectorPane } }
     }
 
-    /// The pane the inspector reopens on. History by default: a fresh
-    /// window has no file changes to show yet.
-    @Published private(set) var lastInspectorPane: ChatInspectorPane = .history
+    /// The pane the inspector reopens on.
+    @Published private(set) var lastInspectorPane: ChatInspectorPane = .fileChanges
 
-    /// True once the user picked the pane on purpose (lens bar tap or a
-    /// deep link into File Changes). A pinned pane is shown as asked, even
-    /// when it is empty; an unpinned request is allowed to fall back. The
-    /// pin is about the chat on screen, so every conversation change
-    /// (`refreshFileChanges()` on switch / load / reset) clears it.
-    @Published private(set) var inspectorPanePinned = false
+    /// Chats or Runs in the History lens; kept across lens switches.
+    @Published var historyTab: ChatHistoryTab = .chats
+
+    /// The Runs tab's search, filters, and scroll spot. Opening a run swaps
+    /// this window's session, which rebuilds the inspector, so the tab
+    /// keeps them here. Not published: the tab owns the live copy.
+    var runHistoryViewState = WorkflowRunHistoryViewState()
 
     var isInspectorOpen: Bool { inspectorPane != nil }
 
-    /// The pane the rail actually draws. Pure so the fallback is testable:
-    /// an unpinned File Changes request for a chat with no change sets
-    /// shows History instead of an empty pane, until the first change lands.
+    /// The pane the inspector resolves to for this chat's agent: the
+    /// Architect's chats swap File Changes for the draft.
     nonisolated static func effectiveInspectorPane(
         requested: ChatInspectorPane?,
-        fileChangeSetCount: Int,
-        isPinned: Bool
+        isArchitect: Bool = false
     ) -> ChatInspectorPane? {
-        guard requested == .fileChanges, fileChangeSetCount == 0, !isPinned else { return requested }
-        return .history
+        requested?.resolved(isArchitect: isArchitect)
     }
 
     var effectiveInspectorPane: ChatInspectorPane? {
-        Self.effectiveInspectorPane(
-            requested: inspectorPane,
-            fileChangeSetCount: fileChangeSetCount,
-            isPinned: inspectorPanePinned
-        )
+        Self.effectiveInspectorPane(requested: inspectorPane, isArchitect: agentId == Agent.architectId)
     }
 
-    /// Toolbar button / mirror of `toggleSidebar()`: closes the inspector
-    /// when it is open, otherwise reopens it on the pane it last showed
-    /// (unpinned, so an empty File Changes falls back to History).
+    /// Closes the inspector when it is open, otherwise reopens it on the
+    /// pane it last showed.
     func toggleInspector() {
         if inspectorPane == nil {
-            inspectorPanePinned = false
             inspectorPane = lastInspectorPane
+            closeCompactDrawerForContext()
         } else {
             inspectorPane = nil
         }
     }
 
-    /// Show `pane` (opening the inspector or switching in place) and pin
-    /// it. Deep links such as "N files changed" rows and the rail's own
-    /// lens bar use this; it never closes.
+    /// Show `pane` (opening the inspector or switching in place). Deep
+    /// links such as "N files changed" rows use this; it never closes.
     func showInspector(_ pane: ChatInspectorPane) {
-        inspectorPanePinned = true
         inspectorPane = pane
+        closeCompactDrawerForContext()
+    }
+
+    /// Toolbar context button: closes the context panel when it is on
+    /// screen, otherwise opens it on File Changes. Works from what is
+    /// drawn, not from `inspectorPane`, so a pane the chat surface does
+    /// not show (the Architect's draft) never makes a click a no-op.
+    func toggleContextPanel() {
+        if isContextPanelOpen {
+            inspectorPane = nil
+            return
+        }
+        inspectorPane = .fileChanges
+        closeCompactDrawerForContext()
+    }
+
+    /// Whether this chat has a context panel at all: File Changes, once it
+    /// has recorded a change. The toolbar hides the toggle otherwise.
+    var hasContextPanel: Bool {
+        Self.contextPane(requested: .fileChanges, fileChangeSetCount: fileChangeSetCount, isArchitect: isArchitect) != nil
+    }
+
+    /// The pane the chat surface's context panel draws, if any.
+    var contextPane: ChatInspectorPane? {
+        Self.contextPane(requested: inspectorPane, fileChangeSetCount: fileChangeSetCount, isArchitect: isArchitect)
+    }
+
+    /// Whether the context panel is on screen (docked or as an overlay).
+    var isContextPanelOpen: Bool { contextPane != nil }
+
+    private var isArchitect: Bool { agentId == Agent.architectId }
+
+    /// A compact window shows one overlay at a time.
+    private func closeCompactDrawerForContext() {
+        if shellBreakpoint == .compact { isCompactSidebarPresented = false }
+    }
+
+    /// The pane the chat surface's context panel draws: File Changes, and
+    /// only while the panel is requested and the chat has recorded a
+    /// change. Any request counts, so visiting the Architect (whose draft
+    /// lives in the Workflows split, not here) never hides File Changes
+    /// for the next chat. The Architect's chats have no context panel.
+    nonisolated static func contextPane(
+        requested: ChatInspectorPane?,
+        fileChangeSetCount: Int,
+        isArchitect: Bool
+    ) -> ChatInspectorPane? {
+        guard requested != nil, fileChangeSetCount > 0, !isArchitect else { return nil }
+        return .fileChanges
     }
 
     func closeInspector() {
         inspectorPane = nil
+    }
+
+    /// Moving to the Architect opens the inspector on its draft, only when
+    /// the inspector is closed. Nothing else about the inspector follows
+    /// the agent: an open rail stays open on the lens the user picked
+    /// (File Changes reads as the draft there).
+    func openInspectorForArchitect() {
+        guard agentId == Agent.architectId, inspectorPane == nil else { return }
+        showInspector(.draft)
     }
 
     /// Count shown on the toolbar's inspector toggle: the files this chat
@@ -513,8 +894,8 @@ final class ChatWindowState: ObservableObject {
     var inspectorBadgeCount: Int? {
         Self.inspectorBadgeCount(
             fileChangesCount: fileChangesCount,
-            isInspectorOpen: isInspectorOpen,
-            isRemoteAgentChat: selectedDiscoveredAgentProviderId != nil
+            isInspectorOpen: isContextPanelOpen,
+            isRemoteAgentChat: selectedRemoteAgentProviderId != nil
         )
     }
 
@@ -527,8 +908,14 @@ final class ChatWindowState: ObservableObject {
     @Published private(set) var fileChangesCount: Int = 0
 
     /// Change sets recorded for the chat (including reverts). Zero hides
-    /// the toolbar entrypoint.
+    /// the context panel and its toolbar toggle.
     @Published private(set) var fileChangeSetCount: Int = 0
+
+    /// Stand-in for the journal query in `refreshFileChanges()`.
+    func setFileChangeCountsForTesting(files: Int, sets: Int) {
+        fileChangesCount = files
+        fileChangeSetCount = sets
+    }
 
     /// True while a background job spawned by the current session may still
     /// be mutating the workspace (undo is disabled meanwhile).
@@ -537,7 +924,6 @@ final class ChatWindowState: ObservableObject {
     // MARK: - Theme State
 
     @Published private(set) var theme: ThemeProtocol
-    @Published private(set) var cachedBackgroundImage: NSImage?
 
     // MARK: - Pre-computed View Values
 
@@ -550,7 +936,6 @@ final class ChatWindowState: ObservableObject {
 
     private nonisolated(unsafe) var notificationObservers: [NSObjectProtocol] = []
     private var sessionRefreshWorkItem: DispatchWorkItem?
-    private var bonjourCancellable: AnyCancellable?
     private var agentsCancellable: AnyCancellable?
     private var sessionsCancellable: AnyCancellable?
     private var workspaceCancellables: Set<AnyCancellable> = []
@@ -562,7 +947,7 @@ final class ChatWindowState: ObservableObject {
         self.agentId = agentId
         self.session = ChatSession()
         self.foundationModelAvailable = AppConfiguration.shared.foundationModelAvailable
-        self.theme = Self.loadTheme(for: agentId)
+        self.theme = ThemeManager.shared.currentTheme
 
         // Load initial data.
         let allAgents = AgentManager.shared.agents
@@ -571,9 +956,8 @@ final class ChatWindowState: ObservableObject {
 
         // Pre-compute view values
         self.cachedSystemPrompt = AgentManager.shared.effectiveSystemPrompt(for: agentId)
-        self.cachedActiveAgent = allAgents.first { $0.id == agentId } ?? .default
+        self.cachedActiveAgent = Self.resolvedAgent(agentId, in: allAgents) ?? .default
         self.cachedAgentDisplayName = Self.displayName(for: cachedActiveAgent)
-        decodeBackgroundImageAsync(themeConfig: theme.customThemeConfig)
 
         let initialTab = ChatTab(id: UUID(), session: self.session)
         self.tabs = [initialTab]
@@ -616,9 +1000,11 @@ final class ChatWindowState: ObservableObject {
         if sessionData == nil {
             adoptAgentWorkingFolder()
         }
+        // The Architect's chat opens on its draft. Set before the first
+        // layout so the window doesn't lay out Chat and then swap surfaces.
+        if agentId == Agent.architectId { showWorkflowDetail() }
 
         setupNotificationObservers()
-        observeBonjourBrowser()
         observeAgentManager()
         observeSessionsManager()
         observeWorkspaceState()
@@ -634,15 +1020,14 @@ final class ChatWindowState: ObservableObject {
         self.agentId = context.agentId
         self.session = context.chatSession
         self.foundationModelAvailable = AppConfiguration.shared.foundationModelAvailable
-        self.theme = Self.loadTheme(for: context.agentId)
+        self.theme = ThemeManager.shared.currentTheme
 
         let allAgents = AgentManager.shared.agents
         self.agents = allAgents
         self.filteredSessions = ChatSessionsManager.shared.sessions(for: context.agentId)
         self.cachedSystemPrompt = AgentManager.shared.effectiveSystemPrompt(for: context.agentId)
-        self.cachedActiveAgent = allAgents.first { $0.id == context.agentId } ?? .default
+        self.cachedActiveAgent = Self.resolvedAgent(context.agentId, in: allAgents) ?? .default
         self.cachedAgentDisplayName = Self.displayName(for: cachedActiveAgent)
-        decodeBackgroundImageAsync(themeConfig: theme.customThemeConfig)
 
         let initialTab = ChatTab(id: UUID(), session: self.session)
         self.tabs = [initialTab]
@@ -654,9 +1039,9 @@ final class ChatWindowState: ObservableObject {
         self.session.onSessionChanged = { [weak self] in
             self?.refreshSessionsDebounced()
         }
+        if context.agentId == Agent.architectId { showWorkflowDetail() }
 
         setupNotificationObservers()
-        observeBonjourBrowser()
         observeAgentManager()
         observeSessionsManager()
         observeWorkspaceState()
@@ -677,9 +1062,7 @@ final class ChatWindowState: ObservableObject {
             WorkspaceRosterStore.shared.endObserving()
         }
         pendingRelayConnect = nil
-        removeEphemeralProviderIfNeeded()
-        selectedDiscoveredAgent = nil
-        selectedDiscoveredAgentProviderId = nil
+        selectedRemoteAgentProviderId = nil
         selectedRelayAgent = nil
         // Inactive tabs first: each of their sessions is saved and stopped
         // (or handed to the background registry / unlinked when shared) —
@@ -724,10 +1107,6 @@ final class ChatWindowState: ObservableObject {
 
     var activeAgent: Agent { cachedActiveAgent }
 
-    var themeId: UUID? {
-        AgentManager.shared.themeId(for: agentId)
-    }
-
     /// Pick another agent: show that agent's tabs. When the agent already
     /// has tabs in this window, the one that needs input (else the most
     /// recently used) is focused and a blank tab left behind in the outgoing
@@ -738,13 +1117,8 @@ final class ChatWindowState: ObservableObject {
     /// pill only shows for chats that belong to a project.
     func switchAgent(to newAgentId: UUID) {
         TTSService.shared.stop()
-        // Picking an agent means "show me this agent's chats": dismiss the
-        // project page even when the agent is already active, otherwise the
-        // early returns below leave the page covering the chat (#2709).
-        openProjectId = nil
-        enteredChatFromProjectPage = false
         let scope = ChatTabScope.local(newAgentId)
-        if scope == activeScope { return }
+        if scope == activeScope, activeTab?.workflowID == nil { return }
         if focusExistingTab(in: scope) { return }
         if isBlank(session) {
             adoptAgent(newAgentId)
@@ -752,9 +1126,11 @@ final class ChatWindowState: ObservableObject {
                 installFreshSession(agentId: newAgentId)
             } else {
                 session.reset(for: newAgentId)
-                // A blank team-agent tab repurposed for a local agent drops
-                // its workspace identity (reset keeps it for New Chat).
+                // A blank team-agent or hosted tab repurposed for a local
+                // agent drops that identity (reset keeps it for New Chat).
                 session.workspaceContext = nil
+                session.hostDevice = nil
+                session.servedBy = nil
                 adoptAgentWorkingFolder()
             }
             reconcileRemoteMode()
@@ -771,8 +1147,6 @@ final class ChatWindowState: ObservableObject {
     /// New Chat there (a blank tab is reused), otherwise a new tab opens for
     /// the agent.
     func startNewChat(with newAgentId: UUID) {
-        openProjectId = nil
-        enteredChatFromProjectPage = false
         if ChatTabScope.local(newAgentId) == activeScope {
             startNewChat()
             return
@@ -796,9 +1170,16 @@ final class ChatWindowState: ObservableObject {
     /// workspace" rather than "workspace lost".
     func switchToWorkspaceAgent(address rawAddress: String, workspaceId requestedWorkspaceId: String? = nil) {
         let address = rawAddress.lowercased()
+        // The user's own agent on one of their sync devices: chat through
+        // sync. The relay route (owner redeem) stays for Macs not in sync.
+        if let hosted = SyncAgentDirectory.shared.hostedAgent(
+            address: address,
+            connected: SyncHostedRunMonitor.shared.connectedDevices
+        ) {
+            switchToHostedAgent(device: hosted.device, agentId: hosted.agentId)
+            return
+        }
         TTSService.shared.stop()
-        openProjectId = nil
-        enteredChatFromProjectPage = false
         let matches = WorkspaceRosterStore.shared.workspacesSharing(agentAddress: address)
         let workspaceId = requestedWorkspaceId ?? (matches.count == 1 ? matches.first?.id : nil) ?? ""
         let scope = ChatTabScope.workspace(address, workspaceId: workspaceId)
@@ -831,7 +1212,9 @@ final class ChatWindowState: ObservableObject {
     /// the strip with empty chats. Returns false when the scope has no tabs
     /// (the caller then opens one).
     private func focusExistingTab(in scope: ChatTabScope) -> Bool {
-        let candidates = tabs.filter { $0.id != activeTabId && ChatTabScope.of($0.session) == scope }
+        let candidates = tabs.filter {
+            $0.id != activeTabId && $0.workflowID == nil && ChatTabScope.of($0.session) == scope
+        }
         guard !candidates.isEmpty else { return false }
         let target =
             candidates.first { !$0.isHibernated && $0.session.awaitingClarify != nil }
@@ -848,6 +1231,13 @@ final class ChatWindowState: ObservableObject {
             dropTab(outgoing)
         }
         return true
+    }
+
+    /// A New Chat nothing has happened in yet. Leaving one closes it (its
+    /// unsent text goes back to the agent's draft), so a window holds at
+    /// most one and it never lingers in the sidebar.
+    private func isAbandonedOnLeave(_ tab: ChatTab) -> Bool {
+        tab.kind == .chat && !tab.isHibernated && tab.session.sessionId == nil && isBlank(tab.session)
     }
 
     /// Remove an INACTIVE tab from the strip and dispose of its session.
@@ -869,7 +1259,55 @@ final class ChatWindowState: ObservableObject {
             let fresh = makeFreshSession(agentId: Agent.defaultId, restoresDraft: false)
             stampWorkspaceContext(address: address, workspaceId: workspaceId, on: fresh)
             return ChatTab(id: UUID(), session: fresh)
+        case .hosted(let device, let agentId):
+            let fresh = makeFreshSession(agentId: Agent.defaultId, restoresDraft: false)
+            stampHostedAgent(device: device, agentId: agentId, on: fresh)
+            return ChatTab(id: UUID(), session: fresh)
         }
+    }
+
+    /// Pick an agent another of the user's Macs runs, from its sidebar
+    /// section. Same tab handling as a workspace agent: its existing tabs
+    /// are shown, else a blank tab is repurposed, else a new tab opens. The
+    /// window stays on the Default agent; the tab's session carries the
+    /// host's agent id and device, and that Mac answers its turns.
+    func switchToHostedAgent(device: String, agentId hostedAgentId: UUID) {
+        TTSService.shared.stop()
+        let scope = ChatTabScope.hosted(device: device, agentId: hostedAgentId)
+        if scope == activeScope, activeTab?.workflowID == nil { return }
+        if focusExistingTab(in: scope) { return }
+        if isBlank(session) {
+            if agentId != Agent.defaultId { adoptAgent(Agent.defaultId) }
+            if releaseSharedSessionIfNeeded() || detachRunningSessionIfNeeded() {
+                installFreshSession(agentId: Agent.defaultId, restoresDraft: false)
+            } else {
+                session.reset(for: Agent.defaultId)
+            }
+            stampHostedAgent(device: device, agentId: hostedAgentId, on: session)
+            reconcileRemoteMode()
+            refreshSessions()
+            refreshFileChanges()
+            return
+        }
+        newTab(agentId: Agent.defaultId, restoresDraft: false)
+        stampHostedAgent(device: device, agentId: hostedAgentId, on: session)
+        reconcileRemoteMode()
+        refreshSessions()
+    }
+
+    /// The agent the window takes on for a chat. A chat another Mac runs or
+    /// served keeps the window on the Default agent: its agent id is one of
+    /// that Mac's, and only the tab's session carries it.
+    private static func windowAgentId(agentId: UUID?, elsewhere: Bool) -> UUID {
+        elsewhere ? Agent.defaultId : agentId ?? Agent.defaultId
+    }
+
+    private func stampHostedAgent(device: String, agentId hostedAgentId: UUID, on target: ChatSession) {
+        target.workspaceContext = nil
+        target.servedBy = nil
+        target.folderState.clearFolder()
+        target.agentId = hostedAgentId
+        target.hostDevice = device
     }
 
     /// Re-run the Mode 2 connect for the active team-agent tab (Retry on
@@ -971,11 +1409,9 @@ final class ChatWindowState: ObservableObject {
             workspaceId: workspaceId?.isEmpty == false ? workspaceId : nil
         )
         if !force, workspaceAgentAddress == address,
-            selectedDiscoveredAgentProviderId == paired?.providerId
+            selectedRemoteAgentProviderId == paired?.providerId
         { return }
         workspaceAgentAddress = address
-        removeEphemeralProviderIfNeeded()
-        selectedDiscoveredAgent = nil
         refreshPairedRelayAgents()
         guard let relay = pairedRelayAgents.first(where: {
             $0.providerId == paired?.providerId
@@ -983,7 +1419,7 @@ final class ChatWindowState: ObservableObject {
             // Not paired yet: the composer lock explains; auto-connect or
             // Retry will pair it, after which `reconcileRemoteMode` re-runs.
             selectedRelayAgent = nil
-            selectedDiscoveredAgentProviderId = nil
+            selectedRemoteAgentProviderId = nil
             pinnedRemoteAgentEffectiveModel = nil
             pinnedRemoteAgentAvatar = nil
             pinnedRemoteAgentQuickActions = nil
@@ -993,7 +1429,7 @@ final class ChatWindowState: ObservableObject {
         // Route sends to the agent even before the connect resolves; the
         // composer stays locked until the phase reaches `.connected`.
         selectedRelayAgent = relay
-        selectedDiscoveredAgentProviderId = relay.providerId
+        selectedRemoteAgentProviderId = relay.providerId
         if WorkspaceRosterStore.shared.presence(forAddress: address, workspaceId: workspaceId).isOffline {
             // Don't hammer a host the router says is down; Retry / the
             // presence poll flipping online re-issues the connect.
@@ -1007,9 +1443,7 @@ final class ChatWindowState: ObservableObject {
     private func clearRemoteMode() {
         workspaceAgentAddress = nil
         pendingRelayConnect = nil
-        removeEphemeralProviderIfNeeded()
-        selectedDiscoveredAgent = nil
-        selectedDiscoveredAgentProviderId = nil
+        selectedRemoteAgentProviderId = nil
         selectedRelayAgent = nil
         pinnedRemoteAgentEffectiveModel = nil
         pinnedRemoteAgentAvatar = nil
@@ -1021,6 +1455,10 @@ final class ChatWindowState: ObservableObject {
     /// can send. Evaluated by the view on every relevant publisher change
     /// (roster presence, pairing, connection phase, session swap).
     var composerLock: ComposerLock? {
+        if let device = session.hostDeviceElsewhere {
+            let monitor = SyncHostedRunMonitor.shared
+            return monitor.isConnected(device) ? nil : .hostOffline(hostName: monitor.hostName(device))
+        }
         guard let context = session.workspaceContext, let status = sharedAgentStatus else { return nil }
         let identity = sharedAgentIdentity ?? SharedAgentIdentity.resolve(address: context.agentAddress)
         let agentName = identity.name
@@ -1035,6 +1473,8 @@ final class ChatWindowState: ObservableObject {
             return .agentNotConnected(agentName: agentName, reason: reason)
         case .unavailable(let reason, _):
             return .agentUnavailable(agentName: agentName, reason: reason)
+        case .accessRevoked:
+            return .agentUnavailable(agentName: agentName, reason: L("its owner revoked your guest link."))
         case .readOnlyTeammate(let callerName):
             // Hosted here for a remote caller: the agent is one of ours. An
             // invite-link row may carry no resolvable address, so fall back
@@ -1044,6 +1484,9 @@ final class ChatWindowState: ObservableObject {
                 identity.localAgent?.displayName
                 ?? resolvedName
                 ?? session.agentId.flatMap { AgentManager.shared.agent(for: $0)?.displayName }
+                ?? session.servedElsewhere.flatMap { device in
+                    session.agentId.flatMap { SyncAgentDirectory.shared.entry(device: device, agentId: $0)?.name }
+                }
                 ?? agentName
             return .teammateConversation(
                 callerName: callerName,
@@ -1085,52 +1528,48 @@ final class ChatWindowState: ObservableObject {
             isPaired: RemoteAgentManager.shared.remoteAgent(forAddress: address,
                 workspaceId: context.workspaceId.isEmpty ? nil : context.workspaceId
             ) != nil,
-            isBoundToProvider: selectedDiscoveredAgentProviderId != nil,
+            isBoundToProvider: selectedRemoteAgentProviderId != nil,
             isPairing: connect.isConnecting(address, workspaceId: context.workspaceId),
             connectFailure: connect.connectFailure(for: address, workspaceId: context.workspaceId),
             hasAttempted: connect.hasAttempted(address, workspaceId: context.workspaceId),
-            phase: remoteAgentConnectionPhase
+            phase: remoteAgentConnectionPhase,
+            accessRevokedAt: context.workspaceId.isEmpty
+                ? RemoteAgentManager.shared.remoteAgent(forAddress: address, workspaceId: nil)?.accessRevokedAt
+                : nil
         )
     }
 
     /// An untouched chat: nothing sent, nothing running, nothing pending.
+    /// A chat tab nothing has happened in yet, which a new chat may take
+    /// over. A workflow tab's session is never blank: the tab shows the
+    /// workflow, so a chat loaded into it would stay hidden.
     private func isBlank(_ s: ChatSession) -> Bool {
         s.turns.isEmpty && !s.isStreaming && s.awaitingClarify == nil
+            && !tabs.contains { $0.workflowID != nil && $0.session === s }
     }
 
-    /// Start a new chat that stays in the user's current project context:
-    /// the open project page when one is showing, otherwise the current
-    /// chat's project. Bound to ⌘N so running out of context mid-project
-    /// doesn't silently drop the project's instructions, knowledge, and
-    /// folder. Falls back to a plain new chat outside any project.
+    /// Start a new chat that stays in the current chat's project, so
+    /// running out of context mid-project doesn't silently drop the
+    /// project's instructions, knowledge, and folder. Falls back to a plain
+    /// new chat outside any project.
     func startNewChatInCurrentProject() {
-        let projectId = openProjectId ?? session.projectId
-        guard let project = ProjectManager.shared.project(for: projectId) else {
-            openProjectId = nil
-            enteredChatFromProjectPage = false
+        guard let project = ProjectManager.shared.project(for: session.projectId) else {
             startNewChat()
             return
         }
         startNewChat(in: project)
     }
 
-    /// Start a fresh chat inside `project`: closes the project page if it is
-    /// showing, honors the project's default agent when set and still
-    /// existing, stamps membership (persisted with the first turn's save),
-    /// and opens the project's working folder when the chat has none.
+    /// Start a fresh chat inside `project` with its default agent, or the
+    /// window's agent when none is set or it was deleted; stamps membership
+    /// (persisted with the first turn's save) and opens the project's
+    /// working folder when the chat has none. Never lands on an existing
+    /// tab: that conversation would be pulled into the project.
     func startNewChat(in project: Project) {
-        openProjectId = nil
-        enteredChatFromProjectPage = true
-        // `switchAgent` already installs a fresh session for the target
-        // agent, so the two branches differ only in the agent change.
-        if let defaultAgentId = project.defaultAgentId,
-            defaultAgentId != agentId,
-            agents.contains(where: { $0.id == defaultAgentId })
-        {
-            switchAgent(to: defaultAgentId)
-        } else {
-            startNewChat()
-        }
+        let target = project.defaultAgentId.flatMap { id in
+            agents.contains(where: { $0.id == id }) ? id : nil
+        } ?? agentId
+        startNewChat(with: target)
         // `reset`/`installFreshSession` clear membership; re-stamp it.
         session.projectId = project.id
         adoptProjectFolder(project)
@@ -1209,9 +1648,10 @@ final class ChatWindowState: ObservableObject {
         origin: String
     ) -> Task<Void, Never> {
         let folderState = target.folderState
-        folderState.restore(bookmark: bookmark, path: path)
+        let adoption = folderState.beginHostFolderAdoption(bookmark: bookmark, path: path)
         let agentId = target.agentId ?? agentId
         return Task { @MainActor in
+            defer { folderState.endHostFolderAdoption(adoption) }
             // Only a folder that actually resolved earns the switch: a stale
             // bookmark whose path is gone leaves the agent as it was rather
             // than stranding it with no sandbox AND no folder.
@@ -1242,9 +1682,7 @@ final class ChatWindowState: ObservableObject {
     /// tab along with the project folder, the same way `startNewChat(in:)`
     /// does.
     func newTabInCurrentProject() {
-        let project = ProjectManager.shared.project(for: openProjectId ?? session.projectId)
-        openProjectId = nil
-        enteredChatFromProjectPage = project != nil
+        let project = ProjectManager.shared.project(for: session.projectId)
         newTab()
         guard let project else { return }
         session.projectId = project.id
@@ -1344,14 +1782,22 @@ final class ChatWindowState: ObservableObject {
         flushCurrentSession()
 
         let resolvedData = ChatSessionStore.load(id: sessionData.id) ?? sessionData
-        let targetAgentId = resolvedData.agentId ?? Agent.defaultId
+        let me = SyncService.shared.core?.deviceKey()
+        let targetAgentId = Self.windowAgentId(
+            agentId: resolvedData.agentId,
+            elsewhere: resolvedData.hostDevice.map { !$0.isEmpty && $0 != me } == true
+                || resolvedData.servedElsewhere(me: me) != nil
+        )
 
         // Browser-style, like `startNewChat` / `switchAgent`: a run in flight
         // (or paused on a clarify prompt) keeps its own tab, still owned by
         // this window and still visible under its agent; the target loads
         // into a fresh tab instead of pushing the run out of the strip.
-        if session.isStreaming || session.awaitingClarify != nil,
-            !LiveChatSessionRegistry.shared.isShared(session)
+        // A workflow tab shows the workflow, not a chat: the chat gets a tab
+        // of its own.
+        if activeTab?.workflowID != nil
+            || ((session.isStreaming || session.awaitingClarify != nil)
+                && !LiveChatSessionRegistry.shared.isShared(session))
         {
             newTab(agentId: targetAgentId, startsConversation: false)
         }
@@ -1432,10 +1878,15 @@ final class ChatWindowState: ObservableObject {
     /// outgoing tab keeps its session untouched (no detach — the tab still
     /// owns it).
     func newTab(agentId newAgentId: UUID? = nil, startsConversation: Bool = true, restoresDraft: Bool = true) {
-        // Browser-style: every ⌘T / ⌘N / + press opens another tab, even
-        // when the active one is still blank. Blank tabs are never
-        // persisted, so extras cost nothing across a relaunch.
+        defer {
+            if agentId == Agent.architectId { showWorkflowDetail() }
+            else { mainSurface = .chat }
+        }
+        // A blank active tab is replaced, not kept beside the new one.
+        // Stashed first so the fresh chat restores its unsent text.
         persistActiveSessionForTabSwitch()
+        let abandoned = activeTab.flatMap { isAbandonedOnLeave($0) ? $0 : nil }
+        abandoned?.session.stashDraft()
         // A new tab from a team-agent tab stays with that agent, same as
         // sidebar New Chat (`startNewChat`). Without the carried context the
         // fresh session scopes as a local tab, so the strip switches scope
@@ -1446,17 +1897,24 @@ final class ChatWindowState: ObservableObject {
             newAgentId == nil
             ? session.workspaceContext.flatMap { $0.isServedForTeammate ? nil : $0 }
             : nil
+        // Likewise a new tab from a hosted tab stays with the other Mac's agent.
+        let carriedHost: (device: String, agentId: UUID)? =
+            newAgentId == nil
+            ? session.hostDeviceElsewhere.flatMap { device in session.agentId.map { (device, $0) } }
+            : nil
         if let newAgentId, newAgentId != agentId {
             adoptAgent(newAgentId)
         }
         let fresh = makeFreshSession(
             agentId: agentId,
-            restoresDraft: restoresDraft && carriedWorkspace == nil
+            restoresDraft: restoresDraft && carriedWorkspace == nil && carriedHost == nil
         )
         fresh.workspaceContext = carriedWorkspace
-        // Local tabs only: a new tab that stays with a team agent must not
-        // inherit the hosting local agent's working folder.
-        if carriedWorkspace == nil {
+        if let carriedHost {
+            stampHostedAgent(device: carriedHost.device, agentId: carriedHost.agentId, on: fresh)
+        } else if carriedWorkspace == nil {
+            // Local tabs only: a new tab that stays with a team agent must not
+            // inherit the hosting local agent's working folder.
             adoptAgentWorkingFolder(on: fresh)
         }
         let tab = ChatTab(id: UUID(), session: fresh)
@@ -1470,6 +1928,7 @@ final class ChatWindowState: ObservableObject {
             tabs.append(tab)
             activeTabId = tab.id
             session = fresh
+            if let abandoned { dropTab(abandoned) }
         }
         reconcileRemoteMode()
         refreshSessions()
@@ -1502,14 +1961,23 @@ final class ChatWindowState: ObservableObject {
     /// outgoing session is neither detached nor released — its tab keeps it
     /// live, so an in-flight stream keeps rendering into that tab.
     func selectTab(id: UUID) {
-        guard id != activeTabId, let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
+        guard let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
+        if tabs[idx].workflowID != nil || tabs[idx].session.agentId == Agent.architectId {
+            showWorkflowDetail()
+        } else {
+            mainSurface = .chat
+        }
+        guard id != activeTabId else { return }
         persistActiveSessionForTabSwitch()
+        let abandoned = activeTab.flatMap { isAbandonedOnLeave($0) ? $0 : nil }
+        abandoned?.session.stashDraft()
         tabs[idx].lastActivatedAt = Date()
         if tabs[idx].isHibernated {
             wake(tabAt: idx)
         }
         activeTabId = id
         adoptTabSession(tabs[idx].session)
+        if let abandoned { dropTab(abandoned) }
         hibernateColdTabsIfNeeded()
     }
 
@@ -1540,9 +2008,12 @@ final class ChatWindowState: ObservableObject {
         let scopedIdx = scoped.firstIndex(where: { $0.id == id }) ?? 0
         let siblings = scoped.filter { $0.id != id }
         // A lone blank tab has nothing to close.
-        if id == activeTabId, siblings.isEmpty, !closing.isHibernated, isBlank(closing.session) { return }
+        if id == activeTabId, siblings.isEmpty, !closing.isHibernated, closing.kind == .chat, isBlank(closing.session) {
+            return
+        }
 
         rememberClosedTab(closing, at: scopedIdx)
+        AgentCreatorLauncher.noteClosed(closing.session)
         if id != activeTabId {
             tabs.remove(at: idx)
             teardownTabSession(closing.session)
@@ -1586,7 +2057,7 @@ final class ChatWindowState: ObservableObject {
     func closeActiveTabIfPossible() -> Bool {
         guard let active = tabs.first(where: { $0.id == activeTabId }) else { return false }
         let hasSiblings = scopedTabs.count > 1
-        guard hasSiblings || active.isHibernated || !isBlank(active.session) else { return false }
+        guard hasSiblings || active.isHibernated || active.kind != .chat || !isBlank(active.session) else { return false }
         closeTab(id: activeTabId)
         return true
     }
@@ -1618,6 +2089,11 @@ final class ChatWindowState: ObservableObject {
     /// `BackgroundTaskManager` retains and re-attaches on its own.
     func tabLayoutSnapshot() -> ChatTabLayoutRecord {
         let entries = tabs.compactMap { tab -> ChatTabLayoutRecord.Tab? in
+            if case .workflowRun(let workflowID, let runID) = tab.kind {
+                return ChatTabLayoutRecord.Tab(
+                    sessionId: nil, lastActivatedAt: tab.lastActivatedAt, workflowID: workflowID, runID: runID,
+                    agentId: tab.session.agentId)
+            }
             guard let sessionId = tab.session.sessionId,
                 tab.isHibernated || !tab.session.turns.isEmpty,
                 !LiveChatSessionRegistry.shared.isShared(tab.session),
@@ -1643,13 +2119,18 @@ final class ChatWindowState: ObservableObject {
     @discardableResult
     func restoreTabs(from record: ChatTabLayoutRecord) -> Int {
         var restored = 0
-        let candidates = record.tabs.filter { entry in
-            !tabs.contains { $0.session.sessionId == entry.sessionId }
-                && BackgroundTaskManager.shared.taskState(for: entry.sessionId) == nil
+        let chatIds = record.tabs.compactMap(\.sessionId).filter { sessionId in
+            !tabs.contains(where: { $0.session.sessionId == sessionId })
+                && BackgroundTaskManager.shared.taskState(for: sessionId) == nil
         }
-        let stubs = transcriptStubs(for: candidates.map(\.sessionId))
-        for entry in candidates {
-            guard let snapshot = stubs[entry.sessionId] else { continue }
+        let stubs = transcriptStubs(for: chatIds)
+        for entry in record.tabs {
+            // Workflows and their runs open in the Workflows window, not
+            // as tabs; a layout saved by an earlier version may list them.
+            if entry.workflowID != nil { continue }
+            guard let sessionId = entry.sessionId, chatIds.contains(sessionId),
+                let snapshot = stubs[sessionId]
+            else { continue }
             let cold = makeFreshSession(agentId: snapshot.agentId ?? agentId, loading: snapshot)
             var tab = ChatTab(id: UUID(), session: cold)
             tab.isHibernated = true
@@ -1661,13 +2142,31 @@ final class ChatWindowState: ObservableObject {
         if let activeSessionId = record.activeSessionId,
             let target = tabs.first(where: { $0.session.sessionId == activeSessionId }),
             let initial = tabs.first(where: { $0.id == activeTabId }),
-            !initial.isHibernated, isBlank(initial.session), initial.session.unsentComposerText.isEmpty
+            !initial.isHibernated, initial.kind == .chat, isBlank(initial.session),
+            initial.session.unsentComposerText.isEmpty
         {
             selectTab(id: target.id)
             dropTab(initial)
         }
         return restored
     }
+
+    // MARK: Workflow tabs
+
+    /// Show a workflow's run, or its form when `runID` is nil, in this
+    /// window's Workflows view. `agentId` is the agent a new run there runs
+    /// as (the Orchestrator for runs started outside a chat).
+    func openWorkflowTab(workflowID: UUID, runID: UUID? = nil, agentId tabAgentId: UUID = Agent.defaultId) {
+        showWorkflowRun(workflowID: workflowID, runID: runID, agentId: tabAgentId)
+    }
+
+    /// The run a workflow tab shows (Run Again, picking from its history).
+    func setWorkflowTabRun(tabId: UUID, runID: UUID?) {
+        guard let idx = tabs.firstIndex(where: { $0.id == tabId }), let workflowID = tabs[idx].workflowID else { return }
+        tabs[idx].kind = .workflowRun(workflowID: workflowID, runID: runID)
+    }
+
+    var activeTab: ChatTab? { tabs.first { $0.id == activeTabId } }
 
     // MARK: Background runs as tabs
 
@@ -1738,7 +2237,7 @@ final class ChatWindowState: ObservableObject {
     /// per-agent chrome (theme, pills, dropdown, sidebar filter) the same
     /// way `loadSession` does for in-tab switches.
     private func adoptTabSession(_ target: ChatSession) {
-        let targetAgentId = target.agentId ?? Agent.defaultId
+        let targetAgentId = Self.windowAgentId(agentId: target.agentId, elsewhere: ChatTabScope.of(target).isHosted)
         if targetAgentId != agentId {
             adoptAgent(targetAgentId)
         }
@@ -2036,12 +2535,8 @@ final class ChatWindowState: ObservableObject {
 
     /// Re-query the journal for the current session's outstanding file
     /// count, set count, and active-job flag. Cheap (actor cache hit) and
-    /// safe to call on every chat switch / journal notification. Every
-    /// conversation change goes through here, so this is also where the
-    /// inspector's explicit pane pick is forgotten; a journal notification
-    /// for the same chat passes `conversationChanged: false`.
-    func refreshFileChanges(conversationChanged: Bool = true) {
-        if conversationChanged { inspectorPanePinned = false }
+    /// safe to call on every chat switch / journal notification.
+    func refreshFileChanges() {
         // Remote-agent chats never mutate local files; a new chat has no
         // session id until the first send.
         if let pending = pendingChangesPanelRequest {
@@ -2052,7 +2547,7 @@ final class ChatWindowState: ObservableObject {
                 openChangesPanel(focusing: pending.setId)
             }
         }
-        guard selectedDiscoveredAgentProviderId == nil,
+        guard selectedRemoteAgentProviderId == nil,
             let sessionId = session.sessionId?.uuidString
         else {
             fileChangesCount = 0
@@ -2158,7 +2653,7 @@ final class ChatWindowState: ObservableObject {
     }
 
     /// Switch every per-agent piece of window state (`agentId`,
-    /// discovered/relay-agent pills, theme, system-prompt cache, global
+    /// relay-agent pills, theme, system-prompt cache, global
     /// active-agent pointer) to `newAgentId` WITHOUT touching the
     /// session's content. `switchAgent` calls this before resetting the
     /// session for a brand-new chat; `loadSession` calls it before
@@ -2168,9 +2663,7 @@ final class ChatWindowState: ObservableObject {
         // team-agent tab afterwards from its session's workspace context.
         workspaceAgentAddress = nil
         pendingRelayConnect = nil
-        removeEphemeralProviderIfNeeded()
-        selectedDiscoveredAgent = nil
-        selectedDiscoveredAgentProviderId = nil
+        selectedRemoteAgentProviderId = nil
         selectedRelayAgent = nil
         pinnedRemoteAgentEffectiveModel = nil
         pinnedRemoteAgentAvatar = nil
@@ -2179,10 +2672,20 @@ final class ChatWindowState: ObservableObject {
         agentId = newAgentId
         refreshTheme()
         refreshAgentConfig()
+        // A New Agent chat is not an agent the user picked: the selection
+        // stays on the agent they came from.
+        guard newAgentId != Agent.configuratorId else { return }
         AgentManager.shared.setActiveAgent(newAgentId)
         // First-run readiness: a freshly created agent (any path) is checked
         // the first time a window shows it. Clean agents clear silently.
         AgentSetupPromptCoordinator.shared.agentShown(newAgentId, windowId: windowId)
+    }
+
+    /// The window's agent by id. The Configurator is never in the agent
+    /// list but owns New Agent chats.
+    static func resolvedAgent(_ id: UUID, in agents: [Agent]) -> Agent? {
+        if id == Agent.configuratorId { return .configurator }
+        return agents.first { $0.id == id }
     }
 
     private func flushCurrentSession() {
@@ -2199,7 +2702,7 @@ final class ChatWindowState: ObservableObject {
     func refreshAgents() {
         let allAgents = AgentManager.shared.agents
         agents = allAgents
-        cachedActiveAgent = allAgents.first { $0.id == agentId } ?? .default
+        cachedActiveAgent = Self.resolvedAgent(agentId, in: allAgents) ?? .default
         cachedAgentDisplayName = Self.displayName(for: cachedActiveAgent)
     }
 
@@ -2207,12 +2710,19 @@ final class ChatWindowState: ObservableObject {
         onTabLayoutChanged?()
         // A team-agent tab lists that agent's history (keyed by address);
         // everything else lists the local agent's.
-        if let context = session.workspaceContext, !context.isServedForTeammate {
-            filteredSessions = ChatSessionsManager.shared.sessions(
+        let next: [ChatSessionData]
+        if case .hosted(let device, let hostedAgentId) = ChatTabScope.of(session) {
+            next = ChatSessionsManager.shared.sessions(forHost: device, agentId: hostedAgentId)
+        } else if let context = session.workspaceContext, !context.isServedForTeammate {
+            next = ChatSessionsManager.shared.sessions(
                 forRemoteAgentAddress: context.agentAddress).filter { $0.workspace?.workspaceId == context.workspaceId }
         } else {
-            filteredSessions = ChatSessionsManager.shared.sessions(for: agentId)
+            next = ChatSessionsManager.shared.sessions(for: agentId)
         }
+        // Publishing re-renders the whole chat shell; a save to another
+        // agent's chat leaves this list unchanged.
+        guard !ChatSessionData.sameListRows(filteredSessions, next) else { return }
+        filteredSessions = next
     }
 
     /// Coalesces rapid `refreshSessions()` calls (e.g. during streaming saves).
@@ -2227,13 +2737,8 @@ final class ChatWindowState: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: workItem)
     }
 
-    /// `freshAgent` lets callers that already hold the up-to-date agent (e.g.
-    /// the `applyAgentsUpdate` sink, which runs during `@Published`'s `willSet`
-    /// while `AgentManager.shared.agents` still holds the OLD array) resolve the
-    /// theme from that fresh value instead of re-reading the stale singleton —
-    /// otherwise the window's theme trails a per-agent theme change by one.
-    func refreshTheme(freshAgent: Agent? = nil) {
-        let newTheme = Self.loadTheme(for: agentId, freshAgent: freshAgent)
+    func refreshTheme() {
+        let newTheme = ThemeManager.shared.currentTheme
         let oldConfig = theme.customThemeConfig
         let newConfig = newTheme.customThemeConfig
         // Skip only if the full config is identical (not just the ID) and the
@@ -2242,25 +2747,13 @@ final class ChatWindowState: ObservableObject {
         let oldScale = (theme as? CustomizableTheme)?.fontScale
         let newScale = (newTheme as? CustomizableTheme)?.fontScale
         guard oldConfig != newConfig || oldScale != newScale else { return }
-        let shouldRedecodeBackgroundImage = Self.needsBackgroundImageRedecode(
-            oldConfig: oldConfig,
-            newConfig: newConfig
-        )
 
         theme = newTheme
-
-        if shouldRedecodeBackgroundImage {
-            decodeBackgroundImageAsync(themeConfig: newConfig)
-        }
-    }
-
-    nonisolated static func needsBackgroundImageRedecode(oldConfig: CustomTheme?, newConfig: CustomTheme?) -> Bool {
-        BackgroundImageDecodeKey(config: oldConfig) != BackgroundImageDecodeKey(config: newConfig)
     }
 
     func refreshAgentConfig() {
         cachedSystemPrompt = AgentManager.shared.effectiveSystemPrompt(for: agentId)
-        cachedActiveAgent = agents.first { $0.id == agentId } ?? .default
+        cachedActiveAgent = Self.resolvedAgent(agentId, in: agents) ?? .default
         cachedAgentDisplayName = Self.displayName(for: cachedActiveAgent)
         // `.appConfigurationChanged` also feeds ChatSession's prompt-shape
         // detector. Keep its old preview bytes until that detector compares
@@ -2280,51 +2773,6 @@ final class ChatWindowState: ObservableObject {
     }
 
     // MARK: - Private
-
-    private func observeBonjourBrowser() {
-        bonjourCancellable = BonjourBrowser.shared.$discoveredAgents
-            .receive(on: RunLoop.main)
-            .sink { [weak self] agents in
-                guard let self else { return }
-                self.discoveredAgents = agents
-                if let selected = self.selectedDiscoveredAgent {
-                    if let refreshed = agents.first(where: { $0.id == selected.id }) {
-                        // Agent survived (or re-appeared within the browser's
-                        // removal grace period). If it came back on a new
-                        // host/port — sleep/wake, DHCP change — repoint the
-                        // provider and reconnect so the chat keeps working.
-                        if refreshed.host != selected.host || refreshed.port != selected.port {
-                            self.selectedDiscoveredAgent = refreshed
-                            self.reconnectSelectedDiscoveredAgent(to: refreshed)
-                        }
-                    } else {
-                        // Browser already debounces flaps; an actual removal
-                        // here means the agent has been gone for the full
-                        // grace period.
-                        self.removeEphemeralProviderIfNeeded()
-                        self.selectedDiscoveredAgent = nil
-                        self.selectedDiscoveredAgentProviderId = nil
-                    }
-                }
-                self.refreshPairedRelayAgents(discoveredAgents: agents)
-            }
-    }
-
-    /// Repoint the selected agent's provider at a refreshed host/port and
-    /// reconnect. Used when a discovered agent re-resolves to a new endpoint
-    /// after a network change.
-    private func reconnectSelectedDiscoveredAgent(to agent: DiscoveredAgent) {
-        guard let providerId = selectedDiscoveredAgentProviderId else { return }
-        let manager = RemoteProviderManager.shared
-        guard var provider = manager.configuration.providers.first(where: { $0.id == providerId })
-        else { return }
-        let rawHost = agent.host ?? ""
-        guard !rawHost.isEmpty else { return }
-        provider.host = rawHost.hasSuffix(".") ? String(rawHost.dropLast()) : rawHost
-        provider.port = agent.port
-        manager.updateProvider(provider, apiKey: nil)
-        Task { try? await manager.connect(providerId: providerId) }
-    }
 
     /// Mirror `AgentManager.shared.$agents` into this window so the picker,
     /// `cachedActiveAgent`, and `cachedAgentDisplayName` stay live across
@@ -2364,7 +2812,7 @@ final class ChatWindowState: ObservableObject {
             .sink { [weak self] _ in
                 Task { @MainActor [weak self] in
                     guard let self, let address = self.workspaceAgentAddress,
-                        self.selectedDiscoveredAgentProviderId == nil
+                        self.selectedRemoteAgentProviderId == nil
                     else { return }
                     self.refreshPairedRelayAgents()
                     self.bindRemoteMode(
@@ -2446,7 +2894,7 @@ final class ChatWindowState: ObservableObject {
         let oldActive = cachedActiveAgent
         agents = latest
 
-        guard let newActive = latest.first(where: { $0.id == agentId }) else {
+        guard let newActive = Self.resolvedAgent(agentId, in: latest) else {
             // `switchAgent` updates theme/sessions/config and persists the
             // selection. `agents` was just swapped above, so any re-read
             // inside `switchAgent` sees the fresh list.
@@ -2471,25 +2919,15 @@ final class ChatWindowState: ObservableObject {
         // baseline across the immediate window-state refresh; otherwise a
         // view redraw can consume the new shape before the detector runs.
         session.invalidateTokenCache(preservingPromptShapeBaseline: true)
-
-        if newActive.themeId != oldActive.themeId {
-            // Resolve from `newActive`: the singleton's `agents` is still the old
-            // array during this `willSet` sink, so re-reading it would apply the
-            // previous theme (a one-change lag).
-            refreshTheme(freshAgent: newActive)
-        }
     }
 
-    func refreshPairedRelayAgents(discoveredAgents: [DiscoveredAgent]? = nil) {
-        let knownAgents = discoveredAgents ?? self.discoveredAgents
-        let discoveredIds = Set(knownAgents.map(\.id))
+    func refreshPairedRelayAgents() {
         let manager = RemoteProviderManager.shared
         pairedRelayAgents = manager.configuration.providers.compactMap { provider in
             guard provider.providerType == .osaurus,
                 !manager.isEphemeral(id: provider.id),
                 let agentId = provider.remoteAgentId,
-                let relayAddress = provider.remoteAgentAddress,
-                !discoveredIds.contains(agentId)
+                let relayAddress = provider.remoteAgentAddress
             else { return nil }
             return PairedRelayAgent(
                 id: agentId,
@@ -2499,27 +2937,6 @@ final class ChatWindowState: ObservableObject {
                 avatar: RemoteAgentManager.shared.remoteAgent(forProviderId: provider.id)?.avatar
             )
         }
-    }
-
-    private func removeEphemeralProviderIfNeeded() {
-        guard let providerId = selectedDiscoveredAgentProviderId,
-            RemoteProviderManager.shared.isEphemeral(id: providerId)
-        else { return }
-        RemoteProviderManager.shared.removeProvider(id: providerId)
-    }
-
-    private static func loadTheme(for agentId: UUID, freshAgent: Agent? = nil) -> ThemeProtocol {
-        // Prefer an explicitly-supplied fresh agent over the singleton, which can
-        // still be mid-update (see `refreshTheme(freshAgent:)`). The Default agent
-        // always uses the global theme, matching `AgentManager.themeId(for:)`.
-        let agent = freshAgent ?? AgentManager.shared.agent(for: agentId)
-        if let agent, agent.id != Agent.defaultId,
-            let themeId = agent.themeId,
-            let custom = ThemeManager.shared.installedThemes.first(where: { $0.metadata.id == themeId })
-        {
-            return CustomizableTheme(config: custom)
-        }
-        return ThemeManager.shared.currentTheme
     }
 
     /// Built-in default agent renders its localized display name (the
@@ -2532,16 +2949,23 @@ final class ChatWindowState: ObservableObject {
     }
 
     /// The identity that should head the chat thread / empty state right now.
-    /// In Mode 2 (a discovered/relay agent is selected) this is the *remote*
-    /// agent's name + fetched mascot; otherwise it's the local active agent.
+    /// In a hosted chat it's the agent on the other Mac, from its directory;
+    /// in Mode 2 (a relay agent is selected) the *remote* agent's
+    /// name + fetched mascot; otherwise it's the local active agent.
     /// Drives message-bubble headers so a remote conversation isn't mislabeled
     /// "Osaurus" with the local avatar.
     var effectiveChatIdentity: ChatThreadIdentity {
-        if selectedDiscoveredAgentProviderId != nil {
-            let remoteName =
-                selectedDiscoveredAgent?.name
-                ?? selectedRelayAgent?.name
-                ?? L("Remote Agent")
+        if let host = session.hostDeviceElsewhere, let hostedAgentId = session.agentId {
+            let entry = SyncAgentDirectory.shared.entry(device: host, agentId: hostedAgentId)
+            return ChatThreadIdentity(
+                name: entry?.name ?? L("Agent"),
+                mascotId: entry?.avatar,
+                customAvatarPath: nil,
+                isRemote: true
+            )
+        }
+        if selectedRemoteAgentProviderId != nil {
+            let remoteName = selectedRelayAgent?.name ?? L("Remote Agent")
             return ChatThreadIdentity(
                 name: remoteName,
                 mascotId: pinnedRemoteAgentAvatar,
@@ -2555,25 +2979,6 @@ final class ChatWindowState: ObservableObject {
             customAvatarPath: cachedActiveAgent.customAvatarURL?.path,
             isRemote: false
         )
-    }
-
-    private func decodeBackgroundImageAsync(themeConfig: CustomTheme?) {
-        Task { [weak self] in
-            let decoded = themeConfig?.background.decodedImage()
-            self?.cachedBackgroundImage = decoded
-        }
-    }
-
-    private struct BackgroundImageDecodeKey: Equatable {
-        let themeId: UUID?
-        let backgroundType: ThemeBackground.BackgroundType?
-        let imageData: String?
-
-        init(config: CustomTheme?) {
-            self.themeId = config?.metadata.id
-            self.backgroundType = config?.background.type
-            self.imageData = config?.background.imageData
-        }
     }
 
     private func setupNotificationObservers() {
@@ -2629,7 +3034,7 @@ final class ChatWindowState: ObservableObject {
                     guard let current = self.session.sessionId?.uuidString,
                         changed == nil || changed == current
                     else { return }
-                    self.refreshFileChanges(conversationChanged: false)
+                    self.refreshFileChanges()
                 }
             }
         )
@@ -2642,11 +3047,8 @@ final class ChatWindowState: ObservableObject {
                 queue: .main
             ) { [weak self] _ in Task { @MainActor in self?.refreshAgentConfig() } }
         )
-        // refresh theme when any theme on disk changes. refreshTheme()
-        // re-resolves from `installedThemes`/`currentTheme` and no ops via its
-        // config equality guard if this window's effective theme is unchanged,
-        // so windows pinned to an agent specific theme also pick up live edits
-        // to that theme without waiting for a reopen
+        // Follow appearance and zoom changes. refreshTheme() no-ops via its
+        // config equality guard when this window's theme is unchanged.
         notificationObservers.append(
             NotificationCenter.default.addObserver(
                 forName: .globalThemeChanged,
@@ -2672,16 +3074,15 @@ final class ChatWindowState: ObservableObject {
             ) { [weak self] _ in
                 Task { @MainActor in
                     guard let self,
-                        let providerId = self.selectedDiscoveredAgentProviderId
+                        let providerId = self.selectedRemoteAgentProviderId
                     else { return }
                     let manager = RemoteProviderManager.shared
                     let providerExists = manager.configuration.providers
                         .contains(where: { $0.id == providerId })
                     guard providerExists else {
                         // Provider was removed from settings — leave remote-agent mode.
-                        self.selectedDiscoveredAgent = nil
                         self.selectedRelayAgent = nil
-                        self.selectedDiscoveredAgentProviderId = nil
+                        self.selectedRemoteAgentProviderId = nil
                         self.pinnedRemoteAgentEffectiveModel = nil
                         self.pinnedRemoteAgentAvatar = nil
                         self.pinnedRemoteAgentQuickActions = nil

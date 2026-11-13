@@ -8,52 +8,71 @@ Canonical reference for all Osaurus features, their status, and documentation.
 
 ## Feature Matrix
 
-| Feature                          | Status    | README Section     | Documentation                 | Code Location                                                                         |
-| -------------------------------- | --------- | ------------------ | ----------------------------- | ------------------------------------------------------------------------------------- |
-| Local LLM Server (MLX)           | Stable    | "Key Features"     | OpenAI_API_GUIDE.md           | Services/Inference/MLXService.swift, Services/ModelRuntime/                                     |
-| Remote Providers                 | Stable    | "Key Features"     | REMOTE_PROVIDERS.md           | Managers/RemoteProviderManager.swift, Services/Provider/RemoteProviderService.swift            |
-| Secure Channel (Agent E2E Encryption) | Stable | "Key Features"   | SECURE_CHANNEL.md             | Identity/SecureChannel.swift, Identity/SecureSessionStore.swift, Networking/SecureChannelResponseEncryptor.swift, Services/Provider/SecureChannelClient.swift, Networking/HTTPHandler.swift |
-| Remote MCP Providers             | Stable    | "Key Features"     | REMOTE_MCP_PROVIDERS.md       | Managers/MCPProviderManager.swift, Tools/MCPProviderTool.swift                        |
-| MCP Server                       | Stable    | "MCP Server"       | (in README)                   | Networking/OsaurusServer.swift, Services/MCP/ExternalMCPToolPolicy.swift, CLI MCPCommand.swift |
-| Structured Document IO           | Foundation | "Tools & Plugins"  | (in README)                   | Services/Documents/, Models/Documents/, Managers/Documents/DocumentAdaptersBootstrap.swift |
-| Tools & Plugins                  | Stable    | "Tools & Plugins"  | plugins/README.md             | Tools/, Managers/Plugin/PluginManager.swift, Services/Plugin/PluginHostAPI.swift, Storage/PluginDatabase.swift, Models/Plugin/PluginHTTP.swift, Views/Plugin/PluginConfigView.swift |
-| Skills                           | Stable    | "Skills"           | SKILLS.md                     | Managers/SkillManager.swift, Views/Skill/SkillsView.swift, Services/Skill/SkillSearchService.swift |
-| Claude Plugin Import             | Stable    | "Plugins"          | CLAUDE_PLUGINS.md             | Services/GitHubSkillService.swift, Services/Skill/ClaudePluginInstaller.swift, Services/Skill/ClaudePluginManifestStore.swift, Services/Skill/ClaudePluginVariableExpander.swift, Services/Plugin/InstalledClaudePluginsAggregator.swift, Views/Plugin/GitHubImportSheet.swift, Views/Plugin/ClaudePluginCard.swift, Views/Plugin/ClaudePluginDetailView.swift, Views/Plugin/ClaudePluginUserConfigSheet.swift |
-| Methods                          | Stable    | "Skills & Methods" | SKILLS.md                     | Models/Method/Method.swift, Services/Method/MethodService.swift, Services/Method/MethodSearchService.swift, Storage/MethodDatabase.swift |
-| Context Management               | Stable    | -                  | SKILLS.md                     | Services/Context/CapabilitySearch.swift, Tools/CapabilityTools.swift, Services/Tool/ToolSearchService.swift, Services/Tool/ToolIndexService.swift |
-| Memory                           | Stable    | "Key Features"     | MEMORY.md                     | Services/Memory/MemoryService.swift, Services/Memory/MemorySearchService.swift, Services/Memory/MemoryContextAssembler.swift |
-| Knowledge Collections            | Foundation | -                 | KNOWLEDGE.md                  | Managers/KnowledgeManager.swift, Services/Knowledge/, Storage/KnowledgeDatabase.swift, Tools/KnowledgeTools.swift, Tools/KnowledgeCurationTools.swift, Views/Knowledge/KnowledgeView.swift |
-| Projects                         | Stable    | "Key Features"     | PROJECTS.md                   | Models/Project/Project.swift, Managers/ProjectManager.swift, Views/Chat/ProjectDetailView.swift, Managers/Chat/ChatSessionsManager.swift, Services/Chat/SystemPromptComposer.swift, Services/Memory/MemoryService.swift |
-| Privacy Filter                   | Experimental | "Key Features"  | PRIVACY_FILTER.md             | PrivacyFilter/Core/PrivacyFilterPipeline.swift, PrivacyFilter/Core/PrivacyFilterEngine.swift, PrivacyFilter/Core/RegexEntityDetector.swift, PrivacyFilter/Store/PrivacyFilterStore.swift, PrivacyFilter/Views/PrivacyView.swift, PrivacyFilter/Views/RedactionReviewSheet.swift, Services/Provider/WireTransportProbe.swift, Views/Chat/RedactionHighlighter.swift, Views/Chat/RedactionHoverController.swift |
-| Agents                         | Stable    | "Agents"         | (in README)                   | Managers/AgentManager.swift, Models/Agent/Agent.swift, Views/Agent/AgentsView.swift         |
-| Apple Apps (built-in, per-agent) | Stable    | "Tools & Plugins"  | APPLE_APPS.md                 | AppleApps/, Tools/ToolRegistry.swift, Services/Chat/SystemPromptComposer.swift, Views/Agent/AgentCapabilityManagerView.swift |
-| Orchestrator (default agent)     | Stable    | "Orchestrator"     | ORCHESTRATOR.md               | Models/Agent/DefaultAgentConfiguration.swift, Services/Chat/DefaultAgentSystemPromptBuilder.swift, Views/Settings/OrchestratorSettingsView.swift |
-| Agent DB & Self-Scheduling       | Stable    | "Agents"           | AGENT_DB.md                   | Storage/AgentDatabase.swift, Storage/SchedulerDatabase.swift, Managers/NextRunScheduler.swift, Tools/Database/, Views/Agent/AgentDBTabViews.swift, Views/Agent/NextRunPanelView.swift |
-| Schedules                        | Stable    | "Schedules"        | (in README)                   | Managers/ScheduleManager.swift, Models/Schedule/Schedule.swift, Views/Schedule/SchedulesView.swift      |
-| Watchers                         | Stable    | "Watchers"         | WATCHERS.md                   | Managers/WatcherManager.swift, Models/Watcher/Watcher.swift, Views/Watcher/WatchersView.swift         |
-| Agent Loop & Folder Context      | Stable    | "Agent Loop"       | AGENT_LOOP.md                 | Services/Chat/AgentToolLoop.swift, Services/Chat/AgentTaskState.swift, Folder/, Tools/AgentLoopTools.swift, Tools/FolderToolManager.swift, Models/Chat/AgentTodo.swift, Models/Chat/AgentTodoStore.swift, Models/Chat/SharedArtifact.swift |
-| Agent Channels (Slack / Discord / Telegram) | Beta | -           | AGENT_CHANNELS.md             | Services/AgentChannel/, Models/AgentChannel/, Tools/AgentChannelTools.swift, Storage/AgentChannelMessageStore.swift, Views/Settings/AgentChannelConnectionCenterView.swift, Views/Settings/AgentChannelDestinationViews.swift |
-| Insights / Activity Log          | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md, ACTIVITY_LOG.md | Views/Insights/, Managers/InsightsService.swift, Storage/ActivityLogStore.swift, Services/Insights/, Models/Chat/RequestLog.swift, Models/Insights/ |
-| Developer Tools: Server Explorer | Stable    | "Developer Tools"  | DEVELOPER_TOOLS.md            | Views/Settings/ServerView.swift                                                                |
-| Apple Foundation Models          | macOS 26+ | "What is Osaurus?" | (in README)                   | Services/Inference/FoundationModelService.swift                                                 |
-| Menu Bar Chat                    | Stable    | "Highlights"       | (in README)                   | Views/Chat/ChatView.swift, Views/ChatOverlayView.swift                                     |
-| Chat Session Management          | Stable    | "Highlights"       | (in README)                   | Managers/Chat/ChatSessionsManager.swift, Models/Chat/ChatSessionData.swift                      |
-| Custom Themes                    | Stable    | "Highlights"       | (in README)                   | Views/Theme/ThemesView.swift, Views/Theme/ThemeEditorView.swift                        |
-| Model Manager                    | Stable    | "Highlights"       | (in README)                   | Views/Model/ModelDownloadView.swift, Services/HuggingFaceService.swift                      |
-| Chat model picker | Beta | - | Guide: guide-chat.md | Views/Model/ChatModelPickerCard.swift, Views/Model/CloudModelBrowserDialog.swift |
-| Shared Configuration             | Stable    | -                  | SHARED_CONFIGURATION_GUIDE.md | Services/SharedConfigurationService.swift                                             |
-| OpenAI API Compatibility         | Stable    | "API Endpoints"    | OpenAI_API_GUIDE.md           | Networking/HTTPHandler.swift, Models/API/OpenAIAPI.swift                                  |
-| Anthropic API Compatibility      | Stable    | "API Endpoints"    | (in README)                   | Networking/HTTPHandler.swift, Models/API/AnthropicAPI.swift                               |
-| Open Responses API               | Stable    | "API Endpoints"    | OpenAI_API_GUIDE.md           | Networking/HTTPHandler.swift, Models/API/OpenResponsesAPI.swift                           |
-| Ollama API Compatibility         | Stable    | "API Endpoints"    | (in README)                   | Networking/HTTPHandler.swift                                                          |
-| Voice Input (FluidAudio)         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Managers/SpeechService.swift, Managers/Model/SpeechModelManager.swift                  |
-| VAD Mode                         | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/Voice/VADService.swift, Views/ContentView.swift (VAD controls)                     |
-| Transcription Mode               | Stable    | "Voice Input"      | VOICE_INPUT.md                | Services/Voice/TranscriptionModeService.swift, Views/Voice/TranscriptionOverlayView.swift         |
-| Text-to-Speech (PocketTTS + OpenAI-compatible servers) | Stable | - | TEXT_TO_SPEECH.md            | Managers/TTSService.swift, Managers/OpenAICompatibleTTSClient.swift, Views/Voice/TTSModeSettingsTab.swift |
-| Sandbox                          | macOS 26+ | "Sandbox"          | SANDBOX.md                    | Services/Sandbox/SandboxManager.swift, Tools/BuiltinSandboxTools.swift, Managers/Plugin/SandboxPluginManager.swift, Views/Sandbox/SandboxView.swift |
-| Computer Use                     | Experimental | -               | COMPUTER_USE.md               | ComputerUse/ (Tool, Loop, Policy, Perception, Recipes, Driver), Views/Settings/ComputerUseSettingsView.swift, Views/Chat/ComputerUseFeedView.swift |
-| Storage (plaintext default, opt-in encryption) | Stable | -          | STORAGE.md                    | Storage/StorageFileFormat.swift, Storage/StorageEncryptionPolicy.swift, Storage/OsaurusStorageOpener.swift, Storage/StorageMigrationCoordinator.swift, Storage/StorageRecoveryService.swift, Storage/StorageFile.swift, Storage/PersistenceHealth.swift, Identity/StorageKeyManager.swift, Storage/EncryptedSQLiteOpener.swift, Storage/StorageDatabaseCatalog.swift, Storage/StorageMutationGate.swift, Storage/StorageExportService.swift, Storage/EncryptedFileStore.swift, Storage/AttachmentBlobStore.swift, Storage/StorageMaintenance.swift, Views/Settings/StorageSettingsView.swift, SQLCipher/ |
-| CLI                              | Stable    | "CLI Reference"    | (in README)                   | Packages/OsaurusCLI/                                                                  |
+| Feature                          | Status    | Documentation                 | Code Location                                                                         |
+| -------------------------------- | --------- | ----------------------------- | ------------------------------------------------------------------------------------- |
+| Local LLM Server (MLX)           | Stable    | OpenAI_API_GUIDE.md           | Services/Inference/MLXService.swift, Services/ModelRuntime/                                     |
+| Remote Providers                 | Stable    | REMOTE_PROVIDERS.md           | Managers/RemoteProviderManager.swift, Services/Provider/RemoteProviderService.swift            |
+| Model Defaults (Core, Images & Video) | Stable | Guide: guide-settings.md     | Views/Model/ModelDefaultsView.swift                                                   |
+| Osaurus Router & Cloud (Osaurus ID → Wallet & Credits) | Stable | OSAURUS_ROUTER.md | Services/Router/, Views/Router/, Views/Credits/                              |
+| Osaurus ID (identity, access keys) | Stable  | IDENTITY.md                   | Identity/, Views/Identity/                                                            |
+| Log in with Osaurus              | Stable    | LOGIN_WITH_OSAURUS.md         | Services/Auth/LoginWithOsaurus/, Views/Identity/LoginConsentView.swift                |
+| Secure Channel (Agent E2E Encryption) | Stable | SECURE_CHANNEL.md             | Identity/SecureChannel.swift, Identity/SecureSessionStore.swift, Networking/SecureChannelResponseEncryptor.swift, Services/Provider/SecureChannelClient.swift, Networking/HTTPHandler.swift |
+| Remote MCP Providers             | Stable    | REMOTE_MCP_PROVIDERS.md       | Managers/MCPProviderManager.swift, Tools/MCPProviderTool.swift                        |
+| MCP Server                       | Stable    | Guide: guide-mcp.md           | Networking/OsaurusServer.swift, Services/MCP/ExternalMCPToolPolicy.swift, CLI MCPCommand.swift |
+| Structured Document IO           | Foundation | -                            | Services/Documents/, Models/Documents/, Managers/Documents/DocumentAdaptersBootstrap.swift |
+| Tools & Plugins                  | Stable    | plugins/README.md             | Tools/, Managers/Plugin/PluginManager.swift, Services/Plugin/PluginHostAPI.swift, Storage/PluginDatabase.swift, Models/Plugin/PluginHTTP.swift, Views/Plugin/PluginConfigView.swift |
+| Skills                           | Stable    | SKILLS.md                     | Managers/SkillManager.swift, Views/Skill/SkillsView.swift, Services/Skill/SkillSearchService.swift |
+| Claude Plugin Import             | Stable    | CLAUDE_PLUGINS.md             | Services/GitHubSkillService.swift, Services/Skill/ClaudePluginInstaller.swift, Services/Skill/ClaudePluginManifestStore.swift, Services/Skill/ClaudePluginVariableExpander.swift, Services/Plugin/InstalledClaudePluginsAggregator.swift, Views/Plugin/GitHubImportSheet.swift, Views/Plugin/ClaudePluginCard.swift, Views/Plugin/ClaudePluginDetailView.swift, Views/Plugin/ClaudePluginUserConfigSheet.swift |
+| Methods                          | Stable    | SKILLS.md                     | Models/Method/Method.swift, Services/Method/MethodService.swift, Services/Method/MethodSearchService.swift, Storage/MethodDatabase.swift |
+| Context Management               | Stable    | SKILLS.md                     | Services/Context/CapabilitySearch.swift, Tools/CapabilityTools.swift, Services/Tool/ToolSearchService.swift, Services/Tool/ToolIndexService.swift |
+| Memory                           | Stable    | MEMORY.md                     | Services/Memory/MemoryService.swift, Services/Memory/MemorySearchService.swift, Services/Memory/MemoryContextAssembler.swift |
+| Knowledge Collections            | Foundation | KNOWLEDGE.md                 | Managers/KnowledgeManager.swift, Services/Knowledge/, Storage/KnowledgeDatabase.swift, Tools/KnowledgeTools.swift, Tools/KnowledgeCurationTools.swift, Views/Knowledge/KnowledgeView.swift |
+| Projects                         | Stable    | PROJECTS.md                   | Models/Project/Project.swift, Managers/ProjectManager.swift, Views/Project/ProjectsView.swift, Managers/Chat/ChatSessionsManager.swift, Services/Chat/SystemPromptComposer.swift, Services/Memory/MemoryService.swift |
+| Privacy Filter                   | Experimental | PRIVACY_FILTER.md          | PrivacyFilter/Core/PrivacyFilterPipeline.swift, PrivacyFilter/Core/PrivacyFilterEngine.swift, PrivacyFilter/Core/RegexEntityDetector.swift, PrivacyFilter/Store/PrivacyFilterStore.swift, PrivacyFilter/Views/PrivacyView.swift, PrivacyFilter/Views/RedactionReviewSheet.swift, Services/Provider/WireTransportProbe.swift, Views/Chat/RedactionHighlighter.swift, Views/Chat/RedactionHoverController.swift |
+| Agents                           | Stable    | Guide: guide-agents.md        | Managers/AgentManager.swift, Models/Agent/Agent.swift, Views/Agent/AgentsView.swift         |
+| Onboarding (starter team, discovery cards) | Stable | Guide: guide-getting-started.md | Views/Onboarding/, Services/Onboarding/ (TeamSeeder.swift, DiscoveryCenter.swift, DiscoveryCatalog.swift) |
+| Subagents & built-in helpers (Research, Files, Browser, Code) | Stable | SUBAGENT_TEAM_SPEC.md | Subagent/, Services/AgentDelegation/, Models/AgentDelegation/, Models/Agent/BuiltInWorker.swift |
+| Agent Runtimes (harness runtimes) | Stable   | HARNESS_RUNTIMES.md           | Services/Harness/, Views/Settings/AgentRuntimesView.swift                             |
+| Inbox & agent attention (approvals, notifications) | Stable | AGENT_ATTENTION.md | Services/Attention/, Views/Approvals/ApprovalsView.swift                         |
+| Workspaces & shared agents       | Stable    | OSAURUS_WORKSPACES.md         | Views/Workspaces/, Services/Spaces/                                                   |
+| Apple Apps (built-in, per-agent) | Stable    | APPLE_APPS.md                 | AppleApps/, Tools/ToolRegistry.swift, Services/Chat/SystemPromptComposer.swift, Views/Agent/AgentCapabilityManagerView.swift |
+| Orchestrator (default agent)     | Stable    | ORCHESTRATOR.md               | Models/Agent/DefaultAgentConfiguration.swift, Services/Chat/DefaultAgentSystemPromptBuilder.swift, Views/Settings/OrchestratorSettingsView.swift |
+| Configurator (settings helper, `osaurus_config`) | Stable | Guide: guide-config.md | Services/Chat/ConfiguratorSystemPromptBuilder.swift, Models/Agent/ConfiguratorConfigurationStore.swift, Views/Settings/ConfiguratorSettingsView.swift, Tools/ConfigurationTools.swift, Configuration/Declarative/ |
+| Configuration History            | Stable    | Guide: guide-config.md        | Storage/ConfigHistoryDatabase.swift, Configuration/Declarative/ConfigHistoryRecorder.swift, Views/Settings/ConfigHistorySection.swift |
+| Agent DB & Self-Scheduling       | Stable    | AGENT_DB.md                   | Storage/AgentDatabase.swift, Storage/SchedulerDatabase.swift, Services/Event/SelfScheduleAutomations.swift, Tools/Database/, Views/Agent/Database/, Views/Agent/NextRunPanelView.swift |
+| Task Queue (Tasks tab, queues, foreground reservations) | Beta | TASK_QUEUE.md | Models/Task/, Services/Task/, Storage/TaskDatabase.swift, Views/Task/ |
+| Vault (unified credentials: secrets, variables, agent overrides) | Beta | CREDENTIALS.md | Models/Credentials/, Services/Credentials/, Views/Credentials/ |
+| Devices & Sync (Mac and iPhone)  | Beta      | SYNC.md, MOBILE_PROTOCOL.md   | Services/Sync/, Views/Settings/DevicesView.swift                                      |
+| Automations (schedules, folders, webhooks, channel messages) | Stable | AUTOMATIONS.md | Services/Event/EventManager.swift, Services/Event/AutomationHistoryFeed.swift, Models/Event/OsaurusEvent.swift, Views/Event/EventsView.swift, Views/Event/AutomationHistoryView.swift |
+| Workflows                        | Stable    | WORKFLOWS.md                  | Models/Workflow/, Services/Workflow/WorkflowRunner.swift, Services/Workflow/WorkflowRunService.swift, Services/Workflow/HTTPNodeExecutor.swift, Services/Workflow/WorkflowConnections.swift, Services/Template/SetupChecker.swift, Storage/WorkflowRunDatabase.swift, Views/Workflow/ |
+| Architect (workflow designer)    | Stable    | WORKFLOWS.md                  | Services/Chat/ArchitectSystemPromptBuilder.swift, Services/Workflow/WorkflowDraftStore.swift, Services/Workflow/WorkflowSelfHealMonitor.swift, Tools/Workflow/ |
+| Agent Loop & Folder Context      | Stable    | AGENT_LOOP.md                 | Services/Chat/AgentToolLoop.swift, Services/Chat/AgentTaskState.swift, Folder/, Tools/AgentLoopTools.swift, Tools/FolderToolManager.swift, Models/Chat/AgentTodo.swift, Models/Chat/AgentTodoStore.swift, Models/Chat/SharedArtifact.swift |
+| Agent Channels (Slack / Discord / Telegram) | Beta | AGENT_CHANNELS.md             | Services/AgentChannel/, Models/AgentChannel/, Tools/AgentChannelTools.swift, Storage/AgentChannelMessageStore.swift, Views/Settings/AgentChannelConnectionCenterView.swift, Views/Settings/AgentChannelDestinationViews.swift |
+| Insights / Activity Log          | Stable    | DEVELOPER_TOOLS.md, ACTIVITY_LOG.md | Views/Insights/, Managers/InsightsService.swift, Storage/ActivityLogStore.swift, Services/Insights/, Models/Chat/RequestLog.swift, Models/Insights/ |
+| Developer Tools: Server Explorer | Stable    | DEVELOPER_TOOLS.md            | Views/Settings/ServerView.swift                                                                |
+| Apple Foundation Models          | macOS 26+ | Guide: guide-local-models.md  | Services/Inference/FoundationModelService.swift                                                 |
+| Chat window & menu bar panel     | Stable    | Guide: guide-chat.md          | Views/Chat/ChatView.swift, Managers/Chat/ChatWindowManager.swift, Views/Settings/StatusPanelView.swift |
+| Chat Session Management          | Stable    | Guide: guide-chat.md          | Managers/Chat/ChatSessionsManager.swift, Models/Chat/ChatSessionData.swift                      |
+| Appearance (System/Light/Dark)   | Stable    | Guide: guide-settings.md      | Views/Settings/ConfigurationView.swift, Models/Theme/Theme.swift                               |
+| Model Manager                    | Stable    | Guide: guide-local-models.md  | Views/Model/LocalModelsView.swift, Services/ModelDownloadService.swift, Services/HuggingFaceService.swift |
+| Chat model picker                | Beta      | Guide: guide-chat.md          | Views/Model/ChatModelPickerCard.swift, Views/Model/CloudModelBrowserDialog.swift |
+| Image & video generation         | Stable    | Guide: guide-images.md        | Views/ImageGeneration/ImageGenerationView.swift, Services/MediaGeneration/, Tools/NativeImageTools.swift |
+| Shared Configuration             | Stable    | SHARED_CONFIGURATION_GUIDE.md | Services/SharedConfigurationService.swift                                             |
+| OpenAI API Compatibility         | Stable    | OpenAI_API_GUIDE.md           | Networking/HTTPHandler.swift, Models/API/OpenAIAPI.swift                                  |
+| Anthropic API Compatibility      | Stable    | Guide: guide-server-api.md    | Networking/HTTPHandler.swift, Models/API/AnthropicAPI.swift                               |
+| Open Responses API               | Stable    | OpenAI_API_GUIDE.md           | Networking/HTTPHandler.swift, Models/API/OpenResponsesAPI.swift                           |
+| Ollama API Compatibility         | Stable    | Guide: guide-server-api.md    | Networking/HTTPHandler.swift                                                          |
+| App Intents (Shortcuts, Spotlight, Siri) | Stable | APP_INTENTS.md           | AppIntents/                                                                           |
+| Osaurus Bundles (`osaurus import`) | Stable  | OSAURUS_BUNDLES.md            | Packages/OsaurusRepository/OsaurusBundle.swift, Packages/OsaurusCLI/Sources/OsaurusCLICore/Commands/Import/ |
+| Voice Input (FluidAudio)         | Stable    | VOICE_INPUT.md                | Managers/SpeechService.swift, Managers/Model/SpeechModelManager.swift                  |
+| VAD Mode                         | Stable    | VOICE_INPUT.md                | Services/Voice/VADService.swift, Views/Voice/VADModeSettingsTab.swift                     |
+| Transcription Mode               | Stable    | VOICE_INPUT.md                | Services/Voice/TranscriptionModeService.swift, Views/Voice/TranscriptionOverlayView.swift         |
+| Text-to-Speech (PocketTTS + OpenAI-compatible servers) | Stable | TEXT_TO_SPEECH.md | Managers/TTSService.swift, Managers/OpenAICompatibleTTSClient.swift, Views/Voice/TTSModeSettingsTab.swift |
+| Sandbox                          | macOS 26+ | SANDBOX.md                    | Services/Sandbox/SandboxManager.swift, Tools/BuiltinSandboxTools.swift, Managers/Plugin/SandboxPluginManager.swift, Views/Sandbox/SandboxView.swift |
+| Computer Use                     | Experimental | COMPUTER_USE.md            | ComputerUse/ (Tool, Loop, Policy, Perception, Recipes, Driver, Feed), Views/Settings/ComputerUseSettingsView.swift |
+| Browser Use                      | Stable    | BROWSER.md                    | Browser/, Subagent/Kinds/BrowserUseKind.swift, Views/Settings/BrowserSettingsView.swift |
+| Storage (plaintext default, opt-in encryption) | Stable | STORAGE.md                    | Storage/StorageFileFormat.swift, Storage/StorageEncryptionPolicy.swift, Storage/OsaurusStorageOpener.swift, Storage/StorageMigrationCoordinator.swift, Storage/StorageRecoveryService.swift, Storage/StorageFile.swift, Storage/PersistenceHealth.swift, Identity/StorageKeyManager.swift, Storage/EncryptedSQLiteOpener.swift, Storage/StorageDatabaseCatalog.swift, Storage/StorageMutationGate.swift, Storage/StorageExportService.swift, Storage/EncryptedFileStore.swift, Storage/AttachmentBlobStore.swift, Storage/StorageMaintenance.swift, Views/Settings/StorageSettingsView.swift, SQLCipher/ |
+| CLI                              | Stable    | README.md (For developers)    | Packages/OsaurusCLI/                                                                  |
 
 ---
 
@@ -64,25 +83,19 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │                              Osaurus App                                 │
 ├─────────────────────────────────────────────────────────────────────────┤
 │  Views Layer                                                             │
-│  ├── ContentView (Menu Bar)                                              │
-│  ├── ChatOverlayView (Global Hotkey Chat)                                │
-│  ├── ManagementView                                                      │
-│  │   ├── ModelDownloadView (Models)                                      │
-│  │   ├── RemoteProvidersView (Providers)                                 │
-│  │   ├── ToolsManagerView (Tools & Plugin Config)                        │
-│  │   ├── AgentsView (Agents)                                         │
-│  │   ├── SkillsView (Skills)                                             │
-│  │   ├── MemoryView (Memory)                                             │
-│  │   ├── SchedulesView (Schedules)                                       │
-│  │   ├── WatchersView (Watchers)                                         │
-│  │   ├── ThemesView (Themes)                                             │
-│  │   ├── SandboxView (Sandbox Container & Plugins)                       │
-│  │   ├── StorageSettingsView (Encryption opt-in, backup, recovery)       │
-│  │   ├── InsightsView (Developer: Insights)                              │
-│  │   ├── ServerView (Developer: Server Explorer)                         │
-│  │   ├── VoiceView (Voice Input & VAD Settings)                          │
-│  │   ├── PrivacyView (Privacy Filter: 4 sub-tabs; opt-in model)          │
-│  │   └── ConfigurationView (Settings)                                    │
+│  ├── StatusPanelView (Menu Bar panel)                                    │
+│  ├── ChatView (Chat windows, via ChatWindowManager; Workflows rail)      │
+│  ├── ManagementView (Settings… ⌘,)                                       │
+│  │   ├── AgentsView / EventsView / ApprovalsView (pinned: Agents,        │
+│  │   │   Automations, Inbox)                                             │
+│  │   ├── LocalModelsView, ProvidersView, ModelDefaultsView (Models)      │
+│  │   ├── ToolsManagerView (Tools & MCP), SkillsView, MemoryView          │
+│  │   ├── WorkspacesView, DevicesView (Sharing)                           │
+│  │   ├── KeysView (Vault), IdentityView (Osaurus ID)                     │
+│  │   ├── PrivacyView (Privacy & Security; embeds StorageSettingsView)    │
+│  │   ├── AgentRuntimesView, SandboxView, InsightsView, ServerView        │
+│  │   ├── VoiceView (Voice Input, VAD, Transcription, TTS)                │
+│  │   └── ConfigurationView (General, Appearance)                         │
 ├─────────────────────────────────────────────────────────────────────────┤
 │  Services Layer                                                          │
 │  ├── Inference                                                           │
@@ -117,12 +130,15 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  │   ├── CapabilitySearch (Index search for capabilities_discover)       │
 │  │   ├── ToolSearchService (RAG-based tool search)                       │
 │  │   └── ToolIndexService (Tool registry sync and indexing)              │
-│  ├── Scheduling                                                          │
-│  │   └── ScheduleManager (Schedule lifecycle and execution)              │
-│  ├── Watchers                                                            │
-│  │   ├── WatcherManager (FSEvents monitoring and convergence loop)       │
-│  │   ├── WatcherStore (Watcher persistence)                              │
-│  │   └── DirectoryFingerprint (Change detection via Merkle hashing)      │
+│  ├── Events                                                              │
+│  │   ├── EventManager (admission, run ledger)                            │
+│  │   ├── Schedule / Folder / Channel sources, EventWebhookIngress        │
+│  │   └── Task queue (TaskScheduler, ResourceArbiter, TaskStore, workers) │
+│  ├── Workflows                                                           │
+│  │   ├── WorkflowRunner / WorkflowRunService (graph execution, runs)     │
+│  │   ├── Node executors (inference, dialog, code, tool, http, wait, …)   │
+│  │   ├── SetupChecker / WorkflowConnections (requirements, Keychain)     │
+│  │   └── Architect tools and draft store (design, test, repair)          │
 │  ├── Folder Tools                                                        │
 │  │   ├── ChatFolderState (Per-chat folder + security-scoped bookmark)    │
 │  │   ├── FolderContextService (Stateless bookmark/context utilities)     │
@@ -175,10 +191,11 @@ Canonical reference for all Osaurus features, their status, and documentation.
 │  Networking Layer                                                        │
 │  ├── OsaurusServer (HTTP + MCP server)                                   │
 │  ├── Router (Request routing)                                            │
-│  └── HTTPHandler (OpenAI/Anthropic/Ollama API handlers)                  │
+│  └── HTTPHandler (OpenAI/Open Responses/Anthropic/Ollama API handlers)   │
 ├─────────────────────────────────────────────────────────────────────────┤
 │  CLI (OsaurusCLI Package)                                                │
-│  └── Commands: serve, stop, status, ui, list, show, run, mcp, tools (install, dev, ...), version │
+│  └── Commands: serve, stop, status, ui, list, show, run, pull, mcp,      │
+│      tools (install, dev, ...), config, import, bundle, doctor, version  │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -477,25 +494,21 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 
 ---
 
-### Custom Themes
+### Appearance
 
-**Purpose:** Customize the chat interface appearance with custom color schemes and styling.
+**Purpose:** Light or dark Osaurus, matching macOS by default.
 
 **Components:**
 
-- `Views/Theme/ThemesView.swift` — Theme gallery and management
-- `Views/Theme/ThemeEditorView.swift` — Full theme editor
-- `Models/Theme/CustomTheme.swift` — Theme data model
-- `Models/Theme/ThemeConfigurationStore.swift` — Theme persistence
-- `Models/Theme/Theme.swift` — Theme protocol and built-in themes
+- `Models/Theme/Theme.swift` — `ThemeManager`: resolves System / Light / Dark to the built-in seed and applies the global text size
+- `Models/Theme/CustomTheme.swift` — The light and dark seed carriers the design library resolves
+- `Views/Settings/ConfigurationView.swift` — General → Appearance (**Appearance**, **Text Size**)
 
 **Features:**
 
-- Built-in light and dark themes
-- Create custom themes with full color customization
-- Import/export themes as JSON files
-- Live preview while editing
-- Background options: solid, gradient, or image
+- System, Light and Dark, also under View → Appearance
+- Text Size from 70% to 160%, shared with View → Zoom In / Zoom Out
+- Custom themes were removed; an active custom theme migrates once to Light or Dark to match it
 
 ---
 
@@ -518,10 +531,9 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 - **Automated Capabilities** — Tools, skills, and methods are automatically selected via RAG search based on the task
 - **Per-Agent Feature Gates** — Configure → Features groups every capability by purpose and keeps extra ones off by default to keep the tool list lean (see below)
 - **Apple Apps** — Calendar, Reminders, Contacts, Notes, Mail, Messages, Maps & Location, Music, and Shortcuts are built-in tool families toggled per app under Abilities → Tools; enabling asks for the macOS grant, sends and deletes always ask for approval, and the Orchestrator provisions them via `capabilities.apple_apps` (see [APPLE_APPS.md](APPLE_APPS.md))
-- **Visual Themes** — Assign a custom theme that activates with the agent
 - **Generation Settings** — Configure default model, temperature, and max tokens
 - **Import/Export** — Share agents as JSON files for backup or sharing
-- **Live Switching** — Click to activate a agent, theme updates automatically
+- **Live Switching** — Click to activate an agent
 - **Working Folder (sticky per-agent folder)** — The one macOS folder the agent works inside. Picking a folder with the chat Folder chip remembers it on the agent; new chats open in it, and schedules, watchers, and other background runs that set no folder of their own run in it. Authenticated remote agent runs (Secure Channel) get file read/write confined to it with shell and git disabled. Configure → Features → Working Folder; see [SECURITY.md](SECURITY.md) and [OpenAI_API_GUIDE.md](OpenAI_API_GUIDE.md).
 
 **Feature Gates (Configure → Features):** stored on `Agent.settings`; [`SystemPromptComposer.resolveTools`](../Packages/OsaurusCore/Services/Chat/SystemPromptComposer.swift) strips the matching tools when a gate is off (auto mode). Capabilities are grouped by purpose; extra ones default **off** to reduce token cost.
@@ -545,126 +557,71 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 | `name` | Display name (required) |
 | `description` | Brief description of the agent |
 | `systemPrompt` | Instructions prepended to all chats |
-| `themeId` | Optional custom theme to apply |
 | `defaultModel` | Optional model ID for this agent |
 | `temperature` | Optional temperature override |
 | `maxTokens` | Optional max tokens override |
-| `workingFolderBookmark` | Machine-local security-scoped bookmark for the agent's sticky working folder. Set by the chat composer's Folder chip or **Agent → Configure → Working Folder**; applied to every fresh chat for the agent (a project's own folder wins inside that project), to background dispatches that name no folder (schedules/watchers without one, self-schedules, delegation, channels, `/agents/{id}/dispatch`), and to authenticated remote agent runs as their confined file-tool root (never sent to a paired peer). Legacy JSON key `hostWorkspaceBookmark` is still read. |
+| `workingFolderBookmark` | Machine-local security-scoped bookmark for the agent's sticky working folder. Set by the chat composer's Folder chip or **Agent → Configure → Working Folder**; applied to every fresh chat for the agent (a project's own folder wins inside that project), to background dispatches that name no folder (schedule and folder events without one, self-schedules, delegation, channels, `/agents/{id}/dispatch`), and to authenticated remote agent runs as their confined file-tool root (never sent to a paired peer). Legacy JSON key `hostWorkspaceBookmark` is still read. |
 | `workingFolderPath` | Advisory display path for the working folder (source of truth is the bookmark; used as the plain-path fallback when the bookmark is stale). Legacy JSON key `hostWorkspacePath` is still read. |
 
 ---
 
-### Schedules
+### Automations
 
-**Purpose:** Automate recurring AI tasks that run at specified intervals.
+**Purpose:** One place for everything that starts work on its own (an *event* in code): a **source** (schedule, folder change, webhook call, or a message on a connected channel), an optional **filter**, an **action** (an agent with instructions, or an installed workflow with mapped inputs), **queueing**, and a **reply** policy for message sources. Replaces Schedules, Watchers and per-connection inbound routing (migrated on first launch). A **History** tab lists every run plus channel messages no automation took. Details: [AUTOMATIONS.md](AUTOMATIONS.md).
 
 **Components:**
 
-- `Models/Schedule/Schedule.swift` — Schedule data model with frequency types
-- `Models/Schedule/ScheduleStore.swift` — Schedule persistence (JSON files)
-- `Managers/ScheduleManager.swift` — Schedule lifecycle, timer management, and execution
-- `Views/Schedule/SchedulesView.swift` — Schedule management UI
+- `Models/Event/OsaurusEvent.swift`, `EventPayload.swift`, `EventRun.swift`, `ScheduleTiming.swift` — Event model, normalized payload and `{{…}}` bindings, ledger rows, schedule slot math
+- `Services/Event/EventManager.swift`, `EventStore.swift`, `Storage/EventRunDatabase.swift` — Admission (filters, dedupe, target checks), persistence, run ledger; lanes and concurrency are the task queue's ([TASK_QUEUE.md](TASK_QUEUE.md))
+- `Services/Event/ScheduleEventSource.swift`, `FolderEventSource.swift`, `ChannelMessageEventSource.swift`, `EventWebhookIngress.swift` — Sources (timers with missed-fire catch-up; FSEvents with debounce and convergence; platform message ingest; `POST /events/{token}`)
+- `Services/Task/Workers/AgentTurnWorker.swift`, `WorkflowRunWorker.swift`, `Services/Event/ChannelReplySink.swift` — Agent dispatch or workflow run (caller `event`), replies to the conversation
+- `Services/Event/EventMigration.swift` — One-time import of schedules, watchers and `inboundDispatch`
+- `Configuration/Declarative/ConfigEvents.swift` — `automations:` section of `osaurus_config` (legacy `events:` / `schedules:` / `watchers:` / `channels.*.inbound_*` accepted)
+- `Views/Event/` — Automations tab (Automations + History), editor, detail (Run Now, webhook URL, Runs); `Services/Event/AutomationHistoryFeed.swift` merges runs with unclaimed/denied channel audit rows
 
 **Features:**
 
-- **Frequency Options** — Once (specific date/time), Daily, Weekly, Monthly, Yearly
-- **Agent Integration** — Optionally assign a agent to handle the scheduled task
-- **Custom Instructions** — Define the prompt sent to the AI when the schedule runs
-- **Enable/Disable** — Toggle schedules on or off without deleting
-- **Manual Trigger** — "Run Now" option to execute a schedule immediately
-- **Results Tracking** — Links to the chat session from the last run
-- **Next Run Display** — Shows when the schedule will next execute
-- **Timezone Aware** — Automatically adjusts for system timezone changes
+- **Schedules** — Once, daily, weekly, monthly, yearly; time-zone aware; a slot missed while the app was closed runs once on launch (or is skipped, per event)
+- **Folders** — FSEvents with six responsiveness tiers (~200 ms to ~10 min), optional recursion, Merkle fingerprint change detection (`Models/DirectoryFingerprint.swift`), a convergence loop of up to 5 passes, nested watched folders excluded
+- **Webhooks** — Per-event URL, reachable through the agent relay; HMAC-SHA256 or shared-secret header; body cap, rate limit, idempotency headers; pollable run status
+- **Channel messages** — Discord, Slack, Telegram, iMessage, WhatsApp, n8n and custom HTTP; any number of events per connection, room and alias tiers, mention gates, per-event reply policy
+- **Queueing** — Serial, per-conversation or parallel lanes, queue limit, dedupe window, steering a running reply
+- **Tracking** — Every fire (including filtered, duplicate and refused) is a ledger row with status, reason, chat or workflow run link; Insights entries per run
 
-**Schedule Properties:**
-
-| Property            | Description                                  |
-| ------------------- | -------------------------------------------- |
-| `name`              | Display name (required)                      |
-| `instructions`      | Prompt sent to the AI when the schedule runs |
-| `agentId`         | Optional agent to use for the chat         |
-| `frequency`         | When and how often to run                    |
-| `isEnabled`         | Whether the schedule is active               |
-| `lastRunAt`         | When the schedule last ran                   |
-| `lastChatSessionId` | Chat session ID from the last run            |
-
-**Frequency Types:**
-
-| Type    | Description                          | Example                          |
-| ------- | ------------------------------------ | -------------------------------- |
-| Once    | Run once at a specific date and time | "Jan 15, 2025 at 9:00 AM"        |
-| Daily   | Run every day at a specific time     | "Daily at 8:00 AM"               |
-| Weekly  | Run on a specific day each week      | "Every Monday at 9:00 AM"        |
-| Monthly | Run on a specific day each month     | "Monthly on the 1st at 10:00 AM" |
-| Yearly  | Run on a specific date each year     | "Yearly on Jan 1st at 12:00 PM"  |
+**Storage:** `~/.osaurus/events/{uuid}.json`, run ledger `~/.osaurus/events/runs.sqlite`, webhook secrets in Keychain
 
 ---
 
-### Watchers
+### Workflows & the Architect
 
-**Purpose:** Monitor folders for file system changes and automatically trigger AI agent tasks.
+**Purpose:** Repeatable, typed, reviewable multi-step automations that agents call as tools, designed by a built-in agent.
 
 **Components:**
 
-- `Models/Watcher/Watcher.swift` — Watcher data model
-- `Models/Watcher/WatcherStore.swift` — Watcher persistence (JSON files)
-- `Managers/WatcherManager.swift` — FSEvents monitoring, debouncing, and convergence loop
-- `Services/DirectoryFingerprint.swift` — Merkle hash-based change detection
-- `Views/Watcher/WatchersView.swift` — Watcher management UI
+- `Models/Workflow/WorkflowDefinition.swift` — Graph model: node kinds, edges, conditions, bindings, `HTTPSpec` + `HTTPPagination`
+- `Models/Workflow/WorkflowValidator.swift`, `WorkflowRequirementsDeriver.swift` — Static checks and derived requirements (reach through sub-workflows)
+- `Models/Workflow/ConnectionProviders.swift` — `declare_connection` catalog (OAuth endpoints, token help per service)
+- `Services/Workflow/WorkflowRunner.swift`, `WorkflowRunService.swift`, `WorkflowRunStore.swift` — Execution, live runs, SQLite history (`Storage/WorkflowRunDatabase.swift`)
+- `Services/Workflow/*NodeExecutor.swift`, `WorkflowStateStore.swift` — One executor per node kind; per-workflow stored state
+- `Services/Workflow/WorkflowConnections.swift`, `Services/Keychain/WorkflowSecretsKeychain.swift` — Shared connections, OAuth 2.0 sign-in and refresh
+- `Services/Workflow/WorkflowCallFeed.swift` — Live tool-card feed for agent-started runs
+- `Services/Template/SetupChecker.swift` — Setup items against the live Mac
+- `Services/Chat/ArchitectSystemPromptBuilder.swift`, `Tools/Workflow/` — The Architect's prompt and tools
+- `Services/Workflow/WorkflowSelfHealMonitor.swift` — Automatic repair of repeated failures
+- `Views/Workflow/` — Run tab, detail sheet, setup wizard, connections sheet, Architect sidebar and graph
 
 **Features:**
 
-- **Folder Monitoring** — Watch any directory using FSEvents with a single shared stream
-- **Configurable Responsiveness** — Six debounce tiers from ~200ms (Fast) to ~10 minutes (Extended) for everything from screenshot capture to "settle then commit" wiki workflows
-- **Recursive Monitoring** — Optionally monitor subdirectories
-- **Agent Integration** — Assign a agent to handle triggered tasks
-- **Enable/Disable** — Toggle watchers on or off without deleting
-- **Manual Trigger** — "Trigger Now" option to run a watcher immediately
-- **Convergence Loop** — Re-checks directory fingerprint after agent completes; loops until stable (max 5 iterations)
-- **Smart Exclusion** — Automatically excludes nested watched folders to prevent conflicts
+- **Node kinds** — inference (schema-checked), dialog, code (JS sandbox or Python in the workflow sandbox), tool, http (auth from declared secrets, SSRF-guarded, pagination), wait, map, workflow, state
+- **Branching** — Conditional edges on the source step's output, `on: error|always` edges, `join: any|all`, `on_error: fail|continue|skip`, retries, retry-from-failed-step
+- **Templates** — Versioned, content-hashed, optionally signed `.osaurustemplate`; `format_version` 2 only when post-v1 features are used; shared online at store.osaurus.ai
+- **Secrets and connections** — Keychain-only values; shared connections matched by service; `declare_connection` with a provider catalog; OAuth 2.0 PKCE sign-in with refresh
+- **Callers** — Workflow tab, `/` in chat, `workflow_<slug>` agent tools with a live tool-card feed, `run_workflow` for the Orchestrator, Work Mode, HTTP API and MCP (`awaiting_user` for forms)
+- **Architect** — Clarify, plan, build, test with evidence on the declared models before save; discover MCP servers, OpenAPI docs, registry templates, and the models that fit each slot; repair failed runs and self-heal on request
+- **Model contract** — A step's model is either required (setup blocks without it) or suggested (the person may pick another)
+- **Audit** — Every run and step in Insights with secrets redacted; test runs flagged and kept out of Recent Runs
 
-**Watcher Properties:**
-
-| Property         | Description                                        |
-| ---------------- | -------------------------------------------------- |
-| `name`           | Display name (required)                            |
-| `instructions`   | Prompt sent to the AI when changes are detected    |
-| `watchedFolder`  | Directory to monitor (security-scoped bookmark)    |
-| `agentId`      | Optional agent to use for the task               |
-| `isEnabled`      | Whether the watcher is active                      |
-| `recursive`      | Whether to monitor subdirectories (default: false) |
-| `responsiveness` | Debounce timing: fast, balanced, patient, relaxed, deferred, or extended |
-| `lastTriggeredAt`| When the watcher last ran                          |
-| `lastChatSessionId` | Chat session ID from the last run               |
-
-**Responsiveness Options:**
-
-| Option   | Debounce Window | Best For                                                 |
-| -------- | --------------- | -------------------------------------------------------- |
-| Fast     | ~200ms          | Screenshots, single-file drops                           |
-| Balanced | ~1s             | General use (default)                                    |
-| Patient  | ~3s             | Downloads, batch operations                              |
-| Relaxed  | ~1 minute       | Note-taking, wiki edits, active editing sessions         |
-| Deferred | ~5 minutes      | Extended writing sessions, periodic syncs                |
-| Extended | ~10 minutes     | End-of-session checkpoints, long-running activity        |
-
-**Change Detection:**
-
-- FSEvents detects file system events across all enabled watchers
-- Directory fingerprinting uses a Merkle hash of file metadata (path + size + modification time)
-- Only stat() calls are used — no file content is read during detection
-- Convergence loop ensures the agent doesn't run unnecessarily after self-caused changes
-
-**State Machine:**
-
-| State       | Description                                     |
-| ----------- | ----------------------------------------------- |
-| `idle`      | Waiting for file system changes                 |
-| `debouncing`| Coalescing rapid events within the debounce window |
-| `processing`| Agent task is running                           |
-| `settling`  | Waiting for self-caused FSEvents to flush       |
-
-**Storage:** `~/.osaurus/watchers/{uuid}.json`
+See [WORKFLOWS.md](./WORKFLOWS.md).
 
 ---
 
@@ -688,7 +645,7 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 - `Services/AgentChannel/AgentChannelConnectionManager.swift` — connection/binding CRUD and validation
 - `Tools/AgentChannelTools.swift` — `agent_channel_publish` (contextual permissions: confirm → ask when attended, queue when unattended)
 - `Storage/AgentChannelMessageStore.swift` — inbound messages + outbound intents
-- `Views/Settings/AgentChannelConnectionCenterView.swift`, `Views/Settings/AgentChannelDestinationViews.swift` — Channels center, Channel Posting cards, Customize sheet, outbox review
+- `Views/Settings/AgentChannelConnectionCenterView.swift`, `Views/Settings/AgentChannelDestinationViews.swift` — Channels center (card detail "Answered by …"), Default-agent posting sheet, Customize sheet, outbox review; `Views/Event/AgentsOnChannelSection.swift` — the per-channel "Agents on this channel" roster (answers / replies automatically / posts on its own)
 
 **Documentation:** [AGENT_CHANNELS.md](AGENT_CHANNELS.md) (architecture and flows), [AGENT_CHANNEL_SECURITY.md](AGENT_CHANNEL_SECURITY.md) (security model), [AGENT_CHANNELS_SLACK_TELEGRAM_SETUP.md](AGENT_CHANNELS_SLACK_TELEGRAM_SETUP.md) (setup guide), [AGENT_CHANNELS_N8N.md](AGENT_CHANNELS_N8N.md) (n8n webhook channel)
 
@@ -892,7 +849,9 @@ Write plugin scripts beside `plugin.json` before registration; the registrar pac
 - `Models/Chat/ChatSessionData.swift` — Session data model (carries `source`, `sourcePluginId`, `externalSessionKey`, `dispatchTaskId`)
 - `Models/Chat/SessionSource.swift` — Origin tag enum + shared UI helpers (badge icon, "via X" label)
 - `Models/Chat/ChatSessionStore.swift` — Session persistence facade
-- `Storage/ChatHistoryDatabase.swift` — SQLite store with indices on `source` and `(source_plugin_id, external_session_key)` for fast filtering and find-or-create
+- `Services/Sync/SyncConversationStore.swift` — The conversation store, backed by osaurus-sync, with conversation tags on `source` and the external session key for fast filtering and find-or-create
+- `Services/Sync/SyncHostRunner.swift` — Answers chats the user's other devices (an iPhone, another Mac) ask this Mac to run: hosted chats tagged `hostDevice`, and this Mac's own chats continued from another device (`docs/SYNC_MOBILE_CONTRACT.md` §3.10)
+- `Storage/ChatHistoryDatabase.swift` — The pre-sync SQLite store, now a read-only import source
 - `Views/Chat/ChatSessionSidebar.swift` — Session history sidebar with source badge + filter rail
 
 **Features:**
@@ -1470,15 +1429,37 @@ The post-scrub invariant only re-scans categories whose built-in regex toggle is
 
 | Document                                                       | Purpose                                           |
 | -------------------------------------------------------------- | ------------------------------------------------- |
-| [README.md](../README.md)                                      | Project overview, quick start, feature highlights |
+| [README.md](../README.md)                                      | What Osaurus is and why, install, developer quick start |
 | [FEATURES.md](FEATURES.md)                                     | Feature inventory and architecture (this file)    |
+| [In-app guides](../Packages/OsaurusCore/Resources/Guide/)      | User-facing topics bundled into the app and read by `osaurus_help` |
+| [RELEASING.md](RELEASING.md)                                   | Osaurus 1.x and Classic release lines, tags, and feeds |
+| [UPGRADE_CLASSIC_TO_1.0.md](UPGRADE_CLASSIC_TO_1.0.md)         | What changes when Classic (0.25.x) updates to 1.0 |
+| [TELEMETRY.md](TELEMETRY.md)                                   | Anonymous usage data and crash reporting          |
+| [ORCHESTRATOR.md](ORCHESTRATOR.md)                             | The default agent and how it routes work          |
+| [SUBAGENT_TEAM_SPEC.md](SUBAGENT_TEAM_SPEC.md)                 | Subagents, built-in helpers, and delegation       |
+| [HARNESS_RUNTIMES.md](HARNESS_RUNTIMES.md)                     | Agent Runtimes: external agent harnesses          |
+| [AGENT_ATTENTION.md](AGENT_ATTENTION.md)                       | Inbox, owner approvals, and multi-party conversations |
+| [WORKFLOWS.md](WORKFLOWS.md)                                   | Workflows and the Architect                       |
+| [OSAURUS_WORKSPACES.md](OSAURUS_WORKSPACES.md)                 | Workspaces and shared agents                      |
+| [OSAURUS_ROUTER.md](OSAURUS_ROUTER.md)                         | Osaurus Router, cloud models, and credits         |
+| [IDENTITY.md](IDENTITY.md)                                     | Osaurus ID: cryptographic addresses, signing, access keys |
+| [LOGIN_WITH_OSAURUS.md](LOGIN_WITH_OSAURUS.md)                 | Sign in to Osaurus websites with your Mac identity |
+| [SYNC.md](SYNC.md)                                             | Devices and sync between Macs and iPhone          |
+| [BROWSER.md](BROWSER.md)                                       | Browser Use                                       |
+| [APP_INTENTS.md](APP_INTENTS.md)                               | Shortcuts, Spotlight, and Siri                    |
+| [OSAURUS_BUNDLES.md](OSAURUS_BUNDLES.md)                       | Ship a ready-made Osaurus setup with your own installer |
+| [STORAGE.md](STORAGE.md)                                       | Data at rest, opt-in encryption, backup, recovery |
+| [KNOWLEDGE.md](KNOWLEDGE.md)                                   | Knowledge collections                             |
+| [PROJECTS.md](PROJECTS.md)                                     | Projects                                          |
+| [TEXT_TO_SPEECH.md](TEXT_TO_SPEECH.md)                         | Text-to-speech                                    |
 | [MODEL_COMPATIBILITY_RESEARCH.md](MODEL_COMPATIBILITY_RESEARCH.md) | Local model compatibility research and rollout plan |
-| [WATCHERS.md](WATCHERS.md)                                     | Watchers and folder monitoring guide              |
+| [AUTOMATIONS.md](AUTOMATIONS.md)                               | Automations: schedules, folders, webhooks, channel messages, History |
 | [AGENT_LOOP.md](AGENT_LOOP.md)                                 | Agent loop, folder context, and `todo`/`complete`/`clarify` |
 | [AGENT_CHANNELS.md](AGENT_CHANNELS.md)                         | Native Slack/Discord/Telegram channels and proactive posting |
 | [AGENT_CHANNEL_SECURITY.md](AGENT_CHANNEL_SECURITY.md)         | Agent channel security model and outbound write gates    |
 | [REMOTE_PROVIDERS.md](REMOTE_PROVIDERS.md)                     | Remote provider setup and configuration           |
 | [REMOTE_MCP_PROVIDERS.md](REMOTE_MCP_PROVIDERS.md)             | Remote MCP provider setup                         |
+| [CREDENTIALS.md](CREDENTIALS.md)                               | Vault: unified credential store, resolution, migration |
 | [DEVELOPER_TOOLS.md](DEVELOPER_TOOLS.md)                       | Insights and Server Explorer guide                |
 | [ACTIVITY_LOG.md](ACTIVITY_LOG.md)                             | Activity log reviewer spec: schema, hash chain, limits, threat model |
 | [VOICE_INPUT.md](VOICE_INPUT.md)                               | Voice input, FluidAudio, and VAD mode guide       |
@@ -1502,11 +1483,12 @@ The post-scrub invariant only re-scans categories whose built-in regex toggle is
 
 When adding a new feature:
 
-1. Add a row to the **Feature Matrix** with status, README section, documentation, and code location
+1. Add a row to the **Feature Matrix** with status, documentation, and code location
 2. Add a **Feature Details** section if the feature is significant
 3. Update the **Architecture Overview** if the feature adds new components
 4. Update the **Documentation Index** if new docs are created
-5. Update the README if the feature should be highlighted
+5. Add or update the in-app guide topic, and for a new setting follow the settings catalog steps in [AGENTS.md](../AGENTS.md)
+6. Update the README's "What you get" list only if the feature changes what Osaurus is for
 
 When modifying an existing feature:
 

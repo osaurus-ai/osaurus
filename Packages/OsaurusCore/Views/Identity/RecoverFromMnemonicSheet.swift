@@ -47,55 +47,50 @@ struct RecoverFromMnemonicSheet: View {
     @State private var hasAcknowledgedReplace: Bool = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            header
+        VStack(spacing: theme.space.s0) {
+            SettingsSheetHeader(icon: "key.fill", title: titleKey, onClose: onCancel)
 
-            description
+            VStack(alignment: .leading, spacing: theme.space.s16) {
+                description
 
-            phraseEditor
+                phraseEditor
 
-            wordCountLine
+                wordCountLine
 
-            if case .replaceExisting(let current) = mode {
-                replaceDetails(current: current)
+                if case .replaceExisting(let current) = mode {
+                    replaceDetails(current: current)
+                }
+
+                if let statusMessage {
+                    statusBanner(statusMessage)
+                }
             }
+            .padding(theme.settingsSheetInset)
 
-            if let statusMessage {
-                statusBanner(statusMessage)
-            }
-
-            buttonRow
+            SettingsSheetFooter(
+                primary: .init(label: "Restore", isEnabled: canRestore, isLoading: isRestoring) {
+                    restore(forceOverride: false)
+                },
+                secondary: .init(label: "Cancel", handler: onCancel),
+                destructive: requiresExplicitOverride
+                    ? .init(label: "Restore Anyway", isEnabled: !isRestoring, isDestructive: true) {
+                        restore(forceOverride: true)
+                    }
+                    : nil
+            )
         }
-        .padding(24)
-        .frame(width: 540)
-        .background(theme.primaryBackground)
+        .frame(width: SettingsSheetWidth.regular)
+        .settingsSheetSurface()
     }
 
     // MARK: - Header / Copy
 
-    private var header: some View {
-        HStack {
-            titleText
-                .font(.system(size: 16, weight: .bold))
-                .foregroundColor(theme.primaryText)
-            Spacer()
-            Button(action: onCancel) {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 18))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            .buttonStyle(PlainButtonStyle())
-        }
-    }
 
-    private var titleText: Text {
+    private var titleKey: LocalizedStringKey {
         switch mode {
-        case .driftRepair:
-            return Text("Recover Master Key", bundle: .module)
-        case .freshRestore:
-            return Text("Restore Identity", bundle: .module)
-        case .replaceExisting:
-            return Text("Replace Identity", bundle: .module)
+        case .driftRepair: "Recover Master Key"
+        case .freshRestore: "Restore Identity"
+        case .replaceExisting: "Replace Identity"
         }
     }
 
@@ -120,63 +115,31 @@ struct RecoverFromMnemonicSheet: View {
     }
 
     private var description: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             descriptionText
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     private var phraseEditor: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Recovery Phrase", bundle: .module)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
-
-            TextEditor(text: $phraseText)
-                .font(.system(size: 13, design: .monospaced))
-                .foregroundColor(theme.primaryText)
-                .scrollContentBackground(.hidden)
-                .padding(8)
-                .frame(minHeight: 110, maxHeight: 140)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(theme.inputBorder, lineWidth: 1)
-                        )
-                )
+        SettingsFieldRow(label: "Recovery Phrase") {
+            SettingsTextEditor(text: $phraseText, minHeight: 110, maxHeight: 140, monospaced: true)
         }
     }
 
     private var wordCountLine: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             let count = parsedWords.count
             Image(systemName: count == 24 ? "checkmark.circle.fill" : "circle.dotted")
-                .font(.system(size: 11))
-                .foregroundColor(count == 24 ? theme.successColor : theme.tertiaryText)
+                .font(SettingsFont.glyphSmall)
+                .foregroundColor(count == 24 ? theme.status.success.foreground : theme.text.tertiary)
             Text("\(count) of 24 words")
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.monoSmall)
+                .foregroundColor(theme.text.tertiary)
             Spacer()
-            Button(action: pasteFromClipboard) {
-                HStack(spacing: 4) {
-                    Image(systemName: "doc.on.clipboard")
-                        .font(.system(size: 10, weight: .medium))
-                    Text("Paste", bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .foregroundColor(theme.primaryText)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(theme.tertiaryBackground)
-                )
-            }
-            .buttonStyle(PlainButtonStyle())
+            SettingsButton(.secondary, "Paste", icon: "doc.on.clipboard", size: .compact, action: pasteFromClipboard)
         }
     }
 
@@ -186,8 +149,8 @@ struct RecoverFromMnemonicSheet: View {
     /// acknowledgment required before Restore enables.
     @ViewBuilder
     private func replaceDetails(current: OsaurusID) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
                 addressLine(label: Text("Current identity", bundle: .module), address: current)
                 addressLine(
                     label: Text("Restored identity", bundle: .module),
@@ -200,125 +163,53 @@ struct RecoverFromMnemonicSheet: View {
                     "I understand: agents get new addresses, existing access keys are revoked, and the current identity's recovery phrase will no longer restore this Mac unless I saved it.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             }
-            .toggleStyle(.checkbox)
+            .settingsCheckbox()
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.warningColor.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.warningColor.opacity(0.35), lineWidth: 1)
-                )
-        )
+        .padding(theme.space.s12)
+        .settingsChrome(.status(.warning))
     }
 
     private func addressLine(label: Text, address: OsaurusID?) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             label
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.smallLabel)
+                .foregroundColor(theme.text.secondary)
                 .frame(width: 110, alignment: .leading)
             if let address {
                 Text(address)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.primary)
                     .lineLimit(1)
                     .truncationMode(.middle)
             } else {
                 Text("Enter a valid phrase", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
             }
             Spacer(minLength: 0)
         }
     }
 
     private func statusBanner(_ message: String) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: statusIsError ? "exclamationmark.triangle.fill" : "checkmark.shield.fill")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(statusIsError ? theme.errorColor : theme.successColor)
+                .font(SettingsFont.glyphSmall)
+                .foregroundColor(statusIsError ? theme.status.error.foreground : theme.status.success.foreground)
             Text(message)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(statusIsError ? theme.errorColor : theme.successColor)
+                .font(SettingsFont.compactLabel)
+                .foregroundColor(statusIsError ? theme.status.error.foreground : theme.status.success.foreground)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill((statusIsError ? theme.errorColor : theme.successColor).opacity(0.1))
-        )
+        .padding(.horizontal, theme.space.s12)
+        .padding(.vertical, theme.space.s6)
+        .settingsChrome(.status(statusIsError ? .error : .success))
     }
 
-    private var buttonRow: some View {
-        HStack(spacing: 12) {
-            if requiresExplicitOverride {
-                Button(action: { restore(forceOverride: true) }) {
-                    Text("Restore Anyway", bundle: .module)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 9)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.warningColor)
-                        )
-                }
-                .buttonStyle(PlainButtonStyle())
-                .disabled(isRestoring)
-            }
-
-            Spacer()
-
-            Button(action: onCancel) {
-                Text("Cancel", bundle: .module)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 9)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.tertiaryBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(theme.inputBorder, lineWidth: 1)
-                            )
-                    )
-            }
-            .buttonStyle(PlainButtonStyle())
-
-            Button(action: { restore(forceOverride: false) }) {
-                HStack(spacing: 6) {
-                    if isRestoring {
-                        ProgressView()
-                            .scaleEffect(0.6)
-                            .frame(width: 14, height: 14)
-                    } else {
-                        Image(systemName: "key.fill")
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    Text("Restore", bundle: .module)
-                        .font(.system(size: 13, weight: .semibold))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 20)
-                .padding(.vertical, 9)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(canRestore ? theme.accentColor : theme.accentColor.opacity(0.4))
-                )
-            }
-            .buttonStyle(PlainButtonStyle())
-            .disabled(!canRestore || isRestoring)
-        }
-    }
 
     // MARK: - Logic
 

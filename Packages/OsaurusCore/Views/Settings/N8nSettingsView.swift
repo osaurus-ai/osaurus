@@ -86,7 +86,7 @@ struct N8nSettingsView: View {
             sectionStatus: sectionStatus(for:),
             onBack: onBack
         ) { sectionId in
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: theme.space.s20) {
                 switch N8nSetupSection(rawValue: sectionId) {
                 case .basics:
                     basicsSectionContent
@@ -232,14 +232,25 @@ struct N8nSettingsView: View {
         N8nConnectionDraft.parseList(draft.senderAllowlistText)
     }
 
-    private var routableRooms: [AgentChannelRoutableRoom] {
-        allowedConversations.map { AgentChannelRoutableRoom(id: $0, name: $0) }
+
+    /// Enabled events listening to this connection; they decide what an
+    /// incoming envelope runs and whether the reply is pushed.
+    private var channelEvents: [OsaurusEvent] {
+        EventManager.shared.events(kind: .n8n, connectionId: trimmedDraftId).filter(\.isEnabled)
     }
 
-    /// Local agent the Secure Channel invite is scoped to: the default
-    /// dispatch target when it is a local agent.
+    private var inboundDispatchEnabled: Bool { !channelEvents.isEmpty }
+
+    private var inboundAutoReplyEnabled: Bool {
+        channelEvents.contains { $0.reply.replies(for: $0.action.kind) }
+    }
+
+    /// Local agent the Secure Channel invite is scoped to: the first local
+    /// agent an event for this connection runs.
     private var shareableAgent: Agent? {
-        guard let localId = draft.inboundTarget?.localId else { return nil }
+        guard let localId = channelEvents.lazy.compactMap({ $0.action.agent?.target?.localId }).first else {
+            return nil
+        }
         return agentManager.agents.first { $0.id == localId }
     }
 
@@ -295,7 +306,7 @@ struct N8nSettingsView: View {
     }
 
     private var pushBlockedByKillSwitch: Bool {
-        wantsOutboundPush && draft.inboundAutoReplyEnabled && !globalWritesEnabled
+        wantsOutboundPush && inboundAutoReplyEnabled && !globalWritesEnabled
     }
 
     private var effectiveHeaderName: String {
@@ -362,9 +373,9 @@ struct N8nSettingsView: View {
         case .location:
             return draft.callerLocation != nil
         case .howOsaurusReplies:
-            guard draft.inboundDispatchEnabled else { return false }
+            guard inboundDispatchEnabled else { return false }
             if draft.callerLocation == .remote { return shareableAgent != nil }
-            return draft.inboundTarget != nil || !draft.inboundRoutes.isEmpty
+            return true
         case .connect:
             return hasSecret && pairingReadiness == .ready
         case .liveCheck:
@@ -380,7 +391,7 @@ struct N8nSettingsView: View {
     }
 
     private func jump(to section: N8nSetupSection) {
-        withAnimation(.easeOut(duration: 0.15)) {
+        withAnimation(theme.motion.quick) {
             selectedSectionId = section.rawValue
         }
     }
@@ -388,7 +399,7 @@ struct N8nSettingsView: View {
     // MARK: - 1. Name it
 
     private var basicsSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             orientationCard
             identitySection
         }
@@ -396,48 +407,46 @@ struct N8nSettingsView: View {
 
     /// The one sentence that answers "where do I enter my n8n URL?".
     private var orientationCard: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: theme.space.s10) {
             Image(systemName: "arrow.left.arrow.right.circle")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.accentColor)
-                .padding(.top, 1)
+                .glyphSize(.label, weight: .semibold)
+                .foregroundColor(theme.text.link)
+                .padding(.top, theme.space.s2)
             Text(
                 "n8n connects to Osaurus, not the other way around. At the end you copy one pairing code into n8n — that is the whole hand-off. You only enter an n8n URL if you want Osaurus to push replies to a workflow.",
                 bundle: .module
             )
-            .font(.system(size: 12))
-            .foregroundColor(theme.secondaryText)
+            .font(SettingsFont.caption)
+            .foregroundColor(theme.text.secondary)
             .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(12)
+        .padding(theme.space.s12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.accentColor.opacity(0.07))
-        )
+        .settingsChrome(.selected)
     }
 
     private var identitySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(
                 L("Name it"),
                 detail: L("A name you will recognize in the channel list. The id below follows it and appears in the webhook URL.")
             )
 
-            StyledSettingsTextField(
-                label: L("Display Name"),
+            SettingsTextFieldRow(
+                label: "Display Name",
                 text: $draft.name,
                 placeholder: L("Accounting Channel"),
-                help: L("Human-readable name shown in the channel list and in n8n's credential.")
+                help: "Human-readable name shown in the channel list and in n8n's credential."
             )
 
-            StyledSettingsTextField(
-                label: L("Connection ID"),
+            SettingsTextFieldRow(
+                label: "Connection ID",
                 text: $draft.id,
                 placeholder: "n8n-accounting-channel",
                 help: draft.isNew
-                    ? L("Filled from the name; edit if you like. Lowercase letters, digits and dashes. Locked after Save.")
-                    : L("Stable id used in the webhook URL and by agent_channel tools. Cannot change after Save.")
+                    ? "Filled from the name; edit if you like. Lowercase letters, digits and dashes. Locked after Save."
+                    : "Stable id used in the webhook URL and by agent_channel tools. Cannot change after Save.",
+                monospaced: true
             )
             .disabled(!draft.isNew)
         }
@@ -446,8 +455,8 @@ struct N8nSettingsView: View {
     // MARK: - 2. Where is your n8n?
 
     private var locationSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 AgentChannelSectionHeading(
                     L("Where is your n8n?"),
                     detail: L(
@@ -465,7 +474,7 @@ struct N8nSettingsView: View {
                     )
                 }
 
-                VStack(spacing: 8) {
+                VStack(spacing: theme.space.s8) {
                     ForEach(AgentChannelN8nCallerLocation.allCases, id: \.self) { location in
                         locationChoice(location)
                     }
@@ -474,7 +483,6 @@ struct N8nSettingsView: View {
             }
 
             if let location = draft.callerLocation {
-                SettingsDivider()
                 locationConsequences(location)
             }
         }
@@ -483,44 +491,34 @@ struct N8nSettingsView: View {
     private func locationChoice(_ location: AgentChannelN8nCallerLocation) -> some View {
         let selected = draft.callerLocation == location
         return Button {
-            withAnimation(.easeOut(duration: 0.15)) {
+            withAnimation(theme.motion.quick) {
                 draft.callerLocation = location
             }
         } label: {
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: theme.space.s12) {
                 Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                    .font(.system(size: 14))
-                    .foregroundColor(selected ? theme.accentColor : theme.tertiaryText)
-                    .padding(.top, 1)
-                VStack(alignment: .leading, spacing: 3) {
+                    .glyphSize(.body)
+                    .foregroundColor(selected ? theme.text.link : theme.text.tertiary)
+                    .padding(.top, theme.space.s2)
+                SettingsRowText {
                     Text(location.title)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.primaryText)
+                } description: {
                     Text(location.summary)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .foregroundColor(theme.text.secondary)
                 }
                 Spacer(minLength: 0)
             }
-            .padding(12)
+            .padding(theme.space.s12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(RoundedRectangle(cornerRadius: 10))
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(selected ? theme.accentColor.opacity(0.08) : theme.cardBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(selected ? theme.accentColor.opacity(0.5) : theme.cardBorder, lineWidth: 1)
-                    )
-            )
+            .contentShape(RoundedRectangle(cornerRadius: theme.radius.medium))
+            .settingsChrome(selected ? .selected : .surface)
         }
         .buttonStyle(PlainButtonStyle())
     }
 
     @ViewBuilder
     private func locationConsequences(_ location: AgentChannelN8nCallerLocation) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(L("What this means"))
 
             switch location {
@@ -570,7 +568,7 @@ struct N8nSettingsView: View {
                     text: L("Requires a local agent in Who answers? with Relay enabled. The pairing code carries only the relay URL and is end-to-end encrypted.")
                 )
                 if shareableAgent == nil {
-                    jumpButton(L("Choose the agent in Who answers?"), to: .howOsaurusReplies)
+                    jumpButton(L("Add an automation in Who answers?"), to: .howOsaurusReplies)
                 } else if relayURLForPairing == nil {
                     jumpButton(L("Enable Relay on \(shareableAgent?.name ?? "") in Who answers?"), to: .howOsaurusReplies)
                 }
@@ -583,19 +581,19 @@ struct N8nSettingsView: View {
     private func consequenceRow(icon: String, tone: ConsequenceTone, text: String) -> some View {
         let color: Color
         switch tone {
-        case .neutral: color = theme.tertiaryText
-        case .success: color = theme.successColor
-        case .warning: color = theme.warningColor
+        case .neutral: color = theme.text.tertiary
+        case .success: color = theme.status.success.foreground
+        case .warning: color = theme.status.warning.foreground
         }
-        return HStack(alignment: .top, spacing: 8) {
+        return HStack(alignment: .top, spacing: theme.space.s8) {
             Image(systemName: icon)
-                .font(.system(size: 11, weight: .semibold))
+                .glyphSize(.footnote, weight: .semibold)
                 .foregroundColor(color)
                 .frame(width: 14)
-                .padding(.top, 1)
+                .padding(.top, theme.space.s2)
             Text(text)
-                .font(.system(size: 11))
-                .foregroundColor(tone == .warning ? theme.warningColor : theme.secondaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(tone == .warning ? theme.status.warning.foreground : theme.text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -604,13 +602,13 @@ struct N8nSettingsView: View {
         Button {
             jump(to: section)
         } label: {
-            HStack(spacing: 4) {
+            HStack(spacing: theme.space.s4) {
                 Text(title)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(SettingsFont.smallLabel)
                 Image(systemName: "arrow.right")
-                    .font(.system(size: 9, weight: .semibold))
+                    .glyphSize(.tiny, weight: .semibold)
             }
-            .foregroundColor(theme.accentColor)
+            .foregroundColor(theme.text.link)
         }
         .buttonStyle(PlainButtonStyle())
     }
@@ -618,9 +616,9 @@ struct N8nSettingsView: View {
     /// Only meaningful for LAN callers. Remote uses Secure Channel; This Mac
     /// and Docker Desktop are loopback.
     private var transportPolicySection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             SettingsToggle(
-                title: L("Allow plaintext HTTP from other machines"),
+                title: "Allow plaintext HTTP from other machines",
                 description: L(
                     "Off: callers not on this Mac must use Secure Channel or get 426. On: the secret alone is enough — trusted LAN only."
                 ),
@@ -629,25 +627,22 @@ struct N8nSettingsView: View {
             .settingsLandingAnchor("agentChannels.n8n.plaintextAllowed")
 
             if draft.plaintextAllowed {
-                HStack(alignment: .top, spacing: 8) {
+                HStack(alignment: .top, spacing: theme.space.s8) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.warningColor)
-                        .padding(.top, 1)
+                        .glyphSize(.footnote, weight: .semibold)
+                        .foregroundColor(theme.status.warning.foreground)
+                        .padding(.top, theme.space.s2)
                     Text(
                         "Anyone who can reach this port and knows the secret can send events and read replies for this connection.",
                         bundle: .module
                     )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.warningColor)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.status.warning.foreground)
                     .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(10)
+                .padding(theme.space.s8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.warningColor.opacity(0.08))
-                )
+                .settingsChrome(.status(.warning))
             }
         }
     }
@@ -655,59 +650,43 @@ struct N8nSettingsView: View {
     // MARK: - 3. Who answers?
 
     private var replySectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             dispatchSection
             if draft.callerLocation == .remote || (draft.callerLocation == .lan && shareableAgent != nil) {
-                SettingsDivider()
                 relaySection
             }
-            SettingsDivider()
             outboundSection
         }
     }
 
     private var dispatchSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(
                 L("Who answers?"),
                 detail: L(
-                    "The agent that replies to verified events. It also decides more than its name: a local agent makes the pairing code end-to-end encrypted, and with Relay it is what a remote n8n reaches."
+                    "The agents on this channel decide what a verified envelope runs. A local agent here also makes the pairing code end-to-end encrypted, and with Relay it is what a remote n8n reaches."
                 )
             )
 
-            SettingsToggle(
-                title: L("Reply with an Agent"),
-                description: L(
-                    "Each conversation gets its own private session; external-surface tool restrictions apply."
-                ),
-                isOn: $draft.inboundDispatchEnabled.animation(.easeOut(duration: 0.2))
-            )
+            ChannelRoutingSection(
+                kind: .n8n, connectionId: trimmedDraftId,
+                connectionName: draft.name.isEmpty ? trimmedDraftId : draft.name)
 
-            if draft.inboundDispatchEnabled {
-                AgentChannelDispatchRoutingEditor(
-                    roomNoun: L("conversation"),
-                    rooms: routableRooms,
-                    defaultTarget: $draft.inboundTarget,
-                    routes: $draft.inboundRoutes
+            if draft.callerLocation == .remote, shareableAgent == nil {
+                consequenceRow(
+                    icon: "exclamationmark.triangle.fill",
+                    tone: .warning,
+                    text: L("Remote n8n needs an automation that runs a local agent: it is the endpoint the relay serves and the key n8n encrypts to.")
                 )
-                AgentChannelPluginPreloadOverflowNotice(agentId: draft.inboundTarget?.localId)
-
-                if draft.callerLocation == .remote, shareableAgent == nil {
-                    consequenceRow(
-                        icon: "exclamationmark.triangle.fill",
-                        tone: .warning,
-                        text: L("Remote n8n needs a local agent as the default: it is the endpoint the relay serves and the key n8n encrypts to.")
-                    )
-                } else {
-                    Text(
-                        shareableAgent != nil
-                            ? L("n8n reads the reply by polling. The default agent is local, so the pairing code is end-to-end encrypted.")
-                            : L("n8n reads the reply by polling. Pick a local agent as the default to make the pairing code end-to-end encrypted.")
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                }
+            } else {
+                Text(
+                    shareableAgent != nil
+                        ? L("n8n reads the reply by polling. An automation runs a local agent, so the pairing code is end-to-end encrypted.")
+                        : L("n8n reads the reply by polling. Add an automation that runs a local agent to make the pairing code end-to-end encrypted.")
+                )
+                .textStyle(.footnote)
+                .foregroundColor(theme.text.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -715,7 +694,7 @@ struct N8nSettingsView: View {
     /// Relay control for the bound agent, right where the choice is made, so
     /// a remote setup never requires a detour through another settings pane.
     private var relaySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(
                 L("Relay for \(shareableAgent?.name ?? L("the bound agent"))"),
                 detail: draft.callerLocation == .remote
@@ -728,11 +707,11 @@ struct N8nSettingsView: View {
             case .connected(let url)?:
                 consequenceRow(icon: "checkmark.circle.fill", tone: .success, text: L("Relay connected — \(url)"))
             case .connecting?:
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
+                HStack(spacing: theme.space.s8) {
+                    SettingsSpinner()
                     Text("Connecting Relay… the pairing code appears in Pair when it is live.", bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.secondary)
                 }
             case .error(let message)?:
                 consequenceRow(icon: "xmark.octagon.fill", tone: .warning, text: L("Relay error: \(message)"))
@@ -754,40 +733,37 @@ struct N8nSettingsView: View {
         Button {
             showRelayConfirmation = true
         } label: {
-            HStack(spacing: 4) {
+            HStack(spacing: theme.space.s4) {
                 Image(systemName: "antenna.radiowaves.left.and.right")
-                    .font(.system(size: 10))
+                    .glyphSize(.micro)
                 Text(title)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(SettingsFont.smallLabel)
             }
-            .foregroundColor(theme.accentColor)
+            .foregroundColor(theme.text.link)
         }
         .buttonStyle(PlainButtonStyle())
         .disabled(shareableAgent == nil)
     }
 
     private var outboundSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             if pushBlockedByKillSwitch {
-                HStack(alignment: .top, spacing: 8) {
+                HStack(alignment: .top, spacing: theme.space.s8) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.warningColor)
-                        .padding(.top, 1)
+                        .glyphSize(.footnote, weight: .semibold)
+                        .foregroundColor(theme.status.warning.foreground)
+                        .padding(.top, theme.space.s2)
                     Text(
                         "Push will fail until Allow Agents to Send Messages is on in Connection Center. Poll still returns the reply.",
                         bundle: .module
                     )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.warningColor)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.status.warning.foreground)
                     .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(10)
+                .padding(theme.space.s8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.warningColor.opacity(0.08))
-                )
+                .settingsChrome(.status(.warning))
             }
 
             AgentChannelSectionHeading(
@@ -797,32 +773,23 @@ struct N8nSettingsView: View {
                 )
             )
 
-            StyledSettingsTextField(
-                label: L("Outbound Webhook URL"),
+            SettingsTextFieldRow(
+                label: "Outbound Webhook URL",
                 text: $draft.outboundWebhookURL,
                 placeholder: "https://n8n.example.com/webhook/osaurus-reply",
-                help: L("Leave empty to keep replies poll-only.")
+                help: "Leave empty to keep replies poll-only.",
+                monospaced: true
             )
             .settingsLandingAnchor("agentChannels.n8n.outboundWebhookURL")
 
             if !draft.outboundWebhookURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 SettingsToggle(
-                    title: L("Sign Outbound Bodies"),
+                    title: "Sign Outbound Bodies",
                     description: L(
                         "Adds X-Osaurus-Channel-Signature: sha256=<HMAC of the body> using the channel secret so the workflow can verify Osaurus."
                     ),
                     isOn: $draft.outboundSignBodies
                 )
-                SettingsToggle(
-                    title: L("Reply Automatically"),
-                    description: L(
-                        "Push the selected agent's sanitized reply as soon as it finishes. Global writes and the conversation allowlist still apply."
-                    ),
-                    isOn: $draft.inboundAutoReplyEnabled
-                )
-                if !draft.inboundAutoReplyEnabled {
-                    AgentChannelAutoReplyOffNotice()
-                }
             }
         }
     }
@@ -830,23 +797,20 @@ struct N8nSettingsView: View {
     // MARK: - 4. Pair
 
     private var connectSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             Text(
                 "Install the @osaurus/n8n-nodes-osaurus community node in n8n, then paste this one pairing code into its Osaurus Channel credential and press Test.",
                 bundle: .module
             )
-            .font(.system(size: 12))
-            .foregroundColor(theme.secondaryText)
+            .font(SettingsFont.caption)
+            .foregroundColor(theme.text.secondary)
             .fixedSize(horizontal: false, vertical: true)
 
             pairingSection
-            SettingsDivider()
             AgentChannelAdvancedSection {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: theme.space.s20) {
                     secretSection
-                    SettingsDivider()
                     verificationSection
-                    SettingsDivider()
                     manualRecipeContent
                 }
             }
@@ -854,7 +818,7 @@ struct N8nSettingsView: View {
     }
 
     private var pairingSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(
                 L("Pair with n8n"),
                 detail: L(
@@ -871,15 +835,15 @@ struct N8nSettingsView: View {
                     onCopied: { showStatus(L("Pairing code copied"), isError: false) }
                 )
 
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: theme.space.s4) {
                     ForEach(pairingCode.urls, id: \.self) { url in
-                        HStack(spacing: 6) {
+                        HStack(spacing: theme.space.s6) {
                             Image(systemName: "arrow.turn.down.right")
-                                .font(.system(size: 9))
-                                .foregroundColor(theme.tertiaryText)
+                                .glyphSize(.tiny)
+                                .foregroundColor(theme.text.tertiary)
                             Text(url)
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundColor(theme.secondaryText)
+                                .font(SettingsFont.monoSmall)
+                                .foregroundColor(theme.text.secondary)
                                 .lineLimit(1)
                                 .truncationMode(.middle)
                         }
@@ -888,8 +852,8 @@ struct N8nSettingsView: View {
                         "Scoped to \(effectiveLocation.title). Change Where is your n8n? and copy the code again if n8n moves.",
                         bundle: .module
                     )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
                 }
 
                 if !draft.isNew, secretSaved, pendingSecret.isEmpty == false {
@@ -919,7 +883,7 @@ struct N8nSettingsView: View {
             message = L(
                 "No pairing code yet: a remote n8n needs a local agent. The code would carry no URL that can reach this Mac from the internet."
             )
-            action = (L("Choose the agent in Who answers?"), .howOsaurusReplies)
+            action = (L("Add an automation in Who answers?"), .howOsaurusReplies)
         case .needsRelay:
             message = L(
                 "No pairing code yet: Relay on \(shareableAgent?.name ?? L("the bound agent")) is not connected, so there is no public URL to put in it. Enable Relay, wait for it to connect, then come back."
@@ -936,42 +900,39 @@ struct N8nSettingsView: View {
             )
             action = (L("Review Where is your n8n?"), .location)
         }
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 8) {
+        return VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(alignment: .top, spacing: theme.space.s8) {
                 Image(systemName: "hand.raised.fill")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.warningColor)
-                    .padding(.top, 1)
+                    .glyphSize(.footnote, weight: .semibold)
+                    .foregroundColor(theme.status.warning.foreground)
+                    .padding(.top, theme.space.s2)
                 Text(message)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.warningColor)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.status.warning.foreground)
                     .fixedSize(horizontal: false, vertical: true)
             }
             jumpButton(action.title, to: action.section)
         }
-        .padding(10)
+        .padding(theme.space.s8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.warningColor.opacity(0.08))
-        )
+        .settingsChrome(.status(.warning))
     }
 
     private func pairingHint(_ text: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: theme.space.s8) {
             Image(systemName: "info.circle")
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-                .padding(.top, 1)
+                .glyphSize(.footnote)
+                .foregroundColor(theme.text.tertiary)
+                .padding(.top, theme.space.s2)
             Text(text)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     private var secretSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(
                 L("Channel secret"),
                 detail: L(
@@ -989,53 +950,53 @@ struct N8nSettingsView: View {
             )
             .settingsLandingAnchor("agentChannels.n8n.channelSecret")
 
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 Button(action: generateSecret) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: theme.space.s4) {
                         Image(systemName: "wand.and.stars")
-                            .font(.system(size: 10))
+                            .glyphSize(.micro)
                         Text(secretSaved ? L("Rotate") : L("Generate"))
-                            .font(.system(size: 11, weight: .medium))
+                            .font(SettingsFont.smallLabel)
                     }
-                    .foregroundColor(theme.accentColor)
+                    .foregroundColor(theme.text.link)
                 }
                 .buttonStyle(PlainButtonStyle())
                 .help(L("Fill the field with a random 48-character secret"))
 
                 if secretSaved {
                     Text("Rotating changes the pairing code; re-paste it into n8n.", bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.tertiary)
                 }
             }
         }
     }
 
     private var verificationSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             Text("Verification", bundle: .module)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.primaryText)
-            Picker(selection: $draft.verificationMethod) {
-                Text("HMAC-SHA256 signature", bundle: .module).tag(AgentChannelSourceVerificationMethod.hmacSHA256)
-                Text("Shared secret header", bundle: .module).tag(
-                    AgentChannelSourceVerificationMethod.sharedSecretHeader
-                )
-            } label: {
-                EmptyView()
-            }
-            .labelsHidden()
-            .pickerStyle(.segmented)
+                .font(SettingsFont.compactLabel)
+                .foregroundColor(theme.text.primary)
+            AssignedBaseSegmentedPicker(
+                selection: $draft.verificationMethod,
+                options: [
+                    .init(AgentChannelSourceVerificationMethod.hmacSHA256, "HMAC-SHA256 signature"),
+                    .init(AgentChannelSourceVerificationMethod.sharedSecretHeader, "Shared secret header"),
+                ]
+            )
+            .fixedSize()
+            .accessibilityLabel(Text("Verification", bundle: .module))
             Text(verificationHelp)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            StyledSettingsTextField(
-                label: L("Header Name"),
+            SettingsTextFieldRow(
+                label: "Header Name",
                 text: $draft.verificationHeaderName,
                 placeholder: draft.verification.effectiveHeaderName,
-                help: L("Override the header n8n sends the secret or signature in. Leave empty for the default.")
+                help: "Override the header n8n sends the secret or signature in. Leave empty for the default.",
+                monospaced: true
             )
         }
     }
@@ -1044,8 +1005,8 @@ struct N8nSettingsView: View {
     /// raw URLs for the chosen location, copyable HTTP Request / HMAC / curl
     /// fragments, and the osk-v1 key for the Agent resource.
     private var manualRecipeContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 AgentChannelSectionHeading(
                     L("Without the Osaurus node"),
                     detail: L(
@@ -1065,12 +1026,12 @@ struct N8nSettingsView: View {
                 )
 
                 Text(locationRecipeHelp)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
                 AgentChannelCopyableCommand(
                     command: sampleEnvelope,
                     caption: L("Sample envelope"),
@@ -1101,8 +1062,8 @@ struct N8nSettingsView: View {
                     "Attachments in the envelope are metadata-only; Osaurus does not fetch the file bytes.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -1141,7 +1102,7 @@ struct N8nSettingsView: View {
     }
 
     private var secureChannelSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             AgentChannelSectionHeading(
                 L("Access key for the Agent resource"),
                 detail: L(
@@ -1153,13 +1114,13 @@ struct N8nSettingsView: View {
                 Button {
                     showShareSheet = true
                 } label: {
-                    HStack(spacing: 4) {
+                    HStack(spacing: theme.space.s4) {
                         Image(systemName: "key.horizontal")
-                            .font(.system(size: 10))
+                            .glyphSize(.micro)
                         Text("Generate an access key", bundle: .module)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(SettingsFont.smallLabel)
                     }
-                    .foregroundColor(theme.accentColor)
+                    .foregroundColor(theme.text.link)
                 }
                 .buttonStyle(PlainButtonStyle())
                 .help(L("Issue an agent-scoped osk-v1 key so remote n8n can call this agent end-to-end encrypted."))
@@ -1168,8 +1129,8 @@ struct N8nSettingsView: View {
                     "Bind a local agent in Who answers? to issue an access key from here.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -1178,23 +1139,20 @@ struct N8nSettingsView: View {
     // MARK: - 5. Prove it
 
     private var liveSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             approvalsSection
-            SettingsDivider()
             verifySection
-            SettingsDivider()
             AgentChannelAdvancedSection {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: theme.space.s20) {
                     manualAllowlistSection
-                    SettingsDivider()
                     Button(action: revealConfigurationFile) {
-                        HStack(spacing: 4) {
+                        HStack(spacing: theme.space.s4) {
                             Image(systemName: "folder")
-                                .font(.system(size: 10))
+                                .glyphSize(.micro)
                             Text("Open configuration file", bundle: .module)
-                                .font(.system(size: 11, weight: .medium))
+                                .font(SettingsFont.smallLabel)
                         }
-                        .foregroundColor(theme.accentColor)
+                        .foregroundColor(theme.text.link)
                     }
                     .buttonStyle(PlainButtonStyle())
                     .help(L("Show agent-channels.json in Finder"))
@@ -1206,7 +1164,7 @@ struct N8nSettingsView: View {
     /// Approve-on-first-contact: the workflow's real identifiers arrive with
     /// its first run; the operator recognizes them instead of predicting them.
     private var approvalsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(
                 L("Who may speak"),
                 detail: draft.isNew
@@ -1220,7 +1178,7 @@ struct N8nSettingsView: View {
             .settingsLandingAnchor("agentChannels.n8n.pendingApprovals")
 
             if !pendingContacts.isEmpty {
-                VStack(spacing: 8) {
+                VStack(spacing: theme.space.s8) {
                     ForEach(pendingContacts) { contact in
                         pendingContactRow(contact)
                     }
@@ -1242,31 +1200,31 @@ struct N8nSettingsView: View {
     }
 
     private func pendingContactRow(_ contact: AgentChannelN8nPendingContact) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: theme.space.s12) {
             Image(systemName: "bell.badge.fill")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.warningColor)
-                .padding(.top, 2)
-            VStack(alignment: .leading, spacing: 4) {
+                .glyphSize(.label, weight: .semibold)
+                .foregroundColor(theme.status.warning.foreground)
+                .padding(.top, theme.space.s2)
+            VStack(alignment: .leading, spacing: theme.space.s4) {
                 Text(
                     "Workflow '\(contact.conversationId)' (sender '\(contact.senderId)') wants to use \(channelDisplayName)",
                     bundle: .module
                 )
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.compactLabel)
+                .foregroundColor(theme.text.primary)
                 .fixedSize(horizontal: false, vertical: true)
                 Text(
                     contact.eventCount == 1
                         ? L("1 event so far · last event id \(contact.lastEventId)")
                         : L("\(contact.eventCount) events so far · last event id \(contact.lastEventId)")
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .textStyle(.footnote)
+                .foregroundColor(theme.text.tertiary)
                 .lineLimit(1)
                 .truncationMode(.middle)
             }
             Spacer(minLength: 8)
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 AgentChannelSheetActionButton(
                     title: L("Deny"),
                     busyTitle: L("Deny"),
@@ -1282,20 +1240,13 @@ struct N8nSettingsView: View {
                 )
             }
         }
-        .padding(12)
+        .padding(theme.space.s12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.warningColor.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.warningColor.opacity(0.35), lineWidth: 1)
-                )
-        )
+        .settingsChrome(.status(.warning))
     }
 
     private var approvedChips: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             chipGroup(title: L("Allowed conversations"), values: allowedConversations) { value in
                 revoke(conversationId: value)
             }
@@ -1306,14 +1257,14 @@ struct N8nSettingsView: View {
     }
 
     private func chipGroup(title: String, values: [String], onRemove: @escaping (String) -> Void) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             Text(title)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.smallLabel)
+                .foregroundColor(theme.text.secondary)
             if values.isEmpty {
                 Text("None yet", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
             } else {
                 FlowChips(values: values, onRemove: onRemove)
             }
@@ -1321,7 +1272,7 @@ struct N8nSettingsView: View {
     }
 
     private var verifySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(
                 L("Verify an incoming event"),
                 detail: draft.isNew
@@ -1358,25 +1309,17 @@ struct N8nSettingsView: View {
             .disabled(isVerifying || isSaving || draft.isNew)
 
             if let diagnosticsText {
-                SettingsDivider()
                 AgentChannelSectionHeading(L("Diagnostics"))
                 ScrollView {
                     Text(diagnosticsText)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.secondary)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(10)
+                        .padding(theme.space.s8)
                 }
                 .frame(maxHeight: 180)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.cardBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(theme.cardBorder, lineWidth: 1)
-                        )
-                )
+                .settingsChrome(.surface)
             }
         }
     }
@@ -1384,7 +1327,7 @@ struct N8nSettingsView: View {
     /// Manual allowlist editing for operators who prefer to type ids ahead
     /// of time. Saved with the rest of the draft.
     private var manualAllowlistSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(
                 L("Edit allowlists by hand"),
                 detail: L(
@@ -1392,7 +1335,7 @@ struct N8nSettingsView: View {
                 )
             )
 
-            HStack(alignment: .top, spacing: 12) {
+            HStack(alignment: .top, spacing: theme.space.s12) {
                 AgentChannelMultilineSettingsField(
                     title: L("Allowed Conversations"),
                     text: $draft.conversationAllowlistText,
@@ -1410,8 +1353,8 @@ struct N8nSettingsView: View {
             }
 
             SettingsToggle(
-                title: L("Accept Bot Senders"),
-                description: L("Accept events whose sender.is_bot is true."),
+                title: "Accept Bot Senders",
+                description: "Accept events whose sender.is_bot is true.",
                 isOn: $draft.allowBotMessages
             )
         }
@@ -1442,12 +1385,14 @@ struct N8nSettingsView: View {
         }
         if let connection {
             draft = N8nConnectionDraft(connection: connection)
-            let pluginId = draft.keychainPluginId
+            let connectionId = connection.id
+            let connectionName = connection.name
             let secretName = draft.secretName
             Task.detached {
                 // One Keychain read serves both the "saved" badge and the
                 // pairing code, which needs the secret bytes.
-                let value = ToolSecretsKeychain.getSecret(id: secretName, for: pluginId, agentId: Agent.defaultId)
+                let value = ChannelCredentials.agentChannelValue(
+                    connectionId: connectionId, connectionName: connectionName, secretName: secretName)
                 await MainActor.run {
                     secretSaved = value != nil
                     savedSecretValue = value
@@ -1502,11 +1447,13 @@ struct N8nSettingsView: View {
         pendingSecret = ""
         savedSecretValue = nil
         guard secretSaved else { return }
-        let pluginId = draft.keychainPluginId
+        let connectionId = AgentChannelConnection.normalizedId(draft.id)
+        let connectionName = draft.name
         let secretName = draft.secretName
         secretSaved = false
         Task.detached {
-            _ = ToolSecretsKeychain.deleteSecret(id: secretName, for: pluginId, agentId: Agent.defaultId)
+            ChannelCredentials.deleteAgentChannel(
+                connectionId: connectionId, connectionName: connectionName, secretName: secretName)
         }
         showStatus(
             L("Channel secret removed — inbound requests will be refused until a new one is saved"),
@@ -1599,9 +1546,6 @@ struct N8nSettingsView: View {
         if !hasSecret {
             return (L("Generate the channel secret under Pair → Advanced before saving."), .connect)
         }
-        if draft.inboundDispatchEnabled, draft.inboundTarget == nil, draft.inboundRoutes.isEmpty {
-            return (L("Choose an agent to reply with, or turn off Reply with an Agent."), .howOsaurusReplies)
-        }
         // Remote without a local agent is *not* a save error: the draft is
         // persistable, it just cannot pair yet. `saveDraft` reports that as
         // the pairing blocker and jumps to Pair, and Who answers? shows the
@@ -1625,7 +1569,8 @@ struct N8nSettingsView: View {
         isSaving = true
         let connection = draft.connection()
         let secret = pendingSecret.trimmingCharacters(in: .whitespacesAndNewlines)
-        let pluginId = N8nConnectionDraft.keychainPluginId(for: connection.id)
+        let connectionId = connection.id
+        let connectionName = connection.name
         let secretName = connection.n8n?.secretName ?? AgentChannelN8nConfiguration.defaultSecretName
         let originalId = draft.originalId
         let pairingBlocked = pairingReadiness.blocker != nil
@@ -1633,7 +1578,9 @@ struct N8nSettingsView: View {
             var secretStored = true
             if !secret.isEmpty {
                 secretStored = await Task.detached {
-                    ToolSecretsKeychain.saveSecret(secret, id: secretName, for: pluginId, agentId: Agent.defaultId)
+                    ChannelCredentials.saveAgentChannel(
+                        secret, connectionId: connectionId, connectionName: connectionName, secretName: secretName
+                    ).isSuccess
                 }.value
             }
             await MainActor.run {
@@ -1740,7 +1687,7 @@ struct N8nSettingsView: View {
             isError: false
         )
         let start = Date()
-        let autoReply = draft.inboundAutoReplyEnabled && !draft.outboundWebhookURL.isEmpty
+        let autoReply = inboundAutoReplyEnabled && !draft.outboundWebhookURL.isEmpty
         let connectionId = draft.id
         Task {
             let outcome = await AgentChannelInboundVerifier.waitForTerminalEvent(
@@ -1849,39 +1796,18 @@ struct N8nSettingsView: View {
 
 /// Wrapping row of removable id chips for the approved allowlists.
 private struct FlowChips: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
+    @Environment(\.theme) private var theme
 
     let values: [String]
     let onRemove: (String) -> Void
-
-    private var theme: ThemeProtocol { themeManager.currentTheme }
 
     var body: some View {
         // Non-lazy wrap: this sits inside the sheet's ScrollView next to the
         // pending-approval cards, and a lazy grid there can hold a stale
         // layout when a sibling is inserted above it.
-        ChipFlowLayout(spacing: 6, lineSpacing: 6) {
+        ChipFlowLayout(spacing: theme.space.s6, lineSpacing: theme.space.s6) {
             ForEach(values, id: \.self) { value in
-                HStack(spacing: 6) {
-                    Text(value)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Button {
-                        onRemove(value)
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .help(L("Remove \(value) from the allowlist"))
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(Capsule().fill(theme.cardBackground))
-                .overlay(Capsule().stroke(theme.cardBorder, lineWidth: 1))
+                FilterTokenChip(value) { onRemove(value) }
             }
         }
     }
@@ -1908,10 +1834,6 @@ struct N8nConnectionDraft: Equatable {
     var conversationAllowlistText = ""
     var senderAllowlistText = ""
     var allowBotMessages = false
-    var inboundDispatchEnabled = false
-    var inboundTarget: AgentDispatchTarget?
-    var inboundRoutes: [AgentChannelDispatchRoute] = []
-    var inboundAutoReplyEnabled = false
     var outboundWebhookURL = ""
     var outboundSignBodies = true
 
@@ -1936,10 +1858,6 @@ struct N8nConnectionDraft: Equatable {
         // legacy Secure-Channel row could be This Mac, Docker or Remote, so
         // it stays unanswered and the sheet asks before issuing a code.
         callerLocation = n8n.callerLocation ?? (plaintextAllowed ? .lan : nil)
-        inboundDispatchEnabled = n8n.inboundDispatch.enabled
-        inboundTarget = n8n.inboundDispatch.target
-        inboundRoutes = n8n.inboundDispatch.routes
-        inboundAutoReplyEnabled = n8n.inboundDispatch.autoReplyEnabled
         outboundWebhookURL = n8n.outbound.webhookURL ?? ""
         outboundSignBodies = n8n.outbound.signBodies
     }
@@ -1971,14 +1889,6 @@ struct N8nConnectionDraft: Equatable {
         let n8n = AgentChannelN8nConfiguration(
             inboundVerification: verification,
             secretName: secretName,
-            inboundDispatch: AgentChannelInboundDispatchConfiguration(
-                enabled: inboundDispatchEnabled,
-                target: inboundTarget,
-                routes: inboundRoutes,
-                requireMention: false,
-                continueThreads: true,
-                autoReplyEnabled: inboundAutoReplyEnabled
-            ),
             remoteTransportPolicy: allowsPlaintext ? .plaintextAllowed : .secureChannelRequired,
             outbound: AgentChannelN8nOutboundConfiguration(
                 webhookURL: outboundWebhookURL,

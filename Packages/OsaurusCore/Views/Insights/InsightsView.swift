@@ -32,15 +32,15 @@ struct InsightsView: View {
     @State private var showFilterPopover = false
 
     /// Content width at or above which a selected row opens beside the list
-    /// instead of replacing it. The management window with its sidebar open
-    /// crosses this around a 1280pt window.
+    /// instead of replacing it. Settings with its sidebar open crosses this
+    /// around a 1280pt window.
     static let inspectorBreakpoint: CGFloat = 1040
     static let inspectorWidth: CGFloat = 440
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             headerView
-                .managerHeaderEntrance(hasAppeared: hasAppeared)
+                .settingsHeaderEntrance(hasAppeared: hasAppeared)
 
             GeometryReader { geo in
                 let useInspector = geo.size.width >= Self.inspectorBreakpoint
@@ -57,10 +57,10 @@ struct InsightsView: View {
             .opacity(hasAppeared ? 1 : 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
+        .background(theme.surface.canvas)
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
-            withAnimation(.easeOut(duration: 0.25).delay(0.05)) { hasAppeared = true }
+            withAnimation(theme.motion.standard.delay(0.05)) { hasAppeared = true }
             insightsService.reload()
             applyPendingFocus(insightsService.pendingFocusLogId)
         }
@@ -97,19 +97,19 @@ struct InsightsView: View {
 
     /// Wide: chrome on top, list and inspector side by side underneath.
     private var inspectorLayout: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             chrome
-            HStack(spacing: 0) {
+            HStack(spacing: theme.space.s0) {
                 eventList(compact: selectedLog != nil, presentation: .inspector)
                     .frame(maxWidth: .infinity)
                 if let selected = selectedLog {
-                    Divider().background(theme.primaryBorder.opacity(0.3))
+                    Divider().background(theme.border.subtle)
                     InsightsDetailPane(log: selected, presentation: .inspector, onBack: pop)
                         .frame(width: Self.inspectorWidth)
                         .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }
-            .animation(.easeInOut(duration: 0.22), value: selectedLog?.id)
+            .animation(theme.motion.standard, value: selectedLog?.id)
         }
     }
 
@@ -120,29 +120,29 @@ struct InsightsView: View {
                 InsightsDetailPane(log: selected, presentation: .page, onBack: pop)
                     .transition(.asymmetric(insertion: .move(edge: .trailing), removal: .move(edge: .trailing)))
             } else {
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     chrome
                     eventList(compact: false, presentation: .page)
                 }
                 .transition(.asymmetric(insertion: .move(edge: .leading), removal: .move(edge: .leading)))
             }
         }
-        .animation(.easeInOut(duration: 0.25), value: selectedLog == nil)
+        .animation(theme.motion.standard, value: selectedLog == nil)
     }
 
     // MARK: - Header
 
     private var headerView: some View {
-        ManagerHeaderWithActions(
-            title: L("Insights"),
-            subtitle: L("Activity and audit log for everything this Mac ran or sent")
-        ) {
-            HeaderPrimaryButton(L("Export"), icon: "square.and.arrow.up") {
-                showExportSheet = true
-            }
-            .disabled(!insightsService.hasLogs)
-
-            Menu {
+        SettingsPageHeader(
+            title: "Insights",
+            subtitle: "Activity and audit log for everything this Mac ran or sent",
+            count: insightsService.totalRequestCount,
+            overflowHelp: "Export, verify, or clear the log",
+            overflow: {
+                Button(action: { showExportSheet = true }) {
+                    Label(L("Export"), systemImage: "square.and.arrow.up")
+                }
+                .disabled(!insightsService.hasLogs)
                 Button(action: { insightsService.verify() }) {
                     Label(L("Verify Integrity"), systemImage: "checkmark.shield")
                 }
@@ -152,96 +152,66 @@ struct InsightsView: View {
                     Label(L("Clear Activity Log…"), systemImage: "trash")
                 }
                 .disabled(!insightsService.hasLogs)
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-                    .frame(width: 32, height: 32)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(theme.tertiaryBackground))
+            },
+            toolbar: {
+                InsightsToolbar(service: insightsService, showFilterPopover: $showFilterPopover)
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help(Text("Verify or clear the log", bundle: .module))
-        }
+        )
     }
 
     // MARK: - Chrome (glance · toolbar · scopes)
 
     private var chrome: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.settingsInlineGap) {
             if let error = insightsService.storeError {
-                InlineNotice(
-                    icon: "exclamationmark.triangle.fill",
-                    tint: .orange,
-                    text: String(format: L("Activity log storage is unavailable (%@). Showing this session only."), error)
+                InlineBanner(
+                    kind: .warning,
+                    title: String(format: L("Activity log storage is unavailable (%@). Showing this session only."), error)
                 )
             }
             if showVerification, let v = insightsService.lastVerification {
                 verificationBanner(v)
             }
             InsightsGlanceStrip(summary: insightsService.summary, filter: $insightsService.filter)
-            InsightsToolbar(service: insightsService, showFilterPopover: $showFilterPopover)
-            InsightsScopeBar(filter: $insightsService.filter)
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 4)
-        .padding(.bottom, 12)
+        .padding(.horizontal, theme.settingsPageInset)
+        .padding(.bottom, theme.settingsInlineGap)
     }
 
     private func verificationBanner(_ v: ActivityLogVerification) -> some View {
-        let tint: Color = v.isIntact ? .green : .red
         let df = DateFormatter()
         df.timeStyle = .short
         df.dateStyle = .none
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
-                Image(systemName: v.isIntact ? "checkmark.shield.fill" : "exclamationmark.shield.fill")
-                    .font(.system(size: 13))
-                    .foregroundColor(tint)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(
-                        v.isIntact
-                            ? String(format: L("Integrity verified: %d records, chain intact"), v.recordCount)
-                            : String(format: L("Integrity problems found in %d records"), v.recordCount)
-                    )
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                    if let first = v.firstSeq, let last = v.lastSeq, let hash = v.lastHash {
-                        Text("#\(first) – #\(last) · \(String(hash.prefix(16)))… · \(df.string(from: v.checkedAt))")
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundColor(theme.tertiaryText)
-                    }
-                }
-                Spacer()
-                Button(action: { withAnimation { showVerification = false } }) {
-                    Image(systemName: "xmark").font(.system(size: 10, weight: .semibold)).foregroundColor(theme.tertiaryText)
-                }
-                .buttonStyle(.plain)
-            }
-            ForEach(Array(v.problems.prefix(8).enumerated()), id: \.offset) { _, p in
-                Text("• " + p.description).font(.system(size: 11)).foregroundColor(theme.secondaryText)
-            }
+        var details: [String] = []
+        if let first = v.firstSeq, let last = v.lastSeq, let hash = v.lastHash {
+            details.append("#\(first) – #\(last) · \(String(hash.prefix(16)))… · \(df.string(from: v.checkedAt))")
         }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10).fill(tint.opacity(0.08)))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(tint.opacity(0.25), lineWidth: 1))
+        details += v.problems.prefix(8).map { "• " + $0.description }
+        return InlineBanner(
+            kind: v.isIntact ? .success : .error,
+            title: v.isIntact
+                ? String(format: L("Integrity verified: %d records, chain intact"), v.recordCount)
+                : String(format: L("Integrity problems found in %d records"), v.recordCount),
+            caption: details.isEmpty ? nil : details.joined(separator: "\n"),
+            icon: v.isIntact ? "checkmark.shield.fill" : "exclamationmark.shield.fill",
+            onDismiss: { withAnimation { showVerification = false } }
+        )
     }
 
     // MARK: - Event list
 
     private func eventList(compact: Bool, presentation: InsightsDetailPresentation) -> some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             if !insightsService.pagedLogs.isEmpty {
                 tableHeader(compact: compact)
             }
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
+                    LazyVStack(spacing: theme.space.s0, pinnedViews: [.sectionHeaders]) {
                         if insightsService.pagedLogs.isEmpty {
                             emptyStateView
                                 .frame(maxWidth: .infinity)
-                                .padding(.top, 40)
+                                .padding(.top, theme.space.s40)
                         } else {
                             ForEach(Self.groupByDay(insightsService.pagedLogs), id: \.key) { group in
                                 Section(header: dayHeader(group.key, count: group.rows.count)) {
@@ -261,7 +231,7 @@ struct InsightsView: View {
                             }
                         }
                     }
-                    .padding(.bottom, 24)
+                    .padding(.bottom, theme.space.s24)
                 }
                 .focusable()
                 .focusEffectDisabled()
@@ -274,15 +244,15 @@ struct InsightsView: View {
                 }
                 .onChange(of: selectedLog?.id) { _, id in
                     guard let id else { return }
-                    withAnimation(.easeInOut(duration: 0.15)) { proxy.scrollTo(id, anchor: nil) }
+                    withAnimation(theme.motion.quick) { proxy.scrollTo(id, anchor: nil) }
                 }
             }
         }
     }
 
     private func tableHeader(compact: Bool) -> some View {
-        let columns = ActivityTableColumns(compact: compact)
-        return HStack(spacing: 0) {
+        let columns = ActivityTableColumns(compact: compact, fontScale: theme.fontScale)
+        return HStack(spacing: theme.space.s0) {
             Spacer().frame(width: columns.status)
             Text("TIME", bundle: .module).frame(width: columns.time, alignment: .leading)
             Text("EVENT", bundle: .module).frame(maxWidth: .infinity, alignment: .leading)
@@ -291,34 +261,34 @@ struct InsightsView: View {
             }
             Text("DURATION", bundle: .module).frame(width: columns.duration, alignment: .trailing)
         }
-        .font(.system(size: 10, weight: .semibold))
-        .foregroundColor(theme.tertiaryText.opacity(0.7))
-        .padding(.horizontal, 24)
-        .padding(.vertical, 8)
-        .overlay(alignment: .bottom) { Divider().background(theme.primaryBorder.opacity(0.3)) }
+        .font(SettingsFont.chip)
+        .foregroundColor(theme.text.tertiary)
+        .padding(.horizontal, theme.space.s24)
+        .padding(.vertical, theme.space.s8)
+        .overlay(alignment: .bottom) { Divider().background(theme.border.subtle) }
     }
 
     private func dayHeader(_ key: String, count: Int) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Text(Self.dayLabel(key))
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.smallLabel)
+                .foregroundColor(theme.text.secondary)
             Text(count == 1 ? L("1 event") : String(format: L("%d events"), count))
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.chip)
+                .foregroundColor(theme.text.tertiary)
             Spacer()
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 12)
-        .padding(.bottom, 6)
-        .background(theme.primaryBackground.opacity(0.96))
+        .padding(.horizontal, theme.space.s24)
+        .padding(.top, theme.space.s12)
+        .padding(.bottom, theme.space.s6)
+        .background(theme.surface.canvas)
     }
 
     private var loadMoreRow: some View {
         HStack {
             Spacer()
             if insightsService.isLoading {
-                ProgressView().scaleEffect(0.7)
+                SettingsSpinner()
             } else {
                 Button(action: { insightsService.loadMore() }) {
                     Text(
@@ -328,54 +298,40 @@ struct InsightsView: View {
                             insightsService.totalRequestCount
                         )
                     )
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.accentColor)
+                    .textStyle(.footnote, weight: 500)
+                    .foregroundColor(theme.text.link)
                 }
                 .buttonStyle(.plain)
             }
             Spacer()
         }
-        .padding(.vertical, 16)
+        .padding(.vertical, theme.space.s16)
         .onAppear { insightsService.loadMore() }
     }
 
     // MARK: - Empty state
 
     private var emptyStateView: some View {
-        VStack(spacing: 16) {
-            Image(systemName: insightsService.filter.isEmpty ? "list.bullet.clipboard" : "line.3.horizontal.decrease.circle")
-                .font(.system(size: 48))
-                .foregroundColor(theme.tertiaryText.opacity(0.3))
-            Text(insightsService.filter.isEmpty ? L("No Activity Yet") : L("Nothing Matches These Filters"))
-                .font(.system(size: 18, weight: .semibold, design: .rounded))
-                .foregroundColor(theme.secondaryText)
-            Text(
-                insightsService.filter.isEmpty
-                    ? L("Chats, cloud requests, web searches, tool calls and API traffic will appear here as they happen.")
-                    : L("Try widening the time range or clearing a filter.")
-            )
-            .font(.system(size: 13))
-            .foregroundColor(theme.tertiaryText)
-            .multilineTextAlignment(.center)
-            if !insightsService.filter.isEmpty {
-                Button(action: { insightsService.clearFilters() }) {
-                    Text("Clear filters", bundle: .module).font(.system(size: 12, weight: .medium))
-                }
-                .buttonStyle(.plain)
-                .foregroundColor(theme.accentColor)
-            }
-        }
-        .padding(40)
+        let filtered = !insightsService.filter.isEmpty
+        return SettingsEmptyState(
+            inline: filtered ? "line.3.horizontal.decrease.circle" : "list.bullet.clipboard",
+            title: filtered ? "Nothing Matches These Filters" : "No Activity Yet",
+            hint: filtered
+                ? "Try widening the time range or clearing a filter."
+                : "Chats, cloud requests, web searches, tool calls and API traffic will appear here as they happen.",
+            secondaryAction: filtered
+                ? .init(title: L("Clear filters"), icon: "", handler: { insightsService.clearFilters() }) : nil
+        )
     }
 
     // MARK: - Selection / navigation
 
     private func pop() {
-        withAnimation(.easeInOut(duration: 0.22)) { selectedLog = nil }
+        withAnimation(theme.motion.standard) { selectedLog = nil }
     }
 
     private func select(_ log: RequestLog) {
-        withAnimation(.easeInOut(duration: 0.22)) { selectedLog = log }
+        withAnimation(theme.motion.standard) { selectedLog = log }
     }
 
     private func moveSelection(by delta: Int, proxy: ScrollViewProxy) -> KeyPress.Result {
@@ -433,8 +389,8 @@ struct InsightsView: View {
 // MARK: - Category tint
 
 extension ActivityCategory {
-    /// Muted hue used only for the row glyph and the detail header glyph.
-    var tint: Color {
+    /// Hue used only for the row glyph and the detail header glyph.
+    var ink: DataInk {
         switch self {
         case .inference: return .purple
         case .compaction: return .indigo
@@ -445,20 +401,24 @@ extension ActivityCategory {
         case .routerControl: return .blue
         case .inboundAPI: return .blue
         case .pluginCall, .pluginLog: return .teal
-        case .embedding: return .mint
+        case .embedding: return .teal
         case .audioTranscription: return .green
-        case .speechSynthesis: return .yellow
+        case .speechSynthesis: return .orange
         case .mediaGeneration: return .pink
+        case .workflowRun, .workflowNode: return .indigo
+        case .event: return .orange
+        case .task: return .orange
         case .system: return .gray
+        case .interaction: return .orange
         }
     }
 }
 
 // MARK: - Glance strip
 
-/// Four quiet stat tiles. The last three double as one-tap filters so the
-/// headline numbers answer "did anything leave, did anything fail, was
-/// anything redacted" and let the reviewer jump straight to those rows.
+/// Four stat tiles that double as one-tap filters, so the headline numbers
+/// answer "did anything leave, did anything fail, was anything redacted"
+/// and jump straight to those rows. Events clears the filter.
 private struct InsightsGlanceStrip: View {
     @Environment(\.theme) private var theme
     let summary: ActivitySummary
@@ -467,62 +427,76 @@ private struct InsightsGlanceStrip: View {
     @State private var showDestinations = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                GlanceTile(
-                    value: "\(summary.totalCount)",
-                    label: L("Events"),
-                    isActive: false,
-                    action: nil
-                )
-                GlanceTile(
-                    value: "\(summary.remoteCount)",
-                    detail: summary.totalCount > 0 && summary.remoteCount > 0
-                        ? String(format: "%.0f%%", summary.remoteShare * 100) : nil,
-                    label: L("Left this Mac"),
-                    isActive: filter.locality == .remote,
-                    action: { filter.locality = filter.locality == .remote ? nil : .remote }
-                )
-                GlanceTile(
-                    value: "\(summary.errorCount)",
-                    label: L("Failed"),
-                    valueTint: summary.errorCount > 0 ? theme.errorColor : nil,
-                    isActive: filter.status == .error,
-                    action: { filter.status = filter.status == .error ? .all : .error }
-                )
-                GlanceTile(
-                    value: "\(summary.privacyFilteredCount)",
-                    label: L("Privacy-filtered"),
-                    isActive: filter.privacyFilterApplied == true,
-                    action: { filter.privacyFilterApplied = filter.privacyFilterApplied == true ? nil : true }
-                )
-            }
+        VStack(alignment: .leading, spacing: theme.settingsInlineGap) {
+            SettingsStatStrip(
+                stats: [
+                    SettingsStat(label: "Events", value: "\(summary.totalCount)"),
+                    SettingsStat(label: "Left this Mac", value: remoteValue),
+                    SettingsStat(
+                        label: "Failed",
+                        value: "\(summary.errorCount)",
+                        valueTint: summary.errorCount > 0 ? theme.status.error.foreground : nil
+                    ),
+                    SettingsStat(label: "Privacy-filtered", value: "\(summary.privacyFilteredCount)"),
+                ],
+                style: .tiles(columns: 4),
+                selection: Binding(get: { glanceSelection }, set: { selectGlance($0) })
+            )
 
             if summary.totalCount > 0 {
                 if summary.remoteCount > 0 {
                     splitBar
                     destinationsDisclosure
                 } else {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         Image(systemName: "lock.laptopcomputer")
-                            .font(.system(size: 10, weight: .semibold))
+                            .glyphSize(.micro, weight: .semibold)
                         Text("Everything stayed on this Mac", bundle: .module)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(SettingsFont.smallLabel)
                     }
-                    .foregroundColor(theme.tertiaryText)
+                    .foregroundColor(theme.text.tertiary)
                 }
             }
         }
     }
 
+    private var remoteValue: String {
+        guard summary.totalCount > 0, summary.remoteCount > 0 else { return "\(summary.remoteCount)" }
+        return String(format: "%d · %.0f%%", summary.remoteCount, summary.remoteShare * 100)
+    }
+
+    /// The tile matching the one active quick filter; Events when none is on,
+    /// nil when the Filter popover has combined several.
+    private var glanceSelection: String? {
+        var active: [String] = []
+        if filter.locality == .remote { active.append("Left this Mac") }
+        if filter.status == .error { active.append("Failed") }
+        if filter.privacyFilterApplied == true { active.append("Privacy-filtered") }
+        if active.isEmpty { return "Events" }
+        return active.count == 1 ? active[0] : nil
+    }
+
+    /// One quick filter at a time; Events (or deselecting) clears them.
+    private func selectGlance(_ id: String?) {
+        if filter.locality == .remote { filter.locality = nil }
+        if filter.status == .error { filter.status = .all }
+        if filter.privacyFilterApplied == true { filter.privacyFilterApplied = nil }
+        switch id {
+        case "Left this Mac": filter.locality = .remote
+        case "Failed": filter.status = .error
+        case "Privacy-filtered": filter.privacyFilterApplied = true
+        default: break
+        }
+    }
+
     private var splitBar: some View {
         GeometryReader { geo in
-            HStack(spacing: 2) {
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(theme.tertiaryText.opacity(0.35))
+            HStack(spacing: theme.space.s2) {
+                RoundedRectangle(cornerRadius: theme.radius.small)
+                    .fill(theme.border.strong)
                     .frame(width: max(0, geo.size.width * (1 - summary.remoteShare) - 1))
-                RoundedRectangle(cornerRadius: 3)
-                    .fill(theme.accentColor.opacity(0.85))
+                RoundedRectangle(cornerRadius: theme.radius.small)
+                    .fill(theme.status.info.foreground)
                     .frame(width: max(0, geo.size.width * summary.remoteShare - 1))
             }
         }
@@ -530,35 +504,31 @@ private struct InsightsGlanceStrip: View {
     }
 
     private var destinationsDisclosure: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Button(action: { withAnimation(.easeInOut(duration: 0.18)) { showDestinations.toggle() } }) {
-                HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            Button(action: { withAnimation(theme.motion.quick) { showDestinations.toggle() } }) {
+                HStack(spacing: theme.space.s6) {
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
+                        .glyphSize(.tiny, weight: .semibold)
                         .rotationEffect(.degrees(showDestinations ? 90 : 0))
                     Text(destinationsLine)
-                        .font(.system(size: 11, weight: .medium))
+                        .font(SettingsFont.smallLabel)
                     Spacer()
                 }
-                .foregroundColor(theme.secondaryText)
+                .foregroundColor(theme.text.secondary)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
             if showDestinations {
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     ForEach(summary.destinations.prefix(14)) { dest in
                         destinationRow(dest)
                         if dest.id != summary.destinations.prefix(14).last?.id {
-                            Divider().background(theme.primaryBorder.opacity(0.15))
+                            Divider().background(theme.border.subtle)
                         }
                     }
                 }
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.secondaryBackground.opacity(0.5))
-                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.primaryBorder.opacity(0.25), lineWidth: 1))
-                )
+                .settingsChrome(.surface)
             }
         }
     }
@@ -578,102 +548,45 @@ private struct InsightsGlanceStrip: View {
             guard !dest.host.isEmpty else { return }
             filter.destinationHost = isActive ? nil : dest.host
         }) {
-            HStack(spacing: 10) {
+            HStack(spacing: theme.space.s10) {
                 Image(systemName: dest.errorCount > 0 ? "exclamationmark.icloud" : "icloud")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(dest.errorCount > 0 ? theme.warningColor : theme.accentColor)
+                    .glyphSize(.micro, weight: .semibold)
+                    .foregroundColor(dest.errorCount > 0 ? theme.status.warning.foreground : theme.text.link)
                     .frame(width: 14)
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text(dest.label)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.primary)
                         .lineLimit(1)
                     if !dest.host.isEmpty, dest.host != dest.label {
                         Text(dest.host)
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundColor(theme.tertiaryText)
+                            .font(SettingsFont.monoSmall)
+                            .foregroundColor(theme.text.tertiary)
                             .lineLimit(1)
                     }
                 }
                 Spacer()
                 Text(dest.count == 1 ? L("1 request") : String(format: L("%d requests"), dest.count))
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.secondary)
                 if dest.bytesSent > 0 {
                     Text(ActivitySummary.formattedBytes(dest.bytesSent))
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.tertiary)
                         .frame(width: 64, alignment: .trailing)
                 }
                 if isActive {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(theme.accentColor)
+                        .glyphSize(.micro, weight: .semibold)
+                        .foregroundColor(theme.text.link)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .padding(.horizontal, theme.space.s12)
+            .padding(.vertical, theme.space.s8)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(dest.host.isEmpty ? dest.label : dest.host)
-    }
-}
-
-private struct GlanceTile: View {
-    @Environment(\.theme) private var theme
-    let value: String
-    var detail: String?
-    let label: String
-    var valueTint: Color?
-    let isActive: Bool
-    let action: (() -> Void)?
-
-    @State private var isHovering = false
-
-    var body: some View {
-        Group {
-            if let action {
-                Button(action: action) { content }
-                    .buttonStyle(.plain)
-                    .onHover { isHovering = $0 }
-            } else {
-                content
-            }
-        }
-    }
-
-    private var content: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
-                Text(value)
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
-                    .foregroundColor(valueTint ?? (isActive ? theme.accentColor : theme.primaryText))
-                if let detail {
-                    Text(detail)
-                        .font(.system(size: 11, weight: .medium, design: .rounded))
-                        .foregroundColor(theme.tertiaryText)
-                }
-            }
-            Text(label)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(isActive ? theme.accentColor : theme.tertiaryText)
-                .lineLimit(1)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(isActive ? theme.accentColor.opacity(0.10) : theme.secondaryBackground.opacity(isHovering ? 0.8 : 0.5))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(isActive ? theme.accentColor.opacity(0.5) : theme.primaryBorder.opacity(0.25), lineWidth: 1)
-                )
-        )
-        .contentShape(RoundedRectangle(cornerRadius: 10))
-        .animation(.easeOut(duration: 0.15), value: isHovering)
-        .animation(.easeOut(duration: 0.15), value: isActive)
     }
 }
 
@@ -689,33 +602,29 @@ private struct InsightsToolbar: View {
 
     private var filter: Binding<ActivityFilter> { $service.filter }
 
+    private var scope: Binding<InsightsScope> {
+        Binding(
+            get: { InsightsScope.scope(for: service.filter.categories) ?? .all },
+            set: { service.filter.categories = $0.categories }
+        )
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
-                SearchField(
-                    text: filter.text,
-                    placeholder: "Search model, destination, path, agent…",
-                    fillsAvailableWidth: true,
-                    compact: true
-                )
-
+        VStack(alignment: .leading, spacing: theme.settingsControlGap) {
+            SettingsTabsRow(
+                selection: scope,
+                searchText: filter.text,
+                searchPlaceholder: "Search model, destination, path, agent…"
+            ) {
                 timeRangeControl
-
                 filterButton
-
-                let count = service.totalRequestCount
-                Text(count == 1 ? L("1 event") : String(format: L("%d events"), count))
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
-                    .lineLimit(1)
-                    .fixedSize()
             }
 
             let tokens = ActivityFilterToken.tokens(for: filter.wrappedValue).filter { $0.kind != .dateRange && $0.kind != .text }
             if !tokens.isEmpty {
-                FlowLayout(spacing: 6) {
+                FlowLayout(spacing: theme.space.s6) {
                     ForEach(tokens) { token in
-                        FilterTokenChip(token: token) {
+                        InsightsFilterToken(token: token) {
                             var f = filter.wrappedValue
                             token.remove(from: &f)
                             filter.wrappedValue = f
@@ -723,10 +632,10 @@ private struct InsightsToolbar: View {
                     }
                     Button(action: { service.clearFilters() }) {
                         Text("Clear all", bundle: .module)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(theme.accentColor)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 4)
+                            .font(SettingsFont.smallLabel)
+                            .foregroundColor(theme.text.link)
+                            .padding(.horizontal, theme.space.s6)
+                            .padding(.vertical, theme.space.s4)
                     }
                     .buttonStyle(.plain)
                 }
@@ -735,25 +644,11 @@ private struct InsightsToolbar: View {
     }
 
     private var timeRangeControl: some View {
-        HStack(spacing: 2) {
-            ForEach(ActivityDateRange.presets, id: \.self) { range in
-                let isSelected = filter.wrappedValue.dateRange == range
-                Button(action: { filter.wrappedValue.dateRange = range }) {
-                    Text(range.displayName)
-                        .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
-                        .lineLimit(1)
-                        .fixedSize()
-                        .foregroundColor(isSelected ? .white : theme.secondaryText)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 5)
-                        .background(RoundedRectangle(cornerRadius: 5).fill(isSelected ? theme.accentColor.opacity(0.9) : Color.clear))
-                        .contentShape(RoundedRectangle(cornerRadius: 5))
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(3)
-        .background(RoundedRectangle(cornerRadius: 7).fill(theme.tertiaryBackground))
+        AssignedBaseSegmentedPicker(
+            selection: filter.dateRange,
+            options: ActivityDateRange.presets.map { .init($0, $0.displayName, verbatim: true) },
+            size: .compact
+        )
         .fixedSize()
     }
 
@@ -762,30 +657,18 @@ private struct InsightsToolbar: View {
         // only what is hidden behind the popover.
         let hidden = ActivityFilterToken.tokens(for: filter.wrappedValue).filter { $0.kind != .dateRange && $0.kind != .text }.count
         return Button(action: { showFilterPopover.toggle() }) {
-            HStack(spacing: 5) {
-                Image(systemName: "line.3.horizontal.decrease").font(.system(size: 10, weight: .semibold))
-                Text("Filter", bundle: .module).font(.system(size: 11, weight: .medium))
+            HStack(spacing: theme.space.s4) {
+                Image(systemName: "line.3.horizontal.decrease").glyphSize(.micro, weight: .semibold)
+                Text("Filter", bundle: .module).font(SettingsFont.smallLabel)
                 if hidden > 0 {
-                    Text("\(hidden)")
-                        .font(.system(size: 9, weight: .bold, design: .rounded))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(Capsule().fill(theme.accentColor))
+                    CountBadge(hidden, prominence: .attention)
                 }
             }
-            .foregroundColor(hidden > 0 ? theme.accentColor : theme.secondaryText)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(
-                RoundedRectangle(cornerRadius: 7)
-                    .fill(theme.tertiaryBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 7)
-                            .stroke(hidden > 0 ? theme.accentColor.opacity(0.5) : Color.clear, lineWidth: 1)
-                    )
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 7))
+            .foregroundColor(hidden > 0 ? theme.text.link : theme.text.secondary)
+            .padding(.horizontal, theme.space.s8)
+            .frame(minHeight: theme.controlSize.defaultHeight)
+            .settingsChrome(.subtle)
+            .contentShape(RoundedRectangle(cornerRadius: theme.radius.medium))
         }
         .buttonStyle(.plain)
         .fixedSize()
@@ -796,40 +679,12 @@ private struct InsightsToolbar: View {
     }
 }
 
-private struct FilterTokenChip: View {
-    @Environment(\.theme) private var theme
+private struct InsightsFilterToken: View {
     let token: ActivityFilterToken
     let onRemove: () -> Void
 
     var body: some View {
-        HStack(spacing: 5) {
-            Text(kindPrefix)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
-            Text(token.label)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.primaryText)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(maxWidth: 220)
-            Button(action: onRemove) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundColor(theme.tertiaryText)
-                    .frame(width: 14, height: 14)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help(Text("Remove this filter", bundle: .module))
-        }
-        .padding(.leading, 9)
-        .padding(.trailing, 5)
-        .padding(.vertical, 4)
-        .background(
-            Capsule()
-                .fill(theme.accentColor.opacity(0.10))
-                .overlay(Capsule().stroke(theme.accentColor.opacity(0.35), lineWidth: 1))
-        )
+        FilterTokenChip(prefix: kindPrefix, token.label, onRemove: onRemove)
     }
 
     private var kindPrefix: String {
@@ -842,6 +697,10 @@ private struct FilterTokenChip: View {
         case .destination: return L("Destination")
         case .model: return L("Model")
         case .agent: return L("Agent")
+        case .workflowRun: return L("Workflow")
+        case .task: return L("Task")
+        case .participant: return L("Who")
+        case .agentAddress: return L("Agent")
         case .status: return L("Status")
         case .privacyFilter: return L("Privacy")
         case .pluginLogsHidden: return L("Logs")
@@ -859,17 +718,17 @@ private struct InsightsFilterPopover: View {
     private var filter: Binding<ActivityFilter> { $service.filter }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: theme.space.s16) {
             HStack {
                 Text("Filter activity", bundle: .module)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.sectionTitle)
+                    .foregroundColor(theme.text.primary)
                 Spacer()
                 if filter.wrappedValue.activeCount > 0 {
                     Button(action: { service.clearFilters() }) {
                         Text("Reset", bundle: .module)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(theme.accentColor)
+                            .font(SettingsFont.smallLabel)
+                            .foregroundColor(theme.text.link)
                     }
                     .buttonStyle(.plain)
                 }
@@ -892,7 +751,7 @@ private struct InsightsFilterPopover: View {
             }
 
             group(Text("Source", bundle: .module)) {
-                FlowLayout(spacing: 6) {
+                FlowLayout(spacing: theme.space.s6) {
                     ForEach(RequestSource.allCases.filter { $0 != .system }, id: \.self) { source in
                         let isOn = filter.wrappedValue.sources.contains(source)
                         toggleChip(source.displayName, isOn: isOn) {
@@ -903,7 +762,7 @@ private struct InsightsFilterPopover: View {
             }
 
             if !service.knownDestinations.isEmpty || !service.knownModels.isEmpty {
-                HStack(alignment: .top, spacing: 12) {
+                HStack(alignment: .top, spacing: theme.space.s12) {
                     if !service.knownDestinations.isEmpty {
                         group(Text("Destination", bundle: .module)) {
                             pickerMenu(
@@ -935,10 +794,10 @@ private struct InsightsFilterPopover: View {
 
             Toggle(isOn: filter.includePluginLogs) {
                 Text("Show plugin console logs", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.caption)
+                    .foregroundColor(theme.text.primary)
             }
-            .toggleStyle(.checkbox)
+            .settingsCheckbox()
 
             HStack {
                 Spacer()
@@ -946,16 +805,16 @@ private struct InsightsFilterPopover: View {
                     .keyboardShortcut(.defaultAction)
             }
         }
-        .padding(16)
+        .padding(theme.space.s16)
         .frame(width: 360)
-        .background(theme.primaryBackground)
+        .background(theme.surface.canvas)
     }
 
     private func group<Content: View>(_ title: Text, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             title
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(theme.tertiaryText)
+                .textStyle(.micro, weight: 600)
+                .foregroundColor(theme.text.tertiary)
                 .textCase(.uppercase)
             content()
         }
@@ -968,37 +827,15 @@ private struct InsightsFilterPopover: View {
         label: @escaping (T) -> String,
         onSelect: @escaping (T) -> Void
     ) -> some View {
-        HStack(spacing: 2) {
-            ForEach(items, id: \.self) { item in
-                let isSelected = selected(item)
-                Button(action: { onSelect(item) }) {
-                    Text(label(item))
-                        .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
-                        .lineLimit(1)
-                        .foregroundColor(isSelected ? .white : theme.secondaryText)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 5)
-                        .background(RoundedRectangle(cornerRadius: 5).fill(isSelected ? theme.accentColor.opacity(0.9) : Color.clear))
-                        .contentShape(RoundedRectangle(cornerRadius: 5))
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(3)
-        .background(RoundedRectangle(cornerRadius: 7).fill(theme.tertiaryBackground))
+        AssignedBaseSegmentedPicker(
+            selection: Binding(get: { items.first(where: selected) ?? items[0] }, set: onSelect),
+            options: items.map { .init($0, label($0), verbatim: true) },
+            size: .compact
+        )
     }
 
     private func toggleChip(_ title: String, isOn: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(title)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(isOn ? .white : theme.secondaryText)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 4)
-                .background(Capsule().fill(isOn ? theme.accentColor.opacity(0.9) : theme.tertiaryBackground))
-                .contentShape(Capsule())
-        }
-        .buttonStyle(.plain)
+        FilterChip(title, isSelected: isOn, action: action)
     }
 
     private func pickerMenu(
@@ -1007,33 +844,13 @@ private struct InsightsFilterPopover: View {
         options: [String],
         onSelect: @escaping (String?) -> Void
     ) -> some View {
-        Menu {
-            Button(anyLabel) { onSelect(nil) }
+        SettingsMenuPicker(selection: Binding(get: { current }, set: onSelect)) {
+            Text(anyLabel).tag(String?.none)
             Divider()
             ForEach(options, id: \.self) { option in
-                Button(action: { onSelect(option) }) {
-                    if current == option { Image(systemName: "checkmark") }
-                    Text(option)
-                }
+                Text(option).tag(String?.some(option))
             }
-        } label: {
-            HStack(spacing: 6) {
-                Text(current ?? anyLabel)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(current == nil ? theme.secondaryText : theme.primaryText)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer(minLength: 4)
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 6)
-            .background(RoundedRectangle(cornerRadius: 6).fill(theme.tertiaryBackground))
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
     }
 }
 
@@ -1042,32 +859,22 @@ private struct InsightsFilterPopover: View {
 /// Groups the fourteen categories into a handful of tabs. Writing a scope
 /// replaces `filter.categories` wholesale; an ad-hoc category set (deep link)
 /// leaves "All" lit and surfaces the categories as a removable token.
-private struct InsightsScopeBar: View {
-    @Binding var filter: ActivityFilter
-
-    private var selection: Binding<InsightsScope> {
-        Binding(
-            get: { InsightsScope.scope(for: filter.categories) ?? .all },
-            set: { filter.categories = $0.categories }
-        )
-    }
-
-    var body: some View {
-        AnimatedTabSelector(selection: selection)
-    }
-}
-
 // MARK: - Row
 
 /// Column widths shared by the table header and every row.
+/// Text columns grow with the Text Size setting so a timestamp or header
+/// never wraps mid-word.
 private struct ActivityTableColumns {
     let status: CGFloat = 14
-    let time: CGFloat = 64
+    let time: CGFloat
     let source: CGFloat
-    let duration: CGFloat = 64
+    let duration: CGFloat
 
-    init(compact: Bool) {
-        source = compact ? 0 : 84
+    init(compact: Bool, fontScale: Double) {
+        let scale = CGFloat(fontScale)
+        time = 64 * scale
+        source = compact ? 0 : 84 * scale
+        duration = 64 * scale
     }
 }
 
@@ -1082,56 +889,60 @@ private struct ActivityRow: View {
     @State private var isHovering = false
 
     var body: some View {
-        let columns = ActivityTableColumns(compact: compact)
+        let columns = ActivityTableColumns(compact: compact, fontScale: theme.fontScale)
         Button(action: onTap) {
-            HStack(spacing: 0) {
+            HStack(spacing: theme.space.s0) {
                 statusDot
                     .frame(width: columns.status, alignment: .leading)
 
                 Text(log.formattedTimestamp)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.tertiary)
                     .frame(width: columns.time, alignment: .leading)
 
-                HStack(spacing: 10) {
+                HStack(spacing: theme.space.s10) {
                     ZStack {
-                        Circle().fill(log.category.tint.opacity(0.14))
+                        Circle().fill(theme.dataWash(log.category.ink))
                         Image(systemName: log.category.icon)
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(log.category.tint.opacity(0.9))
+                            .glyphSize(.footnote, weight: .semibold)
+                            .foregroundColor(theme.dataInk(log.category.ink))
                     }
                     .frame(width: 26, height: 26)
 
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: theme.space.s2) {
                         Text(log.title)
-                            .font(.system(size: 12, weight: .medium, design: usesMonospacedTitle ? .monospaced : .default))
-                            .foregroundColor(log.isError ? theme.errorColor : (log.isPluginLog ? pluginLevelColor : theme.primaryText))
+                            .textStyle(usesMonospacedTitle ? .code : .caption, weight: 500)
+                            .foregroundColor(
+                                log.isError
+                                    ? theme.status.error.foreground
+                                    : (log.isPluginLog ? pluginLevelColor : theme.text.primary)
+                            )
                             .lineLimit(1)
                             .truncationMode(.middle)
                         secondaryLine
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.trailing, 12)
+                .padding(.trailing, theme.space.s12)
 
                 if !compact {
                     Text(log.source.displayName)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.secondary)
                         .lineLimit(1)
                         .frame(width: columns.source, alignment: .leading)
                 }
 
                 Text(log.formattedDuration)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.secondary)
                     .frame(width: columns.duration, alignment: .trailing)
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 8)
+            .padding(.horizontal, theme.space.s24)
+            .padding(.vertical, theme.space.s8)
             .background(rowBackground)
             .overlay(alignment: .leading) {
-                if isSelected { Rectangle().fill(theme.accentColor).frame(width: 3) }
+                if isSelected { Rectangle().fill(theme.action.primary.default.background).frame(width: 3) }
             }
             .contentShape(Rectangle())
         }
@@ -1140,18 +951,18 @@ private struct ActivityRow: View {
     }
 
     private var rowBackground: Color {
-        if isSelected { return theme.accentColor.opacity(0.12) }
-        if isHovering { return theme.secondaryBackground.opacity(0.4) }
+        if isSelected { return theme.surface.selected }
+        if isHovering { return theme.surface.hover }
         return .clear
     }
 
     @ViewBuilder
     private var statusDot: some View {
         if log.isError {
-            Circle().fill(theme.errorColor).frame(width: 6, height: 6)
+            Circle().fill(theme.status.error.foreground).frame(width: 6, height: 6)
                 .help(Text(verbatim: log.errorMessage ?? "\(log.statusCode)"))
-        } else if log.statusCode >= 400, !log.isPluginLog {
-            Circle().fill(theme.warningColor).frame(width: 6, height: 6)
+        } else if log.statusCode >= 400, !log.isPluginLog, log.category != .interaction {
+            Circle().fill(theme.status.warning.foreground).frame(width: 6, height: 6)
                 .help(Text(verbatim: "\(log.statusCode)"))
         } else {
             Color.clear.frame(width: 6, height: 6)
@@ -1159,16 +970,16 @@ private struct ActivityRow: View {
     }
 
     private var secondaryLine: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: theme.space.s4) {
             Text(secondaryText)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
                 .lineLimit(1)
                 .truncationMode(.middle)
             if log.egress?.privacyFilterApplied == true {
                 Image(systemName: "hand.raised.fill")
-                    .font(.system(size: 9, weight: .semibold))
-                    .foregroundColor(theme.successColor.opacity(0.9))
+                    .glyphSize(.tiny, weight: .semibold)
+                    .foregroundColor(theme.status.success.foreground)
                     .help(Text("Privacy Filter rewrote spans before send", bundle: .module))
             }
         }
@@ -1195,30 +1006,10 @@ private struct ActivityRow: View {
 
     private var pluginLevelColor: Color {
         switch log.statusCode {
-        case 500: return theme.errorColor
-        case 299: return theme.warningColor
-        default: return theme.primaryText
+        case 500: return theme.status.error.foreground
+        case 299: return theme.status.warning.foreground
+        default: return theme.text.primary
         }
-    }
-}
-
-// MARK: - Inline notice
-
-private struct InlineNotice: View {
-    @Environment(\.theme) private var theme
-    let icon: String
-    let tint: Color
-    let text: String
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon).font(.system(size: 12)).foregroundColor(tint)
-            Text(text).font(.system(size: 12)).foregroundColor(theme.primaryText)
-            Spacer()
-        }
-        .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10).fill(tint.opacity(0.08)))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(tint.opacity(0.25), lineWidth: 1))
     }
 }
 
@@ -1235,29 +1026,32 @@ private struct ActivityExportSheet: View {
     @State private var options = ActivityExportOptions()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s16) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
                 Text("Export Activity Log", bundle: .module)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Text("Choose a format for outside review. Every export includes a manifest with the chain position so a reviewer can verify it offline.", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .font(SettingsFont.detailTitle)
+                    .foregroundColor(theme.text.primary)
+                Text(
+                    "Choose a format for outside review. Every export includes a manifest with the chain position so a reviewer can verify it offline.",
+                    bundle: .module
+                )
+                .font(SettingsFont.caption)
+                .foregroundColor(theme.text.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             }
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Format", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(theme.tertiaryText)
+            VStack(alignment: .leading, spacing: theme.space.s8) {
+                Text("Format", bundle: .module).font(SettingsFont.smallLabel).foregroundColor(theme.text.tertiary)
                 ForEach(ActivityExportFormat.allCases) { format in
                     Button(action: { options.format = format }) {
-                        HStack(alignment: .top, spacing: 10) {
+                        HStack(alignment: .top, spacing: theme.space.s10) {
                             Image(systemName: options.format == format ? "largecircle.fill.circle" : "circle")
-                                .font(.system(size: 13))
-                                .foregroundColor(options.format == format ? theme.accentColor : theme.tertiaryText)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(format.displayName).font(.system(size: 12, weight: .medium)).foregroundColor(theme.primaryText)
-                                Text(format.summary).font(.system(size: 11)).foregroundColor(theme.secondaryText)
-                                    .fixedSize(horizontal: false, vertical: true)
+                                .glyphSize(.label)
+                                .foregroundColor(options.format == format ? theme.text.link : theme.text.tertiary)
+                            SettingsRowText(compact: true) {
+                                Text(format.displayName)
+                            } description: {
+                                Text(format.summary).foregroundColor(theme.text.secondary)
                             }
                             Spacer()
                         }
@@ -1267,44 +1061,49 @@ private struct ActivityExportSheet: View {
                 }
             }
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Scope", bundle: .module).font(.system(size: 11, weight: .semibold)).foregroundColor(theme.tertiaryText)
+            VStack(alignment: .leading, spacing: theme.space.s8) {
+                Text("Scope", bundle: .module).font(SettingsFont.smallLabel).foregroundColor(theme.text.tertiary)
                 Toggle(isOn: $options.filteredOnly) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(filter.isEmpty
-                            ? L("Current view (all records)")
-                            : String(format: L("Current view only (%d records)"), filteredCount))
-                            .font(.system(size: 12)).foregroundColor(theme.primaryText)
+                    SettingsRowText(compact: true) {
+                        Text(
+                            filter.isEmpty
+                                ? L("Current view (all records)")
+                                : String(format: L("Current view only (%d records)"), filteredCount)
+                        )
+                    } description: {
                         if !filter.isEmpty {
-                            Text(ActivityExportService.describe(filter)).font(.system(size: 10)).foregroundColor(theme.tertiaryText)
+                            Text(ActivityExportService.describe(filter))
                         }
                     }
                 }
-                .toggleStyle(.checkbox)
+                .settingsCheckbox()
                 .disabled(filter.isEmpty)
                 Toggle(isOn: $options.includeContent) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Include message content", bundle: .module).font(.system(size: 12)).foregroundColor(theme.primaryText)
-                        Text("Off: prompts, responses and tool arguments are replaced with a marker. Destinations, sizes and tool names are kept.", bundle: .module)
-                            .font(.system(size: 10)).foregroundColor(theme.tertiaryText)
-                            .fixedSize(horizontal: false, vertical: true)
+                    SettingsRowText(compact: true) {
+                        Text("Include message content", bundle: .module)
+                    } description: {
+                        Text(
+                            "Off: prompts, responses and tool arguments are replaced with a marker. Destinations, sizes and tool names are kept.",
+                            bundle: .module
+                        )
                     }
                 }
-                .toggleStyle(.checkbox)
+                .settingsCheckbox()
             }
 
             HStack {
                 Spacer()
                 Button(action: onCancel) { Text("Cancel", bundle: .module) }
+                    .assignedSettingsButtonStyle(.secondary)
                     .keyboardShortcut(.cancelAction)
                 Button(action: { onExport(options) }) { Text("Export…", bundle: .module) }
+                    .assignedSettingsButtonStyle(.primary)
                     .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
             }
         }
-        .padding(22)
+        .padding(theme.space.s24)
         .frame(width: 460)
-        .background(theme.primaryBackground)
+        .background(theme.surface.canvas)
     }
 }
 

@@ -128,32 +128,44 @@ final class SubagentFeedObserver: ObservableObject {
     }
 }
 
+/// Supplies the app theme to the feed hosted outside SwiftUI in a chat row.
+struct HostedSubagentFeedView: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+    let feed: SubagentFeed
+
+    var body: some View {
+        SubagentFeedView(feed: feed)
+            .environment(\.theme, themeManager.currentTheme)
+    }
+}
+
 /// Live activity feed for one subagent run.
 struct SubagentFeedView: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
+    @Environment(\.theme) private var baseTheme
     @StateObject private var observer: SubagentFeedObserver
+    @State private var expandedEvents: Set<UUID> = []
 
-    private var theme: ThemeProtocol { themeManager.currentTheme }
+    private var theme: ThemeProtocol { baseTheme.catalogFamily(35) }
 
     init(feed: SubagentFeed) {
         _observer = StateObject(wrappedValue: SubagentFeedObserver(feed: feed))
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             header
-            Divider().background(theme.cardBorder)
+            Rectangle().fill(theme.border.subtle).frame(height: AgentProgressInspectionStyle.metric("borderWidth", ThemeStrokes.hairline(forBackingScale: NSScreen.main?.backingScaleFactor ?? 2), theme))
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 6) {
+                    LazyVStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.body.verticalGap", inheriting: AgentProgressInspectionStyle.metric("gap", theme.space.s6, theme))) {
                         if observer.truncatedEventCount > 0 {
                             truncationRow(observer.truncatedEventCount)
                         }
                         ForEach(observer.events) { event in
                             eventRow(event).id(event.id)
                         }
-                    }
-                    .padding(10)
+                    }.catalogLayoutTarget("component.library.35.elements.layout.subagentFeedView.body.verticalGap")
+                    .padding(.horizontal, theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.body.padding.horizontal", inheriting: AgentProgressInspectionStyle.metric("padding", theme.space.s10, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.body.padding.vertical", inheriting: AgentProgressInspectionStyle.metric("padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.35.elements.layout.subagentFeedView.body.padding.horizontal").catalogLayoutTarget("component.library.35.elements.layout.subagentFeedView.body.padding.vertical")
                 }
                 // Follow the tail WITHOUT animation: an animated scroll runs
                 // inside a SwiftUI transaction, forcing the lazy stack to lay
@@ -167,12 +179,15 @@ struct SubagentFeedView: View {
                 }
             }
         }
+        .frame(minHeight: AgentProgressInspectionStyle.metric("height", 0, theme))
+        .environment(\.theme, theme)
         .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.cardBackground)
+            RoundedRectangle(cornerRadius: theme.radius.medium)
+                .fill(AgentContentSurfaceAssignments.color(35, "subagentFeed", theme))
+                .nativeCatalogTarget([AgentContentSurfaceAssignments.key(35, "subagentFeed")], "Subagent activity feed")
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.cardBorder, lineWidth: 1)
+                    RoundedRectangle(cornerRadius: theme.radius.medium)
+                        .stroke(theme.border.subtle, lineWidth: theme.stroke.default)
                 )
         )
     }
@@ -180,64 +195,41 @@ struct SubagentFeedView: View {
     /// Human label for the run header, sourced from the kind's capability
     /// descriptor (SSOT) so the feed header and the collapsed tool chip agree.
     private var kindLabel: String {
-        SubagentCapabilityRegistry.displayLabel(forKindId: observer.kindId) ?? "Subagent"
+        if observer.kindId == WorkflowCallFeed.kindId { return L("Workflow") }
+        return SubagentCapabilityRegistry.displayLabel(forKindId: observer.kindId) ?? "Subagent"
     }
 
     private var header: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.header.horizontalGap", inheriting: AgentProgressInspectionStyle.metric("gap", theme.space.s8, theme))) {
             statusIndicator
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.header.verticalGap", inheriting: AgentProgressInspectionStyle.metric("gap", theme.space.s2, theme))) {
                 Text(kindLabel)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .agentProgressText(.heading, fallback: .footnote, weight: 600, theme: theme)
+                    .foregroundColor(theme.text.primary)
                 // A failed run's reason is the one thing the user needs from
                 // this header, so it gets warning color and room to wrap
                 // instead of a single truncated grey line.
                 Text(headerSubtitle)
-                    .font(.system(size: 10))
-                    .foregroundColor(runFailed ? theme.warningColor : theme.tertiaryText)
+                    .agentProgressText(.caption, fallback: .micro, theme: theme)
+                    .foregroundColor(runFailed ? theme.status.warning.foreground : theme.text.tertiary)
                     .lineLimit(runFailed ? 3 : 1)
                     .textSelection(.enabled)
                     .help(headerSubtitle)
-            }
+            }.catalogLayoutTarget("component.library.35.elements.layout.subagentFeedView.header.verticalGap")
             Spacer()
             elapsedLabel
             if let sessionId = observer.delegatedSessionId {
-                Button(action: { Self.openDelegatedChat(sessionId) }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "bubble.left.and.text.bubble.right")
-                            .font(.system(size: 9))
-                        Text("Open Chat", bundle: .module)
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundColor(theme.accentColor)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        Capsule().fill(theme.accentColor.opacity(0.12))
-                    )
+                SettingsButton(.secondary, "Open Chat", icon: "bubble.left.and.text.bubble.right", size: .compact) {
+                    Self.openDelegatedChat(sessionId)
                 }
-                .buttonStyle(PlainButtonStyle())
                 .help(Text("Open the delegated agent's chat session", bundle: .module))
             }
             if observer.isRunning {
-                Button(action: { observer.stop() }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "stop.fill").font(.system(size: 9))
-                        Text("Stop", bundle: .module).font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundColor(theme.errorColor)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        Capsule().fill(theme.errorColor.opacity(0.12))
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
+                SettingsButton(.destructive, "Stop", icon: "stop.fill", size: .compact) { observer.stop() }
             }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        }.catalogLayoutTarget("component.library.35.elements.layout.subagentFeedView.header.horizontalGap")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.header.paddingX3", inheriting: AgentProgressInspectionStyle.metric("padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.35.elements.layout.subagentFeedView.header.paddingX3")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.header.paddingY3", inheriting: AgentProgressInspectionStyle.metric("padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.35.elements.layout.subagentFeedView.header.paddingY3")
     }
 
     /// Wall-clock readout for the run. While running it ticks ~10x/sec via a
@@ -256,8 +248,8 @@ struct SubagentFeedView: View {
 
     private func elapsedText(_ elapsed: TimeInterval) -> some View {
         Text(Self.formatElapsed(elapsed))
-            .font(.system(size: 10, weight: .medium, design: .monospaced))
-            .foregroundColor(theme.tertiaryText)
+            .agentProgressText(.code, fallback: .micro, weight: 500, family: .code, theme: theme)
+            .foregroundColor(theme.text.tertiary)
     }
 
     private static func formatElapsed(_ t: TimeInterval) -> String {
@@ -270,11 +262,14 @@ struct SubagentFeedView: View {
     private var statusIndicator: some View {
         switch observer.status {
         case .running:
-            ProgressView().scaleEffect(0.5).frame(width: 14, height: 14)
+            SettingsSpinner(size: .large, tint: theme.status.info.foreground)
+                .controlSize(.large)
+                .assignedProgressIndicator(tintOverride: theme.status.info.foreground)
+                .scaleEffect(0.5).frame(width: 14, height: 14)
         case .finished(let success, _):
             Image(systemName: success ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                .font(.system(size: 13))
-                .foregroundColor(success ? theme.successColor : theme.warningColor)
+                .glyphSize(.label)
+                .foregroundColor(success ? theme.status.success.foreground : theme.status.warning.foreground)
         }
     }
 
@@ -293,42 +288,61 @@ struct SubagentFeedView: View {
     /// Placeholder for history trimmed by the observer's render window, so a
     /// long run doesn't silently appear to start mid-flight.
     private func truncationRow(_ count: Int) -> some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.truncationRow.horizontalGap", inheriting: AgentProgressInspectionStyle.metric("gap", theme.space.s8, theme))) {
             Image(systemName: "ellipsis")
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .glyphSize(.footnote)
+                .foregroundColor(theme.text.tertiary)
                 .frame(width: 16)
             Text(count == 1 ? L("1 earlier step") : L("\(count) earlier steps"))
-                .font(.system(size: 10))
-                .foregroundColor(theme.tertiaryText)
+                .agentProgressText(.caption, fallback: .micro, theme: theme)
+                .foregroundColor(theme.text.tertiary)
             Spacer(minLength: 0)
-        }
+        }.catalogLayoutTarget("component.library.35.elements.layout.subagentFeedView.truncationRow.horizontalGap")
     }
 
     private func eventRow(_ event: SubagentActivityEvent) -> some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.eventRow.horizontalGap", inheriting: AgentProgressInspectionStyle.metric("gap", theme.space.s8, theme))) {
             Image(systemName: event.iconName)
-                .font(.system(size: 11))
+                .glyphSize(.footnote)
                 .foregroundColor(color(for: event))
                 .frame(width: 16)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.35.elements.layout.subagentFeedView.eventRow.verticalGap", inheriting: AgentProgressInspectionStyle.metric("gap", theme.space.s2, theme))) {
                 Text(event.title)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
+                    .agentProgressText(.body, fallback: .footnote, theme: theme)
+                    .foregroundColor(theme.text.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if let detail = event.detail, !detail.isEmpty {
                     Text(detail)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText)
+                        .agentProgressText(.caption, fallback: .micro, theme: theme)
+                        .foregroundColor(theme.text.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let text = event.expandableText, !text.isEmpty, expandedEvents.contains(event.id) {
+                    Text(text)
+                        .agentProgressText(.caption, fallback: .micro, theme: theme)
+                        .foregroundColor(theme.text.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 if event.kind == .progress, let fraction = event.fraction {
-                    ProgressView(value: max(0, min(1, fraction)))
-                        .progressViewStyle(.linear)
+                    SettingsProgressBar(value: fraction, tint: theme.status.info.foreground)
                         .frame(maxWidth: 160)
                 }
-            }
+            }.catalogLayoutTarget("component.library.35.elements.layout.subagentFeedView.eventRow.verticalGap")
             Spacer(minLength: 0)
+            if let text = event.expandableText, !text.isEmpty {
+                Image(systemName: expandedEvents.contains(event.id) ? "chevron.down" : "chevron.right")
+                    .glyphSize(.tiny)
+                    .foregroundColor(theme.text.tertiary)
+            }
+        }.catalogLayoutTarget("component.library.35.elements.layout.subagentFeedView.eventRow.horizontalGap")
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard let text = event.expandableText, !text.isEmpty else { return }
+            if expandedEvents.contains(event.id) {
+                expandedEvents.remove(event.id)
+            } else {
+                expandedEvents.insert(event.id)
+            }
         }
     }
 
@@ -363,15 +377,15 @@ struct SubagentFeedView: View {
 
     private func color(for event: SubagentActivityEvent) -> Color {
         if let success = event.success {
-            return success ? theme.successColor : theme.warningColor
+            return success ? theme.status.success.foreground : theme.status.warning.foreground
         }
         switch event.kind {
-        case .blocked, .denied, .error: return theme.errorColor
-        case .confirmRequested: return theme.warningColor
-        case .confirmed: return theme.successColor
-        case .reasoning: return theme.tertiaryText
-        case .response: return theme.primaryText
-        default: return theme.accentColor
+        case .blocked, .denied, .error: return theme.status.error.foreground
+        case .confirmRequested: return theme.status.warning.foreground
+        case .confirmed: return theme.status.success.foreground
+        case .reasoning: return theme.text.tertiary
+        case .response: return theme.text.primary
+        default: return theme.status.info.foreground
         }
     }
 }

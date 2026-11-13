@@ -1,6 +1,6 @@
 # Storage
 
-Osaurus stores your local data — chats, memory, methods, tool indexes, plugin databases, and large attachments — under `~/.osaurus/`. As of 0.21.0, that data is stored **as plaintext SQLite by default**, relying on macOS **FileVault** for at-rest protection, with **SQLCipher whole-database encryption available as an explicit opt-in** in **General → Advanced → Data & Storage**.
+Osaurus stores your local data — chats, memory, methods, tool indexes, plugin databases, and large attachments — under `~/.osaurus/`. As of 0.21.0, that data is stored **as plaintext SQLite by default**, relying on macOS **FileVault** for at-rest protection, with **SQLCipher whole-database encryption available as an explicit opt-in** in **Privacy & Security → Data & Storage**.
 
 This is a deliberate change from the earlier always-on encryption model. The "why" is documented in [Why encryption is opt-in](#why-encryption-is-opt-in) below — the short version is reliability: an always-required Keychain key coupled every store's ability to open to a secret that breaks on Mac migration, app re-signing, or a Keychain wipe, and when it broke it failed closed with no recovery.
 
@@ -31,7 +31,7 @@ This document covers how data is stored, how opening is decided per-file, how to
 Everything Osaurus persists lives under `~/.osaurus/`:
 
 - **Default (plaintext).** Every SQLite database is a normal SQLite file, and large attachments / `.osec`-class artifacts are written as plaintext. On a modern Mac, **FileVault** already encrypts the entire disk at rest, so plaintext-on-disk is still protected when the Mac is powered off or logged out — without depending on an app-managed key that can go missing.
-- **Opt-in (encrypted).** When you enable encryption in **General → Advanced → Data & Storage**, every SQLite database is converted to a [SQLCipher 4.6.1](https://www.zetetic.net/sqlcipher/) database keyed with a 32-byte symmetric key, and app-layer artifacts are written as AES-GCM `.osec` files. The data-encryption key (DEK) lives in the macOS Keychain, scoped to your account on this device.
+- **Opt-in (encrypted).** When you enable encryption in **Privacy & Security → Data & Storage**, every SQLite database is converted to a [SQLCipher 4.6.1](https://www.zetetic.net/sqlcipher/) database keyed with a 32-byte symmetric key, and app-layer artifacts are written as AES-GCM `.osec` files. The data-encryption key (DEK) lives in the macOS Keychain, scoped to your account on this device.
 
 The posture (plaintext vs. encrypted) is your choice and is persisted in a small, deliberately **non-encrypted** marker file (`~/.osaurus/.storage-encryption.json`). It cannot itself be encrypted — that would reintroduce the chicken-and-egg key dependency this design removes.
 
@@ -85,11 +85,11 @@ Nothing to configure. On first launch of a fresh install:
 1. The posture marker is created in plaintext mode (`~/.osaurus/.storage-encryption.json`).
 2. Each database is created as a plaintext SQLite file on first open via [`OsaurusStorageOpener`](../Packages/OsaurusCore/Storage/OsaurusStorageOpener.swift).
 
-If you upgraded from a version that used always-on encryption, your existing encrypted data is **migrated automatically and invisibly on first launch** (see [Migration and Convergence](#migration-and-convergence)): it is decrypted to plaintext when macOS FileVault is enabled, or kept encrypted when FileVault is off so the migration never silently removes its only at-rest protection. There is no prompt or notice — the change is seamless, and you can always flip the posture later from **General → Advanced → Data & Storage**.
+If you upgraded from a version that used always-on encryption, your existing encrypted data is **migrated automatically and invisibly on first launch** (see [Migration and Convergence](#migration-and-convergence)): it is decrypted to plaintext when macOS FileVault is enabled, or kept encrypted when FileVault is off so the migration never silently removes its only at-rest protection. There is no prompt or notice — the change is seamless, and you can always flip the posture later from **Privacy & Security → Data & Storage**.
 
-To turn encryption back on, open **Settings… (⌘,) → General → Advanced → Data & Storage** and enable **Encrypt local data at rest (SQLCipher)**.
+To turn encryption back on, open **Settings… (⌘,) → Privacy & Security → Data & Storage** and enable **Encrypt Local Data at Rest (SQLCipher)**.
 
-To back up your data in plaintext (for example, before reinstalling macOS), open **Settings… (⌘,) → General → Advanced → Data & Storage → Export plaintext backup**.
+To back up your data in plaintext (for example, before reinstalling macOS), open **Settings… (⌘,) → Privacy & Security → Data & Storage → Backup & Key → Export Plaintext Backup**.
 
 ---
 
@@ -97,7 +97,8 @@ To back up your data in plaintext (for example, before reinstalling macOS), open
 
 | Artifact | Default (plaintext) | Opt-in (encrypted) | On-disk location |
 |---|---|---|---|
-| Chat history | SQLite | SQLCipher | `~/.osaurus/chat-history/history.sqlite` |
+| Conversations | osaurus-sync (see [SYNC.md](SYNC.md)) | osaurus-sync | `~/.osaurus/sync/` |
+| Pre-sync chat history (read-only import source and backup) | SQLite | SQLCipher | `~/.osaurus/chat-history/history.sqlite` |
 | Router billing ledger | SQLite | SQLCipher | `~/.osaurus/billing/ledger.sqlite` |
 | Memory (identity, pinned facts, episodes, transcript, FTS5 mirrors) | SQLite | SQLCipher | `~/.osaurus/memory/memory.sqlite` |
 | Methods catalog | SQLite | SQLCipher | `~/.osaurus/methods/methods.sqlite` |
@@ -114,7 +115,7 @@ To back up your data in plaintext (for example, before reinstalling macOS), open
 **Always plaintext, by design.** A few artifacts stay plaintext in both modes:
 
 - The encryption posture marker `~/.osaurus/.storage-encryption.json` (it cannot be encrypted — see [Overview](#overview)).
-- JSON config under `~/.osaurus/config/`, `agents/`, `themes/`, `providers/`, `schedules/`, `watchers/`, `skills/` that is read as raw JSON by various consumers. (In encrypted mode, sensitive app-layer artifacts that go through `EncryptedFileStore` are wrapped; pure config that must be world-readable JSON stays plaintext.)
+- JSON config under `~/.osaurus/config/`, `agents/`, `providers/`, `schedules/`, `watchers/`, `skills/` that is read as raw JSON by various consumers. (In encrypted mode, sensitive app-layer artifacts that go through `EncryptedFileStore` are wrapped; pure config that must be world-readable JSON stays plaintext.)
 - Plugin manifests under `~/.osaurus/sandbox-plugins/`.
 - Vector index files under `~/.osaurus/memory/vectura/<agentId>/`. These are rebuilt from the SQLite source on demand; see [Limitations](#limitations-and-trade-offs).
 
@@ -134,7 +135,7 @@ On launch, `convergeOnLaunch()` first resolves *which* posture to converge to vi
   - Existing **encrypted** install + FileVault **off** → **keep encrypted** (decrypting would silently strip the data's only at-rest protection).
   - Fresh / already-plaintext install → **plaintext**.
 
-The resolved posture is persisted as the marker, then convergence runs to match. The whole sequence is **invisible** — there is no migration prompt or "What's New" notice. An explicit choice in **General → Advanced → Data & Storage** always converts regardless of FileVault.
+The resolved posture is persisted as the marker, then convergence runs to match. The whole sequence is **invisible** — there is no migration prompt or "What's New" notice. An explicit choice in **Privacy & Security → Data & Storage** always converts regardless of FileVault.
 
 For each database in [`StorageDatabaseCatalog`](../Packages/OsaurusCore/Storage/StorageDatabaseCatalog.swift) whose detected format differs from the desired mode:
 
@@ -153,7 +154,7 @@ Convergence **never auto-deletes data**. If a store can't be converted or opened
 
 - Failures are classified by [`PersistenceHealth`](../Packages/OsaurusCore/Storage/PersistenceHealth.swift) into `locked` (key unavailable), `corrupt` (unreadable / key mismatch), `migration` (schema upgrade failed), or `unknown`, with the underlying error message and file path retained.
 - The **Memory → Diagnostics** panel shows the real cause for the memory DB and offers inline **Retry** and **Reset** actions.
-- **General → Advanced → Data & Storage** shows a "Stores needing attention" panel listing every degraded store with its cause and the same actions.
+- **Privacy & Security → Data & Storage** shows a **Stores Needing Attention** panel listing every degraded store with its cause and the same actions.
 
 Recovery actions are provided by [`StorageRecoveryService`](../Packages/OsaurusCore/Storage/StorageRecoveryService.swift):
 
@@ -205,7 +206,7 @@ For users who want their DEK reproducible across devices via the iCloud-synced I
 
 ## Storage Settings
 
-Open **Settings… (⌘,) → General → Advanced → Data & Storage** ([`StorageSettingsView`](../Packages/OsaurusCore/Views/Settings/StorageSettingsView.swift), embedded in the General tab's Advanced disclosure). The Privacy tab is now only about consent and the redaction filter. The panel reflects the **detected on-disk reality** (plaintext / encrypted / mixed), not a flag guess.
+Open **Settings… (⌘,) → Privacy & Security → Data & Storage** ([`StorageSettingsView`](../Packages/OsaurusCore/Views/Settings/StorageSettingsView.swift), embedded in the Privacy & Security tab by `PrivacyView`). The panel reflects the **detected on-disk reality** (plaintext / encrypted / mixed), not a flag guess.
 
 ### Encrypt local data at rest (the opt-in toggle)
 
@@ -254,8 +255,9 @@ State is persisted in `~/.osaurus/.storage-maintenance.json`. The first load sta
 | `~/.osaurus/.storage-key.salt` | HKDF salt sidecar (only present when DEK is master-derived) |
 | `~/.osaurus/quarantine/` | Unreadable stores moved here by Reset recovery (never deleted) |
 | `~/.osaurus/billing/ledger.sqlite` | Router billing ledger (SQLite, or SQLCipher when encrypted) |
-| `~/.osaurus/chat-history/history.sqlite` | Chat database (SQLite, or SQLCipher when encrypted) |
-| `~/.osaurus/chat-history/blobs/<sha256>` | Spilled attachments (plaintext blob, or `.osec` when encrypted) |
+| `~/.osaurus/sync/` | Conversations, in the osaurus-sync core's data directory (see [SYNC.md](SYNC.md)) |
+| `~/.osaurus/chat-history/history.sqlite` | Pre-sync chat database, read-only: imported into sync once and kept as a backup (SQLite, or SQLCipher when encrypted) |
+| `~/.osaurus/chat-history/blobs/<sha256>` | Cached large attachments (plaintext blob, or `.osec` when encrypted) |
 | `~/.osaurus/memory/memory.sqlite` | Memory database (SQLite, or SQLCipher when encrypted) |
 | `~/.osaurus/memory/vectura/<agentId>/` | Per-agent VecturaKit vector index (plaintext, see Limitations) |
 | `~/.osaurus/methods/methods.sqlite` | Methods catalog (SQLite, or SQLCipher when encrypted) |

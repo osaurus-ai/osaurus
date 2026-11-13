@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Form-based sandbox plugin editor with live JSON preview.
-//  Supports both creation and editing, modeled on ThemeEditorView.
+//  Supports both creation and editing.
 //
 
 import AppKit
@@ -67,7 +67,7 @@ struct SandboxPluginEditorView: View {
                 .frame(minWidth: 400, idealWidth: 500)
         }
         .frame(minWidth: 900, minHeight: 650)
-        .background(theme.primaryBackground)
+        .background(theme.surface.canvas)
     }
 }
 
@@ -76,10 +76,10 @@ struct SandboxPluginEditorView: View {
 private extension SandboxPluginEditorView {
 
     var editorPanel: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             editorHeader
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: theme.space.s20) {
                     identitySection
                     dependenciesSection
                     setupSection
@@ -87,35 +87,26 @@ private extension SandboxPluginEditorView {
                     filesSection
                     metadataSection
                 }
-                .padding(20)
+                .padding(theme.space.s16)
             }
             editorFooter
         }
-        .background(theme.secondaryBackground)
+        .background(theme.surface.subtle)
     }
 
     var editorHeader: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             HStack {
                 Text(isNew ? L("Create Custom Tool") : L("Edit Custom Tool"))
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.detailTitle)
+                    .foregroundColor(theme.text.primary)
                 Spacer()
-                Button(action: {
-                    dismiss(); onDismiss()
-                }) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
-                        .frame(width: 24, height: 24)
-                        .background(Circle().fill(theme.tertiaryBackground))
-                }
-                .buttonStyle(PlainButtonStyle())
+                SettingsIconButton("xmark", help: "Close", size: .compact, action: { dismiss(); onDismiss() })
             }
             editorTextField(L("Name"), text: $plugin.name, fontSize: 14, weight: .medium, radius: 8)
             editorTextField(L("Short description"), text: $plugin.description, fontSize: 13, radius: 6)
         }
-        .padding(16)
+        .padding(theme.space.s16)
     }
 
     var editorFooter: some View {
@@ -126,19 +117,20 @@ private extension SandboxPluginEditorView {
                 } icon: {
                     Image(systemName: "pencil")
                 }
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .textStyle(.footnote)
+                .foregroundColor(theme.text.tertiary)
             }
             Spacer()
-            HStack(spacing: 12) {
+            HStack(spacing: theme.space.s12) {
                 Button {
                     dismiss(); onDismiss()
                 } label: {
                     Text("Cancel", bundle: .module)
                 }
-                .buttonStyle(.bordered)
+                .assignedSettingsButtonStyle(.secondary)
+                .keyboardShortcut(.cancelAction)
                 Button(action: savePlugin) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: theme.space.s4) {
                         if showSaveConfirmation { Image(systemName: "checkmark") }
                         Text(
                             LocalizedStringKey(
@@ -148,15 +140,16 @@ private extension SandboxPluginEditorView {
                         )
                     }
                 }
-                .buttonStyle(.borderedProminent)
+                .assignedSettingsButtonStyle(.primary)
+                .keyboardShortcut(.return, modifiers: .command)
                 .disabled(
                     plugin.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                         || !hasChanges
                 )
             }
         }
-        .padding(16)
-        .background(theme.secondaryBackground)
+        .padding(theme.space.s16)
+        .background(theme.surface.subtle)
     }
 }
 
@@ -178,8 +171,8 @@ private extension SandboxPluginEditorView {
     var dependenciesSection: some View {
         editorSection(L("Dependencies"), itemCount: plugin.dependencies?.count) {
             Text("System packages installed via apk", bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
             stringListEditor(
                 binding: Binding(
                     get: { plugin.dependencies ?? [] },
@@ -193,8 +186,8 @@ private extension SandboxPluginEditorView {
     var setupSection: some View {
         editorSection(L("Setup Command")) {
             Text("Shell command run after dependencies are installed", bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
             codeField(
                 text: Binding(
                     get: { plugin.setup ?? "" },
@@ -219,15 +212,15 @@ private extension SandboxPluginEditorView {
                     Image(systemName: "plus")
                 }
             }
-            .buttonStyle(.bordered)
+            .assignedSettingsButtonStyle(.secondary)
         }
     }
 
     var filesSection: some View {
         editorSection(L("Files"), itemCount: plugin.files?.count) {
             Text("Files seeded into the plugin directory", bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
 
             let files = plugin.files ?? [:]
             ForEach(Array(files.keys.sorted()), id: \.self) { path in
@@ -241,15 +234,15 @@ private extension SandboxPluginEditorView {
                     Image(systemName: "plus")
                 }
             }
-            .buttonStyle(.bordered)
+            .assignedSettingsButtonStyle(.secondary)
         }
     }
 
     var metadataSection: some View {
         editorSection(L("Metadata"), itemCount: plugin.metadata?.count) {
             Text("Custom JSON data preserved across exports and imports", bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
 
             codeField(
                 text: $metadataText,
@@ -261,13 +254,13 @@ private extension SandboxPluginEditorView {
             }
 
             if !metadataValid {
-                HStack(spacing: 4) {
+                HStack(spacing: theme.space.s4) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 10))
+                        .glyphSize(.micro)
                     Text("Invalid JSON", bundle: .module)
-                        .font(.system(size: 11))
+                        .font(SettingsFont.rowDescription)
                 }
-                .foregroundColor(theme.errorColor)
+                .foregroundColor(theme.status.error.foreground)
             }
         }
     }
@@ -278,19 +271,19 @@ private extension SandboxPluginEditorView {
 private extension SandboxPluginEditorView {
 
     func toolCard(index: Int, tool: SandboxToolSpec) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             HStack {
                 Image(systemName: "wrench")
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.accentColor)
+                    .glyphSize(.micro)
+                    .foregroundColor(theme.text.link)
                 Text(tool.id.isEmpty ? L("New Tool") : tool.id)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                 Spacer()
                 Button(action: { removeTool(at: index) }) {
                     Image(systemName: "trash")
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.errorColor)
+                        .glyphSize(.footnote)
+                        .foregroundColor(theme.status.error.foreground)
                 }
                 .buttonStyle(PlainButtonStyle())
             }
@@ -306,20 +299,16 @@ private extension SandboxPluginEditorView {
             }
             parametersEditor(toolIndex: index)
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.tertiaryBackground.opacity(0.5))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.cardBorder, lineWidth: 1))
-        )
+        .padding(theme.space.s8)
+        .settingsChrome(.subtle)
     }
 
     func parametersEditor(toolIndex: Int) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             HStack {
                 Text("Parameters", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.smallLabel)
+                    .foregroundColor(theme.text.secondary)
                 Spacer()
                 Button(action: { addParameter(to: toolIndex) }) {
                     Label {
@@ -328,8 +317,7 @@ private extension SandboxPluginEditorView {
                         Image(systemName: "plus")
                     }
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
+                .assignedSettingsButtonStyle(.secondary, size: .compact)
             }
 
             let params = plugin.tools?[toolIndex].parameters ?? [:]
@@ -340,16 +328,16 @@ private extension SandboxPluginEditorView {
     }
 
     func parameterRow(key: String, toolIndex: Int) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             HStack {
                 Text(key.isEmpty ? "new_param" : key)
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.primary)
                 Spacer()
                 Button(action: { removeParameter(key, from: toolIndex) }) {
                     Image(systemName: "trash")
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.errorColor.opacity(0.7))
+                        .glyphSize(.micro)
+                        .foregroundColor(theme.status.error.foreground)
                 }
                 .buttonStyle(PlainButtonStyle())
             }
@@ -363,30 +351,24 @@ private extension SandboxPluginEditorView {
                 }
             }
             labeledField("Type") {
-                Picker("", selection: parameterTypeBinding(key: key, toolIndex: toolIndex)) {
-                    Text("string", bundle: .module).tag("string")
-                    Text("number", bundle: .module).tag("number")
-                    Text("boolean", bundle: .module).tag("boolean")
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
+                AssignedBaseSegmentedPicker(
+                    selection: parameterTypeBinding(key: key, toolIndex: toolIndex),
+                    options: [.init("string", "string"), .init("number", "number"), .init("boolean", "boolean")]
+                )
+                .fixedSize()
+                .accessibilityLabel(Text("Type", bundle: .module))
             }
             HStack {
                 Text("Optional", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.smallLabel)
+                    .foregroundColor(theme.text.secondary)
                 Spacer()
                 Toggle("", isOn: parameterOptionalBinding(key: key, toolIndex: toolIndex))
-                    .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                    .labelsHidden()
+                    .settingsSwitch()
             }
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.inputBackground.opacity(0.4))
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.cardBorder.opacity(0.5), lineWidth: 1))
-        )
+        .padding(theme.space.s8)
+        .settingsChrome(.control)
     }
 }
 
@@ -395,11 +377,11 @@ private extension SandboxPluginEditorView {
 private extension SandboxPluginEditorView {
 
     func fileCard(path: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: "doc.text")
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.accentColor)
+                    .glyphSize(.micro)
+                    .foregroundColor(theme.text.link)
                 DeferredRenameField(
                     "filename.ext",
                     initialValue: path,
@@ -409,15 +391,15 @@ private extension SandboxPluginEditorView {
                 }
                 Button(action: { removeFile(path) }) {
                     Image(systemName: "minus.circle")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.errorColor.opacity(0.7))
+                        .glyphSize(.caption)
+                        .foregroundColor(theme.status.error.foreground)
                 }
                 .buttonStyle(PlainButtonStyle())
             }
             codeField(text: fileContentBinding(path: path), placeholder: "File contents...", minHeight: 60)
         }
-        .padding(8)
-        .background(RoundedRectangle(cornerRadius: 6).fill(theme.tertiaryBackground.opacity(0.5)))
+        .padding(theme.space.s8)
+        .settingsChrome(.inset)
     }
 }
 
@@ -426,18 +408,18 @@ private extension SandboxPluginEditorView {
 private extension SandboxPluginEditorView {
 
     var previewPanel: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             HStack {
                 Text("JSON Preview", bundle: .module)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.cardTitle)
+                    .foregroundColor(theme.text.primary)
                 Spacer()
                 Text("Updates as you edit", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
             }
-            .padding(16)
-            .background(theme.secondaryBackground)
+            .padding(theme.space.s16)
+            .background(theme.surface.subtle)
 
             GeometryReader { geo in
                 ScrollView {
@@ -446,10 +428,10 @@ private extension SandboxPluginEditorView {
                         language: "json",
                         baseWidth: max(geo.size.width - 24, 300)
                     )
-                    .padding(12)
+                    .padding(theme.space.s12)
                 }
             }
-            .background(theme.primaryBackground)
+            .background(theme.surface.canvas)
         }
         .environment(\.theme, theme)
     }
@@ -637,29 +619,23 @@ private extension SandboxPluginEditorView {
         @ViewBuilder content: () -> Content
     ) -> some View {
         let isCollapsed = collapsedSections.contains(title)
-        return VStack(alignment: .leading, spacing: 10) {
+        return VStack(alignment: .leading, spacing: theme.space.s10) {
             Button(action: {
-                withAnimation(.easeInOut(duration: 0.2)) {
+                withAnimation(theme.motion.quick) {
                     if isCollapsed { collapsedSections.remove(title) } else { collapsedSections.insert(title) }
                 }
             }) {
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     Text(title)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
-                        .textCase(.uppercase)
+                        .font(SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.secondary)
                     if isCollapsed, let count = itemCount {
-                        Text("\(count)", bundle: .module)
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(theme.tertiaryText)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(theme.tertiaryBackground))
+                        CountBadge(count)
                     }
                     Spacer()
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
+                        .glyphSize(.micro, weight: .semibold)
+                        .foregroundColor(theme.text.tertiary)
                         .rotationEffect(.degrees(isCollapsed ? 0 : 90))
                 }
                 .contentShape(Rectangle())
@@ -667,9 +643,9 @@ private extension SandboxPluginEditorView {
             .buttonStyle(PlainButtonStyle())
 
             if !isCollapsed {
-                VStack(alignment: .leading, spacing: 8) { content() }
-                    .padding(12)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(theme.cardBackground))
+                VStack(alignment: .leading, spacing: theme.space.s8) { content() }
+                    .padding(theme.space.s12)
+                    .settingsChrome(.surface)
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
@@ -683,61 +659,26 @@ private extension SandboxPluginEditorView {
         radius: CGFloat = 6,
         mono: Bool = false
     ) -> some View {
-        TextField(placeholder, text: text)
-            .textFieldStyle(.plain)
-            .font(
-                mono
-                    ? .system(size: fontSize, weight: weight, design: .monospaced)
-                    : .system(size: fontSize, weight: weight)
-            )
-            .foregroundColor(theme.primaryText)
-            .padding(.horizontal, 12)
-            .padding(.vertical, fontSize > 13 ? 8 : 6)
-            .background(
-                RoundedRectangle(cornerRadius: radius)
-                    .fill(theme.inputBackground)
-                    .overlay(RoundedRectangle(cornerRadius: radius).stroke(theme.inputBorder, lineWidth: 1))
-            )
+        SettingsTextField(placeholder: placeholder, text: text, monospaced: mono)
     }
 
     func codeField(text: Binding<String>, placeholder: String, minHeight: CGFloat = 40) -> some View {
-        ZStack(alignment: .topLeading) {
-            if text.wrappedValue.isEmpty {
-                Text(LocalizedStringKey(placeholder), bundle: .module)
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText.opacity(0.5))
-                    .padding(.top, 8)
-                    .padding(.leading, 5)
-                    .allowsHitTesting(false)
-            }
-            TextEditor(text: text)
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundColor(theme.primaryText)
-                .scrollContentBackground(.hidden)
-                .frame(minHeight: minHeight)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(theme.codeBlockBackground)
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(theme.inputBorder, lineWidth: 1))
-        )
+        SettingsTextEditor(text: text, placeholder: String(localized: String.LocalizationValue(placeholder), bundle: .module), minHeight: minHeight, monospaced: true)
     }
 
     func labeledField<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
             Text(LocalizedStringKey(label), bundle: .module)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.smallLabel)
+                .foregroundColor(theme.text.secondary)
             content()
         }
     }
 
     func stringListEditor(binding: Binding<[String]>, placeholder: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             ForEach(Array(binding.wrappedValue.enumerated()), id: \.offset) { index, _ in
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     editorTextField(
                         placeholder,
                         text: Binding(
@@ -749,8 +690,8 @@ private extension SandboxPluginEditorView {
                     )
                     Button(action: { binding.wrappedValue.remove(at: index) }) {
                         Image(systemName: "minus.circle")
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.errorColor.opacity(0.7))
+                            .glyphSize(.caption)
+                            .foregroundColor(theme.status.error.foreground)
                     }
                     .buttonStyle(PlainButtonStyle())
                 }
@@ -762,7 +703,7 @@ private extension SandboxPluginEditorView {
                     Image(systemName: "plus")
                 }
             }
-            .buttonStyle(.bordered)
+            .assignedSettingsButtonStyle(.secondary)
         }
     }
 }
@@ -800,18 +741,7 @@ private struct DeferredRenameField: View {
     }
 
     var body: some View {
-        TextField(placeholder, text: $text)
-            .textFieldStyle(.plain)
-            .font(.system(size: fontSize, weight: weight, design: .monospaced))
-            .foregroundColor(theme.primaryText)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(theme.inputBackground)
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(theme.inputBorder, lineWidth: 1))
-            )
-            .focused($isFocused)
+        SettingsTextField(placeholder: placeholder, text: $text, monospaced: true, focus: $isFocused)
             .onSubmit { commit() }
             .onChange(of: isFocused) {
                 if !isFocused { commit() }

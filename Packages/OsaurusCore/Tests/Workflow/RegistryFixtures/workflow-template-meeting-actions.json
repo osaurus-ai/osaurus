@@ -1,0 +1,186 @@
+{
+  "format": "osaurus.template",
+  "format_version": 1,
+  "id": "0f5c1a4e-6b7d-4c1a-9a01-000000000102",
+  "kind": "workflow",
+  "version": 1,
+  "changelog": "Built-in template",
+  "name": "Meeting Action Items",
+  "summary": "Paste meeting notes; get a summary, who does what, the decisions made, and a follow-up email.",
+  "author": {
+    "name": "Osaurus"
+  },
+  "created_at": "2026-10-06T00:00:00Z",
+  "available_to_orchestrator": true,
+  "workflow": {
+    "input_schema": {
+      "type": "object",
+      "properties": {
+        "notes": {
+          "type": "string",
+          "title": "Meeting notes",
+          "description": "Paste notes or a transcript.",
+          "maxLength": 40000
+        },
+        "meeting_title": {
+          "type": "string",
+          "title": "Meeting name",
+          "description": "Optional. Used in the follow-up email."
+        }
+      },
+      "required": [
+        "notes"
+      ],
+      "x-order": [
+        "notes",
+        "meeting_title"
+      ]
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string",
+          "title": "Summary"
+        },
+        "action_items": {
+          "type": "array",
+          "title": "Action items",
+          "items": {
+            "type": "string"
+          }
+        },
+        "decisions": {
+          "type": "array",
+          "title": "Decisions",
+          "items": {
+            "type": "string"
+          }
+        },
+        "follow_up": {
+          "type": "string",
+          "title": "Follow-up email"
+        }
+      },
+      "required": [
+        "summary",
+        "action_items",
+        "decisions",
+        "follow_up"
+      ]
+    },
+    "nodes": [
+      {
+        "id": "extract",
+        "name": "Find the action items",
+        "kind": "inference",
+        "inference": {
+          "model_slot": "writer",
+          "mode": "generate",
+          "instructions": "Read the meeting notes. Write a two to three sentence summary. List every action item as 'Owner: task (due date)', leaving out the due date when none was mentioned and using 'Unassigned' when no owner was named. List the decisions that were made. Use only what the notes say."
+        },
+        "input": {
+          "notes": "{{input.notes}}"
+        },
+        "output_schema": {
+          "type": "object",
+          "properties": {
+            "summary": {
+              "type": "string",
+              "title": "Summary"
+            },
+            "action_items": {
+              "type": "array",
+              "title": "Action items",
+              "items": {
+                "type": "string"
+              },
+              "description": "Each as: Owner: task (due date if mentioned)."
+            },
+            "decisions": {
+              "type": "array",
+              "title": "Decisions",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "summary",
+            "action_items",
+            "decisions"
+          ]
+        },
+        "timeout": 120,
+        "retry": {
+          "max_attempts": 2,
+          "backoff_seconds": 1
+        }
+      },
+      {
+        "id": "followup",
+        "name": "Draft the follow-up",
+        "kind": "inference",
+        "inference": {
+          "model_slot": "writer",
+          "mode": "generate",
+          "instructions": "Write a short, friendly follow-up email to the attendees of the meeting: a one-line thank-you, the summary, the action items as a list, and the decisions. Plain text, no subject line."
+        },
+        "input": {
+          "meeting": "{{input.meeting_title}}",
+          "summary": "{{nodes.extract.output.summary}}",
+          "action_items": "{{nodes.extract.output.action_items}}",
+          "decisions": "{{nodes.extract.output.decisions}}"
+        },
+        "output_schema": {
+          "type": "object",
+          "properties": {
+            "follow_up": {
+              "type": "string",
+              "title": "Follow-up email"
+            }
+          },
+          "required": [
+            "follow_up"
+          ]
+        },
+        "timeout": 120,
+        "retry": {
+          "max_attempts": 2,
+          "backoff_seconds": 1
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from": "extract",
+        "to": "followup"
+      }
+    ],
+    "output": {
+      "summary": "{{nodes.extract.output.summary}}",
+      "action_items": "{{nodes.extract.output.action_items}}",
+      "decisions": "{{nodes.extract.output.decisions}}",
+      "follow_up": "{{nodes.followup.output.follow_up}}"
+    },
+    "model_slots": [
+      {
+        "slot": "writer",
+        "preferred": "foundation",
+        "strictness": "preferred",
+        "locality": "cloud_allowed"
+      }
+    ],
+    "secrets": [],
+    "requirement_notes": {},
+    "examples": [
+      {
+        "name": "Weekly sync",
+        "input": {
+          "meeting_title": "Website weekly sync",
+          "notes": "Attendees: Priya, Marco, Lee.\n- Launch moves to May 12 because QA needs another week. Agreed.\n- Marco will update the pricing page copy by Friday.\n- Lee to ask legal about the cookie banner.\n- Priya owns the launch checklist.\n- We will drop the blog post from launch week."
+        }
+      }
+    ]
+  }
+}

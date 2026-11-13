@@ -1,0 +1,35 @@
+{
+  "id": "configurator.settings-memory-disable",
+  "domain": "configurator",
+  "label": "configurator • disable memory via osaurus_config",
+  "query": "Disable the memory feature in Osaurus — I don't want it remembering things between chats.",
+  "notes": "Memory scope: a `memory:` section with `enabled: false`. The 'false' matcher probes the document text.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "action": "apply",
+            "yaml": "memory"
+          }
+        },
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "yaml": "false"
+          }
+        }
+      ],
+      "maxIterations": 8
+    }
+  }
+}

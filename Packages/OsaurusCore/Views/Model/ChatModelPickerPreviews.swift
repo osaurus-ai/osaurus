@@ -49,7 +49,7 @@ private struct ChatModelPickerPreview: View {
         _favorites = StateObject(wrappedValue: store)
     }
 
-    private var theme: ThemeProtocol { light ? LightTheme() : DarkTheme() }
+    private var theme: ThemeProtocol { light ? CustomizableTheme.light() : CustomizableTheme.dark() }
 
     private var availableModels: [ModelPickerItem] {
         let data = ChatModelPickerPreviewData.self
@@ -154,9 +154,9 @@ private struct ChatModelPickerPreview: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             Text(verbatim: "Interactive sample data")
-                .font(theme.font(size: 14, weight: .medium))
+                .textStyle(.label)
             ChatModelPickerCard(
                 providers: providers,
                 selectedModel: $selectedModel,
@@ -167,21 +167,21 @@ private struct ChatModelPickerPreview: View {
                 favorites: favorites
             )
             .frame(width: cardSize.width, height: cardSize.height)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: cardSize)
+            .animation(theme.motion.quick, value: cardSize)
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 Text(verbatim: "Selected: \(selectionLabel)")
                 if !lastAction.isEmpty { Text(lastAction) }
                 Text(verbatim: "Models and capabilities are fictional. These controls do not connect an account or load a model.")
             }
-            .font(theme.font(size: 12))
-            .foregroundStyle(theme.secondaryText)
+            .textStyle(.caption)
+            .foregroundStyle(theme.text.secondary)
             .frame(maxWidth: 792, alignment: .leading)
         }
-        .padding(28)
+        .padding(theme.space.s24)
         .frame(width: 848, height: 680, alignment: .topLeading)
-        .foregroundStyle(theme.primaryText)
-        .background(theme.primaryBackground)
+        .foregroundStyle(theme.text.primary)
+        .background(theme.surface.canvas)
         .environment(\.theme, theme)
         .environment(\.colorScheme, light ? .light : .dark)
     }

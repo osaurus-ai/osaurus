@@ -48,6 +48,8 @@ final class NativeActivityGroupView: NSView {
     // MARK: State
 
     private var isExpanded = false
+    private var inspectionTheme: (any ThemeProtocol)?
+    private let inspectionHeader = InspectorActivityHeaderSurface()
     private var currentWidth: CGFloat = 0
     /// Same-block guard so the chevron only animates on a real expand-state
     /// change, never on cell recycling (mirrors NativeThinkingView).
@@ -99,6 +101,8 @@ final class NativeActivityGroupView: NSView {
         onToggle: @escaping () -> Void,
         onHeightChanged: @escaping () -> Void
     ) {
+        let theme = theme.catalogFamily(34)
+        inspectionTheme = theme
         self.onToggle = onToggle
         self.onHeightChanged = onHeightChanged
         self.onToggleChild = onToggleChild
@@ -106,13 +110,17 @@ final class NativeActivityGroupView: NSView {
         self.lastChildren = children
         self.lastExpandedIds = expandedIds
 
-        let tint = NSColor(theme.primaryText)
-        let titleFont = NSFont.systemFont(ofSize: CGFloat(theme.captionSize), weight: .semibold)
+        let tint = NSColor(theme.text.primary)
+        let titleFont = theme.assignedNativeFont(ActivityInspectionStyle.key + "heading", fallback: theme.nsFont(.caption, weight: .semibold))
         titleLabel.font = titleFont
         titleLabel.textColor = tint
         iconView.contentTintColor = tint
-        iconNode.layer?.backgroundColor = tint.withAlphaComponent(0.15).cgColor
-        iconNode.layer?.borderColor = tint.withAlphaComponent(0.55).cgColor
+        iconNode.layer?.backgroundColor = NSColor(theme.surface.hover).cgColor
+        iconNode.layer?.borderColor = NSColor(theme.border.default).cgColor
+        iconNode.layer?.borderWidth = theme.stroke.default
+        expandAllButton.font = theme.nsFont(.footnote, weight: .medium)
+        chevronView.contentTintColor = NSColor(theme.text.tertiary)
+        separatorView.layer?.backgroundColor = NSColor(theme.border.subtle).cgColor
 
         // A group is "live" when its own children say so — a thinking child
         // still streaming, or an unresolved tool call while the table streams.
@@ -127,11 +135,15 @@ final class NativeActivityGroupView: NSView {
         }
 
         if live {
+            let titleTracking = theme.assignedTracking(ActivityInspectionStyle.key + "heading")
+            let titleLineHeight: CGFloat? = theme.assignedLineHeight(ActivityInspectionStyle.key + "heading", fallback: titleFont.pointSize)
             shimmerLabel.configure(
                 text: L("Working"),
                 font: titleFont,
-                baseColor: tint.withAlphaComponent(0.45),
-                highlightColor: tint
+                baseColor: NSColor(theme.text.tertiary),
+                highlightColor: tint,
+                tracking: titleTracking,
+                lineHeight: titleLineHeight
             )
             titleLabel.isHidden = true
             shimmerLabel.isHidden = false
@@ -167,6 +179,10 @@ final class NativeActivityGroupView: NSView {
             animated: isSameBlock && expanded != self.isExpanded
         )
         self.isExpanded = expanded
+        ActivityInspectionStyle.label(titleLabel, property: "heading", theme: theme)
+        ActivityInspectionStyle.label(stepCountLabel, property: "caption", theme: theme)
+        inspectionHeader.configure(theme: theme, selected: expanded, element: "activityHeader")
+        applyAssignedLayout(theme)
         configuredBlockId = blockId
 
         contentContainer.isHidden = !expanded
@@ -187,7 +203,12 @@ final class NativeActivityGroupView: NSView {
         expandAllButton.toolTip =
             allStepsExpanded ? L("Collapse all steps") : L("Expand all steps")
         expandAllButton.setAccessibilityLabel(expandAllButton.toolTip ?? "")
-        expandAllButton.contentTintColor = NSColor(theme.tertiaryText)
+        expandAllButton.contentTintColor = NSColor(theme.text.tertiary)
+        let expandTitle = NSTextField(labelWithString: expandAllButton.title)
+        expandTitle.textColor = NSColor(theme.text.tertiary)
+        ActivityInspectionStyle.label(expandTitle, property: "caption", theme: theme)
+        expandAllButton.attributedTitle = expandTitle.attributedStringValue
+        expandAllButton.constraints.first { $0.firstAttribute == .height }?.constant = max(20, ActivityInspectionStyle.fieldHeight("caption", theme))
 
         if expanded {
             configureChildren(
@@ -213,12 +234,47 @@ final class NativeActivityGroupView: NSView {
         applyHeight()
     }
 
+    private func applyAssignedLayout(_ theme: any ThemeProtocol) {
+        let pad = ActivityInspectionStyle.layout("headerPaddingX", "padding", theme.space.s14, theme)
+        let contentPad = ActivityInspectionStyle.layout("contentPaddingX", "padding", theme.space.s14, theme)
+        let gap = ActivityInspectionStyle.layout("headerIconGap", "gap", theme.space.s8, theme)
+        let height = ActivityInspectionStyle.headerHeight(theme, fallback: 44, property: "heading")
+        headerButton.constraints.first { $0.firstAttribute == .height }?.constant = height
+        separatorView.constraints.first { $0.firstAttribute == .height }?.constant = ActivityInspectionStyle.metric("borderWidth", 1, theme)
+        childStack.spacing = ActivityInspectionStyle.layout("childGap", "gap", theme.space.s8, theme)
+        headerButton.catalogAssignmentTarget(["headerPaddingX", "headerPaddingY", "headerIconGap"].map { ActivityInspectionStyle.key + "elements.layout." + $0 }, name: "Grouped activity header", theme: theme)
+        contentContainer.catalogAssignmentTarget(["contentPaddingX", "contentTopGap", "contentBottomPadding", "childGap"].map { ActivityInspectionStyle.key + "elements.layout." + $0 } + [AgentContentSurfaceAssignments.key(34, "activityContent")], name: "Grouped activity content", theme: theme)
+        layer?.backgroundColor = NSColor(AgentContentSurfaceAssignments.color(34, "activityCard", theme)).cgColor
+        catalogAssignmentTarget([AgentContentSurfaceAssignments.key(34, "activityCard")], name: "Grouped activity card", theme: theme)
+        contentContainer.wantsLayer = true
+        contentContainer.layer?.backgroundColor = NSColor(AgentContentSurfaceAssignments.color(34, "activityContent", theme)).cgColor
+        layer?.borderColor = NSColor(theme.border.subtle).cgColor
+        layer?.borderWidth = ActivityInspectionStyle.metric("borderWidth", 0, theme)
+        layer?.cornerRadius = theme.radius.medium
+        iconNode.layer?.backgroundColor = NSColor(theme.surface.raised).cgColor
+        iconNode.layer?.borderColor = NSColor(theme.border.default).cgColor
+        separatorView.layer?.backgroundColor = NSColor(theme.border.subtle).cgColor
+        for c in constraints {
+            let view = c.firstItem as? NSView
+            if view === iconNode, c.firstAttribute == .leading { c.constant = pad }
+            if view === iconNode, c.firstAttribute == .centerY { c.constant = height / 2 }
+            if (view === titleLabel || view === shimmerLabel), c.firstAttribute == .leading { c.constant = gap }
+            if view === chevronView, c.firstAttribute == .trailing { c.constant = -pad }
+            if view === separatorView, c.firstAttribute == .top { c.constant = height }
+            if (view === separatorView || view === contentContainer), c.firstAttribute == .leading { c.constant = contentPad }
+            if (view === separatorView || view === contentContainer), c.firstAttribute == .trailing { c.constant = -contentPad }
+            if view === contentContainer, c.firstAttribute == .top { c.constant = ActivityInspectionStyle.layout("contentTopGap", "gap", theme.space.s8, theme) }
+        }
+    }
+
     // MARK: Measured height (used by cell coordinator)
 
     func measuredHeight() -> CGFloat {
-        let headerH: CGFloat = 44
-        let collapsedBottomInset: CGFloat = 4
-        guard isExpanded, !childOrder.isEmpty else { return headerH + collapsedBottomInset }
+        let theme = inspectionTheme ?? CustomizableTheme.light()
+        let headerH = ActivityInspectionStyle.headerHeight(theme, fallback: 44, property: "heading")
+        // Header height already includes vertical padding; keep its center
+        // aligned with the collapsed card instead of reserving empty content.
+        guard isExpanded, !childOrder.isEmpty else { return headerH }
         var contentH: CGFloat = 0
         for id in childOrder {
             guard let v = childViews[id] else { continue }
@@ -229,7 +285,7 @@ final class NativeActivityGroupView: NSView {
             }
         }
         contentH += childStack.spacing * CGFloat(max(0, childOrder.count - 1))
-        return headerH + 1 + 8 + contentH + 10
+        return headerH + ActivityInspectionStyle.metric("borderWidth", 1, theme) + ActivityInspectionStyle.layout("contentTopGap", "gap", theme.space.s8, theme) + contentH + ActivityInspectionStyle.layout("contentBottomPadding", "padding", theme.space.s10, theme)
     }
 
     // MARK: - Children
@@ -242,7 +298,7 @@ final class NativeActivityGroupView: NSView {
         sessionRedactions: [String: String],
         onToggleChild: @escaping (String) -> Void
     ) {
-        let childWidth = max(currentWidth - 28, 100)
+        let childWidth = max(currentWidth - 2 * ActivityInspectionStyle.layout("contentPaddingX", "padding", theme.space.s14, theme), 100)
         let newOrder = children.map(\.id)
 
         // Rebuild the stack arrangement only when membership/order changed;
@@ -361,10 +417,10 @@ final class NativeActivityGroupView: NSView {
 
     private func chipColor(_ key: StepChip.ChipColor, theme: any ThemeProtocol) -> NSColor {
         switch key {
-        case .neutral: return NSColor(theme.tertiaryText)
-        case .running: return NSColor(theme.accentColor)
-        case .success: return NSColor(theme.successColor)
-        case .error: return NSColor(theme.errorColor)
+        case .neutral: return NSColor(theme.text.tertiary)
+        case .running: return NSColor(theme.status.info.foreground)
+        case .success: return NSColor(theme.status.success.foreground)
+        case .error: return NSColor(theme.status.error.foreground)
         }
     }
 
@@ -385,13 +441,13 @@ final class NativeActivityGroupView: NSView {
             stepCount > 3
             ? L("steps")
             : (stepCount == 1 ? L("1 step") : "\(stepCount) \(L("steps"))")
-        stepCountLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) - 2, weight: .medium)
-        stepCountLabel.textColor = NSColor(theme.tertiaryText)
+        stepCountLabel.font = theme.nsFont(.micro, weight: .medium)
+        stepCountLabel.textColor = NSColor(theme.text.tertiary)
 
         let chips = Self.stepChips(for: children, stepCount: stepCount, isStreaming: isStreaming)
         let signature =
             chips.map { "\($0.glyph ?? $0.text ?? "")/\($0.colorKey.rawValue)" }
-            .joined(separator: ",") + "|dark:\(theme.isDark)"
+            .joined(separator: ",") + "|dark:\(theme.isDark)|style:\(theme.renderFingerprint)"
         guard signature != stepChipsSignature else { return }
         stepChipsSignature = signature
 
@@ -400,35 +456,40 @@ final class NativeActivityGroupView: NSView {
             v.removeFromSuperview()
         }
         // Opaque backing so overlapped circles don't show through each other.
-        let backing = NSColor(theme.primaryBackground)
+        let backing = NSColor(theme.surface.raised)
         for chip in chips {
             let color = chipColor(chip.colorKey, theme: theme)
-            stepChipsStack.addArrangedSubview(makeChipView(chip, color: color, backing: backing))
+            stepChipsStack.addArrangedSubview(makeChipView(chip, color: color, backing: backing, theme: theme))
         }
         // Trailing "steps" word (overflow case only — hidden views are
         // detached from the stack's layout). Positive gap after the
         // negatively-spaced circles.
         stepChipsStack.addArrangedSubview(stepCountLabel)
         if let lastChip = stepChipsStack.arrangedSubviews.dropLast().last {
-            stepChipsStack.setCustomSpacing(6, after: lastChip)
+            stepChipsStack.setCustomSpacing(ActivityInspectionStyle.metric("gap", theme.space.s6, theme), after: lastChip)
         }
     }
 
     private static let chipSize: CGFloat = 20
+    private static let iconNodeSize: CGFloat = 28
 
-    private func makeChipView(_ chip: StepChip, color: NSColor, backing: NSColor) -> NSView {
+    private func makeChipView(
+        _ chip: StepChip, color: NSColor, backing: NSColor, theme: any ThemeProtocol
+    ) -> NSView {
         let circle = NSView()
         circle.translatesAutoresizingMaskIntoConstraints = false
         circle.wantsLayer = true
         circle.layer?.cornerRadius = Self.chipSize / 2
-        circle.layer?.borderWidth = 1.5
-        circle.layer?.borderColor = color.withAlphaComponent(0.55).cgColor
+        circle.layer?.borderWidth = theme.stroke.default
+        circle.layer?.borderColor = NSColor(theme.border.default).cgColor
         circle.layer?.backgroundColor =
             (backing.blended(withFraction: 0.14, of: color) ?? backing).cgColor
-        circle.heightAnchor.constraint(equalToConstant: Self.chipSize).isActive = true
+        let chipHeight = max(Self.chipSize, ActivityInspectionStyle.fieldHeight("caption", theme, fallback: Self.chipSize))
+        circle.layer?.cornerRadius = chipHeight / 2
+        circle.heightAnchor.constraint(equalToConstant: chipHeight).isActive = true
 
         if let glyph = chip.glyph {
-            circle.widthAnchor.constraint(equalToConstant: Self.chipSize).isActive = true
+            circle.widthAnchor.constraint(equalToConstant: chipHeight).isActive = true
             let icon = NSImageView()
             icon.translatesAutoresizingMaskIntoConstraints = false
             icon.image = SymbolImageCache.image(
@@ -447,8 +508,9 @@ final class NativeActivityGroupView: NSView {
             // shrinks below a circle.
             let label = NSTextField(labelWithString: chip.text ?? "")
             label.translatesAutoresizingMaskIntoConstraints = false
-            label.font = NSFont.systemFont(ofSize: 9, weight: .semibold)
+            label.font = theme.nsFont(.micro, weight: .semibold)
             label.textColor = color
+            ActivityInspectionStyle.label(label, property: "caption", theme: theme)
             circle.addSubview(label)
             circle.widthAnchor.constraint(greaterThanOrEqualToConstant: Self.chipSize).isActive = true
             NSLayoutConstraint.activate([
@@ -494,15 +556,11 @@ final class NativeActivityGroupView: NSView {
 
         iconNode.translatesAutoresizingMaskIntoConstraints = false
         iconNode.wantsLayer = true
-        iconNode.layer?.cornerRadius = 14
-        iconNode.layer?.borderWidth = 1.5
-        iconNode.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.15).cgColor
-        iconNode.layer?.borderColor = NSColor.labelColor.withAlphaComponent(0.55).cgColor
+        iconNode.layer?.cornerRadius = Self.iconNodeSize / 2
         addSubview(iconNode)
 
         iconView.translatesAutoresizingMaskIntoConstraints = false
         iconView.image = SymbolImageCache.image("sparkles", accessibilityDescription: nil)
-        iconView.contentTintColor = NSColor.labelColor
         iconView.imageScaling = .scaleProportionallyUpOrDown
         iconNode.addSubview(iconView)
 
@@ -530,7 +588,6 @@ final class NativeActivityGroupView: NSView {
             "arrow.up.left.and.arrow.down.right", accessibilityDescription: nil,
             pointSize: 10, weight: .semibold)
         expandAllButton.title = L("Expand All")
-        expandAllButton.font = NSFont.systemFont(ofSize: 11, weight: .medium)
         expandAllButton.imagePosition = .imageLeading
         expandAllButton.isBordered = false
         expandAllButton.focusRingType = .none
@@ -546,13 +603,11 @@ final class NativeActivityGroupView: NSView {
         chevronView.wantsLayer = true
         chevronView.image = SymbolImageCache.image(
             "chevron.right", accessibilityDescription: nil, pointSize: 10, weight: .semibold)
-        chevronView.contentTintColor = .tertiaryLabelColor
         chevronView.imageScaling = .scaleProportionallyDown
         addSubview(chevronView)
 
         separatorView.translatesAutoresizingMaskIntoConstraints = false
         separatorView.wantsLayer = true
-        separatorView.layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.2).cgColor
         separatorView.isHidden = true
         addSubview(separatorView)
 
@@ -568,7 +623,7 @@ final class NativeActivityGroupView: NSView {
 
         let headerH: CGFloat = 44
 
-        let h = heightAnchor.constraint(equalToConstant: headerH + 4)
+        let h = heightAnchor.constraint(equalToConstant: headerH)
         h.priority = NSLayoutConstraint.Priority(rawValue: 750)
         h.isActive = true
         selfHeight = h
@@ -581,8 +636,8 @@ final class NativeActivityGroupView: NSView {
 
             iconNode.leadingAnchor.constraint(equalTo: leadingAnchor),
             iconNode.centerYAnchor.constraint(equalTo: topAnchor, constant: headerH / 2),
-            iconNode.widthAnchor.constraint(equalToConstant: 28),
-            iconNode.heightAnchor.constraint(equalToConstant: 28),
+            iconNode.widthAnchor.constraint(equalToConstant: Self.iconNodeSize),
+            iconNode.heightAnchor.constraint(equalToConstant: Self.iconNodeSize),
 
             iconView.centerXAnchor.constraint(equalTo: iconNode.centerXAnchor),
             iconView.centerYAnchor.constraint(equalTo: iconNode.centerYAnchor),
@@ -626,6 +681,9 @@ final class NativeActivityGroupView: NSView {
             childStack.bottomAnchor.constraint(equalTo: contentContainer.bottomAnchor),
         ])
 
+        inspectionHeader.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(inspectionHeader, positioned: .below, relativeTo: iconNode)
+        NSLayoutConstraint.activate([inspectionHeader.leadingAnchor.constraint(equalTo: leadingAnchor), inspectionHeader.trailingAnchor.constraint(equalTo: trailingAnchor), inspectionHeader.topAnchor.constraint(equalTo: topAnchor), inspectionHeader.heightAnchor.constraint(equalTo: headerButton.heightAnchor)])
         // Front of Z-order like the tool rows' header overlay, so clicks on
         // the title / step-count text toggle the same as the empty header
         // area. Transparent, and only 44pt tall, so it never paints over or

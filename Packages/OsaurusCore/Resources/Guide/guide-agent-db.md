@@ -6,7 +6,7 @@ order: 95
 
 # Agent Database and Self-Scheduling
 
-Two per-agent capabilities turn a stateless chat agent into something that remembers structured data across runs and wakes itself up to act on it. Both are off by default and independent — enable one, both, or neither in the agent's Abilities → Overview tab.
+Two per-agent capabilities turn a stateless chat agent into something that remembers structured data across runs and wakes itself up to act on it. Both are off by default and independent — enable one, both, or neither on the agent's Abilities page.
 
 ## Agent Database
 

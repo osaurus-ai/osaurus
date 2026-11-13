@@ -14,12 +14,12 @@ order: 180
 - New skill/plugin/MCP tools not appearing mid-chat: start a new chat so the session's capability manifest refreshes.
 - Port already in use: change the server port (Server tab or ask the assistant); ports below 1024 need elevated permissions — pick a higher one.
 - Permission prompts (Microphone, Accessibility, Screen Recording, Full Disk Access): grant in macOS System Settings → Privacy & Security, then retry.
-- Broken data store: Settings… (⌘,) → General → Advanced → Data & Storage → "Stores needing attention" → Retry or Reset (Reset quarantines the file, never deletes it).
+- Broken data store: Settings… (⌘,) → Privacy & Security → Data & Storage → "Stores needing attention" → Retry or Reset (Reset quarantines the file, never deletes it).
 
 ## Diagnostics
 
-- Insights tab: the persisted activity log — every model request (local or cloud), web search, URL fetch, MCP call, channel delivery, Router call, inbound API request and plugin call, with Local/Cloud badges, filters, Verify and Export. Open a row's Overview tab for the plain-language summary and any error message. Retention: Privacy → Activity Log.
-- Memory → Diagnostics for the memory store; Sandbox → Run Diagnostics for the VM.
+- Insights tab: the persisted activity log — every model request (local or cloud), web search, URL fetch, MCP call, channel delivery, Router call, inbound API request and plugin call, with Local/Cloud badges, filters, Verify and Export. Open a row's Overview tab for the plain-language summary and any error message. Retention: Privacy & Security → Activity Log.
+- Memory → Diagnostics for the memory store; Developer Tools → Sandbox → Troubleshooting → Run Diagnostics for the sandbox VM.
 - CLI: `osaurus status`.
 
 ## Getting help

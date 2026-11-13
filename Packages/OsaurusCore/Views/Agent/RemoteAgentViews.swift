@@ -27,11 +27,11 @@ struct RemoteAgentCard: View {
     let onChat: () -> Void
     let onRemove: () -> Void
 
-    @State private var isHovered: Bool = false
     @State private var showRemoveConfirm: Bool = false
     @ObservedObject private var workspacesService = WorkspacesService.shared
+    @ObservedObject private var providers = RemoteProviderManager.shared
 
-    private var color: Color { agentColorFor(remote.name) }
+    private var color: Color { theme.dataInk(seed: remote.name) }
 
     /// Workspace this pairing is managed by, when the roster/pairing recorded
     /// one. A workspace-managed agent can't be meaningfully "removed" here —
@@ -42,56 +42,22 @@ struct RemoteAgentCard: View {
     }
 
     var body: some View {
-        Button(action: onSelect) {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .center, spacing: 12) {
-                    avatar
-                    metadata
-                    Spacer(minLength: 8)
-                    overflowMenu
-                }
-
-                if !remote.description.isEmpty {
-                    Text(remote.description)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                        .lineLimit(2)
-                        .lineSpacing(2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                } else {
-                    Text("No description", bundle: .module)
-                        .font(.system(size: 12).italic())
-                        .foregroundColor(theme.tertiaryText)
-                        .lineLimit(2)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                Spacer(minLength: 0)
-                stats
-            }
-            .frame(maxWidth: .infinity, minHeight: 140, alignment: .top)
-            .padding(16)
-            .background(cardBackground)
-            .overlay(hoverGradient)
-            .overlay(alignment: .bottomTrailing) { hoverChevron }
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .overlay(cardBorder)
-            .shadow(
-                color: Color.black.opacity(isHovered ? 0.08 : 0.04),
-                radius: isHovered ? 10 : 5,
-                x: 0,
-                y: isHovered ? 3 : 2
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(PlainButtonStyle())
-        .scaleEffect(isHovered ? 1.01 : (hasAppeared ? 1 : 0.95))
-        .opacity(hasAppeared ? 1 : 0)
-        .offset(y: hasAppeared ? 0 : 20)
-        .animation(.spring(response: 0.4, dampingFraction: 0.8).delay(animationDelay), value: hasAppeared)
-        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isHovered)
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) { isHovered = hovering }
+        LibraryCard(
+            title: remote.name,
+            subtitle: sharingWorkspace.map { String(format: L("Shared via %@"), $0.name) } ?? remote.shortAddress,
+            animationDelay: animationDelay,
+            hasAppeared: hasAppeared,
+            action: onSelect
+        ) {
+            avatar
+        } badges: {
+            PresenceStatusChip(SharedAgentStatus.forDirectShareRow(remote))
+        } content: {
+            LibraryCardPreview(text: remote.description)
+        } footer: {
+            LibraryStatRow(stats: stats)
+        } menu: {
+            menuItems
         }
         .themedAlert(
             "Remove this remote agent?",
@@ -109,17 +75,11 @@ struct RemoteAgentCard: View {
     private var avatar: some View {
         ZStack {
             Circle()
-                .fill(
-                    LinearGradient(
-                        colors: [color.opacity(0.15), color.opacity(0.05)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
+                .fill(theme.wash(behind: color))
             Circle()
-                .strokeBorder(color.opacity(0.4), lineWidth: 2)
+                .strokeBorder(theme.rule(around: color), lineWidth: theme.stroke.focus)
             Text(remote.name.prefix(1).uppercased())
-                .font(.system(size: 16, weight: .bold, design: .rounded))
+                .font(SettingsFont.detailTitle)
                 .foregroundColor(color)
             // Tiny "remote" decoration in the bottom-right of the avatar (same
             // badge the detail header / switcher rows use). Reads at a glance
@@ -130,37 +90,9 @@ struct RemoteAgentCard: View {
         .frame(width: 36, height: 36)
     }
 
-    private var metadata: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
-                Text(remote.name)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                    .lineLimit(1)
-
-                // Same chip recipe as the local AgentCard's "Active" badge so
-                // the grid's status chips read at the same weight/size.
-                CapsuleBadge(L("Remote"), tint: theme.accentColor, icon: "antenna.radiowaves.left.and.right")
-            }
-            if let workspace = sharingWorkspace {
-                HStack(spacing: 4) {
-                    Image(systemName: "rectangle.3.group.fill")
-                        .font(.system(size: 9))
-                    Text(String(format: L("Shared via %@"), workspace.name))
-                        .lineLimit(1)
-                }
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
-            } else {
-                Text(remote.shortAddress)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
-            }
-        }
-    }
-
-    private var overflowMenu: some View {
-        Menu {
+    @ViewBuilder
+    private var menuItems: some View {
+        Group {
             Button {
                 onChat()
             } label: {
@@ -199,85 +131,27 @@ struct RemoteAgentCard: View {
                     }
                 }
             }
-        } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-                .frame(width: 24, height: 24)
-                .background(Circle().fill(theme.tertiaryBackground))
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .frame(width: 24)
     }
 
-    private var stats: some View {
-        HStack(spacing: 12) {
-            statChip(icon: "calendar", text: "Paired \(remote.pairedAt.formatted(.relative(presentation: .named)))")
-            if let used = remote.lastUsedAt {
-                statChip(icon: "clock", text: "Used \(used.formatted(.relative(presentation: .named)))")
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private func statChip(icon: String, text: String) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.system(size: 9))
-            Text(text)
-                .font(.system(size: 10, weight: .medium))
-                .lineLimit(1)
-        }
-        .foregroundColor(theme.tertiaryText)
-        .padding(.horizontal, 6)
-        .padding(.vertical, 2)
-        .background(Capsule().fill(theme.tertiaryBackground.opacity(0.5)))
-    }
-
-    private var cardBackground: some View {
-        RoundedRectangle(cornerRadius: 12)
-            .fill(theme.cardBackground)
-    }
-
-    private var hoverGradient: some View {
-        RoundedRectangle(cornerRadius: 12)
-            .fill(
-                LinearGradient(
-                    colors: [
-                        color.opacity(isHovered ? 0.06 : 0),
-                        Color.clear,
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
+    private var stats: [LibraryStat] {
+        var stats = [
+            LibraryStat(
+                icon: "calendar",
+                text: String(
+                    format: L("Paired %@"), remote.pairedAt.formatted(.relative(presentation: .named))
                 )
             )
-            .allowsHitTesting(false)
-            .animation(.easeOut(duration: 0.15), value: isHovered)
-    }
-
-    private var cardBorder: some View {
-        RoundedRectangle(cornerRadius: 12)
-            .strokeBorder(
-                isHovered ? color.opacity(0.25) : theme.cardBorder,
-                lineWidth: isHovered ? 1.5 : 1
+        ]
+        if let used = remote.lastUsedAt {
+            stats.append(
+                LibraryStat(
+                    icon: "clock",
+                    text: String(format: L("Used %@"), used.formatted(.relative(presentation: .named)))
+                )
             )
-    }
-
-    /// Same hover-reveal "open" affordance the local AgentCard uses, tinted to
-    /// the agent's deterministic color so local + remote cards share a
-    /// hover language.
-    private var hoverChevron: some View {
-        Image(systemName: "arrow.up.right")
-            .font(.system(size: 10, weight: .bold))
-            .foregroundColor(color)
-            .frame(width: 22, height: 22)
-            .background(Circle().fill(color.opacity(0.12)))
-            .padding(10)
-            .opacity(isHovered ? 1 : 0)
-            .scaleEffect(isHovered ? 1 : 0.85)
-            .allowsHitTesting(false)
-            .animation(.easeOut(duration: 0.15), value: isHovered)
+        }
+        return stats
     }
 }
 
@@ -321,12 +195,12 @@ struct RemoteAgentDetailView: View {
     /// suppress the initial onChange that fires when `note` is hydrated on
     /// appear, so the user doesn't see a phantom "Saved" pill on every visit.
     @State private var noteHydrated: Bool = false
-    /// Which content tab is showing. Mirrors the local agent detail's tabbed
-    /// shell so both surfaces navigate the same way.
+    /// Overview, or the sub-page pushed from its last group. Mirrors the
+    /// local agent detail so both surfaces navigate the same way.
     @State private var selectedTab: RemoteDetailTab = .overview
 
     private var remote: RemoteAgent? { manager.remoteAgent(for: remoteId) }
-    private var color: Color { agentColorFor(remote?.name ?? "") }
+    private var color: Color { theme.dataInk(seed: remote?.name ?? "") }
 
     /// Workspace that manages this pairing, if any (see `RemoteAgentCard`).
     private var sharingWorkspace: OsaurusRouterWorkspaceSummary? {
@@ -334,60 +208,58 @@ struct RemoteAgentDetailView: View {
         return RemoteAgentWorkspaceAttribution.workspace(for: remote, in: workspacesService.workspaces)
     }
 
-    /// The two content tabs for a paired remote agent. Kept deliberately small
-    /// — the remote surface is read-only-ish — but mirrors the local detail
-    /// view's tabbed shell so both navigate the same way.
-    private enum RemoteDetailTab: Hashable {
+    /// The pages of a paired remote agent. Kept deliberately small — the
+    /// remote surface is read-only-ish.
+    private enum RemoteDetailTab: Hashable, SettingsDrillInItem {
         case overview
         case activity
+
+        var id: Self { self }
+
+        var title: String {
+            switch self {
+            case .overview: return L("Overview")
+            case .activity: return L("Activity")
+            }
+        }
+
+        var icon: String {
+            switch self {
+            case .overview: return "info.circle"
+            case .activity: return "waveform.path.ecg"
+            }
+        }
+
+        var subtitle: String {
+            switch self {
+            case .overview: return ""
+            case .activity: return L("Requests and tokens this session.")
+            }
+        }
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        Group {
             if let remote {
-                header(for: remote)
-
-                // Same folder-tab chrome as the local agent detail. Each tab
-                // is a single-item group, so no sub-tab drawer renders — the
-                // strip owns its own padding and sits flush here.
-                AgentDetailGroupedTabStrip(groups: tabGroups(for: remote), selection: $selectedTab)
-
-                Divider()
-                    .foregroundColor(theme.primaryBorder)
-
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        tabSections(for: remote)
-                    }
-                    .padding(24)
-                    .id(selectedTab)
+                SettingsPage {
+                    header(for: remote)
+                } content: {
+                    tabSections(for: remote)
                 }
-                .background(theme.primaryBackground)
+                .id(selectedTab)
             } else {
-                unavailableHeader
-
-                ScrollView {
-                    VStack(spacing: 12) {
-                        Image(systemName: "antenna.radiowaves.left.and.right.slash")
-                            .font(.system(size: 32))
-                            .foregroundColor(theme.tertiaryText)
-                        Text("This remote agent is no longer available.", bundle: .module)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.tertiaryText)
-                        Button {
-                            onBack()
-                        } label: {
-                            Text("Go back", bundle: .module)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.top, 80)
+                SettingsPage {
+                    SettingsPageHeader(title: "Remote Agent")
+                        .settingsBackDestination(L("Agents"), verbatim: true, action: onBack)
+                } content: {
+                    SettingsEmptyState(
+                        inline: "antenna.radiowaves.left.and.right.slash",
+                        title: "This remote agent is no longer available.",
+                        secondaryAction: .init(title: L("Go back"), icon: "", handler: onBack)
+                    )
                 }
-                .background(theme.primaryBackground)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
         .onAppear {
             note = remote?.note ?? ""
             // Mark hydrated on the next runloop tick so the onChange that
@@ -412,29 +284,9 @@ struct RemoteAgentDetailView: View {
         )
     }
 
-    /// Overview / Activity as single-item groups so the remote detail shares
-    /// the local detail's folder-tab strip (no second row renders for
-    /// single-tab groups). The Activity tab carries a badge with this
-    /// session's request count once the agent has been used.
-    private func tabGroups(for remote: RemoteAgent) -> [AgentDetailTabGroup<RemoteDetailTab>] {
+    private func activityBadges(for remote: RemoteAgent) -> [RemoteDetailTab: Int] {
         let activity = insights.activity(forProviderId: remote.providerId)
-        return [
-            AgentDetailTabGroup(
-                id: "overview",
-                label: L("Overview"),
-                icon: "info.circle",
-                items: [AgentDetailTabItem(id: .overview, label: L("Overview"), icon: "info.circle")]
-            ),
-            AgentDetailTabGroup(
-                id: "activity",
-                label: L("Activity"),
-                icon: "waveform.path.ecg",
-                items: [
-                    AgentDetailTabItem(id: .activity, label: L("Activity"), icon: "waveform.path.ecg")
-                ],
-                badgeCount: activity.isEmpty ? nil : activity.requestCount
-            ),
-        ]
+        return activity.isEmpty ? [:] : [.activity: activity.requestCount]
     }
 
     @ViewBuilder
@@ -444,6 +296,7 @@ struct RemoteAgentDetailView: View {
             connectionCard(for: remote)
             sourceCard(for: remote)
             noteCard(for: remote)
+            SettingsDrillInList(items: [.activity], badges: activityBadges(for: remote)) { selectedTab = $0 }
         case .activity:
             activityCard(for: remote)
         }
@@ -452,113 +305,65 @@ struct RemoteAgentDetailView: View {
     // MARK: Header
 
     private func header(for remote: RemoteAgent) -> some View {
-        AgentDetailHeaderBar(
-            onBack: onBack,
-            identity: { identityButton(for: remote) },
-            status: { connectionStatusPill(for: remote) },
-            actions: {
-                HStack(spacing: 6) {
-                    AgentDetailHeaderActionButton(
-                        icon: "bubble.left.and.bubble.right",
-                        tint: theme.accentColor,
-                        help: "Chat with this Agent",
-                        action: { onChat(remote) }
+        let onOverview = selectedTab == .overview
+        return SettingsPageHeader(
+            title: onOverview ? remote.name : selectedTab.title,
+            verbatimTitle: true,
+            subtitle: onOverview && !remote.description.isEmpty ? remote.description : nil,
+            verbatimSubtitle: true,
+            onRefresh: { refreshLiveMetadata() },
+            refreshHelp: "Refresh from the agent",
+            isRefreshing: isRefreshingMetadata,
+            leading: {
+                AgentHeaderAvatar(mascotId: remote.avatar, name: remote.name, tint: color, showsRemoteGlyph: true) {
+                    showingAgentSwitcher = true
+                }
+                .popover(isPresented: $showingAgentSwitcher, arrowEdge: .bottom) {
+                    AgentSwitcherPopover(
+                        localAgents: AgentManager.shared.agents.filter { !$0.isBuiltIn },
+                        remoteAgents: manager.remoteAgents,
+                        currentLocalAgentId: nil,
+                        currentRemoteAgentId: remote.id,
+                        onSelectLocal: { agent in
+                            showingAgentSwitcher = false
+                            onSwitchAgent(agent)
+                        },
+                        onSelectRemote: { other in
+                            showingAgentSwitcher = false
+                            onSwitchRemoteAgent(other.id)
+                        },
+                        onDismiss: { showingAgentSwitcher = false }
                     )
-                    if let workspace = sharingWorkspace {
-                        AgentDetailHeaderActionButton(
-                            icon: "rectangle.3.group",
-                            tint: theme.secondaryText,
-                            help: "Open workspace",
-                            action: { RemoteAgentWorkspaceAttribution.openWorkspace(id: workspace.id) }
-                        )
-                    } else {
-                        AgentDetailHeaderActionButton(
-                            icon: "trash",
-                            tint: theme.errorColor,
-                            help: "Remove",
-                            action: { showRemoveConfirm = true }
-                        )
+                    .environment(\.theme, theme)
+                }
+            },
+            status: { connectionStatusPill(for: remote) },
+            utilities: {
+                SettingsIconButton("bubble.left.and.bubble.right", help: "Chat with this Agent") { onChat(remote) }
+                if let workspace = sharingWorkspace {
+                    SettingsIconButton("rectangle.3.group", help: "Open workspace") {
+                        RemoteAgentWorkspaceAttribution.openWorkspace(id: workspace.id)
+                    }
+                }
+            },
+            overflow: {
+                if sharingWorkspace == nil {
+                    Button(role: .destructive, action: { showRemoveConfirm = true }) {
+                        Label(L("Remove"), systemImage: "trash")
                     }
                 }
             }
         )
-    }
-
-    /// Tappable identity block mirroring the local header: avatar (carrying the
-    /// remote antenna glyph instead of a free-floating "Remote" pill) + name +
-    /// switcher chevron. Tapping opens the shared agent switcher so the user can
-    /// hop between local and remote agents from here too.
-    private func identityButton(for remote: RemoteAgent) -> some View {
-        Button {
-            showingAgentSwitcher = true
-        } label: {
-            AgentDetailIdentityLabel(
-                mascotId: remote.avatar,
-                name: remote.name,
-                tint: color,
-                subtitle: remote.description,
-                showsChevron: true,
-                maxWidth: 240,
-                showsRemoteGlyph: true,
-                glyphRingColor: theme.secondaryBackground
-            )
-            .contentShape(Rectangle())
+        .settingsBackDestination(onOverview ? L("Agents") : remote.name, verbatim: true) {
+            if onOverview { onBack() } else { selectedTab = .overview }
         }
-        .buttonStyle(PlainButtonStyle())
-        .localizedHelp("Switch agent")
-        .popover(isPresented: $showingAgentSwitcher, arrowEdge: .bottom) {
-            AgentSwitcherPopover(
-                localAgents: AgentManager.shared.agents.filter { !$0.isBuiltIn },
-                remoteAgents: manager.remoteAgents,
-                currentLocalAgentId: nil,
-                currentRemoteAgentId: remote.id,
-                onSelectLocal: { agent in
-                    showingAgentSwitcher = false
-                    onSwitchAgent(agent)
-                },
-                onSelectRemote: { other in
-                    showingAgentSwitcher = false
-                    onSwitchRemoteAgent(other.id)
-                },
-                onDismiss: { showingAgentSwitcher = false }
-            )
-            .environment(\.theme, theme)
-        }
-    }
-
-    /// Back-only header shown when the remote agent can no longer be resolved
-    /// (e.g. it was removed in another window) so the user can still navigate
-    /// back.
-    private var unavailableHeader: some View {
-        AgentDetailHeaderBar(
-            onBack: onBack,
-            identity: {
-                HStack(spacing: 6) {
-                    Image(systemName: "antenna.radiowaves.left.and.right")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.accentColor)
-                    Text("Remote Agent", bundle: .module)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                }
-            },
-            status: { EmptyView() },
-            actions: { EmptyView() }
-        )
     }
 
     /// Compact connection-state pill for the header's status slot so the live
     /// link state is visible regardless of which tab is showing.
     private func connectionStatusPill(for remote: RemoteAgent) -> some View {
         let currentPhase = phase(for: remote)
-        return HStack(spacing: 5) {
-            Circle()
-                .fill(phaseColor(currentPhase))
-                .frame(width: 6, height: 6)
-            Text(currentPhase.label, bundle: .module)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-        }
+        return StatusChip(currentPhase.label, tint: phaseColor(currentPhase), showsDot: true)
     }
 
     // MARK: Connection
@@ -572,12 +377,12 @@ struct RemoteAgentDetailView: View {
         case disconnected
         case failed(String)
 
-        var label: LocalizedStringKey {
+        var label: String {
             switch self {
-            case .connected: return "Connected"
-            case .connecting: return "Connecting…"
-            case .disconnected: return "Disconnected"
-            case .failed: return "Connection failed"
+            case .connected: return L("Connected")
+            case .connecting: return L("Connecting…")
+            case .disconnected: return L("Disconnected")
+            case .failed: return L("Connection failed")
             }
         }
     }
@@ -595,61 +400,39 @@ struct RemoteAgentDetailView: View {
 
     private func phaseColor(_ phase: ConnectionPhase) -> Color {
         switch phase {
-        case .connected: return theme.successColor
-        case .connecting: return .orange
-        case .disconnected: return theme.tertiaryText
-        case .failed: return theme.errorColor
+        case .connected: return theme.status.success.foreground
+        case .connecting: return theme.status.warning.foreground
+        case .disconnected: return theme.text.tertiary
+        case .failed: return theme.status.error.foreground
         }
     }
 
     private func connectionCard(for remote: RemoteAgent) -> some View {
         let currentPhase = phase(for: remote)
-        return AgentDetailSection(
-            title: L("Connection"),
-            icon: "antenna.radiowaves.left.and.right",
-            trailing: {
-                HStack(spacing: 6) {
-                    if isRefreshingMetadata {
-                        ProgressView()
-                            .controlSize(.mini)
-                            .scaleEffect(0.7)
-                    }
-                    Button {
-                        refreshLiveMetadata()
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(theme.accentColor)
-                    }
-                    .buttonStyle(.plain)
-                    .help(Text("Refresh from the agent", bundle: .module))
-                    .disabled(isRefreshingMetadata)
-                }
-            }
-        ) {
-            AgentDetailStatusRow(
-                label: "Status",
+        return SettingsSection(title: "Connection") {
+            SettingsValueRow(
+                title: "Status",
                 value: currentPhase.label,
-                dotColor: phaseColor(currentPhase)
+                dot: phaseColor(currentPhase)
             )
             if case .failed(let message) = currentPhase {
                 Text(message)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.errorColor.opacity(0.85))
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.status.error.foreground)
                     .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            AgentDetailMetadataRow(
-                label: "Mode",
+            SettingsValueRow(
+                title: "Mode",
                 value: NSLocalizedString("Remote agent run", bundle: .module, comment: "")
             )
-            AgentDetailMetadataRow(
-                label: "Encryption",
-                value: NSLocalizedString("Secure Channel (E2E)", bundle: .module, comment: "")
+            SettingsValueRow(
+                title: "Encryption",
+                value: NSLocalizedString("End-to-end encrypted", bundle: .module, comment: "")
             )
-            AgentDetailMetadataRow(
-                label: "Model",
+            SettingsValueRow(
+                title: "Model",
                 value: liveEffectiveModel
                     ?? remote.model
                     ?? NSLocalizedString("Default (agent decides)", bundle: .module, comment: "")
@@ -661,67 +444,65 @@ struct RemoteAgentDetailView: View {
 
     @ViewBuilder
     private func connectionActionRow(for remote: RemoteAgent, phase: ConnectionPhase) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             if phase == .connected {
                 Button {
                     providerManager.disconnect(providerId: remote.providerId)
                 } label: {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         Image(systemName: "bolt.slash")
-                            .font(.system(size: 11))
+                            .glyphSize(.footnote)
                         Text("Disconnect", bundle: .module)
                     }
                 }
-                .buttonStyle(SecondaryButtonStyle())
+                .assignedSettingsButtonStyle(.secondary)
             } else {
                 Button {
                     connect(remote)
                 } label: {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         Image(systemName: "bolt")
-                            .font(.system(size: 11))
+                            .glyphSize(.footnote)
                         Text("Connect", bundle: .module)
                     }
                 }
-                .buttonStyle(SecondaryButtonStyle())
+                .assignedSettingsButtonStyle(.secondary)
                 .disabled(phase == .connecting)
             }
             Spacer()
         }
-        .padding(.top, 2)
+        .padding(.top, theme.space.s2)
     }
 
     // MARK: Activity
 
     private func activityCard(for remote: RemoteAgent) -> some View {
         let activity = insights.activity(forProviderId: remote.providerId)
-        return AgentDetailSection(
-            title: L("Activity"),
-            icon: "waveform.path.ecg",
-            trailing: {
+        return SettingsSection(
+            title: "This Session",
+            accessory: {
                 if !activity.isEmpty {
                     Button {
                         viewInInsights(remote)
                     } label: {
-                        HStack(spacing: 4) {
+                        Label {
                             Text("View in Insights", bundle: .module)
-                                .font(.system(size: 11, weight: .medium))
+                        } icon: {
                             Image(systemName: "arrow.up.right")
-                                .font(.system(size: 9, weight: .semibold))
                         }
-                        .foregroundColor(theme.accentColor)
+                        .labelStyle(.titleAndIcon)
                     }
-                    .buttonStyle(.plain)
+                    .assignedSettingsButtonStyle(.tertiary, size: .compact)
                 }
             }
         ) {
             if activity.isEmpty {
                 Text("No requests recorded this session.", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                HStack(spacing: 10) {
+                HStack(spacing: theme.space.s10) {
                     activityStat(
                         value: "\(activity.requestCount)",
                         label: Text("Requests", bundle: .module)
@@ -742,21 +523,18 @@ struct RemoteAgentDetailView: View {
     }
 
     private func activityStat(value: String, label: Text) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
             Text(value)
-                .font(.system(size: 15, weight: .semibold, design: .rounded))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.cardTitle)
+                .foregroundColor(theme.text.primary)
                 .lineLimit(1)
             label
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
+                .textStyle(.micro, weight: 500)
+                .foregroundColor(theme.text.tertiary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.tertiaryBackground.opacity(0.4))
-        )
+        .padding(theme.space.s8)
+        .settingsChrome(.inset)
     }
 
     // MARK: Connection actions
@@ -802,20 +580,20 @@ struct RemoteAgentDetailView: View {
     }
 
     private func sourceCard(for remote: RemoteAgent) -> some View {
-        AgentDetailSection(title: L("Source"), icon: "globe") {
+        SettingsSection(title: "Source") {
             if let workspace = sharingWorkspace {
-                HStack(spacing: 8) {
-                    AgentDetailMetadataRow(label: "Shared via", value: workspace.name)
+                HStack(spacing: theme.space.s8) {
+                    SettingsValueRow(title: "Shared via", value: workspace.name)
                     Button {
                         RemoteAgentWorkspaceAttribution.openWorkspace(id: workspace.id)
                     } label: {
-                        HStack(spacing: 4) {
+                        HStack(spacing: theme.space.s4) {
                             Text("Open workspace", bundle: .module)
-                                .font(.system(size: 11, weight: .medium))
+                                .font(SettingsFont.smallLabel)
                             Image(systemName: "arrow.up.right")
-                                .font(.system(size: 9, weight: .semibold))
+                                .glyphSize(.tiny, weight: .semibold)
                         }
-                        .foregroundColor(theme.accentColor)
+                        .foregroundColor(theme.text.link)
                     }
                     .buttonStyle(.plain)
                 }
@@ -823,24 +601,24 @@ struct RemoteAgentDetailView: View {
                     "Managed by the workspace: it re-pairs automatically while it stays shared. Leave the workspace or ask the owner to unshare it to remove it.",
                     bundle: .module
                 )
-                .font(.system(size: 10))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.footnote)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
             } else if remote.isWorkspaceManaged {
-                AgentDetailMetadataRow(
-                    label: "Shared via",
+                SettingsValueRow(
+                    title: "Shared via",
                     value: NSLocalizedString("A workspace you're no longer in", bundle: .module, comment: "")
                 )
             }
-            AgentDetailMetadataRow(label: "Address", value: remote.agentAddress, mono: true)
-            AgentDetailMetadataRow(label: "Relay URL", value: remote.relayBaseURL, mono: true)
-            AgentDetailMetadataRow(
-                label: "Paired",
+            SettingsValueRow(title: "Address", value: remote.agentAddress, monospaced: true)
+            SettingsValueRow(title: "Relay URL", value: remote.relayBaseURL, monospaced: true)
+            SettingsValueRow(
+                title: "Paired",
                 value: remote.pairedAt.formatted(date: .abbreviated, time: .shortened)
             )
             if let last = remote.lastUsedAt {
-                AgentDetailMetadataRow(
-                    label: "Last Used",
+                SettingsValueRow(
+                    title: "Last Used",
                     value: last.formatted(date: .abbreviated, time: .shortened)
                 )
             }
@@ -848,23 +626,22 @@ struct RemoteAgentDetailView: View {
     }
 
     private func noteCard(for remote: RemoteAgent) -> some View {
-        AgentDetailSection(
-            title: L("Your Note"),
-            icon: "note.text",
-            trailing: {
+        SettingsSection(
+            title: "Your Note",
+            accessory: {
                 if noteSaved {
-                    HStack(spacing: 4) {
+                    HStack(spacing: theme.space.s4) {
                         Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 10))
+                            .glyphSize(.micro)
                         Text("Saved", bundle: .module)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(SettingsFont.smallLabel)
                     }
-                    .foregroundColor(theme.successColor)
+                    .foregroundColor(theme.status.success.foreground)
                     .transition(.opacity.combined(with: .scale(scale: 0.9)))
                 }
             }
         ) {
-            StyledTextField(
+            SettingsTextField(
                 placeholder: "e.g., Alice's research agent",
                 text: $note,
                 icon: "text.alignleft",
@@ -887,10 +664,10 @@ struct RemoteAgentDetailView: View {
             try? await Task.sleep(nanoseconds: 500_000_000)
             guard !Task.isCancelled else { return }
             manager.updateNote(value, for: id)
-            withAnimation(.easeOut(duration: 0.2)) { noteSaved = true }
+            withAnimation(theme.motion.quick) { noteSaved = true }
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.3)) { noteSaved = false }
+            withAnimation(theme.motion.standard) { noteSaved = false }
         }
     }
 

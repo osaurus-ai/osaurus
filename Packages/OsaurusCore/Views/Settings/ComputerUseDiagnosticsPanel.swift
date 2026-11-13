@@ -34,35 +34,35 @@ struct ComputerUseDiagnosticsPanel: View {
 
     var body: some View {
         DisclosureGroup(isExpanded: $isExpanded) {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: theme.space.s16) {
                 permissionDoctorSection
-                Divider().background(theme.cardBorder)
+                Divider().background(theme.border.default)
                 gateInspectorSection
             }
-            .padding(.top, 14)
+            .padding(.top, theme.space.s12)
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: "wrench.and.screwdriver")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(theme.accentColor)
-                VStack(alignment: .leading, spacing: 2) {
+                    .glyphSize(.body, weight: .medium)
+                    .foregroundColor(theme.text.link)
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text(L("Diagnostics"))
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.sectionTitle)
+                        .foregroundColor(theme.text.primary)
                     Text(L("Permission Doctor and autonomy gate inspector."))
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.tertiary)
                 }
                 Spacer()
             }
             .contentShape(Rectangle())
             .onTapGesture {
-                withAnimation(.easeInOut(duration: 0.2)) {
+                withAnimation(theme.motion.quick) {
                     isExpanded.toggle()
                 }
             }
         }
-        .accentColor(theme.tertiaryText)
+        .tint(theme.text.tertiary)
         .task(id: inspectorFingerprint) {
             await refreshInspection()
         }
@@ -71,23 +71,23 @@ struct ComputerUseDiagnosticsPanel: View {
     // MARK: - Permission Doctor
 
     private var permissionDoctorSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             sectionTitle(L("Permission Doctor"))
             helperText(
                 L("Read-only snapshot of the cached permission and consent state Computer Use already uses.")
             )
 
-            VStack(spacing: 8) {
+            VStack(spacing: theme.space.s8) {
                 ForEach(doctorSnapshot.rows) { row in
                     diagnosticRow(row)
                 }
             }
 
             if !doctorSnapshot.agentAvailability.rows.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: theme.space.s6) {
                     Text(L("Agent availability"))
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.smallLabel)
+                        .foregroundColor(theme.text.secondary)
                     ForEach(doctorSnapshot.agentAvailability.rows) { row in
                         agentAvailabilityRow(row)
                     }
@@ -139,7 +139,7 @@ struct ComputerUseDiagnosticsPanel: View {
     // MARK: - Gate Inspector
 
     private var gateInspectorSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             sectionTitle(L("Autonomy Gate Inspector"))
             helperText(
                 L("Preview a proposed app action against the current policy without running it.")
@@ -156,16 +156,16 @@ struct ComputerUseDiagnosticsPanel: View {
     }
 
     private var inspectorInputs: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
+            HStack(alignment: .top, spacing: theme.space.s10) {
                 labeledTextField(L("App"), text: $previewApp, placeholder: L("Notes"))
                 verbPicker
             }
-            HStack(alignment: .top, spacing: 10) {
+            HStack(alignment: .top, spacing: theme.space.s10) {
                 labeledTextField(L("Target label"), text: $previewTargetLabel, placeholder: L("Save"))
                 labeledTextField(L("Target role"), text: $previewTargetRole, placeholder: L("AXButton"))
             }
-            HStack(alignment: .top, spacing: 10) {
+            HStack(alignment: .top, spacing: theme.space.s10) {
                 labeledTextField(L("Target value"), text: $previewTargetValue, placeholder: L("Optional"))
                 labeledTextField(
                     L("Role description"),
@@ -173,11 +173,11 @@ struct ComputerUseDiagnosticsPanel: View {
                     placeholder: L("Optional")
                 )
             }
-            HStack(alignment: .top, spacing: 10) {
+            HStack(alignment: .top, spacing: theme.space.s10) {
                 labeledTextField(L("Typed text"), text: $previewText, placeholder: L("For type/set"))
                 labeledTextField(L("Key"), text: $previewKey, placeholder: L("For press_key"))
             }
-            HStack(alignment: .top, spacing: 10) {
+            HStack(alignment: .top, spacing: theme.space.s10) {
                 labeledTextField(
                     L("Modifiers"),
                     text: $previewModifiers,
@@ -194,77 +194,33 @@ struct ComputerUseDiagnosticsPanel: View {
     }
 
     private var verbPicker: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             fieldLabel(L("Verb"))
-            Menu {
+            SettingsMenuPicker(selection: $previewVerb) {
                 ForEach(AgentVerb.allCases, id: \.self) { verb in
-                    Button {
-                        previewVerb = verb
-                    } label: {
-                        if previewVerb == verb {
-                            Label {
-                                Text(verbatim: verbLabel(verb))
-                            } icon: {
-                                Image(systemName: "checkmark")
-                            }
-                        } else {
-                            Text(verbatim: verbLabel(verb))
-                        }
-                    }
+                    Text(verbatim: verbLabel(verb)).tag(verb)
                 }
-            } label: {
-                pickerLabel(verbLabel(previewVerb))
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var ceilingPicker: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             fieldLabel(L("Preview ceiling"))
-            Menu {
-                Button {
-                    previewCeilingPreset = nil
-                } label: {
-                    if previewCeilingPreset == nil {
-                        Label {
-                            Text(L("No ceiling"))
-                        } icon: {
-                            Image(systemName: "checkmark")
-                        }
-                    } else {
-                        Text(L("No ceiling"))
-                    }
-                }
+            SettingsMenuPicker(selection: $previewCeilingPreset) {
+                Text(L("No ceiling")).tag(AutonomyPreset?.none)
                 Divider()
                 ForEach(AutonomyPreset.allCases) { preset in
-                    Button {
-                        previewCeilingPreset = preset
-                    } label: {
-                        if previewCeilingPreset == preset {
-                            Label {
-                                Text(preset.displayLabel)
-                            } icon: {
-                                Image(systemName: "checkmark")
-                            }
-                        } else {
-                            Text(preset.displayLabel)
-                        }
-                    }
+                    Text(preset.displayLabel).tag(AutonomyPreset?.some(preset))
                 }
-            } label: {
-                pickerLabel(previewCeilingPreset?.displayLabel ?? L("No ceiling"))
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func inspectorResults(_ inspection: ComputerUseGateInspection) -> some View {
-        VStack(spacing: 8) {
+        VStack(spacing: theme.space.s8) {
             resultRow(
                 title: L("Effect class"),
                 value: inspection.effect.displayLabel,
@@ -378,30 +334,12 @@ struct ComputerUseDiagnosticsPanel: View {
     }
 
     private func agentAvailabilityRow(_ row: ComputerUseAgentAvailabilityRow) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            statusDot(row.severity)
-                .padding(.top, 4)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(verbatim: row.name)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-                    Text(verbatim: row.value)
-                        .font(.system(size: 9, weight: .bold))
-                        .foregroundColor(color(for: row.severity))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(color(for: row.severity).opacity(0.1)))
-                }
-                Text(verbatim: row.detail)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 8)
-        }
-        .padding(10)
-        .diagnosticsSurface(cornerRadius: 8, fill: theme.inputBackground, stroke: theme.inputBorder)
+        SettingsFindingRow(
+            severity: findingSeverity(row.severity),
+            title: row.name,
+            value: row.value,
+            detail: row.detail
+        )
     }
 
     private func resultRow(
@@ -410,33 +348,21 @@ struct ComputerUseDiagnosticsPanel: View {
         detail: String,
         severity: ComputerUseDiagnosticSeverity
     ) -> some View {
-        HStack(alignment: .top, spacing: 10) {
-            statusDot(severity)
-                .padding(.top, 5)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(verbatim: title)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                    Text(verbatim: value)
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(color(for: severity))
-                }
-                Text(verbatim: detail)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 8)
-        }
-        .padding(10)
-        .diagnosticsSurface(cornerRadius: 8, fill: theme.inputBackground, stroke: theme.inputBorder)
+        SettingsFindingRow(
+            severity: findingSeverity(severity),
+            title: title,
+            value: value,
+            detail: detail
+        )
     }
 
-    private func statusDot(_ severity: ComputerUseDiagnosticSeverity) -> some View {
-        Circle()
-            .fill(color(for: severity))
-            .frame(width: 7, height: 7)
+    private func findingSeverity(_ severity: ComputerUseDiagnosticSeverity) -> SettingsFindingRow.Severity {
+        switch severity {
+        case .ready: .ok
+        case .attention: .warning
+        case .inactive: .inactive
+        case .info: .info
+        }
     }
 
     private func labeledTextField(
@@ -444,58 +370,29 @@ struct ComputerUseDiagnosticsPanel: View {
         text: Binding<String>,
         placeholder: String
     ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             fieldLabel(label)
-            ZStack(alignment: .leading) {
-                if text.wrappedValue.isEmpty {
-                    Text(verbatim: placeholder)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.placeholderText)
-                        .allowsHitTesting(false)
-                }
-                TextField("", text: text)
-                    .textFieldStyle(PlainTextFieldStyle())
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.primaryText)
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .diagnosticsSurface(cornerRadius: 7, fill: theme.inputBackground, stroke: theme.inputBorder)
+            SettingsTextField(placeholder: placeholder, text: text)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func fieldLabel(_ text: String) -> some View {
         Text(verbatim: text)
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundColor(theme.secondaryText)
-    }
-
-    private func pickerLabel(_ text: String) -> some View {
-        HStack(spacing: 6) {
-            Text(verbatim: text)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.primaryText)
-            Spacer(minLength: 6)
-            Image(systemName: "chevron.up.chevron.down")
-                .font(.system(size: 9))
-                .foregroundColor(theme.secondaryText)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .diagnosticsSurface(cornerRadius: 7, fill: theme.inputBackground, stroke: theme.inputBorder)
+            .font(SettingsFont.chip)
+            .foregroundColor(theme.text.secondary)
     }
 
     private func sectionTitle(_ text: String) -> some View {
         Text(verbatim: text)
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundColor(theme.primaryText)
+            .font(SettingsFont.compactLabel)
+            .foregroundColor(theme.text.primary)
     }
 
     private func helperText(_ text: String) -> some View {
         Text(verbatim: text)
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
+            .font(SettingsFont.rowDescription)
+            .foregroundColor(theme.text.tertiary)
             .fixedSize(horizontal: false, vertical: true)
     }
 
@@ -601,15 +498,6 @@ struct ComputerUseDiagnosticsPanel: View {
         case .confirm, .reject: return .attention
         }
     }
-
-    private func color(for severity: ComputerUseDiagnosticSeverity) -> Color {
-        switch severity {
-        case .ready: return theme.successColor
-        case .attention: return theme.warningColor
-        case .inactive: return theme.tertiaryText
-        case .info: return theme.accentColor
-        }
-    }
 }
 
 private struct InspectorFingerprint: Equatable {
@@ -627,20 +515,3 @@ private struct InspectorFingerprint: Equatable {
     let ceilingPreset: AutonomyPreset?
 }
 
-private extension View {
-    func diagnosticsSurface(
-        cornerRadius: CGFloat,
-        fill: Color,
-        stroke: Color = .clear,
-        lineWidth: CGFloat = 1
-    ) -> some View {
-        background(
-            RoundedRectangle(cornerRadius: cornerRadius)
-                .fill(fill)
-                .overlay(
-                    RoundedRectangle(cornerRadius: cornerRadius)
-                        .stroke(stroke, lineWidth: lineWidth)
-                )
-        )
-    }
-}

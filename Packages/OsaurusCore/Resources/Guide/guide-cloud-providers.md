@@ -22,7 +22,7 @@ Osaurus can use cloud or peer inference providers alongside local models. Your c
 ## Using remote models
 
 - The chat model picker groups each provider's discovered models under the provider name.
-- Anthropic models list the thinking efforts, context window, and lifecycle that Anthropic's Models API reports for each model. Deprecated models are labelled "Deprecated". When thinking is available, Osaurus requests summarized thinking, so the reasoning panel shows a summary. Picking an effort sends that level; picking Off turns thinking off on models that allow it. Thinking can't be turned off on Opus 5.5, Fable 5.1, or Mythos 5.1, so those models have no Off option.
+- Anthropic models list the thinking efforts, context window, and lifecycle that Anthropic's Models API reports for each model. Deprecated models are labelled "Deprecated". When thinking is available, Osaurus requests summarized thinking, so the reasoning panel shows a summary. Picking an effort sends that level; picking Off turns thinking off on models that allow it. Thinking can't be turned off on Opus 5.5, Fable 5.2, Mythos 5.2, Fable 5.1, or Mythos 5.1, so those models have no Off option.
 - OpenAI reasoning models (API key and ChatGPT sign-in) always request reasoning summaries, so the reasoning panel fills even at the model's default effort.
 - Local apps pointed at Osaurus's API (`http://127.0.0.1:1337/v1/chat/completions`) can use remote models through the same endpoint — Osaurus routes by model id (e.g. `anthropic/claude-...`).
 
@@ -33,5 +33,5 @@ Osaurus can use cloud or peer inference providers alongside local models. Your c
 
 ## Osaurus Router and peers
 
-- Osaurus Router is a hosted routing service tied to your Osaurus identity (Credits tab shows usage); it auto-connects at startup when configured.
+- Osaurus Router is a hosted routing service tied to your Osaurus identity (Osaurus ID → Wallet & Credits shows usage); it auto-connects at startup when configured.
 - Paired Osaurus devices (peers) can share models, or expose whole remote agents that run with their own tools on the other machine.

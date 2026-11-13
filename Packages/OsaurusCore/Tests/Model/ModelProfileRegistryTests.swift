@@ -933,13 +933,56 @@ struct ModelProfileRegistryTests {
 
     /// Gemini 3.1 Flash *Lite* Image supports only 1K output; it must not
     /// inherit the full 3.1 Flash resolution set (512px/2K/4K would be
-    /// rejected on the wire). The non-Lite id keeps the extended profile.
+    /// rejected on the wire). It gets its own profile with no resolution
+    /// control. The non-Lite id keeps the extended profile.
     @Test func gemini31FlashLiteImage_isExcludedFromResolutionProfile() {
         #expect(
             !Gemini31FlashImageProfile.matches(modelId: "google/gemini-3.1-flash-lite-image")
         )
-        #expect(ModelProfileRegistry.profile(for: "gemini-3.1-flash-lite-image") == nil)
+        let lite = ModelProfileRegistry.profile(for: "gemini-3.1-flash-lite-image")
+        #expect(lite?.displayName == GeminiFlashLiteImageProfile.displayName)
+        #expect(lite?.options.contains { $0.id == "imageSize" } == false)
         #expect(Gemini31FlashImageProfile.matches(modelId: "google/gemini-3.1-flash-image"))
+    }
+
+    /// Each current Gemini image id resolves to the profile that carries its
+    /// documented aspect-ratio and resolution set.
+    @Test func geminiImageModels_resolveToTheirOwnProfiles() {
+        let cases: [(String, String)] = [
+            ("gemini-nano-banana-2.1", GeminiNanoBanana21ImageProfile.displayName),
+            ("google/gemini-3.1-flash-lite-image", GeminiFlashLiteImageProfile.displayName),
+            ("gemini-3.1-flash-image", Gemini31FlashImageProfile.displayName),
+            ("gemini-3-pro-image", GeminiProImageProfile.displayName),
+            ("gemini-2.5-flash-image", GeminiFlashImageProfile.displayName),
+        ]
+        for (modelId, displayName) in cases {
+            #expect(ModelProfileRegistry.profile(for: modelId)?.displayName == displayName, "\(modelId)")
+        }
+
+        // Nano Banana 2.1: extended ratios at 1K/2K/4K, no 512px tier.
+        let banana = ModelProfileRegistry.profile(for: "gemini-nano-banana-2.1")
+        let segmentIds: (String) -> [String]? = { optionId in
+            guard let option = banana?.options.first(where: { $0.id == optionId }),
+                case .segmented(let segments) = option.kind
+            else { return nil }
+            return segments.map(\.id)
+        }
+        #expect(segmentIds("aspectRatio")?.contains("1:8") == true)
+        #expect(segmentIds("imageSize") == ["auto", "1K", "2K", "4K"])
+    }
+
+    /// Matching an image profile is what routes a model as an image model on
+    /// the wire, so every current image id must count and text models must not.
+    @Test func geminiImageModels_routeAsImageModels() {
+        for modelId in [
+            "gemini-nano-banana-2.1", "gemini-3.1-flash-lite-image", "gemini-3.1-flash-image",
+            "gemini-3-pro-image", "gemini-2.5-flash-image",
+        ] {
+            #expect(GeminiImageModels.isImageModel(modelId), "\(modelId)")
+        }
+        for modelId in ["gemini-4-argon", "gemini-4-carbon", "gemini-3.8-flash", "gemini-3.1-flash-lite"] {
+            #expect(!GeminiImageModels.isImageModel(modelId), "\(modelId)")
+        }
     }
 
     // MARK: - Inline reasoning suffix (model chip "· Effort" label)

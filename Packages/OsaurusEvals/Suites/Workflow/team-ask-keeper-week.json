@@ -1,0 +1,56 @@
+{
+  "id": "workflow.team-ask-keeper-week",
+  "domain": "workflow",
+  "label": "workflow • prepared ask: what did I download this week",
+  "query": "prepared ask: what did I download this week",
+  "notes": "Runs the shipped file. Every tool step returns its fixture under its teammate, so nothing on this Mac is read. Fixture dates and expected arguments are `{{date:…}}` tokens on this Mac's calendar at run time.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "bundled": "prepared-ask-keeper-week",
+      "input": {},
+      "toolResults": {
+        "read": {
+          "kind": "directory",
+          "entries": [
+            {
+              "name": "Tax-Form-1099.pdf",
+              "path": "Tax-Form-1099.pdf",
+              "type": "file",
+              "modified": "{{date:yesterday_start+600m}}"
+            },
+            {
+              "name": "boarding-pass.pdf",
+              "path": "boarding-pass.pdf",
+              "type": "file",
+              "modified": "{{date:today_start-2d}}"
+            }
+          ]
+        }
+      },
+      "toolArguments": {
+        "read": {
+          "path": ".",
+          "max_depth": 1,
+          "sort": "recent"
+        }
+      },
+      "outputKeys": [
+        "answer"
+      ],
+      "outputContains": {
+        "answer": [
+          "1099"
+        ]
+      },
+      "outputExcludes": {
+        "answer": [
+          "{",
+          "}",
+          "\": \"",
+          "\\n"
+        ]
+      }
+    }
+  }
+}

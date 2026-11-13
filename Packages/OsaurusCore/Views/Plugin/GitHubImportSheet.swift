@@ -58,29 +58,28 @@ struct GitHubImportSheet: View {
     /// fresh toggle — kept separately so the footer can name them.
     @State private var lastAutoSelectedPlugins: [String] = []
     @State private var hasAppeared = false
-    @State private var isInputFocused = false
     @State private var activeTask: Task<Void, Never>?
     @State private var dependencyResolverTask: Task<Void, Never>?
 
     // MARK: - Body
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             headerView
             contentView
             footerView
         }
         .fittedSheetFrame(width: 560, height: 540)
-        .background(theme.primaryBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 14))
+        .background(theme.surface.canvas)
+        .clipShape(RoundedRectangle(cornerRadius: theme.radius.large))
         .overlay(
-            RoundedRectangle(cornerRadius: 14)
-                .stroke(theme.primaryBorder.opacity(0.5), lineWidth: 1)
+            RoundedRectangle(cornerRadius: theme.radius.large)
+                .stroke(theme.border.subtle, lineWidth: theme.stroke.default)
         )
-        .shadow(color: Color.black.opacity(0.2), radius: 20, x: 0, y: 10)
+        .themeElevation(theme.elevation.overlay)
         .opacity(hasAppeared ? 1 : 0)
         .scaleEffect(hasAppeared ? 1 : 0.96)
-        .animation(.spring(response: 0.3, dampingFraction: 0.8), value: hasAppeared)
+        .animation(theme.motion.springAnimation, value: hasAppeared)
         .onAppear {
             withAnimation { hasAppeared = true }
         }
@@ -95,54 +94,12 @@ struct GitHubImportSheet: View {
     // MARK: - Header
 
     private var headerView: some View {
-        HStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [theme.accentColor.opacity(0.2), theme.accentColor.opacity(0.05)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                Image(systemName: headerIcon)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [theme.accentColor, theme.accentColor.opacity(0.7)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-            }
-            .frame(width: 36, height: 36)
-
-            VStack(alignment: .leading, spacing: 1) {
-                Text(headerTitle)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-
-                Text(headerSubtitle)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-                    .lineLimit(1)
-            }
-
-            Spacer()
-
-            Button(action: cancel) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-                    .frame(width: 24, height: 24)
-                    .background(Circle().fill(theme.tertiaryBackground))
-            }
-            .buttonStyle(PlainButtonStyle())
-            .keyboardShortcut(.escape, modifiers: [])
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 16)
-        .background(theme.secondaryBackground)
+        SettingsSheetHeader(
+            icon: headerIcon,
+            title: LocalizedStringKey(headerTitle),
+            subtitleText: headerSubtitle,
+            onClose: cancel
+        )
     }
 
     private var headerIcon: String {
@@ -215,104 +172,61 @@ struct GitHubImportSheet: View {
     // MARK: - URL Input View
 
     private var urlInputView: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             Spacer()
 
-            VStack(spacing: 24) {
+            VStack(spacing: theme.space.s24) {
                 // Icon
                 ZStack {
                     Circle()
-                        .fill(theme.accentColor.opacity(0.08))
+                        .fill(theme.status.info.background)
                         .frame(width: 72, height: 72)
 
                     Circle()
-                        .fill(theme.accentColor.opacity(0.12))
+                        .fill(theme.status.info.background)
                         .frame(width: 56, height: 56)
 
                     Image(systemName: "link.badge.plus")
-                        .font(.system(size: 24, weight: .medium))
-                        .foregroundColor(theme.accentColor)
+                        .glyphSize(.xxlarge, weight: .medium)
+                        .foregroundColor(theme.text.link)
                 }
 
-                VStack(spacing: 8) {
+                VStack(spacing: theme.space.s8) {
                     Text("Enter Repository URL", bundle: .module)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.detailTitle)
+                        .foregroundColor(theme.text.primary)
 
                     Text("Import skills from any GitHub repository", bundle: .module)
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.body)
+                        .foregroundColor(theme.text.secondary)
                 }
 
                 // URL input field
-                HStack(spacing: 10) {
-                    Image(systemName: "link")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(isInputFocused ? theme.accentColor : theme.tertiaryText)
-                        .frame(width: 16)
-
-                    TextField(
-                        "",
-                        text: $urlInput,
-                        onEditingChanged: { editing in
-                            withAnimation(.easeOut(duration: 0.15)) {
-                                isInputFocused = editing
-                            }
-                        }
-                    )
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.primaryText)
-                    .placeholder(when: urlInput.isEmpty) {
-                        Text("github.com/owner/repository", bundle: .module)
-                            .font(.system(size: 13))
-                            .foregroundColor(theme.placeholderText)
-                    }
-                    .onSubmit { fetchSkills() }
-
-                    if !urlInput.isEmpty {
-                        Button(action: { urlInput = "" }) {
-                            Image(systemName: "xmark.circle.fill")
-                                .font(.system(size: 13))
-                                .foregroundColor(theme.tertiaryText)
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(
-                                    isInputFocused ? theme.accentColor.opacity(0.5) : theme.inputBorder,
-                                    lineWidth: 1
-                                )
-                        )
+                SettingsTextField(
+                    placeholder: L("github.com/owner/repository"),
+                    text: $urlInput,
+                    icon: "link",
+                    onSubmit: fetchSkills
                 )
                 .frame(maxWidth: 360)
             }
 
             Spacer()
         }
-        .padding(24)
+        .padding(theme.space.s24)
     }
 
     // MARK: - Loading View
 
     private var loadingView: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: theme.space.s16) {
             Spacer()
 
-            ProgressView()
-                .scaleEffect(1.0)
-                .progressViewStyle(CircularProgressViewStyle(tint: theme.accentColor))
+            SettingsSpinner(size: .large, tint: theme.action.primary.default.background)
 
             Text("Fetching skills...", bundle: .module)
-                .font(.system(size: 13))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.body)
+                .foregroundColor(theme.text.secondary)
 
             Spacer()
         }
@@ -321,59 +235,47 @@ struct GitHubImportSheet: View {
     // MARK: - Skill Selection View
 
     private func skillSelectionView(_ result: GitHubSkillsResult) -> some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             // Repository info card
-            HStack(spacing: 10) {
+            HStack(spacing: theme.space.s10) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: theme.radius.medium)
                         .fill(
                             LinearGradient(
-                                colors: [theme.accentColor.opacity(0.15), theme.accentColor.opacity(0.05)],
+                                colors: [theme.surface.pressed, theme.surface.raised],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )
                         )
                     Image(systemName: "folder.fill")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(theme.accentColor)
+                        .glyphSize(.body, weight: .medium)
+                        .foregroundColor(theme.text.link)
                 }
                 .frame(width: 32, height: 32)
 
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     if let description = result.repoDescription {
                         Text(description)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.secondaryText)
+                            .font(SettingsFont.caption)
+                            .foregroundColor(theme.text.secondary)
                             .lineLimit(2)
                     }
                 }
 
                 Spacer()
 
-                Text("\(selectedSkillPaths.count) selected", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.accentColor)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Capsule().fill(theme.accentColor.opacity(0.1)))
+                StatusChip(L("\(selectedSkillPaths.count) selected"), tone: .accent)
             }
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.cardBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(theme.cardBorder, lineWidth: 1)
-                    )
-            )
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
-            .padding(.bottom, 8)
+            .padding(theme.space.s12)
+            .settingsChrome(.surface)
+            .padding(.horizontal, theme.space.s16)
+            .padding(.top, theme.space.s12)
+            .padding(.bottom, theme.space.s8)
 
             // Select all header
             HStack {
                 Button(action: {
-                    withAnimation(.easeOut(duration: 0.15)) {
+                    withAnimation(theme.motion.quick) {
                         if selectedSkillPaths.count == result.skills.count {
                             selectedSkillPaths.removeAll()
                         } else {
@@ -381,19 +283,20 @@ struct GitHubImportSheet: View {
                         }
                     }
                 }) {
-                    HStack(spacing: 8) {
+                    HStack(spacing: theme.space.s8) {
                         Image(
                             systemName: selectedSkillPaths.count == result.skills.count
                                 ? "checkmark.circle.fill" : "circle"
                         )
-                        .font(.system(size: 14, weight: .medium))
+                        .textStyle(.label)
                         .foregroundColor(
-                            selectedSkillPaths.count == result.skills.count ? theme.accentColor : theme.tertiaryText
+                            selectedSkillPaths.count == result.skills.count
+                                ? theme.action.primary.default.background : theme.text.tertiary
                         )
 
                         Text("Select All", bundle: .module)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.primaryText)
+                            .font(SettingsFont.compactLabel)
+                            .foregroundColor(theme.text.primary)
                     }
                 }
                 .buttonStyle(PlainButtonStyle())
@@ -401,21 +304,21 @@ struct GitHubImportSheet: View {
                 Spacer()
 
                 Text("\(result.skills.count) skill\(result.skills.count == 1 ? "" : "s")", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 8)
+            .padding(.horizontal, theme.space.s16)
+            .padding(.vertical, theme.space.s8)
 
             // Skills list
             ScrollView {
-                LazyVStack(spacing: 4) {
+                LazyVStack(spacing: theme.space.s4) {
                     ForEach(result.skills) { skill in
                         GitHubSkillSelectionRow(
                             skill: skill,
                             isSelected: selectedSkillPaths.contains(skill.path)
                         ) {
-                            withAnimation(.easeOut(duration: 0.1)) {
+                            withAnimation(theme.motion.quick) {
                                 if selectedSkillPaths.contains(skill.path) {
                                     selectedSkillPaths.remove(skill.path)
                                 } else {
@@ -425,8 +328,8 @@ struct GitHubImportSheet: View {
                         }
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 8)
+                .padding(.horizontal, theme.space.s16)
+                .padding(.bottom, theme.space.s8)
             }
         }
     }
@@ -434,59 +337,47 @@ struct GitHubImportSheet: View {
     // MARK: - Plugin Selection View (new-style marketplaces)
 
     private func pluginSelectionView(_ result: GitHubPluginsResult) -> some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             // Repository info + selected count.
-            HStack(spacing: 10) {
+            HStack(spacing: theme.space.s10) {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 8)
+                    RoundedRectangle(cornerRadius: theme.radius.medium)
                         .fill(
                             LinearGradient(
-                                colors: [theme.accentColor.opacity(0.15), theme.accentColor.opacity(0.05)],
+                                colors: [theme.surface.pressed, theme.surface.raised],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )
                         )
                     Image(systemName: "shippingbox.fill")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(theme.accentColor)
+                        .glyphSize(.body, weight: .medium)
+                        .foregroundColor(theme.text.link)
                 }
                 .frame(width: 32, height: 32)
 
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     if let description = result.repoDescription {
                         Text(description)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.secondaryText)
+                            .font(SettingsFont.caption)
+                            .foregroundColor(theme.text.secondary)
                             .lineLimit(2)
                     }
                 }
 
                 Spacer()
 
-                Text("\(selectedPluginNames.count) selected", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.accentColor)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(Capsule().fill(theme.accentColor.opacity(0.1)))
+                StatusChip(L("\(selectedPluginNames.count) selected"), tone: .accent)
             }
-            .padding(12)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.cardBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(theme.cardBorder, lineWidth: 1)
-                    )
-            )
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
-            .padding(.bottom, 8)
+            .padding(theme.space.s12)
+            .settingsChrome(.surface)
+            .padding(.horizontal, theme.space.s16)
+            .padding(.top, theme.space.s12)
+            .padding(.bottom, theme.space.s8)
 
             // Select-all header + options.
-            HStack(spacing: 12) {
+            HStack(spacing: theme.space.s12) {
                 Button(action: {
-                    withAnimation(.easeOut(duration: 0.15)) {
+                    withAnimation(theme.motion.quick) {
                         if selectedPluginNames.count == result.plugins.count {
                             selectedPluginNames.removeAll()
                         } else {
@@ -494,20 +385,20 @@ struct GitHubImportSheet: View {
                         }
                     }
                 }) {
-                    HStack(spacing: 8) {
+                    HStack(spacing: theme.space.s8) {
                         Image(
                             systemName: selectedPluginNames.count == result.plugins.count
                                 ? "checkmark.circle.fill" : "circle"
                         )
-                        .font(.system(size: 14, weight: .medium))
+                        .textStyle(.label)
                         .foregroundColor(
                             selectedPluginNames.count == result.plugins.count
-                                ? theme.accentColor : theme.tertiaryText
+                                ? theme.action.primary.default.background : theme.text.tertiary
                         )
 
                         Text("Select All", bundle: .module)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.primaryText)
+                            .font(SettingsFont.compactLabel)
+                            .foregroundColor(theme.text.primary)
                     }
                 }
                 .buttonStyle(PlainButtonStyle())
@@ -515,48 +406,44 @@ struct GitHubImportSheet: View {
                 Spacer()
 
                 Toggle("", isOn: $attachClaudeMd)
-                    .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                    .labelsHidden()
-                    .scaleEffect(0.7)
+                    .settingsSwitch()
                 Text("CLAUDE.md", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.secondary)
 
                 Toggle("", isOn: $importMCPProviders)
-                    .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                    .labelsHidden()
-                    .scaleEffect(0.7)
+                    .settingsSwitch()
                 Text("MCP", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.secondary)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 8)
+            .padding(.horizontal, theme.space.s16)
+            .padding(.vertical, theme.space.s8)
 
             // Auto-selection footer — only renders when the user just
             // toggled a plugin whose agents reference siblings.
             if let source = lastAutoSelectionSource, !lastAutoSelectedPlugins.isEmpty {
-                HStack(alignment: .top, spacing: 6) {
+                HStack(alignment: .top, spacing: theme.space.s6) {
                     Image(systemName: "link")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(theme.accentColor)
-                        .padding(.top, 2)
+                        .glyphSize(.micro, weight: .medium)
+                        .foregroundColor(theme.text.link)
+                        .padding(.top, theme.space.s2)
                     Text(
                         "Also selected: \(lastAutoSelectedPlugins.joined(separator: ", ")) — referenced by \(source).",
                         bundle: .module
                     )
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.text.secondary)
                     .lineLimit(2)
                     Spacer()
                 }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 4)
+                .padding(.horizontal, theme.space.s16)
+                .padding(.bottom, theme.space.s4)
             }
 
             // Plugin list.
             ScrollView {
-                LazyVStack(spacing: 4) {
+                LazyVStack(spacing: theme.space.s4) {
                     ForEach(result.plugins, id: \.name) { plugin in
                         ClaudePluginRow(
                             plugin: plugin,
@@ -566,8 +453,8 @@ struct GitHubImportSheet: View {
                         }
                     }
                 }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 8)
+                .padding(.horizontal, theme.space.s16)
+                .padding(.bottom, theme.space.s8)
             }
         }
     }
@@ -576,7 +463,7 @@ struct GitHubImportSheet: View {
     /// any sibling plugins it depends on. Surfaces the cascade in the
     /// footer so the user can see what got pulled in.
     private func togglePluginSelection(_ name: String) {
-        withAnimation(.easeOut(duration: 0.1)) {
+        withAnimation(theme.motion.quick) {
             if selectedPluginNames.contains(name) {
                 selectedPluginNames.remove(name)
                 // Toggling off clears the auto-select footer so it isn't
@@ -602,9 +489,9 @@ struct GitHubImportSheet: View {
 
     private func installCompleteView(_ report: ClaudePluginInstallReport) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 // Top-line counts.
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: theme.space.s6) {
                     InstallReportLine(
                         icon: "sparkles",
                         label: L("Skills"),
@@ -626,15 +513,8 @@ struct GitHubImportSheet: View {
                         count: report.totalImportedMCPProviders
                     )
                 }
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(theme.cardBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(theme.cardBorder, lineWidth: 1)
-                        )
-                )
+                .padding(theme.space.s12)
+                .settingsChrome(.surface)
 
                 if !report.allSchedulesNeedingCron.isEmpty {
                     InstallReportPendingSchedulesNotice(
@@ -710,25 +590,25 @@ struct GitHubImportSheet: View {
                     )
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.horizontal, theme.space.s16)
+            .padding(.vertical, theme.space.s12)
         }
     }
 
     // MARK: - Importing View
 
     private func importingView(progress: Int, total: Int) -> some View {
-        VStack(spacing: 20) {
+        VStack(spacing: theme.space.s20) {
             Spacer()
 
             ZStack {
                 Circle()
-                    .stroke(theme.tertiaryBackground, lineWidth: 3)
+                    .stroke(theme.border.default, lineWidth: theme.stroke.focus * 1.5)
                     .frame(width: 56, height: 56)
 
                 Circle()
                     .trim(from: 0, to: CGFloat(progress) / CGFloat(total))
-                    .stroke(theme.accentColor, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                    .stroke(theme.status.info.foreground, style: StrokeStyle(lineWidth: theme.stroke.focus * 1.5, lineCap: .round))
                     .frame(width: 56, height: 56)
                     .rotationEffect(.degrees(-90))
                 // Disable the implicit trim animation: with the
@@ -738,19 +618,19 @@ struct GitHubImportSheet: View {
                 // visible jank instead of smooth motion.
 
                 Text("\(progress)", bundle: .module)
-                    .font(.system(size: 16, weight: .semibold, design: .rounded))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.detailTitle)
+                    .foregroundColor(theme.text.primary)
             }
 
-            VStack(spacing: 4) {
+            VStack(spacing: theme.space.s4) {
                 Text("Installing", bundle: .module)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.cardTitle)
+                    .foregroundColor(theme.text.primary)
 
                 Text("\(progress) of \(total)", bundle: .module)
-                    .font(.system(size: 12))
+                    .font(SettingsFont.caption)
                     .monospacedDigit()
-                    .foregroundColor(theme.secondaryText)
+                    .foregroundColor(theme.text.secondary)
             }
 
             Spacer()
@@ -762,48 +642,45 @@ struct GitHubImportSheet: View {
     private func errorView(_ error: GitHubSkillError) -> some View {
         let isRateLimit: Bool
         if case .rateLimited = error { isRateLimit = true } else { isRateLimit = false }
-        return VStack(spacing: 20) {
+        return VStack(spacing: theme.space.s20) {
             Spacer()
 
             ZStack {
                 Circle()
-                    .fill(theme.errorColor.opacity(0.1))
+                    .fill(theme.status.error.background)
                     .frame(width: 64, height: 64)
 
                 Image(systemName: isRateLimit ? "clock.badge.exclamationmark" : "exclamationmark.triangle.fill")
-                    .font(.system(size: 26))
-                    .foregroundColor(theme.errorColor)
+                    .glyphSize(.display)
+                    .foregroundColor(theme.status.error.foreground)
             }
 
-            VStack(spacing: 6) {
+            VStack(spacing: theme.space.s6) {
                 Text(
                     isRateLimit ? "GitHub rate limit reached" : "Something went wrong",
                     bundle: .module
                 )
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.cardTitle)
+                .foregroundColor(theme.text.primary)
 
                 Text(error.localizedDescription)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.caption)
+                    .foregroundColor(theme.text.secondary)
                     .multilineTextAlignment(.center)
-                    .padding(.horizontal, 32)
+                    .padding(.horizontal, theme.space.s32)
             }
 
             Button(action: { importState = .urlInput }) {
-                HStack(spacing: 5) {
+                HStack(spacing: theme.space.s4) {
                     Image(systemName: "arrow.counterclockwise")
-                        .font(.system(size: 11, weight: .medium))
+                        .glyphSize(.footnote, weight: .medium)
                     Text("Try Again", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
+                        .font(SettingsFont.compactLabel)
                 }
-                .foregroundColor(theme.accentColor)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(theme.accentColor.opacity(0.1))
-                )
+                .foregroundColor(theme.text.link)
+                .padding(.horizontal, theme.space.s12)
+                .padding(.vertical, theme.space.s8)
+                .settingsChrome(.selected)
             }
             .buttonStyle(PlainButtonStyle())
 
@@ -814,18 +691,18 @@ struct GitHubImportSheet: View {
     // MARK: - Footer
 
     private var footerView: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             Spacer()
 
             switch importState {
             case .installComplete:
                 Button(action: cancel) { Text("Done", bundle: .module) }
-                    .buttonStyle(GitHubPrimaryButtonStyle())
+                    .assignedSettingsButtonStyle(.primary)
                     .keyboardShortcut(.return, modifiers: .command)
 
             default:
                 Button(action: cancel) { Text("Cancel", bundle: .module) }
-                    .buttonStyle(GitHubSecondaryButtonStyle())
+                    .assignedSettingsButtonStyle(.secondary)
             }
 
             switch importState {
@@ -835,7 +712,7 @@ struct GitHubImportSheet: View {
                 } label: {
                     Text("Continue", bundle: .module)
                 }
-                .buttonStyle(GitHubPrimaryButtonStyle())
+                .assignedSettingsButtonStyle(.primary)
                 .disabled(urlInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .keyboardShortcut(.return, modifiers: .command)
 
@@ -850,7 +727,7 @@ struct GitHubImportSheet: View {
                         bundle: .module
                     )
                 }
-                .buttonStyle(GitHubPrimaryButtonStyle())
+                .assignedSettingsButtonStyle(.primary)
                 .disabled(selectedSkillPaths.isEmpty)
                 .keyboardShortcut(.return, modifiers: .command)
 
@@ -865,7 +742,7 @@ struct GitHubImportSheet: View {
                         bundle: .module
                     )
                 }
-                .buttonStyle(GitHubPrimaryButtonStyle())
+                .assignedSettingsButtonStyle(.primary)
                 .disabled(selectedPluginNames.isEmpty)
                 .keyboardShortcut(.return, modifiers: .command)
 
@@ -873,12 +750,12 @@ struct GitHubImportSheet: View {
                 EmptyView()
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
+        .padding(.horizontal, theme.space.s16)
+        .padding(.vertical, theme.space.s12)
         .background(
-            theme.secondaryBackground
+            theme.surface.subtle
                 .overlay(
-                    Rectangle().fill(theme.primaryBorder.opacity(0.5)).frame(height: 1),
+                    ThemeHairlineDivider(),
                     alignment: .top
                 )
         )
@@ -892,12 +769,12 @@ struct GitHubImportSheet: View {
         onCancel()
     }
 
-    /// Deep-link from the install summary to the schedule editor. Dismisses
-    /// this sheet, flips to the Schedules tab, and queues the editor to open
-    /// for the requested schedule id.
+    /// Deep-link from the install summary to the event editor. Dismisses
+    /// this sheet, flips to the Events tab, and queues the editor to open
+    /// for the requested schedule event id.
     private func openScheduleEditor(_ id: UUID) {
-        ManagementStateManager.shared.selectedTab = .schedules
-        ManagementStateManager.shared.pendingScheduleEditId = id
+        ManagementStateManager.shared.selectedTab = .automations
+        ManagementStateManager.shared.pendingEventEditId = id
         cancel()
     }
 
@@ -1067,59 +944,57 @@ private struct GitHubSkillSelectionRow: View {
 
     @State private var isHovered = false
 
-    private var skillColor: Color {
-        let hue = Double(abs(skill.displayName.hashValue % 360)) / 360.0
-        return Color(hue: hue, saturation: 0.55, brightness: 0.75)
-    }
+    private var skillColor: Color { theme.dataInk(seed: skill.displayName) }
+    private var skillWash: Color { theme.dataWash(seed: skill.displayName) }
 
     var body: some View {
         Button(action: onToggle) {
-            HStack(spacing: 10) {
+            HStack(spacing: theme.space.s10) {
                 // Checkbox
                 ZStack {
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(isSelected ? theme.accentColor : Color.clear)
+                    RoundedRectangle(cornerRadius: theme.radius.small)
+                        .fill(isSelected ? theme.action.primary.default.background : Color.clear)
                         .frame(width: 16, height: 16)
 
-                    RoundedRectangle(cornerRadius: 4)
-                        .stroke(isSelected ? theme.accentColor : theme.tertiaryText.opacity(0.5), lineWidth: 1.5)
+                    RoundedRectangle(cornerRadius: theme.radius.small)
+                        .stroke(
+                            isSelected ? theme.action.primary.default.background : theme.border.strong,
+                            lineWidth: theme.stroke.default
+                        )
                         .frame(width: 16, height: 16)
 
                     if isSelected {
                         Image(systemName: "checkmark")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundColor(.white)
+                            .glyphSize(.tiny, weight: .bold)
+                            .foregroundColor(theme.action.primary.default.foreground)
                     }
                 }
 
                 // Skill icon
                 ZStack {
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(skillColor.opacity(0.12))
+                    RoundedRectangle(cornerRadius: theme.radius.medium)
+                        .fill(skillWash)
                     Image(systemName: "sparkles")
-                        .font(.system(size: 10, weight: .medium))
+                        .glyphSize(.micro, weight: .medium)
                         .foregroundColor(skillColor)
                 }
                 .frame(width: 26, height: 26)
 
                 // Skill name
                 Text(skill.displayName)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
 
                 Spacer()
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isHovered ? theme.secondaryBackground : Color.clear)
-            )
+            .padding(.horizontal, theme.space.s8)
+            .padding(.vertical, theme.space.s8)
+            .settingsChrome(isHovered ? .inset : nil)
             .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.1)) {
+            withAnimation(theme.motion.quick) {
                 isHovered = hovering
             }
         }
@@ -1137,10 +1012,8 @@ private struct ClaudePluginRow: View {
 
     @State private var isHovered = false
 
-    private var pluginColor: Color {
-        let hue = Double(abs(plugin.name.hashValue % 360)) / 360.0
-        return Color(hue: hue, saturation: 0.55, brightness: 0.75)
-    }
+    private var pluginColor: Color { theme.dataInk(seed: plugin.name) }
+    private var pluginWash: Color { theme.dataWash(seed: plugin.name) }
 
     private var summaryLine: String {
         var pieces: [String] = []
@@ -1160,63 +1033,59 @@ private struct ClaudePluginRow: View {
 
     var body: some View {
         Button(action: onToggle) {
-            HStack(alignment: .top, spacing: 10) {
+            HStack(alignment: .top, spacing: theme.space.s10) {
                 // Checkbox
                 ZStack {
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(isSelected ? theme.accentColor : Color.clear)
+                    RoundedRectangle(cornerRadius: theme.radius.small)
+                        .fill(isSelected ? theme.action.primary.default.background : Color.clear)
                         .frame(width: 16, height: 16)
 
-                    RoundedRectangle(cornerRadius: 4)
-                        .stroke(isSelected ? theme.accentColor : theme.tertiaryText.opacity(0.5), lineWidth: 1.5)
+                    RoundedRectangle(cornerRadius: theme.radius.small)
+                        .stroke(
+                            isSelected ? theme.action.primary.default.background : theme.border.strong,
+                            lineWidth: theme.stroke.default
+                        )
                         .frame(width: 16, height: 16)
 
                     if isSelected {
                         Image(systemName: "checkmark")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundColor(.white)
+                            .glyphSize(.tiny, weight: .bold)
+                            .foregroundColor(theme.action.primary.default.foreground)
                     }
                 }
-                .padding(.top, 3)
+                .padding(.top, theme.space.s4)
 
                 // Plugin icon
                 ZStack {
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(pluginColor.opacity(0.12))
+                    RoundedRectangle(cornerRadius: theme.radius.medium)
+                        .fill(pluginWash)
                     Image(systemName: "shippingbox")
-                        .font(.system(size: 11, weight: .medium))
+                        .glyphSize(.footnote, weight: .medium)
                         .foregroundColor(pluginColor)
                 }
                 .frame(width: 28, height: 28)
 
-                VStack(alignment: .leading, spacing: 2) {
+                SettingsRowText(compact: true) {
                     Text(plugin.name)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                } description: {
                     if let description = plugin.description, !description.isEmpty {
                         Text(description)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.secondaryText)
+                            .foregroundColor(theme.text.secondary)
                             .lineLimit(2)
                     }
                     Text(summaryLine)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText)
                 }
 
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isHovered ? theme.secondaryBackground : Color.clear)
-            )
+            .padding(.horizontal, theme.space.s8)
+            .padding(.vertical, theme.space.s8)
+            .settingsChrome(isHovered ? .inset : nil)
             .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.1)) {
+            withAnimation(theme.motion.quick) {
                 isHovered = hovering
             }
         }
@@ -1233,19 +1102,19 @@ private struct InstallReportLine: View {
     let count: Int
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: icon)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.accentColor)
+                .glyphSize(.caption, weight: .medium)
+                .foregroundColor(theme.text.link)
                 .frame(width: 16)
             Text(label)
-                .font(.system(size: 12))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.caption)
+                .foregroundColor(theme.text.primary)
             Spacer()
             Text("\(count)")
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                .font(SettingsFont.compactLabel)
                 // swiftlint:disable:next empty_count
-                .foregroundColor(count > 0 ? theme.primaryText : theme.tertiaryText)
+                .foregroundColor(count > 0 ? theme.text.primary : theme.text.tertiary)
         }
     }
 }
@@ -1263,58 +1132,48 @@ private struct InstallReportNotice: View {
     var onAction: (() -> Void)?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: icon)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.orange)
+                    .glyphSize(.caption, weight: .semibold)
+                    .foregroundColor(theme.status.warning.foreground)
                 Text(title)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                 Spacer(minLength: 8)
                 if let actionLabel, let onAction {
                     Button(action: onAction) {
                         Text(actionLabel)
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(theme.accentColor)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 4)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(theme.accentColor.opacity(0.12))
-                            )
+                            .font(SettingsFont.smallLabel)
+                            .foregroundColor(theme.text.link)
+                            .padding(.horizontal, theme.space.s8)
+                            .padding(.vertical, theme.space.s4)
+                            .settingsChrome(.selected)
                     }
                     .buttonStyle(PlainButtonStyle())
                 }
             }
             Text(message)
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
-            VStack(alignment: .leading, spacing: 2) {
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.secondary)
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 ForEach(items, id: \.self) { item in
                     Text("• \(item)")
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.secondary)
                         .lineLimit(2)
                 }
             }
-            .padding(.leading, 4)
+            .padding(.leading, theme.space.s4)
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.orange.opacity(0.06))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.orange.opacity(0.25), lineWidth: 1)
-                )
-        )
+        .padding(theme.space.s8)
+        .settingsChrome(.status(.warning))
     }
 }
 
 /// Variant of `InstallReportNotice` that renders each pending schedule as a
 /// button so the user can jump straight to the schedule editor instead of
-/// hunting through the Schedules tab manually.
+/// hunting through the Automations tab manually.
 private struct InstallReportPendingSchedulesNotice: View {
     @Environment(\.theme) private var theme
 
@@ -1322,54 +1181,47 @@ private struct InstallReportPendingSchedulesNotice: View {
     let onSelect: (UUID) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: "exclamationmark.circle")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.orange)
-                Text("Schedules need review", bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .glyphSize(.caption, weight: .semibold)
+                    .foregroundColor(theme.status.warning.foreground)
+                Text("Automations need review", bundle: .module)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
             }
             Text(
                 "These agents had no machine-readable schedule and were created disabled. Tap one to set a cron expression:",
                 bundle: .module
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.secondaryText)
+            .font(SettingsFont.rowDescription)
+            .foregroundColor(theme.text.secondary)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 ForEach(items) { item in
                     Button(action: { onSelect(item.id) }) {
-                        HStack(spacing: 6) {
+                        HStack(spacing: theme.space.s6) {
                             Text("•")
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundColor(theme.secondaryText)
+                                .font(SettingsFont.monoSmall)
+                                .foregroundColor(theme.text.secondary)
                             Text(item.name)
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundColor(theme.accentColor)
+                                .font(SettingsFont.monoSmall)
+                                .foregroundColor(theme.text.link)
                                 .underline()
                                 .lineLimit(2)
                             Image(systemName: "arrow.up.right.square")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundColor(theme.accentColor.opacity(0.7))
+                                .glyphSize(.tiny, weight: .semibold)
+                                .foregroundColor(theme.text.link)
                             Spacer()
                         }
                     }
                     .buttonStyle(PlainButtonStyle())
                 }
             }
-            .padding(.leading, 4)
+            .padding(.leading, theme.space.s4)
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.orange.opacity(0.06))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.orange.opacity(0.25), lineWidth: 1)
-                )
-        )
+        .padding(theme.space.s8)
+        .settingsChrome(.status(.warning))
     }
 }
 
@@ -1387,100 +1239,58 @@ private struct InstallReportPendingProvidersNotice: View {
     let onSelect: (UUID) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: icon)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.orange)
+                    .glyphSize(.caption, weight: .semibold)
+                    .foregroundColor(theme.status.warning.foreground)
                 Text(title)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                 Spacer(minLength: 8)
             }
             Text(message)
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.secondary)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
                 ForEach(items) { item in
                     Button(action: { onSelect(item.id) }) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 6) {
+                        VStack(alignment: .leading, spacing: theme.space.s2) {
+                            HStack(spacing: theme.space.s6) {
                                 Text("•")
-                                    .font(.system(size: 11, design: .monospaced))
-                                    .foregroundColor(theme.secondaryText)
+                                    .font(SettingsFont.monoSmall)
+                                    .foregroundColor(theme.text.secondary)
                                 Text(item.name)
-                                    .font(.system(size: 11, design: .monospaced))
-                                    .foregroundColor(theme.accentColor)
+                                    .font(SettingsFont.monoSmall)
+                                    .foregroundColor(theme.text.link)
                                     .underline()
                                     .lineLimit(1)
                                 Image(systemName: "arrow.up.right.square")
-                                    .font(.system(size: 9, weight: .semibold))
-                                    .foregroundColor(theme.accentColor.opacity(0.7))
+                                    .glyphSize(.tiny, weight: .semibold)
+                                    .foregroundColor(theme.text.link)
                                 Spacer()
                             }
                             if !item.missingKeys.isEmpty {
                                 Text("needs: \(item.missingKeys.joined(separator: ", "))")
-                                    .font(.system(size: 10, design: .monospaced))
-                                    .foregroundColor(theme.secondaryText)
+                                    .font(SettingsFont.monoSmall)
+                                    .foregroundColor(theme.text.secondary)
                                     .lineLimit(2)
-                                    .padding(.leading, 12)
+                                    .padding(.leading, theme.space.s12)
                             }
                         }
                     }
                     .buttonStyle(PlainButtonStyle())
                 }
             }
-            .padding(.leading, 4)
+            .padding(.leading, theme.space.s4)
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.orange.opacity(0.06))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.orange.opacity(0.25), lineWidth: 1)
-                )
-        )
+        .padding(theme.space.s8)
+        .settingsChrome(.status(.warning))
     }
 }
 
 // MARK: - Button Styles
-
-private struct GitHubPrimaryButtonStyle: ButtonStyle {
-    @Environment(\.theme) private var theme
-    @Environment(\.isEnabled) private var isEnabled
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundColor(.white)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(theme.accentColor)
-            )
-            .opacity(isEnabled ? (configuration.isPressed ? 0.85 : 1.0) : 0.5)
-    }
-}
-
-private struct GitHubSecondaryButtonStyle: ButtonStyle {
-    @Environment(\.theme) private var theme
-
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 12, weight: .medium))
-            .foregroundColor(theme.secondaryText)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(theme.tertiaryBackground)
-            )
-            .opacity(configuration.isPressed ? 0.85 : 1.0)
-    }
-}
 
 // MARK: - Placeholder Modifier
 

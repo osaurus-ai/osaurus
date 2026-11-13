@@ -3172,11 +3172,11 @@ struct WorkspaceBilledInferenceTests {
             forRouter402:
                 #"{"error":{"code":"WORKSPACE_INSUFFICIENT_FUNDS","message":"team pool exhausted"}}"#
         )
-        #expect(workspaceCopy.contains("workspace's pool is out of credits"))
+        #expect(workspaceCopy.contains("This workspace is out of credits"))
         // The router fires an armed auto-reload on this failure, so the copy
         // says to retry — and points at the owner, never at a personal top-up.
         #expect(workspaceCopy.contains("auto-reload"))
-        #expect(workspaceCopy.contains("ask the owner to add credits"))
+        #expect(workspaceCopy.contains("ask the owner to add workspace credits"))
         #expect(!workspaceCopy.contains("Add credits to continue"))
 
         let personalCopy = chatCopy(

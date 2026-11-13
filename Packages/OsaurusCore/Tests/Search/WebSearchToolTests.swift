@@ -27,9 +27,8 @@ struct WebSearchToolTests {
         let registry = ToolRegistry.shared
         #expect(registry.registeredToolNames().contains("web_search"))
         #expect(registry.builtInToolNames.contains("web_search"))
-        // Basic orchestrator capability: the Default agent runs
-        // quick lookups itself; only heavy research dispatches to helpers.
-        #expect(ToolRegistry.orchestratorAllowedToolNames.contains("web_search"))
+        // The Orchestrator routes lookups to the Research worker.
+        #expect(!ToolRegistry.orchestratorAllowedToolNames.contains("web_search"))
         #expect(!ToolRegistry.orchestratorExcludedToolNames.contains("web_search"))
     }
 
@@ -38,9 +37,7 @@ struct WebSearchToolTests {
         #expect(registry.registeredToolNames().contains("search_and_extract"))
         // Dynamic: registered but NOT part of the always-loaded baseline.
         #expect(!registry.builtInToolNames.contains("search_and_extract"))
-        // On the orchestrator allowlist so `web_search`'s advertised
-        // discovery→retrieval transition is callable in the Default agent's own loop.
-        #expect(ToolRegistry.orchestratorAllowedToolNames.contains("search_and_extract"))
+        #expect(!ToolRegistry.orchestratorAllowedToolNames.contains("search_and_extract"))
         #expect(!ToolRegistry.orchestratorExcludedToolNames.contains("search_and_extract"))
     }
 

@@ -6,7 +6,7 @@ This document is the contract for harness authors.
 
 ## Registering a runtime
 
-Settings → Agents → **Runtimes** → **Add Runtime**:
+Settings → **Agent Runtimes** → **Add Runtime**:
 
 | Field | Meaning |
 |---|---|
@@ -51,16 +51,16 @@ Runtimes apply before agents, so one document can add a runtime and move an agen
 | `{cwd}` | The process's working directory |
 | `{system_prompt_file}` | A private (0600) file holding the agent's system prompt, e.g. `--append-system-prompt {system_prompt_file}` |
 
-A typical Pi-based runtime:
+New Pi runtimes start with:
 
 ```
 --mode
 rpc
 --session-id
 {chat_id}
---append-system-prompt
-{system_prompt_file}
 ```
+
+When a Pi runtime's arguments don't place `{system_prompt_file}` and the agent has a system prompt, Osaurus appends `--append-system-prompt <private file>` itself. A wrapper that doesn't accept that flag should place `{system_prompt_file}` where it wants the file.
 
 ## Process lifecycle
 
@@ -93,7 +93,7 @@ The rest of the environment is Osaurus's own, with these changes:
 
 ## The agent token
 
-`OSAURUS_AGENT_TOKEN` is minted for one process, given only to that process (through its environment, never its arguments), and revoked when the process exits or Osaurus quits. It has no time limit while the process lives, and it keeps working if the Osaurus server is stopped and started again.
+`OSAURUS_AGENT_TOKEN` is minted for one process, given only to that process (through its environment, never its arguments), and revoked when the process exits or Osaurus quits. It has no time limit while the process lives, and it keeps working if the Osaurus server is stopped and started again. It also carries the chat: tools called with it run as that chat (the Architect's draft tools act on the chat's draft, and a workflow's forms ask in the chat while it is open in a window).
 
 It is honored only on connections from this Mac's loopback interface, even when the server is exposed to the network. With it, a harness can call:
 
@@ -115,7 +115,16 @@ On the MCP routes the token binds the agent's identity, so tools behave as they 
 - Refused with an "external harness" error: Computer Use, Browser Use, AppleScript, and Mac query. They run Osaurus's own sub-loop on the agent's model, which a harness agent doesn't have.
 - A revoked or unknown token presented on the bridge header is rejected; it never falls back to unauthenticated loopback access.
 
-A `POST /mcp/call` body is `{"name": "<tool>", "arguments": {…}}`.
+A `POST /mcp/call` body is `{"name": "<tool>", "arguments": {…}}`. A call can run as long as its tool does (`workflow_test` runs a whole workflow), so don't put a short timeout on it. `osaurus mcp` waits 15 minutes by default; set `OSAURUS_MCP_CALL_TIMEOUT` (seconds) to change that.
+
+## The Architect on a harness
+
+The Architect (the workflow designer) can run on Claude Code or Pi. Its surface is fixed, whatever the runtime or its Claude Code options say:
+
+- **Instructions.** Its own built-in instructions, plus the person's extra instructions, plus a harness section: the draft is its only output, there is no `clarify` (it asks in a plain reply), and it stops after `workflow_propose_save`.
+- **Tools.** `workflow_draft`, `workflow_test`, `workflow_runs`, `workflow_discover`, `workflow_propose_save`, and `osaurus_inspect` (the narrowed form its own loop gets). Its token grants exactly these and never `osaurus_config`. No built-in harness tools: Claude Code runs with `--tools ""`, Pi with `--no-builtin-tools`.
+- **Server.** The tools need the Osaurus server. When it isn't reachable at launch, the Architect is told its tools aren't connected and says so instead of improvising; the process relaunches with the tools once the server is back.
+- **Save card.** A successful `workflow_propose_save` raises the same Save card as on Osaurus's own loop when the turn ends. Only the card's Save writes.
 
 ## Pi RPC
 
@@ -140,6 +149,8 @@ Read from the harness:
 
 Osaurus can't confine a Pi harness's tools. Narrow them with `--tools` in the runtime's arguments.
 
+Pi has no MCP client. For the Architect, Osaurus loads a bundled extension (`-e <app bundle>/osaurus-pi-extension.ts`) that lists the token's tools from `GET $OSAURUS_API_BASE/mcp/tools`, registers each as a Pi tool with its JSON Schema, and runs it through `POST /mcp/call` with the `X-Osaurus-Bridge-Grant` header. `workflow_propose_save` returns `terminate: true`, so the turn ends on the Save card. Other agents' Pi runs don't load it; a harness author can do the same from their own extension with `OSAURUS_AGENT_TOKEN`.
+
 ## Claude Code
 
 The runtime launches:
@@ -147,17 +158,21 @@ The runtime launches:
 ```
 claude --print --input-format stream-json --output-format stream-json --verbose
        --include-partial-messages --strict-mcp-config --model <alias>
-       [--effort <level>] --thinking-display summarized
+       [--effort <level>] --thinking-display summarized [--system-prompt-snapshot off]
        (--session-id | --resume) <chat id> <permission flags>
        [--mcp-config <file>] [--append-system-prompt-file <file>] <runtime arguments>
 ```
 
+Verified against Claude Code 2.1.212 and 2.1.308.
+
 - **Effort and thinking.** `--effort` is passed only when the agent's **Claude effort** is set; Default leaves Claude Code on its own per-model default. `--thinking-display summarized` makes Claude Code stream thinking summaries. In `--print` mode it ignores the `showThinkingSummaries` setting and sends empty thinking, so the flag is required.
 
 - **Execution mode.** *Agent* runs with `--permission-mode dontAsk` and an allow list: `Read`, `Grep`, and `Glob`; `Edit(//<real folder path>/**)` when **Allow file changes** is on (symlinks resolved, so `/tmp/x` becomes `//private/tmp/x`); `Bash` when **Allow shell commands** is on; and the Osaurus MCP tools when **Allow Osaurus read tools** is on. *Text only* disables every tool.
+- **Visible built-ins.** `--tools` names the only built-ins the model sees: `Read`, `Grep`, `Glob`, `TodoWrite` (where the CLI still has it; unknown names are ignored), plus `Edit`, `Write`, `NotebookEdit` with file changes and `Bash`, `Monitor` with shell commands. It is an allow list because new CLI releases add built-ins (sub-agents, agent teams, scheduling, worktrees) that a deny list never names. `--disallowedTools` stays as a second layer.
+- **Refusals.** A call `dontAsk` refuses shows a tool card naming the setting to change. A call to a tool the run doesn't have ("No such tool available") says so instead of the generic failure. A `can_use_tool` control request (a permission prompt routed to the host) is denied at once, and any other control request is refused, so a turn never waits on a question nobody can answer.
 - **Writes and shell.** File edits are limited to the chat's folder. Shell commands can't be confined.
-- **System prompt.** The agent's system prompt is passed through a 0600 file, never through argv.
-- **Osaurus tools.** Claude Code reaches them through `osaurus mcp` and the per-process token.
+- **System prompt.** The agent's system prompt is passed through a 0600 file, never through argv. When the CLI supports it, `--system-prompt-snapshot off` makes a resumed session read the current prompt instead of replaying the first turn's, so a relaunch after the prompt or the server's state changed takes effect.
+- **Osaurus tools.** Claude Code reaches them through `osaurus mcp` and the per-process token. Tool cards show them without the `mcp__osaurus__` prefix. `MCP_TOOL_TIMEOUT` is set to 15 minutes unless the runtime's environment sets it, so long `workflow_test` calls finish.
 - **Session ids.** The chat id doubles as the Claude Code session id. If Osaurus guesses wrong about whether a session exists ("already in use" or "No conversation found"), it retries once with the other flag.
 - **Upgrading.** Earlier builds ran Claude Code as `claude-code/<alias>` models. On launch, any agent whose own or inherited model is one of those ids moves to the Claude Code runtime with that alias as its **Claude model**. An agent that already has an explicit runtime keeps it. The dead model ids are cleared, so the check costs nothing afterwards, and an agent restored from an old backup still gets moved.
 

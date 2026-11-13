@@ -19,20 +19,24 @@ public enum AgentMascot: String, CaseIterable, Identifiable, Sendable {
     public var id: String { rawValue }
     public var assetName: String { "osaurus-avatar-\(rawValue)" }
 
-    /// The dino's signature color, used to theme surfaces around the mascot
-    /// (e.g. the onboarding hero glow, avatar tint, and selection ring) so
-    /// the UI reacts in the selected dino's actual color rather than a
-    /// name-hash approximation.
-    public var color: Color {
-        switch self {
-        case .blue: return Color(red: 0.30, green: 0.56, blue: 0.92)
-        case .green: return Color(red: 0.36, green: 0.72, blue: 0.42)
-        case .orange: return Color(red: 0.95, green: 0.58, blue: 0.24)
-        case .purple: return Color(red: 0.62, green: 0.42, blue: 0.92)
-        case .red: return Color(red: 0.91, green: 0.38, blue: 0.36)
-        case .yellow: return Color(red: 0.95, green: 0.78, blue: 0.27)
-        }
+    /// Costumed day-one-team avatars an earlier build stored, and the stock
+    /// dino each one became. Agents, exports, and relay peers may still
+    /// carry these ids.
+    static let retiredIDs: [String: AgentMascot] = [
+        "trice-beret": .orange,
+        "rex-purse": .purple,
+        "bronto-scarf": .yellow,
+        "trice-backpack": .red,
+        "rex-mecha": .blue,
+    ]
+
+    /// The mascot a persisted `Agent.avatar` names, reading a retired id as
+    /// its stock replacement.
+    public init?(storedID: String) {
+        guard let mascot = AgentMascot(rawValue: storedID) ?? Self.retiredIDs[storedID] else { return nil }
+        self = mascot
     }
+
 
     /// Human-friendly label for accessibility / tooltip surfaces. Avoids
     /// leaking the raw enum case (`"blue"`) into help text — the avatar
@@ -63,9 +67,10 @@ public enum AgentMascot: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-/// Renders an agent avatar at the given diameter. Uses the mascot image when
-/// `mascotId` matches a known `AgentMascot` otherwise draws a tinted circle
-/// with the first letter of `name` (or `?` when name is empty)
+/// Renders an agent avatar at the given diameter. Uses the custom image, then
+/// the mascot image when `mascotId` matches a known `AgentMascot`, otherwise
+/// the first letter of `name` (or `?` when name is empty) tinted in the
+/// agent's colour.
 struct AgentAvatarView: View {
     let mascotId: String?
     let name: String
@@ -82,56 +87,75 @@ struct AgentAvatarView: View {
     /// (no inner inset). Use for hero treatments; leave default for small
     /// list/sidebar avatars where the inset reads as more iconic.
     var bleedsToEdge: Bool = false
+    /// False keeps `diameter` over the library's avatar size, for an avatar
+    /// whose size is part of its layout (the setup's team list).
+    var followsLibrarySize: Bool = true
 
+    @Environment(\.theme) private var baseTheme
+    @Environment(\.isEnabled) private var baseComponentEnabled
+    private var theme: any ThemeProtocol { baseTheme.catalogFamily(11, enabled: baseComponentEnabled) }
     @Environment(\.displayScale) private var displayScale
 
+    private var resolvedDiameter: CGFloat {
+        followsLibrarySize ? theme.catalogMetric("avatarSize", fallback: diameter) : diameter
+    }
+    private var avatarShape: AnyShape {
+        AnyShape(RoundedRectangle(cornerRadius: theme.catalogMetric("radius", fallback: resolvedDiameter / 2)))
+    }
     var body: some View {
         ZStack {
-            Circle()
-                .fill(
-                    LinearGradient(
-                        colors: [tint.opacity(0.2), tint.opacity(0.05)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-
-            if let url = customImageURL,
-                let nsImage = AvatarBitmapRenderer.shared.image(
-                    customURL: url,
-                    pointSize: diameter,
-                    scale: displayScale
-                )
-            {
-                Image(nsImage: nsImage)
-            } else if let mascot = mascotId.flatMap(AgentMascot.init(rawValue:)),
-                let nsImage = AvatarBitmapRenderer.shared.image(
-                    mascot: mascot,
-                    pointSize: mascotPointSize,
-                    scale: displayScale
-                )
-            {
-                Image(nsImage: nsImage)
+            if let artwork {
+                avatarShape.fill(theme.assignedColor("component.library.11." + (baseComponentEnabled ? "background" : "disabledBackground"), fallback: theme.surface.raised))
+                Image(nsImage: artwork)
+                RoundedRectangle(cornerRadius: theme.catalogMetric("radius", fallback: resolvedDiameter / 2))
+                    .strokeBorder(theme.assignedColor("component.library.11.border", fallback: theme.rule(around: tint)), lineWidth: theme.catalogMetric("borderWidth", fallback: borderWidth))
             } else {
-                Text(name.isEmpty ? "?" : name.prefix(1).uppercased())
-                    .font(.system(size: monogramFontSize, weight: .bold, design: .rounded))
-                    .foregroundColor(tint)
+                monogram
             }
-
-            Circle()
-                .strokeBorder(tint.opacity(0.5), lineWidth: borderWidth)
         }
-        .frame(width: diameter, height: diameter)
-        .clipShape(Circle())
+        .frame(width: resolvedDiameter, height: resolvedDiameter)
+        .clipShape(avatarShape)
+    }
+
+    /// The custom image, else the mascot, pre-rendered at display size.
+    private var artwork: NSImage? {
+        if let url = customImageURL,
+            let image = AvatarBitmapRenderer.shared.image(customURL: url, pointSize: resolvedDiameter, scale: displayScale)
+        {
+            return image
+        }
+        if let mascot = mascotId.flatMap(AgentMascot.init(storedID:)) {
+            return AvatarBitmapRenderer.shared.image(mascot: mascot, pointSize: mascotPointSize, scale: displayScale)
+        }
+        return nil
+    }
+
+    /// No artwork: the name's initial on a soft wash of the agent's own
+    /// colour, borderless, so a list of letter avatars reads as a set of
+    /// distinct agents rather than a column of keycaps. In light mode the
+    /// letter uses primary ink: an agent colour such as yellow cannot hold
+    /// text contrast on a light surface.
+    private var monogram: some View {
+        ZStack {
+            avatarShape.fill(tint.opacity(baseComponentEnabled ? 0.18 : 0.08))
+            Text(name.isEmpty ? "?" : name.prefix(1).uppercased())
+                .glyphSize(points: min(monogramFontSize, resolvedDiameter * 0.5), weight: .semibold, design: .rounded)
+                .foregroundStyle(monogramInk)
+        }
+    }
+
+    private var monogramInk: Color {
+        guard baseComponentEnabled else { return theme.text.disabled }
+        return theme.isDark ? tint : theme.text.primary
     }
 
     /// Mascot edge length in points: full bleed, or inset 8% per side. The
     /// inset is snapped so the leftover margin is a whole number of pixels on
     /// each side; a half-pixel offset would make the GPU resample the bitmap.
     private var mascotPointSize: CGFloat {
-        guard !bleedsToEdge else { return diameter }
+        guard !bleedsToEdge else { return resolvedDiameter }
         let scale = max(displayScale, 1)
-        let outerPixels = (diameter * scale).rounded()
+        let outerPixels = (resolvedDiameter * scale).rounded()
         var innerPixels = (outerPixels * 0.84).rounded()
         if Int(outerPixels - innerPixels) % 2 != 0 { innerPixels -= 1 }
         return max(innerPixels, 1) / scale

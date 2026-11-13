@@ -10,15 +10,15 @@ Osaurus runs open-weight models locally on Apple Silicon using MLX — no intern
 
 ## Downloading models
 
-- Settings… (⌘,) → Local Models shows the curated catalog with size estimates; download, pause, and delete from there.
+- Settings… (⌘,) → Local Models lists the curated catalog in one table: name, **Fits This Mac**, estimated memory, download size and release date, with installed models first. **All**, **On This Mac** and **Available** narrow the list, the search field matches names and families, column headers sort, and **Filter** (Language) narrows by type, size, parameters and family. Click a row to open its details on the right; download, pause, and delete from the row or the details. **Model kind** switches the page between Language, Image, Speech, Privacy Detection and AppleScript models; which installed model is used for each job is Models → Model Defaults.
 - Or just ask the default Osaurus assistant in chat to download a model — it can list recommended models and start the download for you.
 - Models are stored in `~/MLXModels` (override with the `OSU_MODELS_DIR` environment variable). Model weights live outside `~/.osaurus/`.
-- The full download of Osaurus (the ~4 GB `Osaurus-<version>-full.dmg`) ships Raptor 0.6 inside the app. On first launch it is installed into `~/MLXModels/OsaurusAI/Raptor-0.6-4B-JANG_6M` (an instant APFS clone when the app and your models folder share a volume, so it costs no extra disk), onboarding skips the model download, and later updates stay small because the installed copy lives in `~/MLXModels`, not in the app. Deleting it from **Local Models → On Device** is permanent for that install; download it again from the catalog if you want it back.
+- The full download of Osaurus (the ~4 GB `Osaurus-<version>-full.dmg`) ships Raptor 0.7 inside the app. On first launch it is installed into `~/MLXModels/OsaurusAI/Raptor-0.7-4B-JANG_6M` (an instant APFS clone when the app and your models folder share a volume, so it costs no extra disk), onboarding skips the model download, and later updates stay small because the installed copy lives in `~/MLXModels`, not in the app. Deleting it from **Local Models → On This Mac** is permanent for that install; download it again from the catalog if you want it back.
 
 ## Choosing a model
 
 If an installed model has missing or damaged files, open its details in
-**Local Models → On Device** and choose **Repair**. Osaurus checks file contents
+**Local Models → On This Mac** and choose **Repair**. Osaurus checks file contents
 against Hugging Face, restores changed or missing files, and displays progress
 or a specific failure. Pause, Resume, and Cancel use the same controls as a
 normal download. Intact files are kept. Repair can restore files you deliberately
@@ -79,7 +79,7 @@ unless explicitly overridden. Remote models do not expose this local control.
 
 ## Apple Foundation Models
 
-On macOS 26+ with Apple Intelligence, the on-device Apple Foundation model is available as `foundation` — used out of the box as the "core model" for background jobs like memory distillation and chat titles (configurable in Settings → General → Core Model). It requires Apple Intelligence to be enabled in System Settings → Apple Intelligence & Siri. When it is turned off, the model is still downloading, or a request stalls, background jobs automatically run on your active chat model instead; the Core Model picker and Memory diagnostics show the reason.
+On macOS 26+ with Apple Intelligence, the on-device Apple Foundation model is available as `foundation` — used out of the box as the "core model" for background jobs like memory distillation and chat titles (configurable in Settings → Models → Model Defaults → Core Model). It requires Apple Intelligence to be enabled in System Settings → Apple Intelligence & Siri. When it is turned off, the model is still downloading, or a request stalls, background jobs automatically run on your active chat model instead; the Core Model picker and Memory diagnostics show the reason.
 
 ## Model memory and loading
 
@@ -87,4 +87,4 @@ On macOS 26+ with Apple Intelligence, the on-device Apple Foundation model is av
 - RAM-safety settings (Server → Settings → Memory Safety) govern load admission and cache caps so a large model can't take down the system.
 - If a model is too large for available RAM, Osaurus refuses the load with a clear error instead of letting the system swap or crash.
 
-Automatic checks of installed official OsaurusAI repositories run periodically without downloading model files. Use **Automatically Check Model Updates** in Settings → Local Models to opt out. Manual detail checks and explicit Verify/Repair/Update actions remain available. Metadata matching does not replace file verification.
+Automatic checks of installed official OsaurusAI repositories run periodically without downloading model files. Use **Automatically Check Model Updates** in Models → Model Defaults → Downloads & Updates to opt out. Manual detail checks and explicit Verify/Repair/Update actions remain available. Metadata matching does not replace file verification.

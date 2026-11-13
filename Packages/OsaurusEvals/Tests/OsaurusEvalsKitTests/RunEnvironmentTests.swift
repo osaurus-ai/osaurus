@@ -62,7 +62,7 @@ struct RunEnvironmentTests {
             runModel: "mlx-community/Qwen3-4B-4bit",
             environment: ["XAI_API_KEY": "key-123"]
         )
-        #expect(env.judge == "xai/grok-4.3")
+        #expect(env.judge == "xai/grok-4.7")
     }
 
     @Test func currentHonorsExplicitJudgeModel() {

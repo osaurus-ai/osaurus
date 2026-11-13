@@ -6,22 +6,21 @@
 //  sandbox root filesystem.
 //
 //  The first cold boot unpacks the pinned OCI image into an 8 GiB
-//  `rootfs.ext4` (tens of seconds). This store captures that pristine,
-//  never-booted filesystem as an immutable template keyed by
-//  (image digest, runtime format version) using APFS `clonefile` — an
-//  O(1) metadata operation that shares every block with the source.
-//  From then on:
+//  ext4 image (tens of seconds) and installs it as an immutable template
+//  keyed by (image digest, rootfs format version). Every pod container
+//  boots from its own APFS `clonefile` of that template — an O(1)
+//  metadata operation that shares every block with the source:
 //
-//  - Any boot that would have re-unpacked (reset, invalidated warm
-//    stamp, warm-boot corruption fallback) clones the template in
-//    milliseconds instead.
-//  - With per-agent environments enabled, each agent gets its own
-//    clone under `container/environments/<agent>/`, so system-level
-//    package state (apk) persists per agent instead of in one shared
-//    mutable rootfs. Environments are bounded: least-recently-used
-//    clones beyond the cap are evicted (they re-clone from the
-//    template on next use; the agent's home stays on the virtiofs
-//    workspace and is never touched by eviction).
+//  - Each agent's container gets a clone under
+//    `container/environments/<agent>/`, so system-level package state
+//    (apk) persists per agent and no agent can see another's. The
+//    system container gets one too (`osaurus-system`).
+//  - Environments are bounded: least-recently-used agent clones beyond
+//    the cap are evicted (they re-clone from the template on next use;
+//    the agent's home stays on the virtiofs workspace and is never
+//    touched by eviction).
+//  - Templates and environments are excluded from Time Machine; both
+//    are rebuilt from the pinned image on demand.
 //
 //  Templates are never booted and never mutated after capture. A key
 //  change (image bump or runtime-format change) makes old templates and
@@ -41,8 +40,7 @@ import Foundation
         // MARK: - Keys and paths
 
         /// Filesystem-safe cache key binding a template to the exact image
-        /// digest and runtime format that produced it. Mirrors the warm-boot
-        /// stamp pair in `SandboxManager.warmBootStampValid`.
+        /// digest and rootfs format that produced it.
         public static func templateKey(
             imageReference: String,
             runtimeFormatVersion: String
@@ -61,6 +59,12 @@ import Foundation
 
         static func templateFile(key: String) -> URL {
             templatesDir().appendingPathComponent("rootfs-\(key).ext4")
+        }
+
+        /// Where a cold boot unpacks the image before it becomes the
+        /// template, so a half-written unpack is never mistaken for one.
+        static func stagingFile(key: String) -> URL {
+            templatesDir().appendingPathComponent("rootfs-\(key).ext4.partial")
         }
 
         public static func environmentDir(agentName: String) -> URL {
@@ -102,6 +106,31 @@ import Foundation
             try OsaurusPaths.ensureExists(templatesDir())
             try cowClone(from: rootfs, to: target)
             pruneTemplates(keeping: key)
+        }
+
+        /// Promote a finished unpack at `stagingFile(key:)` to the template
+        /// for `key`, then prune every other template.
+        public static func installTemplate(key: String) throws {
+            let fm = FileManager.default
+            let target = templateFile(key: key)
+            if fm.fileExists(atPath: target.path) {
+                try fm.removeItem(at: target)
+            }
+            try fm.moveItem(at: stagingFile(key: key), to: target)
+            pruneTemplates(keeping: key)
+        }
+
+        /// Mark the template and environment directories (and the legacy
+        /// container state dir) as excluded from Time Machine. Each holds
+        /// 8 GiB-logical disk images that are rebuilt on demand.
+        public static func excludeFromBackups() {
+            for dir in [templatesDir(), environmentsDir(), OsaurusPaths.container().appendingPathComponent("containers")] {
+                guard FileManager.default.fileExists(atPath: dir.path) else { continue }
+                var url = dir
+                var values = URLResourceValues()
+                values.isExcludedFromBackup = true
+                try? url.setResourceValues(values)
+            }
         }
 
         /// Drop the template for `key` (e.g. after a boot from it failed —
@@ -229,23 +258,24 @@ import Foundation
                 .sorted { ($0.stamp?.lastUsedAt ?? .distantPast) < ($1.stamp?.lastUsedAt ?? .distantPast) }
         }
 
-        /// Bound the environment pool: evict least-recently-used clones
-        /// beyond `max`, plus any clone made from a different template key
-        /// (unreachable — the pin moved). `protecting` (the currently booted
-        /// environment) is never evicted. Returns the evicted names.
+        /// Bound the agent environment pool: evict least-recently-used
+        /// agent clones beyond `max`, plus any clone made from a different
+        /// template key (unreachable — the pin moved). `protecting` (the
+        /// running pod's environments) is never evicted, and the system
+        /// environment never counts toward `max`. Returns the evicted names.
         @discardableResult
         public static func enforceLimit(
             max: Int,
             currentKey: String,
-            protecting protected: String? = nil
+            protecting protected: Set<String> = []
         ) -> [String] {
             var evicted: [String] = []
             var live: [(name: String, stamp: EnvironmentStamp?)] = []
             for env in listEnvironments() {
-                if env.name != protected, env.stamp?.key != currentKey {
+                if !protected.contains(env.name), env.stamp?.key != currentKey {
                     try? resetEnvironment(agentName: env.name)
                     evicted.append(env.name)
-                } else {
+                } else if env.name != SandboxPodLayout.systemEnvironmentName {
                     live.append(env)
                 }
             }
@@ -253,12 +283,40 @@ import Foundation
             guard overflow > 0 else { return evicted }
             for env in live {  // already LRU-first
                 guard overflow > 0 else { break }
-                guard env.name != protected else { continue }
+                guard !protected.contains(env.name) else { continue }
                 try? resetEnvironment(agentName: env.name)
                 evicted.append(env.name)
                 overflow -= 1
             }
             return evicted
+        }
+
+        /// Disk the agent's rootfs image costs on its own: the blocks it no
+        /// longer shares with the template. The template's blocks are paid
+        /// once, so counting them per clone overstated usage many times over.
+        /// Falls back to allocated blocks where APFS can't report the split.
+        public static func allocatedBytes(agentName: String) -> Int64? {
+            let url = environmentRootfs(agentName: agentName)
+            if let unique = privateBytes(at: url) { return unique }
+            let values = try? url.resourceValues(forKeys: [.totalFileAllocatedSizeKey])
+            return values?.totalFileAllocatedSize.map(Int64.init)
+        }
+
+        /// APFS's count of a file's blocks not shared with any clone.
+        static func privateBytes(at url: URL) -> Int64? {
+            var request = attrlist()
+            request.bitmapcount = u_short(ATTR_BIT_MAP_COUNT)
+            request.forkattr = attrgroup_t(ATTR_CMNEXT_PRIVATESIZE)
+            // u_int32 length, then the packed off_t.
+            var buffer = [UInt8](repeating: 0, count: 32)
+            let status = url.withUnsafeFileSystemRepresentation { path -> Int32 in
+                guard let path else { return -1 }
+                return getattrlist(path, &request, &buffer, buffer.count, UInt32(FSOPT_ATTR_CMN_EXTENDED))
+            }
+            guard status == 0 else { return nil }
+            let length = buffer.withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) }
+            guard length >= 4 + 8 else { return nil }
+            return buffer.withUnsafeBytes { Int64($0.loadUnaligned(fromByteOffset: 4, as: off_t.self)) }
         }
 
         // MARK: - Diagnostics

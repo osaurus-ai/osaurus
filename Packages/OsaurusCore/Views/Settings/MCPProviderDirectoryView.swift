@@ -24,14 +24,16 @@ struct MCPProviderDirectoryView: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             searchField
 
             MCPProviderCategoryChips(selection: $category)
 
             LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 160), spacing: 12)],
-                spacing: 12
+                // Two columns in the 560pt Add Service sheet; at three, a
+                // card's one-line title truncates to a few letters.
+                columns: [GridItem(.adaptive(minimum: 210), spacing: theme.space.s12)],
+                spacing: theme.space.s12
             ) {
                 MCPProviderDirectoryCard(
                     icon: "slider.horizontal.3",
@@ -92,65 +94,16 @@ struct MCPProviderDirectoryView: View {
     }
 
     private var searchField: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
-
-            ZStack(alignment: .leading) {
-                if query.isEmpty {
-                    Text("Search services", bundle: .module)
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.placeholderText)
-                        .allowsHitTesting(false)
-                }
-                TextField("", text: $query)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 13))
-                    .foregroundColor(theme.primaryText)
-            }
-
-            if !query.isEmpty {
-                Button(action: { query = "" }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.inputBorder, lineWidth: 1)
-                )
-        )
+        SearchField(text: $query, placeholder: "Search services", fillsAvailableWidth: true)
     }
 
     private var noMatchesHint: some View {
-        VStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 22, weight: .light))
-                .foregroundColor(theme.tertiaryText)
-            Group {
-                if trimmedQuery.isEmpty {
-                    Text("No services in this category", bundle: .module)
-                } else {
-                    Text("No services match \"\(trimmedQuery)\"", bundle: .module)
-                }
-            }
-            .font(.system(size: 13, weight: .medium))
-            .foregroundColor(theme.secondaryText)
-            Text("Try a different name, or pick Custom Server above.", bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
+        SettingsEmptyState(
+            inline: "magnifyingglass",
+            title: trimmedQuery.isEmpty
+                ? "No services in this category" : L("No services match \"\(trimmedQuery)\""),
+            hint: "Try a different name, or pick Custom Server above."
+        )
     }
 }
 
@@ -159,70 +112,24 @@ struct MCPProviderDirectoryView: View {
 /// One cell in the directory grid: icon, title, two-line tagline, full-cell
 /// tap target.
 struct MCPProviderDirectoryCard: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
+    @Environment(\.theme) private var inheritedTheme
+    private var theme: any ThemeProtocol { inheritedTheme }
+    /// Catalog keys.
     let icon: String
     let title: String
     let tagline: String
     var requiresSubscription = false
     let action: () -> Void
 
-    @State private var isHovering = false
-
     var body: some View {
-        Button(action: action) {
-            VStack(alignment: .leading, spacing: 10) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(themeManager.currentTheme.accentColor.opacity(0.12))
-                    Image(systemName: icon)
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(themeManager.currentTheme.accentColor)
-                }
-                .frame(width: 40, height: 40)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(LocalizedStringKey(title), bundle: .module)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(themeManager.currentTheme.primaryText)
-                        .lineLimit(1)
-                    Text(LocalizedStringKey(tagline), bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(themeManager.currentTheme.secondaryText)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if requiresSubscription {
-                        MCPProviderSubscriptionNote()
-                    }
-                }
-
-                Spacer(minLength: 0)
+        LibraryCard(title: LCached(title), minHeight: 130, action: action) {
+            LibraryIcon(symbol: icon, tint: theme.action.primary.default.background)
+        } content: {
+            LibraryCardPreview(text: LCached(tagline))
+            if requiresSubscription {
+                MCPProviderSubscriptionNote()
             }
-            .padding(14)
-            .frame(maxWidth: .infinity, minHeight: 130, alignment: .topLeading)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(
-                        isHovering
-                            ? themeManager.currentTheme.accentColor.opacity(0.06)
-                            : themeManager.currentTheme.tertiaryBackground
-                    )
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(
-                        isHovering
-                            ? themeManager.currentTheme.accentColor.opacity(0.4)
-                            : themeManager.currentTheme.primaryBorder,
-                        lineWidth: 1
-                    )
-            )
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(PlainButtonStyle())
-        .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) { isHovering = hovering }
-        }
+        }.environment(\.theme, theme)
     }
 }
 
@@ -232,115 +139,63 @@ struct MCPProviderDirectoryCard: View {
 /// tagline, and an "Add" affordance. Flat — it is always a row inside a
 /// `SettingsGroup`.
 struct MCPProviderDirectoryRow: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    private var theme: any ThemeProtocol { inheritedTheme }
+    /// Catalog keys.
     let icon: String
     let title: String
     let tagline: String
     var requiresSubscription = false
     let action: () -> Void
 
-    @State private var isHovering = false
-
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 7)
-                        .fill(theme.accentColor.opacity(0.12))
-                    Image(systemName: icon)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.accentColor)
-                }
-                .frame(width: 28, height: 28)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(LocalizedStringKey(title), bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-                        .lineLimit(1)
-                    HStack(spacing: 6) {
-                        Text(LocalizedStringKey(tagline), bundle: .module)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                            .lineLimit(1)
-                        if requiresSubscription {
-                            MCPProviderSubscriptionNote()
-                        }
-                    }
-                }
-
-                Spacer(minLength: 8)
-
-                HStack(spacing: 4) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 10, weight: .semibold))
-                    Text("Add", bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .foregroundColor(theme.accentColor)
-                .opacity(isHovering ? 0.8 : 1)
+        LibraryRow(title: LCached(title), subtitle: LCached(tagline), action: action) {
+            SettingsIconTile(icon: icon)
+        } badges: {
+            if requiresSubscription {
+                MCPProviderSubscriptionNote()
             }
-            .frame(maxWidth: .infinity, minHeight: SettingsGroupMetrics.rowMinHeight)
-            .contentShape(Rectangle())
+        } trailing: {
+            Label {
+                Text("Add", bundle: .module)
+            } icon: {
+                Image(systemName: "plus")
+            }
+            .labelStyle(.titleAndIcon)
+            .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
+            .foregroundColor(theme.text.link)
+            .fixedSize()
         }
-        .buttonStyle(.plain)
-        .pointingHandCursor()
-        .onHover { isHovering = $0 }
     }
 }
 
 // MARK: - Category Chips
 
-/// "All" plus one chip per category, shared by the Add Service sheet and the
-/// inline directory on Tools & MCP → Services.
 struct MCPProviderCategoryChips: View {
-    @Environment(\.theme) private var theme
     @Binding var selection: MCPProviderCategory?
 
     var body: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 6) {
-                chip(title: "All", isSelected: selection == nil) { selection = nil }
-                ForEach(MCPProviderCategory.allCases, id: \.self) { category in
-                    chip(title: category.displayName, isSelected: selection == category) {
-                        selection = selection == category ? nil : category
-                    }
-                }
-            }
-        }
-    }
-
-    private func chip(title: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Text(LocalizedStringKey(title), bundle: .module)
-                .font(.system(size: 11, weight: isSelected ? .semibold : .medium))
-                .foregroundColor(isSelected ? .white : theme.secondaryText)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(
-                    Capsule().fill(isSelected ? theme.accentColor : theme.tertiaryBackground)
-                )
-                .overlay(
-                    Capsule().stroke(isSelected ? Color.clear : theme.primaryBorder, lineWidth: 1)
-                )
-        }
-        .buttonStyle(.plain)
-        .accessibilityAddTraits(isSelected ? .isSelected : [])
+        FilterChipRow(
+            MCPProviderCategory.allCases,
+            selection: $selection,
+            title: { String(localized: String.LocalizationValue($0.displayName), bundle: .module) }
+        )
     }
 }
 
 /// Small caption for enterprise data products that need a paid account.
 struct MCPProviderSubscriptionNote: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    private var theme: any ThemeProtocol { inheritedTheme }
 
     var body: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: theme.space.s2) {
             Image(systemName: "lock.fill")
-                .font(.system(size: 8, weight: .semibold))
+                .glyphSize(.tiny, weight: .semibold)
             Text("Requires subscription", bundle: .module)
-                .font(.system(size: 10, weight: .medium))
+                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.chip)
         }
-        .foregroundColor(theme.tertiaryText)
+        .foregroundColor(theme.text.tertiary)
         .lineLimit(1)
         .fixedSize()
     }

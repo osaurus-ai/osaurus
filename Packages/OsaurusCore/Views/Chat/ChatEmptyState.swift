@@ -17,6 +17,15 @@ private let heroAvatarDiameter: CGFloat = 64
 /// placeholder and `AgentAvatarView` monogram fallback).
 private let heroAvatarIconFontSize: CGFloat = 28
 
+// MARK: - Hosted Agent
+
+struct HostedAgentHero: Equatable, Sendable {
+    let name: String
+    let avatar: String?
+    let description: String?
+    let hostName: String
+}
+
 // MARK: - Hero Agent Avatar
 
 /// Renders a hero-sized avatar for a given agent. Built-in and custom
@@ -26,13 +35,14 @@ private let heroAvatarIconFontSize: CGFloat = 28
 /// backing, leaving the dino floating against the chat background.
 /// Shared by `ChatEmptyState.heroAvatar` and `ChatEmptyStateNoModels.welcomeAvatar`.
 private struct HeroAgentAvatar: View {
+    @Environment(\.theme) private var theme
     let agent: Agent
 
     var body: some View {
         AgentAvatarView(
             mascotId: agent.avatar,
             name: agent.name,
-            tint: agentColorFor(agent.name),
+            tint: theme.dataInk(seed: agent.name),
             diameter: heroAvatarDiameter,
             customImageURL: agent.customAvatarURL,
             monogramFontSize: heroAvatarIconFontSize,
@@ -59,7 +69,7 @@ struct ChatEmptyState: View {
     /// progress never disappears.
     var pendingLocalModelId: String? = nil
     /// Display name of the temporary Router model already selected while local
-    /// setup runs (DeepSeek V4.1 Flash for first-run). Nil means Cloud still
+    /// setup runs (the newest DeepSeek Flash for first-run). Nil means Cloud still
     /// needs to connect.
     var temporaryCloudModelName: String? = nil
     /// Automatic temporary Osaurus Cloud selection while the pinned local
@@ -72,7 +82,6 @@ struct ChatEmptyState: View {
     /// Open the providers management surface from the no-models recovery
     /// state. nil hides the Connect-a-provider action.
     var onOpenProviders: (() -> Void)? = nil
-    var activeDiscoveredAgent: DiscoveredAgent? = nil
     var activeRelayAgent: PairedRelayAgent? = nil
     /// Mascot avatar id of the active remote agent (Mode 2), resolved from its
     /// live metadata on connect. nil = monogram fallback on the remote name.
@@ -97,6 +106,18 @@ struct ChatEmptyState: View {
     /// greeting (one vocabulary with the composer lock notice) and hides the
     /// quick actions while the composer is locked.
     var sharedAgentStatus: SharedAgentStatus?
+    /// One of the user's agents on another of their Macs, which runs it.
+    var hostedAgent: HostedAgentHero?
+    /// The new chat's discovery card, under the greeting.
+    var discoveryCard: DiscoveryCard? = nil
+    var onOpenDiscovery: ((DiscoveryItem) -> Void)? = nil
+    var onDismissDiscovery: ((DiscoveryItem) -> Void)? = nil
+    /// What is left in Set Up Osaurus; the link under the greeting shows
+    /// while it is above zero.
+    var setUpLeft: Int = 0
+    var onOpenSetUp: (() -> Void)? = nil
+    /// Turns discovery off: the card and the link leave every new chat.
+    var onSkipSetUp: (() -> Void)? = nil
 
     @State private var hasAppeared = false
     @Environment(\.theme) private var theme
@@ -107,23 +128,23 @@ struct ChatEmptyState: View {
 
     /// True when this empty state heads a Mode 2 remote-agent conversation.
     private var isRemoteChat: Bool {
-        sharedAgent != nil || activeRelayAgent != nil || activeDiscoveredAgent != nil
+        hostedAgent != nil || sharedAgent != nil || activeRelayAgent != nil
     }
 
     /// Display name of the active remote agent (Mode 2), if any. Drives the
     /// empty-state title so a remote conversation is headed by the remote
     /// agent's own name rather than the local agent's greeting.
     private var remoteAgentName: String? {
+        if let hosted = hostedAgent {
+            let trimmed = hosted.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { return trimmed }
+        }
         if let shared = sharedAgent {
             let trimmed = shared.name.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { return trimmed }
         }
         if let relay = activeRelayAgent {
             let trimmed = relay.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : trimmed
-        }
-        if let discovered = activeDiscoveredAgent {
-            let trimmed = discovered.name.trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmed.isEmpty ? nil : trimmed
         }
         return nil
@@ -165,11 +186,11 @@ struct ChatEmptyState: View {
         // introduces itself), never the local agent's custom
         // subtitle. Falls back to the neutral default when it has none.
         if isRemoteChat {
-            if let d = (remoteAgentDescription ?? sharedAgent?.description)?
+            if let d = (remoteAgentDescription ?? sharedAgent?.description ?? hostedAgent?.description)?
                 .trimmingCharacters(in: .whitespacesAndNewlines),
                 !d.isEmpty
             {
-                return LocalizedStringKey(d)
+                return LocalizedStringKey(Self.greetingSubtitle(d))
             }
             return "How can I help you today?"
         }
@@ -180,9 +201,33 @@ struct ChatEmptyState: View {
         }
         let description = activeAgent.displayDescription.trimmingCharacters(in: .whitespacesAndNewlines)
         if !description.isEmpty {
-            return LocalizedStringKey(description)
+            return LocalizedStringKey(Self.greetingSubtitle(description))
         }
         return "How can I help you today?"
+    }
+
+    /// Longest subtitle the greeting shows before trimming to sentences.
+    nonisolated static let greetingSubtitleLimit = 160
+
+    /// An agent description shortened for the greeting: the leading whole
+    /// sentences that fit in `limit` characters, so the subtitle ends on a
+    /// full stop instead of an ellipsis mid-clause. A first sentence longer
+    /// than the limit is kept whole and left to the line limit; whitespace
+    /// runs (including newlines) collapse to single spaces.
+    nonisolated static func greetingSubtitle(_ description: String, limit: Int = greetingSubtitleLimit) -> String {
+        let text = description.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        guard text.count > limit else { return text }
+        var sentences: [String] = []
+        text.enumerateSubstrings(in: text.startIndex..., options: .bySentences) { sentence, _, _, _ in
+            if let sentence { sentences.append(sentence.trimmingCharacters(in: .whitespaces)) }
+        }
+        var result = ""
+        for sentence in sentences where !sentence.isEmpty {
+            let next = result.isEmpty ? sentence : result + " " + sentence
+            if next.count > limit { break }
+            result = next
+        }
+        return result.isEmpty ? (sentences.first ?? text) : result
     }
 
     /// "Shared by Maggie · annietest" for a teammate's shared agent, "Your
@@ -190,6 +235,7 @@ struct ChatEmptyState: View {
     /// from a different device; nil for agents hosted here and legacy
     /// Mode 2 peers (no owner to name).
     private var sharedAttribution: String? {
+        if let hosted = hostedAgent { return String(format: L("Your agent on %@"), hosted.hostName) }
         guard isRemoteChat, let shared = sharedAgent, !shared.isHostedHere else { return nil }
         let workspace = shared.workspaceName?.trimmingCharacters(in: .whitespacesAndNewlines)
         if shared.isOwnedElsewhere {
@@ -223,27 +269,11 @@ struct ChatEmptyState: View {
         return quickActions
     }
 
-    /// Transport-security status for the active remote agent, if any.
-    /// Relay agents are always end-to-end encrypted (the Secure Channel is
-    /// hard-required for agent traffic); Bonjour peers advertise support via
-    /// `osc=1` — peers without it must upgrade before they can chat.
-    private enum RemoteEncryptionStatus {
-        case endToEndEncrypted
-        case peerNeedsUpgrade
-    }
-
-    private var remoteEncryptionStatus: RemoteEncryptionStatus? {
-        if activeRelayAgent != nil { return .endToEndEncrypted }
-        if let discovered = activeDiscoveredAgent {
-            return discovered.supportsSecureChannel ? .endToEndEncrypted : .peerNeedsUpgrade
-        }
-        return nil
-    }
 
     var body: some View {
         GeometryReader { geometry in
             ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     Spacer(minLength: 20)
 
                     if let pendingModelId = pendingLocalModelId {
@@ -273,7 +303,7 @@ struct ChatEmptyState: View {
         }
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                withAnimation(theme.animationSlow()) {
+                withAnimation(theme.motion.slow) {
                     hasAppeared = true
                 }
             }
@@ -286,64 +316,64 @@ struct ChatEmptyState: View {
     // MARK: - Ready State (has models)
 
     private var readyState: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: theme.space.s14) {
             // Hero avatar — agent's mascot as the focal point
             heroAvatar
                 .opacity(hasAppeared ? 1 : 0)
                 .scaleEffect(hasAppeared ? 1 : 0.85)
-                .animation(theme.springAnimation().delay(0.0), value: hasAppeared)
+                .animation(theme.motion.springAnimation.delay(0.0), value: hasAppeared)
 
             greetingBlock
         }
-        .padding(.horizontal, 40)
+        .padding(.horizontal, theme.space.s40)
     }
 
     /// Greeting + subtitle + quick actions block.
     @ViewBuilder
     private var greetingBlock: some View {
-        VStack(spacing: 14) {
-            VStack(spacing: 8) {
-                HStack(spacing: 6) {
+        VStack(spacing: theme.space.s14) {
+            VStack(spacing: theme.space.s8) {
+                HStack(spacing: theme.space.s6) {
                     Text(greetingText)
-                        .font(theme.font(size: CGFloat(theme.titleSize) + 4, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .textStyle(.title)
+                        .foregroundColor(theme.text.primary)
                 }
                 .id("greeting-\(greetingText)")
                 .transition(.opacity)
                 .opacity(hasAppeared ? 1 : 0)
                 .offset(y: hasAppeared ? 0 : 20)
-                .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
+                .animation(theme.motion.springAnimation.delay(0.1), value: hasAppeared)
 
                 Text(subtitleText, bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.bodySize) + 2))
-                    .foregroundColor(theme.secondaryText)
+                    .textStyle(.heading)
+                    .foregroundColor(theme.text.secondary)
                     .multilineTextAlignment(.center)
-                    .lineLimit(2)
+                    .lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: 480)
+                    .frame(maxWidth: 560)
                     .transition(.opacity)
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 15)
-                    .animation(theme.springAnimation().delay(0.17), value: hasAppeared)
+                    .animation(theme.motion.springAnimation.delay(0.17), value: hasAppeared)
 
                 // Teammate's shared agent: who shared it and through which
                 // workspace, next to the transport/status badge — the two
                 // facts that distinguish it from a local agent of the same
                 // name.
                 if sharedAttribution != nil || securityBadgeState != nil {
-                    HStack(spacing: 8) {
+                    HStack(spacing: theme.space.s8) {
                         if let attribution = sharedAttribution {
-                            HStack(spacing: 5) {
+                            HStack(spacing: theme.space.s4) {
                                 Image(systemName: "person.2.fill")
-                                    .font(.system(size: 9, weight: .semibold))
+                                    .glyphSize(.tiny, weight: .semibold)
                                 Text(verbatim: attribution)
                                     .lineLimit(1)
                             }
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 4)
-                            .background(Capsule().fill(theme.secondaryText.opacity(theme.isDark ? 0.12 : 0.08)))
+                            .textStyle(.footnote, weight: 500)
+                            .foregroundColor(theme.text.secondary)
+                            .padding(.horizontal, theme.space.s10)
+                            .padding(.vertical, theme.space.s4)
+                            .background(Capsule().fill(theme.surface.hover))
                             .help(sharedAgent?.shortAddress ?? "")
                         }
                         if securityBadgeState != nil {
@@ -352,8 +382,25 @@ struct ChatEmptyState: View {
                     }
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 12)
-                    .animation(theme.springAnimation().delay(0.24), value: hasAppeared)
+                    .animation(theme.motion.springAnimation.delay(0.24), value: hasAppeared)
                 }
+            }
+
+            if let discoveryCard {
+                DiscoveryCardView(
+                    card: discoveryCard,
+                    onOpen: { onOpenDiscovery?(discoveryCard.item) },
+                    onDismiss: { onDismissDiscovery?(discoveryCard.item) }
+                )
+                .opacity(hasAppeared ? 1 : 0)
+                .offset(y: hasAppeared ? 0 : 12)
+                .animation(theme.motion.springAnimation.delay(0.24), value: hasAppeared)
+            }
+
+            if setUpLeft > 0, let onOpenSetUp {
+                SetUpOsaurusLink(left: setUpLeft, onOpen: onOpenSetUp, onSkip: onSkipSetUp)
+                    .opacity(hasAppeared ? 1 : 0)
+                    .animation(theme.motion.springAnimation.delay(0.28), value: hasAppeared)
             }
 
             if !effectiveQuickActions.isEmpty {
@@ -368,9 +415,9 @@ struct ChatEmptyState: View {
             // Match the local hero: the remote agent's own mascot (surfaced over
             // the Secure Channel), falling back to a monogram on its name.
             AgentAvatarView(
-                mascotId: remoteAgentAvatar ?? sharedAgent?.avatar,
+                mascotId: remoteAgentAvatar ?? sharedAgent?.avatar ?? hostedAgent?.avatar,
                 name: remoteDisplayName,
-                tint: agentColorFor(remoteDisplayName),
+                tint: theme.dataInk(seed: remoteDisplayName),
                 diameter: heroAvatarDiameter,
                 customImageURL: sharedAgent?.customAvatarURL,
                 monogramFontSize: heroAvatarIconFontSize,
@@ -389,7 +436,6 @@ struct ChatEmptyState: View {
     enum SecurityBadgeState: Hashable {
         case connecting
         case encrypted
-        case peerNeedsUpgrade
         /// Shared agent's host isn't reachable.
         case offline
         /// Shared agent isn't paired / the connect failed.
@@ -410,7 +456,7 @@ struct ChatEmptyState: View {
         case .checking, .connecting: return .connecting
         case .offline: return .offline
         case .notConnected: return .notConnected
-        case .unavailable: return .unavailable
+        case .unavailable, .accessRevoked: return .unavailable
         case .readOnlyTeammate: return .readOnly
         }
     }
@@ -418,19 +464,17 @@ struct ChatEmptyState: View {
     private var securityBadgeState: SecurityBadgeState? {
         if let status = sharedAgentStatus { return Self.badgeState(for: status) }
         if isConnecting { return .connecting }
-        switch remoteEncryptionStatus {
-        case .endToEndEncrypted: return .encrypted
-        case .peerNeedsUpgrade: return .peerNeedsUpgrade
-        case nil: return nil
-        }
+        // Relay agent traffic is Secure Channel or refused, so a connected
+        // relay agent is end-to-end encrypted.
+        return activeRelayAgent != nil ? .encrypted : nil
     }
 
     private func securityBadgeTint(_ state: SecurityBadgeState) -> Color {
         switch state {
-        case .connecting: return theme.accentColor
-        case .encrypted: return theme.successColor
-        case .peerNeedsUpgrade, .notConnected: return theme.warningColor
-        case .offline, .unavailable, .readOnly: return theme.secondaryText
+        case .connecting: return theme.status.info.foreground
+        case .encrypted: return theme.status.success.foreground
+        case .notConnected: return theme.status.warning.foreground
+        case .offline, .unavailable, .readOnly: return theme.text.secondary
         }
     }
 
@@ -438,10 +482,10 @@ struct ChatEmptyState: View {
     private func securityBadgeIcon(_ state: SecurityBadgeState) -> some View {
         switch state {
         case .connecting:
-            MorphingStatusIcon(state: .active, accentColor: theme.accentColor, size: 12)
-        case .encrypted, .peerNeedsUpgrade, .offline, .notConnected, .unavailable, .readOnly:
+            MorphingStatusIcon(state: .active, accentColor: theme.status.info.foreground, size: 12)
+        case .encrypted, .offline, .notConnected, .unavailable, .readOnly:
             Image(systemName: securityBadgeSymbol(state))
-                .font(.system(size: 9, weight: .semibold))
+                .glyphSize(.tiny, weight: .semibold)
         }
     }
 
@@ -449,7 +493,6 @@ struct ChatEmptyState: View {
         switch state {
         case .connecting: return SharedAgentStatus.connecting.symbolName
         case .encrypted: return SharedAgentStatus.ready.symbolName
-        case .peerNeedsUpgrade: return "exclamationmark.triangle.fill"
         case .offline: return SharedAgentStatus.offline(lastSeen: nil).symbolName
         case .notConnected: return SharedAgentStatus.notConnected(reason: nil, hasAttempted: false).symbolName
         case .unavailable: return SharedAgentStatus.unavailable(reason: "", fix: .none).symbolName
@@ -463,16 +506,14 @@ struct ChatEmptyState: View {
             return Text("Securing connection…", bundle: .module)
         case .encrypted:
             return Text("End-to-end encrypted", bundle: .module)
-        case .peerNeedsUpgrade:
-            return Text("Peer needs an Osaurus upgrade for encrypted chat", bundle: .module)
         case .offline:
             return Text(verbatim: sharedAgentStatus?.shortLabel ?? L("Offline"))
         case .notConnected:
             return Text("Not connected", bundle: .module)
         case .unavailable:
-            return Text("Unavailable", bundle: .module)
+            return Text(verbatim: sharedAgentStatus?.shortLabel ?? L("Unavailable"))
         case .readOnly:
-            return Text("Read-only", bundle: .module)
+            return Text("Teammate's chat", bundle: .module)
         }
     }
 
@@ -486,10 +527,6 @@ struct ChatEmptyState: View {
             return L(
                 "Agent traffic is protected by the Osaurus Secure Channel: forward-secret, mutually authenticated end-to-end encryption."
             )
-        case .peerNeedsUpgrade:
-            return L(
-                "This peer runs an older Osaurus without the Secure Channel. Agent chat is refused until it upgrades — no plaintext fallback."
-            )
         case .offline, .notConnected, .unavailable, .readOnly:
             guard let status = sharedAgentStatus else { return "" }
             return status.message(agentName: remoteDisplayName, hostName: sharedAgent?.ownerName)
@@ -499,13 +536,13 @@ struct ChatEmptyState: View {
     /// Single capsule under the greeting that *morphs* between the connect
     /// loader and the resolved transport-security state. Same chrome/padding
     /// across states so it never resize-jumps; the tint springs from accent
-    /// (connecting) to success (encrypted) / warning (needs upgrade), the icon
+    /// (connecting) to success (encrypted) / warning (not connected), the icon
     /// crossfades spinner -> lock, and the label content-transitions in place.
     @ViewBuilder
     private var securityBadge: some View {
         if let state = securityBadgeState {
             let tint = securityBadgeTint(state)
-            HStack(spacing: 5) {
+            HStack(spacing: theme.space.s4) {
                 securityBadgeIcon(state)
                     .frame(width: 14, height: 14)
                     .id(state)
@@ -513,12 +550,12 @@ struct ChatEmptyState: View {
                 securityBadgeLabel(state)
                     .contentTransition(.opacity)
             }
-            .font(.system(size: 11, weight: .medium))
+            .textStyle(.footnote, weight: 500)
             .foregroundColor(tint)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .background(Capsule().fill(tint.opacity(theme.isDark ? 0.14 : 0.10)))
-            .animation(theme.springAnimation(), value: state)
+            .padding(.horizontal, theme.space.s10)
+            .padding(.vertical, theme.space.s4)
+            .background(Capsule().fill(theme.wash(behind: tint)))
+            .animation(theme.motion.springAnimation, value: state)
             .help(securityBadgeHelp(state))
         }
     }
@@ -528,19 +565,19 @@ struct ChatEmptyState: View {
     /// repartitions rows to even widths, so any action count lays out
     /// cleanly — no orphan grid cells, wrapped labels, or clipped rows.
     private var staggeredQuickActions: some View {
-        FlowLayout(spacing: 8, alignment: .center, balanced: true) {
+        FlowLayout(spacing: theme.space.s8, alignment: .center, balanced: true) {
             ForEach(Array(effectiveQuickActions.enumerated()), id: \.element.id) { index, action in
                 QuickActionButton(action: action, onTap: onQuickAction)
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 15)
                     .animation(
-                        theme.springAnimation().delay(0.3 + Double(index) * 0.04),
+                        theme.motion.springAnimation.delay(0.3 + Double(index) * 0.04),
                         value: hasAppeared
                     )
             }
         }
         .frame(maxWidth: 460)
-        .padding(.top, 8)
+        .padding(.top, theme.space.s8)
     }
 
     // MARK: - Helpers
@@ -641,29 +678,29 @@ private struct EmptyStateSecondaryButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 6) {
+            HStack(spacing: theme.space.s6) {
                 if let icon {
                     Image(systemName: icon)
-                        .font(.system(size: 11, weight: .semibold))
+                        .glyphSize(.footnote, weight: .semibold)
                 }
                 Text(title, bundle: .module)
-                    .font(.system(size: 13, weight: .medium))
+                    .textStyle(.label)
             }
-            .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 9)
+            .foregroundColor(isHovered ? theme.text.primary : theme.text.secondary)
+            .padding(.horizontal, theme.space.s16)
+            .padding(.vertical, theme.space.s8)
             .background(
                 Capsule()
-                    .fill(isHovered ? theme.secondaryBackground : Color.clear)
+                    .fill(isHovered ? theme.surface.subtle : Color.clear)
                     .overlay(
-                        Capsule().strokeBorder(theme.primaryBorder.opacity(0.6), lineWidth: 1)
+                        Capsule().strokeBorder(theme.border.subtle, lineWidth: theme.stroke.default)
                     )
             )
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            withAnimation(theme.animationQuick()) { isHovered = hovering }
+            withAnimation(theme.motion.quick) { isHovered = hovering }
         }
     }
 }
@@ -688,264 +725,49 @@ private struct ChatEmptyStateLocalSetup: View {
     @ObservedObject private var modelManager = ModelManager.shared
     @Environment(\.theme) private var theme
 
-    /// Lifecycle of the automatic Cloud handoff: idle → connecting → ready
-    /// (reported by `temporaryCloudModelName`) | failed (retry stays).
-    private enum CloudBridgePhase: Equatable {
-        case idle
-        case connecting
-        case failed
-    }
-
-    @State private var bridgePhase: CloudBridgePhase = .idle
-
     private var downloadState: DownloadState {
         modelManager.downloadStates[modelId] ?? .notStarted
     }
 
-    private var modelName: String {
-        displayName(forModelId: modelId)
-    }
-
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: theme.space.s16) {
             defaultWelcomeAvatar()
                 .opacity(hasAppeared ? 1 : 0)
                 .scaleEffect(hasAppeared ? 1 : 0.85)
-                .animation(theme.springAnimation().delay(0.0), value: hasAppeared)
+                .animation(theme.motion.springAnimation.delay(0.0), value: hasAppeared)
 
-            VStack(spacing: 6) {
+            VStack(spacing: theme.space.s6) {
                 Text(headline, bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.titleSize) + 4, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .textStyle(.title)
+                    .foregroundColor(theme.text.primary)
                     .multilineTextAlignment(.center)
                     .lineLimit(2)
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 20)
-                    .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
+                    .animation(theme.motion.springAnimation.delay(0.1), value: hasAppeared)
 
                 Text(subtitle, bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.bodySize) + 2))
-                    .foregroundColor(theme.secondaryText)
+                    .textStyle(.heading)
+                    .foregroundColor(theme.text.secondary)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 15)
-                    .animation(theme.springAnimation().delay(0.17), value: hasAppeared)
+                    .animation(theme.motion.springAnimation.delay(0.17), value: hasAppeared)
             }
             .frame(maxWidth: 560)
 
-            setupPanel
-                .opacity(hasAppeared ? 1 : 0)
-                .offset(y: hasAppeared ? 0 : 12)
-                .animation(theme.springAnimation().delay(0.25), value: hasAppeared)
+            LocalSetupPanel(
+                modelId: modelId,
+                temporaryCloudModelName: temporaryCloudModelName,
+                onUseHostedMeanwhile: onUseHostedMeanwhile,
+                onOpenModelManager: onOpenModelManager
+            )
+            .opacity(hasAppeared ? 1 : 0)
+            .offset(y: hasAppeared ? 0 : 12)
+            .animation(theme.motion.springAnimation.delay(0.25), value: hasAppeared)
         }
-        .padding(.horizontal, 40)
-        .task {
-            guard temporaryCloudModelName == nil else { return }
-            guard bridgePhase == .idle else { return }
-            startCloudBridge()
-        }
-    }
-
-    /// One visual object for the whole transition: local download on top,
-    /// temporary Cloud readiness below. This replaces the old loose progress
-    /// bar + tiny caption, which looked disconnected in the large empty state.
-    private var setupPanel: some View {
-        let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
-        return VStack(spacing: 14) {
-            downloadStatus
-            if onUseHostedMeanwhile != nil {
-                Rectangle()
-                    .fill(theme.primaryBorder.opacity(0.35))
-                    .frame(height: 1)
-                cloudStatus
-            }
-        }
-        .padding(18)
-        .frame(maxWidth: 480)
-        .background(shape.fill(theme.secondaryBackground.opacity(theme.isDark ? 0.42 : 0.62)))
-        .overlay(shape.strokeBorder(theme.primaryBorder.opacity(0.45), lineWidth: 1))
-        .shadow(color: theme.shadowColor.opacity(0.07), radius: 14, y: 5)
-        .animation(theme.springAnimation(), value: bridgePhase)
-    }
-
-    @ViewBuilder
-    private var downloadStatus: some View {
-        switch downloadState {
-        case .downloading(let progress):
-            VStack(spacing: 10) {
-                HStack(spacing: 10) {
-                    statusIcon("arrow.down", color: theme.accentColor)
-                    Text(L("Downloading \(modelName)"))
-                        .font(theme.font(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                        .lineLimit(1)
-                    Spacer(minLength: 8)
-                    Text("\(Int(progress * 100))%", bundle: .module)
-                        .font(theme.font(size: 12, weight: .semibold).monospaced())
-                        .foregroundColor(theme.secondaryText)
-                }
-                progressTrack(progress)
-                if let metrics = downloadMetricsText(for: modelId) {
-                    Text(metrics)
-                        .font(theme.font(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-            }
-
-        case .paused(let progress):
-            VStack(spacing: 10) {
-                HStack(spacing: 10) {
-                    statusIcon("pause.fill", color: theme.warningColor)
-                    Text("Download paused", bundle: .module)
-                        .font(theme.font(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                    Spacer(minLength: 8)
-                    Text("\(Int(progress * 100))%", bundle: .module)
-                        .font(theme.font(size: 12, weight: .semibold).monospaced())
-                        .foregroundColor(theme.secondaryText)
-                }
-                progressTrack(progress)
-                HStack {
-                    Spacer()
-                    EmptyStateSecondaryButton(
-                        title: "Resume download",
-                        icon: "play.fill"
-                    ) {
-                        modelManager.resumeDownload(modelId)
-                    }
-                }
-            }
-
-        case .failed(let error):
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 10) {
-                    statusIcon("exclamationmark", color: theme.warningColor)
-                    Text("Local download needs attention", bundle: .module)
-                        .font(theme.font(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                }
-                Text(error)
-                    .font(theme.font(size: 11))
-                    .foregroundColor(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 8) {
-                    EmptyStateSecondaryButton(title: "Try again", icon: "arrow.clockwise") {
-                        restartDownload(forModelId: modelId)
-                    }
-                    EmptyStateSecondaryButton(
-                        title: "Open Models",
-                        icon: "square.grid.2x2",
-                        action: onOpenModelManager
-                    )
-                }
-            }
-
-        case .completed:
-            HStack(spacing: 10) {
-                statusIcon("checkmark", color: theme.successColor)
-                Text("Private model ready", bundle: .module)
-                    .font(theme.font(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Spacer()
-            }
-
-        case .notStarted:
-            HStack(spacing: 10) {
-                ProgressView().controlSize(.small)
-                Text("Preparing local download…", bundle: .module)
-                    .font(theme.font(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Spacer()
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var cloudStatus: some View {
-        if let cloudModel = temporaryCloudModelName {
-            HStack(alignment: .top, spacing: 10) {
-                statusIcon("checkmark", color: theme.successColor)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Ready to chat now", bundle: .module)
-                        .font(theme.font(size: 12, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                    Text(L("\(cloudModel) on Osaurus Cloud · switches to local automatically"))
-                        .font(theme.font(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer(minLength: 0)
-            }
-        } else {
-            switch bridgePhase {
-            case .idle, .connecting:
-                HStack(spacing: 10) {
-                    ProgressView().controlSize(.small)
-                    Text("Getting Osaurus Cloud ready…", bundle: .module)
-                        .font(theme.font(size: 12, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                    Spacer()
-                }
-            case .failed:
-                HStack(spacing: 10) {
-                    statusIcon("exclamationmark", color: theme.warningColor)
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text("Couldn't reach Osaurus Cloud", bundle: .module)
-                            .font(theme.font(size: 12, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-                        EmptyStateSecondaryButton(
-                            title: "Try again",
-                            icon: "arrow.clockwise",
-                            action: startCloudBridge
-                        )
-                    }
-                    Spacer()
-                }
-            }
-        }
-    }
-
-    private func statusIcon(_ systemName: String, color: Color) -> some View {
-        ZStack {
-            Circle().fill(color.opacity(0.14))
-            Image(systemName: systemName)
-                .font(.system(size: 9, weight: .bold))
-                .foregroundColor(color)
-        }
-        .frame(width: 22, height: 22)
-    }
-
-    private func progressTrack(_ progress: Double) -> some View {
-        GeometryReader { proxy in
-            let clamped = min(max(progress, 0), 1)
-            ZStack(alignment: .leading) {
-                Capsule().fill(theme.primaryBorder.opacity(0.25))
-                Capsule()
-                    .fill(
-                        LinearGradient(
-                            colors: [theme.accentColor, theme.accentColor.opacity(0.72)],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
-                    .frame(width: proxy.size.width * clamped)
-            }
-        }
-        .frame(height: 7)
-        .animation(.easeOut(duration: 0.25), value: progress)
-    }
-
-    private func startCloudBridge() {
-        guard bridgePhase != .connecting, let onUseHostedMeanwhile else { return }
-        bridgePhase = .connecting
-        Task {
-            let succeeded = await onUseHostedMeanwhile()
-            // On success the parent passes the selected Cloud model back into
-            // this panel; only failure needs a separate recovery state.
-            bridgePhase = succeeded ? .idle : .failed
-        }
+        .padding(.horizontal, theme.space.s40)
     }
 
     private var headline: LocalizedStringKey {
@@ -965,6 +787,471 @@ private struct ChatEmptyStateLocalSetup: View {
             return "You can keep chatting with Osaurus Cloud."
         case .downloading, .completed, .notStarted:
             return "Start chatting now while Osaurus finishes setting up local AI."
+        }
+    }
+}
+
+/// The local setup strip above a chat's transcript: always in the
+/// first-run chat, and in any other chat once the download is paused or
+/// failed, so a stalled private model is not missed after setup.
+struct PendingLocalSetupStrip: View {
+    @ObservedObject var session: ChatSession
+    let ownsFirstRun: Bool
+
+    @ObservedObject private var modelManager = ModelManager.shared
+    @Environment(\.theme) private var theme
+
+    nonisolated static func shows(ownsFirstRun: Bool, state: DownloadState?) -> Bool {
+        if ownsFirstRun { return true }
+        switch state {
+        case .paused?, .failed?: return true
+        case .downloading?, .completed?, .notStarted?, nil: return false
+        }
+    }
+
+    var body: some View {
+        if let modelId = session.pendingLocalSetupModelId,
+            Self.shows(ownsFirstRun: ownsFirstRun, state: modelManager.downloadStates[modelId])
+        {
+            LocalSetupPanel(
+                modelId: modelId,
+                temporaryCloudModelName: session.temporaryCloudModelDisplayName,
+                onUseHostedMeanwhile: {
+                    await session.adoptOsaurusRouterModelWhileLocalSetupPending()
+                },
+                onOpenModelManager: {
+                    AppDelegate.shared?.showManagementWindow(initialTab: .models)
+                },
+                style: .strip
+            )
+            .readableColumnRow()
+            .padding(.top, theme.space.s8)
+            .transition(.opacity)
+        }
+    }
+}
+
+/// One visual object for the whole transition: local download and the
+/// temporary Cloud readiness. The empty state shows it as a card; the
+/// first-run chat pins it above the transcript as one compact strip.
+/// Either way it starts the temporary Cloud handoff.
+struct LocalSetupPanel: View {
+    enum Style { case card, strip }
+
+    let modelId: String
+    let temporaryCloudModelName: String?
+    let onUseHostedMeanwhile: (() async -> Bool)?
+    let onOpenModelManager: () -> Void
+    var style: Style = .card
+
+    @ObservedObject private var modelManager = ModelManager.shared
+    @Environment(\.theme) private var theme
+
+    /// Lifecycle of the automatic Cloud handoff: idle → connecting → ready
+    /// (reported by `temporaryCloudModelName`) | failed (retry stays).
+    private enum CloudBridgePhase: Equatable {
+        case idle
+        case connecting
+        case failed
+    }
+
+    @State private var bridgePhase: CloudBridgePhase = .idle
+
+    private var downloadState: DownloadState {
+        modelManager.downloadStates[modelId] ?? .notStarted
+    }
+
+    private var modelName: String {
+        displayName(forModelId: modelId)
+    }
+
+    var body: some View {
+        Group {
+            switch style {
+            case .card: setupPanel
+            case .strip: setupStrip
+            }
+        }
+        .task {
+            guard temporaryCloudModelName == nil else { return }
+            guard bridgePhase == .idle else { return }
+            startCloudBridge()
+        }
+    }
+
+    // MARK: Strip
+
+    private var progress: Double? {
+        switch downloadState {
+        case .downloading(let progress), .paused(let progress): return progress
+        case .completed: return 1
+        case .failed, .notStarted: return nil
+        }
+    }
+
+    private var setupStrip: some View {
+        let shape = RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous)
+        return HStack(spacing: theme.space.s12) {
+            stripGlyph
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                stripTitle
+                    .textStyle(.label, weight: 600)
+                    .foregroundColor(theme.text.primary)
+                    .lineLimit(1)
+                if let detail = stripDetail {
+                    Text(detail)
+                        .textStyle(.footnote)
+                        .foregroundColor(theme.text.tertiary)
+                        .lineLimit(1)
+                        .help(detail)
+                }
+            }
+            .layoutPriority(1)
+            Spacer(minLength: theme.space.s8)
+            stripDownloadActions
+            if onUseHostedMeanwhile != nil {
+                ViewThatFits(in: .horizontal) {
+                    cloudChip(compact: false)
+                    cloudChip(compact: true)
+                }
+            }
+        }
+        .padding(.leading, theme.space.s8)
+        .padding(.trailing, theme.space.s12)
+        .padding(.vertical, theme.space.s6)
+        .background(shape.fill(theme.surface.subtle))
+        .overlay(alignment: .bottomLeading) { stripProgress }
+        .clipShape(shape)
+        .overlay(shape.strokeBorder(theme.border.subtle, lineWidth: theme.stroke.default))
+        .animation(theme.motion.springAnimation, value: bridgePhase)
+    }
+
+    static let glyphSize: CGFloat = 28
+
+    /// The download's phase on a tile of its status colour.
+    @ViewBuilder
+    private var stripGlyph: some View {
+        let shape = RoundedRectangle(cornerRadius: theme.radius.small, style: .continuous)
+        Group {
+            if let style = stripGlyphStyle {
+                Image(systemName: style.symbol)
+                    .glyphSize(.caption, weight: .semibold)
+                    .foregroundStyle(theme.status[style.kind].foreground)
+                    .frame(width: Self.glyphSize, height: Self.glyphSize)
+                    .background(shape.fill(theme.status[style.kind].background))
+                    .contentTransition(.symbolEffect(.replace))
+            } else {
+                SettingsSpinner()
+                    .frame(width: Self.glyphSize, height: Self.glyphSize)
+            }
+        }
+        .padding(.leading, theme.space.s4)
+        .accessibilityHidden(true)
+    }
+
+    private var stripGlyphStyle: (symbol: String, kind: ThemeStatusKind)? {
+        switch downloadState {
+        case .downloading: return ("arrow.down", .info)
+        case .paused: return ("pause.fill", .warning)
+        case .completed: return ("checkmark", .success)
+        case .failed: return ("exclamationmark.triangle.fill", .warning)
+        case .notStarted: return nil
+        }
+    }
+
+    private var stripTitle: Text {
+        switch downloadState {
+        case .downloading: return Text(L("Downloading \(modelName)"))
+        case .paused: return Text("Download paused", bundle: .module)
+        case .failed: return Text("Local download needs attention", bundle: .module)
+        case .completed: return Text("Private model ready", bundle: .module)
+        case .notStarted: return Text("Preparing local download…", bundle: .module)
+        }
+    }
+
+    private var stripDetail: String? {
+        switch downloadState {
+        case .downloading(let progress):
+            let percent = "\(Int(progress * 100))%"
+            return downloadMetricsText(for: modelId).map { "\(percent) · \($0)" } ?? percent
+        case .paused(let progress):
+            return "\(Int(progress * 100))%"
+        case .failed(let error):
+            return error
+        case .completed, .notStarted:
+            return nil
+        }
+    }
+
+    @ViewBuilder
+    private var stripDownloadActions: some View {
+        switch downloadState {
+        case .paused:
+            SettingsButton(.tertiary, L("Resume download"), icon: "play.fill", size: .small, verbatim: true) {
+                modelManager.resumeDownload(modelId)
+            }
+        case .failed:
+            SettingsButton(.tertiary, L("Try again"), icon: "arrow.clockwise", size: .small, verbatim: true) {
+                restartDownload(forModelId: modelId)
+            }
+            SettingsButton(.tertiary, L("Open Models"), icon: "square.grid.2x2", size: .small, verbatim: true,
+                action: onOpenModelManager)
+        case .downloading, .completed, .notStarted:
+            EmptyView()
+        }
+    }
+
+    /// Where chat runs until the private model lands.
+    @ViewBuilder
+    private func cloudChip(compact: Bool) -> some View {
+        if let cloudModel = temporaryCloudModelName {
+            chipLabel(
+                icon: "cloud.fill", tint: theme.status.success.foreground,
+                title: compact ? nil : L("Ready to chat now"))
+                .help(L("\(cloudModel) on Osaurus Cloud · switches to local automatically"))
+        } else {
+            switch bridgePhase {
+            case .idle, .connecting:
+                HStack(spacing: theme.space.s6) {
+                    SettingsSpinner(size: .mini)
+                    if !compact {
+                        Text("Getting Osaurus Cloud ready…", bundle: .module)
+                            .textStyle(.caption, weight: 500)
+                            .foregroundColor(theme.text.secondary)
+                            .lineLimit(1)
+                    }
+                }
+            case .failed:
+                HStack(spacing: theme.space.s6) {
+                    chipLabel(
+                        icon: "exclamationmark.icloud", tint: theme.status.warning.foreground,
+                        title: compact ? nil : L("Couldn't reach Osaurus Cloud"))
+                    SettingsButton(.tertiary, L("Try again"), icon: "arrow.clockwise", size: .small, verbatim: true,
+                        action: startCloudBridge)
+                }
+            }
+        }
+    }
+
+    private func chipLabel(icon: String, tint: Color, title: String?) -> some View {
+        HStack(spacing: theme.space.s6) {
+            Image(systemName: icon)
+                .glyphSize(.footnote, weight: .semibold)
+                .foregroundColor(tint)
+            if let title {
+                Text(title)
+                    .textStyle(.caption, weight: 600)
+                    .foregroundColor(theme.text.secondary)
+                    .lineLimit(1)
+            }
+        }
+    }
+
+    /// A hairline of progress along the strip's bottom edge.
+    @ViewBuilder
+    private var stripProgress: some View {
+        if let progress {
+            let paused: Bool = {
+                if case .paused = downloadState { return true }
+                return false
+            }()
+            GeometryReader { proxy in
+                Rectangle()
+                    .fill(paused ? theme.status.warning.foreground : theme.status.info.foreground)
+                    .frame(width: proxy.size.width * min(max(progress, 0), 1))
+            }
+            .frame(height: theme.stroke.focus)
+            .animation(theme.motion.standard, value: progress)
+        }
+    }
+
+    private var setupPanel: some View {
+        let shape = RoundedRectangle(cornerRadius: theme.radius.xlarge, style: .continuous)
+        return VStack(spacing: theme.space.s14) {
+            downloadStatus
+            if onUseHostedMeanwhile != nil {
+                ThemeHairlineDivider()
+                cloudStatus
+            }
+        }
+        .padding(theme.space.s16)
+        .frame(maxWidth: 480)
+        .background(shape.fill(theme.surface.subtle))
+        .overlay(shape.strokeBorder(theme.border.subtle, lineWidth: theme.stroke.default))
+        .themeElevation(theme.elevation.overlay)
+        .animation(theme.motion.springAnimation, value: bridgePhase)
+    }
+
+    @ViewBuilder
+    private var downloadStatus: some View {
+        switch downloadState {
+        case .downloading(let progress):
+            VStack(spacing: theme.space.s10) {
+                HStack(spacing: theme.space.s10) {
+                    statusIcon("arrow.down", color: theme.status.info.foreground)
+                    Text(L("Downloading \(modelName)"))
+                        .textStyle(.label, weight: 600)
+                        .foregroundColor(theme.text.primary)
+                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    Text("\(Int(progress * 100))%", bundle: .module)
+                        .textStyle(.caption, weight: 600, family: .code)
+                        .foregroundColor(theme.text.secondary)
+                }
+                progressTrack(progress)
+                if let metrics = downloadMetricsText(for: modelId) {
+                    Text(metrics)
+                        .textStyle(.footnote)
+                        .foregroundColor(theme.text.tertiary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+
+        case .paused(let progress):
+            VStack(spacing: theme.space.s10) {
+                HStack(spacing: theme.space.s10) {
+                    statusIcon("pause.fill", color: theme.status.warning.foreground)
+                    Text("Download paused", bundle: .module)
+                        .textStyle(.label, weight: 600)
+                        .foregroundColor(theme.text.primary)
+                    Spacer(minLength: 8)
+                    Text("\(Int(progress * 100))%", bundle: .module)
+                        .textStyle(.caption, weight: 600, family: .code)
+                        .foregroundColor(theme.text.secondary)
+                }
+                progressTrack(progress)
+                HStack {
+                    Spacer()
+                    EmptyStateSecondaryButton(
+                        title: "Resume download",
+                        icon: "play.fill"
+                    ) {
+                        modelManager.resumeDownload(modelId)
+                    }
+                }
+            }
+
+        case .failed(let error):
+            VStack(alignment: .leading, spacing: theme.space.s10) {
+                HStack(spacing: theme.space.s10) {
+                    statusIcon("exclamationmark", color: theme.status.warning.foreground)
+                    Text("Local download needs attention", bundle: .module)
+                        .textStyle(.label, weight: 600)
+                        .foregroundColor(theme.text.primary)
+                }
+                Text(error)
+                    .textStyle(.footnote)
+                    .foregroundColor(theme.text.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: theme.space.s8) {
+                    EmptyStateSecondaryButton(title: "Try again", icon: "arrow.clockwise") {
+                        restartDownload(forModelId: modelId)
+                    }
+                    EmptyStateSecondaryButton(
+                        title: "Open Models",
+                        icon: "square.grid.2x2",
+                        action: onOpenModelManager
+                    )
+                }
+            }
+
+        case .completed:
+            HStack(spacing: theme.space.s10) {
+                statusIcon("checkmark", color: theme.status.success.foreground)
+                Text("Private model ready", bundle: .module)
+                    .textStyle(.label, weight: 600)
+                    .foregroundColor(theme.text.primary)
+                Spacer()
+            }
+
+        case .notStarted:
+            HStack(spacing: theme.space.s10) {
+                SettingsSpinner()
+                Text("Preparing local download…", bundle: .module)
+                    .textStyle(.label, weight: 600)
+                    .foregroundColor(theme.text.primary)
+                Spacer()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var cloudStatus: some View {
+        if let cloudModel = temporaryCloudModelName {
+            HStack(alignment: .top, spacing: theme.space.s10) {
+                statusIcon("checkmark", color: theme.status.success.foreground)
+                VStack(alignment: .leading, spacing: theme.space.s2) {
+                    Text("Ready to chat now", bundle: .module)
+                        .textStyle(.caption, weight: 600)
+                        .foregroundColor(theme.text.primary)
+                    Text(L("\(cloudModel) on Osaurus Cloud · switches to local automatically"))
+                        .textStyle(.footnote)
+                        .foregroundColor(theme.text.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+        } else {
+            switch bridgePhase {
+            case .idle, .connecting:
+                HStack(spacing: theme.space.s10) {
+                    SettingsSpinner()
+                    Text("Getting Osaurus Cloud ready…", bundle: .module)
+                        .textStyle(.caption, weight: 500)
+                        .foregroundColor(theme.text.secondary)
+                    Spacer()
+                }
+            case .failed:
+                HStack(spacing: theme.space.s10) {
+                    statusIcon("exclamationmark", color: theme.status.warning.foreground)
+                    VStack(alignment: .leading, spacing: theme.space.s4) {
+                        Text("Couldn't reach Osaurus Cloud", bundle: .module)
+                            .textStyle(.caption, weight: 600)
+                            .foregroundColor(theme.text.primary)
+                        EmptyStateSecondaryButton(
+                            title: "Try again",
+                            icon: "arrow.clockwise",
+                            action: startCloudBridge
+                        )
+                    }
+                    Spacer()
+                }
+            }
+        }
+    }
+
+    private func statusIcon(_ systemName: String, color: Color) -> some View {
+        ZStack {
+            Circle().fill(theme.wash(behind: color))
+            Image(systemName: systemName)
+                .glyphSize(.tiny, weight: .bold)
+                .foregroundColor(color)
+        }
+        .frame(width: 22, height: 22)
+    }
+
+    private func progressTrack(_ progress: Double) -> some View {
+        GeometryReader { proxy in
+            let clamped = min(max(progress, 0), 1)
+            ZStack(alignment: .leading) {
+                Capsule().fill(theme.surface.pressed)
+                Capsule()
+                    .fill(theme.status.info.foreground)
+                    .frame(width: proxy.size.width * clamped)
+            }
+        }
+        .frame(height: 7)
+        .animation(theme.motion.standard, value: progress)
+    }
+
+    private func startCloudBridge() {
+        guard bridgePhase != .connecting, let onUseHostedMeanwhile else { return }
+        bridgePhase = .connecting
+        Task {
+            let succeeded = await onUseHostedMeanwhile()
+            // On success the parent passes the selected Cloud model back into
+            // this panel; only failure needs a separate recovery state.
+            bridgePhase = succeeded ? .idle : .failed
         }
     }
 }
@@ -1029,27 +1316,27 @@ private struct ChatEmptyStateNoModels: View {
     }
 
     private var noModelsState: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: theme.space.s14) {
             defaultWelcomeAvatar()
                 .opacity(hasAppeared ? 1 : 0)
                 .scaleEffect(hasAppeared ? 1 : 0.85)
-                .animation(theme.springAnimation().delay(0.0), value: hasAppeared)
+                .animation(theme.motion.springAnimation.delay(0.0), value: hasAppeared)
 
-            VStack(spacing: 8) {
+            VStack(spacing: theme.space.s8) {
                 Text("One more step", bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.titleSize) + 4, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .textStyle(.title)
+                    .foregroundColor(theme.text.primary)
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 20)
-                    .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
+                    .animation(theme.motion.springAnimation.delay(0.1), value: hasAppeared)
 
                 Text("Osaurus needs an AI to work — either a cloud provider or a local model.", bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.bodySize) + 2))
-                    .foregroundColor(theme.secondaryText)
+                    .textStyle(.heading)
+                    .foregroundColor(theme.text.secondary)
                     .multilineTextAlignment(.center)
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 15)
-                    .animation(theme.springAnimation().delay(0.17), value: hasAppeared)
+                    .animation(theme.motion.springAnimation.delay(0.17), value: hasAppeared)
             }
             .frame(maxWidth: 340)
 
@@ -1059,42 +1346,42 @@ private struct ChatEmptyStateNoModels: View {
             .opacity(hasAppeared ? 1 : 0)
             .offset(y: hasAppeared ? 0 : 12)
             .scaleEffect(hasAppeared ? 1 : 0.97)
-            .animation(theme.springAnimation().delay(0.25), value: hasAppeared)
+            .animation(theme.motion.springAnimation.delay(0.25), value: hasAppeared)
         }
-        .padding(.horizontal, 40)
+        .padding(.horizontal, theme.space.s40)
     }
 
     /// Recoverable first-chat state for a completed onboarding whose brain
     /// isn't reachable (e.g. the Osaurus connection failed while offline).
     private var connectionRecoveryState: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: theme.space.s14) {
             defaultWelcomeAvatar()
                 .opacity(hasAppeared ? 1 : 0)
                 .scaleEffect(hasAppeared ? 1 : 0.85)
-                .animation(theme.springAnimation().delay(0.0), value: hasAppeared)
+                .animation(theme.motion.springAnimation.delay(0.0), value: hasAppeared)
 
-            VStack(spacing: 8) {
+            VStack(spacing: theme.space.s8) {
                 Text("Couldn't reach your AI", bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.titleSize) + 4, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .textStyle(.title)
+                    .foregroundColor(theme.text.primary)
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 20)
-                    .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
+                    .animation(theme.motion.springAnimation.delay(0.1), value: hasAppeared)
 
                 Text(
                     "Osaurus couldn't connect to a model just now. Retry the connection, run a private model on this Mac, or use your own provider.",
                     bundle: .module
                 )
-                .font(theme.font(size: CGFloat(theme.bodySize) + 2))
-                .foregroundColor(theme.secondaryText)
+                .textStyle(.heading)
+                .foregroundColor(theme.text.secondary)
                 .multilineTextAlignment(.center)
                 .opacity(hasAppeared ? 1 : 0)
                 .offset(y: hasAppeared ? 0 : 15)
-                .animation(theme.springAnimation().delay(0.17), value: hasAppeared)
+                .animation(theme.motion.springAnimation.delay(0.17), value: hasAppeared)
             }
             .frame(maxWidth: 420)
 
-            VStack(spacing: 10) {
+            VStack(spacing: theme.space.s10) {
                 if onRetryConnection != nil {
                     GetStartedButton(
                         title: isRetryingConnection ? "Retrying…" : "Retry connection"
@@ -1102,7 +1389,7 @@ private struct ChatEmptyStateNoModels: View {
                         retryConnection()
                     }
                 }
-                HStack(spacing: 10) {
+                HStack(spacing: theme.space.s10) {
                     if let onOpenModelManager {
                         EmptyStateSecondaryButton(
                             title: "Run a local model",
@@ -1121,9 +1408,9 @@ private struct ChatEmptyStateNoModels: View {
             }
             .opacity(hasAppeared ? 1 : 0)
             .offset(y: hasAppeared ? 0 : 12)
-            .animation(theme.springAnimation().delay(0.25), value: hasAppeared)
+            .animation(theme.motion.springAnimation.delay(0.25), value: hasAppeared)
         }
-        .padding(.horizontal, 40)
+        .padding(.horizontal, theme.space.s40)
     }
 
     private func retryConnection() {
@@ -1138,31 +1425,31 @@ private struct ChatEmptyStateNoModels: View {
     /// The only download that could have produced a model failed and nothing
     /// else is available — surface the error with a way forward in place.
     private func failedDownloadState(_ failure: (modelId: String, message: String)) -> some View {
-        VStack(spacing: 14) {
+        VStack(spacing: theme.space.s14) {
             defaultWelcomeAvatar()
                 .opacity(hasAppeared ? 1 : 0)
                 .scaleEffect(hasAppeared ? 1 : 0.85)
-                .animation(theme.springAnimation().delay(0.0), value: hasAppeared)
+                .animation(theme.motion.springAnimation.delay(0.0), value: hasAppeared)
 
-            VStack(spacing: 8) {
+            VStack(spacing: theme.space.s8) {
                 Text("Download hit a snag", bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.titleSize) + 4, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .textStyle(.title)
+                    .foregroundColor(theme.text.primary)
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 20)
-                    .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
+                    .animation(theme.motion.springAnimation.delay(0.1), value: hasAppeared)
 
                 Text(failure.message)
-                    .font(theme.font(size: CGFloat(theme.bodySize) + 2))
-                    .foregroundColor(theme.secondaryText)
+                    .textStyle(.heading)
+                    .foregroundColor(theme.text.secondary)
                     .multilineTextAlignment(.center)
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 15)
-                    .animation(theme.springAnimation().delay(0.17), value: hasAppeared)
+                    .animation(theme.motion.springAnimation.delay(0.17), value: hasAppeared)
             }
             .frame(maxWidth: 420)
 
-            HStack(spacing: 10) {
+            HStack(spacing: theme.space.s10) {
                 GetStartedButton(title: "Try again") {
                     restartDownload(forModelId: failure.modelId)
                 }
@@ -1172,63 +1459,61 @@ private struct ChatEmptyStateNoModels: View {
             }
             .opacity(hasAppeared ? 1 : 0)
             .offset(y: hasAppeared ? 0 : 12)
-            .animation(theme.springAnimation().delay(0.25), value: hasAppeared)
+            .animation(theme.motion.springAnimation.delay(0.25), value: hasAppeared)
         }
-        .padding(.horizontal, 40)
+        .padding(.horizontal, theme.space.s40)
     }
 
     private var downloadingState: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: theme.space.s14) {
             defaultWelcomeAvatar()
                 .opacity(hasAppeared ? 1 : 0)
                 .scaleEffect(hasAppeared ? 1 : 0.85)
-                .animation(theme.springAnimation().delay(0.0), value: hasAppeared)
+                .animation(theme.motion.springAnimation.delay(0.0), value: hasAppeared)
 
-            VStack(spacing: 8) {
+            VStack(spacing: theme.space.s8) {
                 Text("Almost ready...", bundle: .module)
-                    .font(theme.font(size: CGFloat(theme.titleSize) + 4, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .textStyle(.title)
+                    .foregroundColor(theme.text.primary)
                     .opacity(hasAppeared ? 1 : 0)
                     .offset(y: hasAppeared ? 0 : 20)
-                    .animation(theme.springAnimation().delay(0.1), value: hasAppeared)
+                    .animation(theme.motion.springAnimation.delay(0.1), value: hasAppeared)
 
                 if let name = downloadingModelName {
                     Text("Downloading \(name)", bundle: .module)
-                        .font(theme.font(size: CGFloat(theme.bodySize) + 2))
-                        .foregroundColor(theme.secondaryText)
+                        .textStyle(.heading)
+                        .foregroundColor(theme.text.secondary)
                         .multilineTextAlignment(.center)
                         .opacity(hasAppeared ? 1 : 0)
                         .offset(y: hasAppeared ? 0 : 15)
-                        .animation(theme.springAnimation().delay(0.17), value: hasAppeared)
+                        .animation(theme.motion.springAnimation.delay(0.17), value: hasAppeared)
                 }
             }
             .frame(maxWidth: 340)
 
             if let progress = downloadProgress, let modelId = activeDownload?.modelId {
-                VStack(spacing: 10) {
-                    ProgressView(value: progress)
-                        .progressViewStyle(.linear)
+                VStack(spacing: theme.space.s10) {
+                    SettingsProgressBar(value: progress, tint: theme.status.info.foreground)
                         .frame(maxWidth: 280)
-                        .tint(theme.accentColor)
 
-                    HStack(spacing: 0) {
+                    HStack(spacing: theme.space.s0) {
                         if let text = downloadMetricsText(for: modelId) {
                             Text(text)
-                                .font(theme.font(size: 12))
-                                .foregroundColor(theme.tertiaryText)
+                                .textStyle(.caption)
+                                .foregroundColor(theme.text.tertiary)
                         }
                         Spacer()
                         Text("\(Int(progress * 100))%", bundle: .module)
-                            .font(theme.font(size: 12, weight: .medium).monospaced())
-                            .foregroundColor(theme.tertiaryText)
+                            .textStyle(.caption, weight: 500, family: .code)
+                            .foregroundColor(theme.text.tertiary)
                     }
                     .frame(maxWidth: 280)
                 }
                 .opacity(hasAppeared ? 1 : 0)
-                .animation(theme.springAnimation().delay(0.25), value: hasAppeared)
+                .animation(theme.motion.springAnimation.delay(0.25), value: hasAppeared)
             }
         }
-        .padding(.horizontal, 40)
+        .padding(.horizontal, theme.space.s40)
     }
 }
 
@@ -1237,6 +1522,103 @@ private struct ChatEmptyStateNoModels: View {
 /// One compact suggestion pill: glyph + single-line label in a capsule.
 /// Sized to its content so a wrapping flow can pack any number of actions
 /// into tidy centered rows.
+/// One discovery under the greeting: tap to open it, or dismiss it for good.
+struct DiscoveryCardView: View {
+    let card: DiscoveryCard
+    let onOpen: () -> Void
+    let onDismiss: () -> Void
+
+    @State private var isHovered = false
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+        HStack(spacing: theme.space.s8) {
+            Button(action: onOpen) {
+                HStack(spacing: theme.space.s8) {
+                    SettingsIconTile(icon: card.icon, size: 24)
+                        .clipShape(RoundedRectangle(cornerRadius: theme.radius.small, style: .continuous))
+                    Text(card.title)
+                        .textStyle(.caption, weight: 500)
+                        .foregroundColor(theme.text.primary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .pointingHandCursor()
+            .accessibilityHint(Text("Opens a short walkthrough", bundle: .module))
+
+            SettingsIconButton("xmark", help: L("Dismiss"), size: .extraSmall, action: onDismiss)
+                .accessibilityLabel(Text("Dismiss", bundle: .module))
+        }
+        .padding(.horizontal, theme.space.s12)
+        .padding(.vertical, theme.space.s8)
+        .frame(maxWidth: 420)
+        .background(
+            shape.fill(theme.action.secondary[isHovered ? .hover : .default].background)
+                .overlay(
+                    shape.strokeBorder(
+                        isHovered ? theme.border.strong : theme.action.border, lineWidth: theme.stroke.default))
+        )
+        .onHover { isHovered = $0 }
+        .padding(.top, theme.space.s4)
+    }
+}
+
+/// The quiet link under the greeting to what is left in Set Up Osaurus,
+/// and Skip setup beside it, which stops offering setup in new chats.
+struct SetUpOsaurusLink: View {
+    let left: Int
+    let onOpen: () -> Void
+    var onSkip: (() -> Void)? = nil
+
+    @State private var isHovered = false
+    @State private var isSkipHovered = false
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        HStack(spacing: theme.space.s8) {
+            Button(action: onOpen) {
+                HStack(spacing: theme.space.s4) {
+                    Image(systemName: "checklist")
+                        .glyphSize(.footnote, weight: .medium)
+                    Text(String(format: L("Set Up Osaurus: %lld left"), left))
+                        .textStyle(.caption, weight: 500)
+                }
+                .foregroundColor(isHovered ? theme.text.primary : theme.text.secondary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .pointingHandCursor()
+            .onHover { isHovered = $0 }
+            .accessibilityHint(Text("Lists what is left to set up", bundle: .module))
+
+            if let onSkip {
+                Text(verbatim: "·")
+                    .textStyle(.caption)
+                    .foregroundColor(theme.text.tertiary)
+                    .accessibilityHidden(true)
+                Button(action: onSkip) {
+                    Text("Skip setup", bundle: .module)
+                        .textStyle(.caption)
+                        .foregroundColor(isSkipHovered ? theme.text.primary : theme.text.tertiary)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .pointingHandCursor()
+                .onHover { isSkipHovered = $0 }
+                .help(Text("Stop suggesting setup in new chats", bundle: .module))
+                .accessibilityHint(Text("Stop suggesting setup in new chats", bundle: .module))
+            }
+        }
+        .padding(.top, theme.space.s2)
+    }
+}
+
 struct QuickActionButton: View {
     let action: AgentQuickAction
     let onTap: (String) -> Void
@@ -1248,38 +1630,32 @@ struct QuickActionButton: View {
         Button {
             onTap(action.prompt)
         } label: {
-            HStack(spacing: 7) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: action.icon)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(isHovered ? theme.accentColor : theme.secondaryText)
+                    .glyphSize(.caption, weight: .medium)
+                    .foregroundColor(isHovered ? theme.text.primary : theme.text.secondary)
 
                 // Single line, capped so an unusually long custom-agent
                 // label truncates instead of producing a pill wider than
                 // the flow container.
                 Text(action.text)
-                    .font(.system(size: 12.5, weight: .medium))
-                    .foregroundColor(isHovered ? theme.primaryText : theme.secondaryText)
+                    .textStyle(.caption, weight: 500)
+                    .foregroundColor(isHovered ? theme.text.primary : theme.text.secondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .frame(maxWidth: 280, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(.horizontal, 13)
-            .padding(.vertical, 8)
+            .padding(.horizontal, theme.space.s12)
+            .padding(.vertical, theme.space.s8)
             .background(
                 Capsule()
-                    .fill(
-                        isHovered
-                            ? theme.secondaryBackground
-                            : theme.secondaryBackground.opacity(theme.isDark ? 0.45 : 0.7)
-                    )
+                    .fill(theme.action.secondary[isHovered ? .hover : .default].background)
                     .overlay(
                         Capsule()
                             .strokeBorder(
-                                isHovered
-                                    ? theme.accentColor.opacity(0.4)
-                                    : theme.primaryBorder.opacity(theme.isDark ? 0.35 : 0.55),
-                                lineWidth: 1
+                                isHovered ? theme.border.strong : theme.action.border,
+                                lineWidth: theme.stroke.default
                             )
                     )
             )
@@ -1287,7 +1663,7 @@ struct QuickActionButton: View {
         }
         .buttonStyle(.plain)
         .onHover { hovering in
-            withAnimation(theme.animationQuick()) {
+            withAnimation(theme.motion.quick) {
                 isHovered = hovering
             }
         }
@@ -1305,42 +1681,27 @@ private struct GetStartedButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 Text(title, bundle: .module)
-                    .font(.system(size: 14, weight: .semibold))
+                    .textStyle(.label, weight: 600)
 
                 Image(systemName: "arrow.right")
-                    .font(.system(size: 12, weight: .semibold))
+                    .glyphSize(.caption, weight: .semibold)
                     .offset(x: isHovered ? 2 : 0)
             }
-            .foregroundColor(.white)
-            .padding(.horizontal, 24)
-            .padding(.vertical, 12)
+            .foregroundColor(theme.action.primary[isHovered ? .hover : .default].foreground)
+            .padding(.horizontal, theme.space.s24)
+            .padding(.vertical, theme.space.s12)
             .background(
                 Capsule()
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                theme.accentColor,
-                                theme.accentColor.opacity(0.85),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                    .shadow(
-                        color: theme.accentColor.opacity(isHovered ? 0.4 : 0.2),
-                        radius: isHovered ? 12 : 8,
-                        x: 0,
-                        y: 4
-                    )
+                    .fill(theme.action.primary[isHovered ? .hover : .default].background)
             )
-            .scaleEffect(isHovered ? 1.02 : 1.0)
+            .themeElevation(theme.elevation.raised)
         }
         .buttonStyle(.plain)
-        .padding(.top, 8)
+        .padding(.top, theme.space.s8)
         .onHover { hovering in
-            withAnimation(theme.animationQuick()) {
+            withAnimation(theme.motion.quick) {
                 isHovered = hovering
             }
         }
@@ -1366,7 +1727,7 @@ private struct GetStartedButton: View {
                 )
             }
             .frame(width: 700, height: 600)
-            .background(Color(hex: "0f0f10"))
+            .background(CustomizableTheme.dark().surface.canvas)
 
             VStack {
                 ChatEmptyState(
@@ -1382,7 +1743,7 @@ private struct GetStartedButton: View {
                 )
             }
             .frame(width: 700, height: 600)
-            .background(Color(hex: "0f0f10"))
+            .background(CustomizableTheme.dark().surface.canvas)
         }
     }
 #endif

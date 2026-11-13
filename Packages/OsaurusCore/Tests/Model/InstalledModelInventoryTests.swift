@@ -3,7 +3,7 @@
 //  osaurusTests
 //
 //  One installed-models inventory. The sidebar Local Models badge, the Models
-//  page header / On Device tab, the Catalog cards and the config catalog all
+//  page header / On This Mac scope, the catalog rows and the config catalog all
 //  read `ModelManager.installedModels()`; these tests pin that the inventory
 //  does not depend on whether the local scan or the OsaurusAI org fetch
 //  lands first, and that an externally installed bundle whose id is also a
@@ -114,7 +114,7 @@ struct InstalledModelInventoryTests {
     }
 
     /// Every surface's installed count from one main-actor snapshot of the
-    /// manager: the sidebar badge, the Models page On Device list, and the
+    /// manager: the sidebar badge, the Models page On This Mac list, and the
     /// inventory itself. `ids` restricts the per-surface counts to the
     /// fixture so a developer machine's own installed models cannot skew
     /// them; the totals are compared unrestricted.
@@ -131,18 +131,16 @@ struct InstalledModelInventoryTests {
     private static func surfaceCounts(_ manager: ModelManager, ids: Set<String>) -> SurfaceCounts {
         let candidates = manager.deduplicatedModels()
         let badge = ModelManager.installedModels(among: candidates).filter { ids.contains($0.id) }
-        let input = ModelDownloadView.GridListInput(
+        let input = LanguageModelCatalog.Input(
             availableModels: manager.availableModels,
             suggestedModels: manager.suggestedModels,
             deduplicatedModels: candidates,
             downloadStates: [:],
             searchText: "",
             filterState: ModelManager.ModelFilterState(),
-            selectedTab: .downloaded,
-            sortOption: .recommended,
             totalMemoryGB: 128
         )
-        let lists = ModelDownloadView.makeGridLists(input)
+        let lists = LanguageModelCatalog.makeLists(input)
         let inventory = manager.installedModels()
         return SurfaceCounts(
             badge: badge.count,
@@ -334,18 +332,16 @@ struct InstalledModelInventoryTests {
 
         let suggested = [installedCard, notInstalledCard]
         let available = [external]
-        let input = ModelDownloadView.GridListInput(
+        let input = LanguageModelCatalog.Input(
             availableModels: available,
             suggestedModels: suggested,
             deduplicatedModels: ModelManager.deduplicatedModels(suggested: suggested, available: available),
             downloadStates: [:],
             searchText: "",
             filterState: ModelManager.ModelFilterState(),
-            selectedTab: .all,
-            sortOption: .recommended,
             totalMemoryGB: 128
         )
-        let lists = ModelDownloadView.makeGridLists(input)
+        let lists = LanguageModelCatalog.makeLists(input)
 
         let installedCards = lists.others.filter { $0.id == installedId }
         #expect(installedCards.count == 1)
@@ -360,7 +356,7 @@ struct InstalledModelInventoryTests {
         #expect(notInstalledCards.first?.bundleDirectory == nil)
         #expect(notInstalledCards.first?.description == notInstalledCard.description)
 
-        // The On Device list from the same input agrees with the badge count.
+        // The On This Mac list from the same input agrees with the badge count.
         #expect(lists.downloaded.map { $0.id } == [installedId])
         #expect(ManagementBadgeStore.modelsBadgeCount(inventoryCandidates: input.deduplicatedModels) == 1)
     }
@@ -370,7 +366,7 @@ struct InstalledModelInventoryTests {
     private static let model2VecConfig = #"{"model_type": "model2vec", "architectures": ["StaticModel"]}"#
 
     /// An embedding bundle found on disk (potion left in the HF cache) is not
-    /// part of the installed inventory: not on the On Device tab, not in the
+    /// part of the installed inventory: not in the On This Mac scope, not in the
     /// badge, not in the inventory itself. A chat bundle beside it still is.
     @Test func embeddingBundlesAreExcludedFromTheInstalledInventory() throws {
         let root = try Self.makeBundleRoot()
@@ -391,18 +387,19 @@ struct InstalledModelInventoryTests {
         #expect(ModelManager.installedModels(among: candidates).map(\.id) == [chatId])
         #expect(ManagementBadgeStore.modelsBadgeCount(inventoryCandidates: candidates) == 1)
 
-        let input = ModelDownloadView.GridListInput(
+        let input = LanguageModelCatalog.Input(
             availableModels: available,
             suggestedModels: [],
             deduplicatedModels: candidates,
             downloadStates: [:],
             searchText: "",
             filterState: ModelManager.ModelFilterState(),
-            selectedTab: .downloaded,
-            sortOption: .recommended,
             totalMemoryGB: 128
         )
-        #expect(ModelDownloadView.makeGridLists(input).downloaded.map(\.id) == [chatId])
+        let lists = LanguageModelCatalog.makeLists(input)
+        #expect(lists.downloaded.map(\.id) == [chatId])
+        // Nor does it come back as an installed catalog row.
+        #expect(!lists.catalog.contains { $0.id == embeddingId })
     }
 
     /// `/v1/models` and chat model lookup read `installedModelNames()` /

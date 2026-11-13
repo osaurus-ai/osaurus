@@ -15,12 +15,14 @@ import SwiftUI
 @MainActor
 enum AgentChannelConnectionPresentation {
     static func kind(for connectionId: String) -> AgentChannelKind {
+        if let account = ChannelAccounts.account(connectionId: connectionId) { return account.kind }
         switch connectionId.lowercased() {
         case AgentChannelConnection.nativeDiscordConnectionId: return .discord
         case AgentChannelConnection.nativeSlackConnectionId: return .slack
         case AgentChannelConnection.nativeTelegramConnectionId: return .telegram
         case AgentChannelConnection.nativeIMessageConnectionId: return .imessage
         case AgentChannelConnection.nativeWhatsAppConnectionId: return .whatsapp
+        case AgentChannelConnection.nativeEmailConnectionId: return .email
         default:
             return AgentChannelConnectionManager.shared.connection(id: connectionId)?.kind
                 ?? .customHTTP
@@ -28,12 +30,14 @@ enum AgentChannelConnectionPresentation {
     }
 
     static func displayName(for connectionId: String) -> String {
+        if let name = ChannelAccounts.displayName(connectionId: connectionId) { return name }
         switch connectionId.lowercased() {
         case AgentChannelConnection.nativeDiscordConnectionId: return "Discord"
         case AgentChannelConnection.nativeSlackConnectionId: return "Slack"
         case AgentChannelConnection.nativeTelegramConnectionId: return "Telegram"
         case AgentChannelConnection.nativeIMessageConnectionId: return "iMessage"
         case AgentChannelConnection.nativeWhatsAppConnectionId: return "WhatsApp"
+        case AgentChannelConnection.nativeEmailConnectionId: return "Email"
         default:
             let connection = AgentChannelConnectionManager.shared.connection(id: connectionId)
             guard let connection, !connection.name.isEmpty else { return connectionId }
@@ -42,122 +46,42 @@ enum AgentChannelConnectionPresentation {
     }
 }
 
-// MARK: - Destinations Section
+// MARK: - Default agent posting sheet
 
-/// "Messages Agents Can Start" section for the Channels pane: every
-/// destination agents can post to on their own, across all agents.
-/// Destinations appear here automatically once a channel has an assigned
-/// agent and write-allowlisted rooms; stored (customized) rows are shown
-/// alongside. Rows share the card + inline mode menu with the per-agent
-/// section.
-struct AgentChannelDestinationsSection: View {
+/// The Default agent's posting places, hosted in a sheet because the
+/// built-in agent has no detail page of its own.
+struct AgentChannelDefaultAgentPostingSheet: View {
     @ObservedObject private var themeManager = ThemeManager.shared
-
-    /// Effective bindings: stored plus automatic (derived).
-    let bindings: [AgentChannelBinding]
-    /// Ids of the stored subset, to badge the rest as "Automatic".
-    let storedBindingIds: Set<String>
-    /// Whether the global Sending switch is off, so the section can say
-    /// exactly which layer is blocking deliveries.
-    var sendingPaused = false
-    let onAdd: () -> Void
-    let onEdit: (AgentChannelBinding) -> Void
-    let onChanged: () -> Void
+    @Environment(\.dismiss) private var dismiss
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             HStack {
-                Text("Messages Agents Can Start", bundle: .module)
-                    .textCase(.uppercase)
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(theme.tertiaryText)
-                    .tracking(0.5)
+                VStack(alignment: .leading, spacing: theme.space.s2) {
+                    Text(AgentManager.shared.agent(for: Agent.defaultId)?.name ?? L("Default"))
+                        .font(SettingsFont.detailTitle)
+                        .foregroundColor(theme.text.primary)
+                    Text("Where this agent may post on its own", bundle: .module)
+                        .font(SettingsFont.caption)
+                        .foregroundColor(theme.text.secondary)
+                }
                 Spacer()
-                Button {
-                    onAdd()
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 9, weight: .semibold))
-                        Text("Add Destination", bundle: .module)
-                    }
-                }
-                .buttonStyle(SettingsButtonStyle())
+                SettingsIconButton("xmark", help: "Close", size: .compact) { dismiss() }
+                    .keyboardShortcut(.escape, modifiers: [])
             }
+            .padding(.horizontal, theme.space.s24)
+            .padding(.vertical, theme.space.s16)
+            .background(theme.surface.subtle)
 
-            Text(
-                "Where agents may bring things up on their own — and whether they ask you first. Replies to incoming messages are configured on each channel above.",
-                bundle: .module
-            )
-            .font(.system(size: 11))
-            .foregroundColor(theme.secondaryText)
-            .fixedSize(horizontal: false, vertical: true)
-
-            if sendingPaused && !bindings.isEmpty {
-                HStack(spacing: 6) {
-                    Image(systemName: "pause.circle.fill")
-                        .font(.system(size: 11))
-                    Text(
-                        "Sending is paused by the global switch below — nothing is delivered from these destinations until it's back on.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 11))
-                    .fixedSize(horizontal: false, vertical: true)
-                }
-                .foregroundColor(theme.warningColor)
-            }
-
-            if bindings.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Agents can't start messages yet", bundle: .module)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                    Text(
-                        "Destinations appear here automatically once a connected channel lets the bot post somewhere and an agent is chosen to reply there. Agents always ask before sending unless you change a destination's setting.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(14)
-                .background(
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(theme.cardBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12)
-                                .stroke(theme.cardBorder, lineWidth: 1)
-                        )
-                )
-            } else {
-                VStack(spacing: 10) {
-                    ForEach(bindings) { binding in
-                        AgentChannelDestinationRowCard(
-                            binding: binding,
-                            isAutomatic: !storedBindingIds.contains(binding.id),
-                            showAgentName: true,
-                            onCustomize: { onEdit(binding) },
-                            onChanged: onChanged
-                        )
-                    }
-                }
-                Text(
-                    "Automatic destinations come from your channel setup and always ask first. Each agent's destinations are also editable in its own settings, under Channels.",
-                    bundle: .module
-                )
-                .font(.system(size: 10))
-                .foregroundColor(theme.tertiaryText)
+            ScrollView {
+                AgentChannelAgentDestinationsSection(agentId: Agent.defaultId, showsChannelsLink: false)
+                    .padding(theme.space.s24)
             }
         }
-        .onAppear {
-            AgentChannelRoomDirectory.shared.prepare(
-                connectionIds: bindings.map(\.connectionId)
-            )
-        }
-        .settingsLandingAnchor("agentChannels.destinations")
+        .fittedSheetFrame(width: 560, height: 520)
+        .background(theme.surface.canvas)
     }
 }
 
@@ -187,38 +111,11 @@ extension AgentChannelBindingOutboundMode {
     }
 }
 
-/// Small colored badge for a binding's outbound mode.
-struct AgentChannelDestinationModeBadge: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-    let mode: AgentChannelBindingOutboundMode
-
-    private var theme: ThemeProtocol { themeManager.currentTheme }
-
-    private var color: Color {
-        switch mode {
-        case .off: return theme.tertiaryText
-        case .draft: return theme.secondaryText
-        case .confirm: return theme.accentColor
-        case .autonomous: return theme.warningColor
-        }
-    }
-
-    var body: some View {
-        Text(mode.friendlyLabel)
-            .font(.system(size: 10, weight: .medium))
-            .foregroundColor(color)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(color.opacity(0.12)))
-    }
-}
-
 // MARK: - Shared destination row
 
 /// One destination as a card: where the agent can post, how it behaves
 /// (inline plain-language mode menu), and a Customize entry point for the
-/// full editor. Used by both the per-agent section (agent settings →
-/// Automation) and the cross-agent section (Settings → Channels).
+/// full editor. Used by the per-agent section (Agents → agent → Channels).
 ///
 /// Rows read name-first ("#content", a person's name) with provider
 /// branding; the raw provider route stays available as a tooltip and in
@@ -267,9 +164,9 @@ struct AgentChannelDestinationRowCard: View {
 
     var body: some View {
         let presentation = self.presentation
-        return HStack(spacing: 10) {
+        return HStack(spacing: theme.space.s10) {
             ZStack {
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: theme.radius.medium)
                     .fill(
                         LinearGradient(
                             colors: connectionKind.brandGradient,
@@ -278,50 +175,40 @@ struct AgentChannelDestinationRowCard: View {
                         )
                     )
                 Image(systemName: connectionKind.icon)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(.white)
+                    .glyphSize(.label, weight: .semibold)
+                    .foregroundColor(FixedPalette.onMedia)
             }
             .frame(width: 32, height: 32)
             .opacity(binding.isUsable ? 1 : 0.5)
 
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                HStack(spacing: theme.space.s6) {
                     Text(presentation.title)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.primary)
                         .lineLimit(1)
                         .help(presentation.technicalRoute)
                     if let typeBadge = presentation.typeBadge {
-                        Text(typeBadge)
-                            .font(.system(size: 9, weight: .semibold))
-                            .foregroundColor(theme.tertiaryText)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 1)
-                            .background(Capsule().fill(theme.tertiaryBackground))
+                        StatusChip(typeBadge, tone: .neutral)
                     }
                     if isAutomatic {
-                        Text("Automatic", bundle: .module)
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(theme.secondaryText.opacity(0.12)))
+                        StatusChip(L("Automatic"), tint: theme.text.secondary)
                             .help(
                                 L(
-                                    "Available because this agent answers on this channel and the room allows bot posts. No setup needed."
+                                    "Added because an automation runs this agent for this channel and the room allows bot posts. No setup needed."
                                 )
                             )
                     }
                 }
                 Text(presentation.subtitle)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.text.secondary)
                     .lineLimit(1)
                     .help(presentation.technicalRoute)
                 Text(effectiveMode.friendlyDescription)
-                    .font(.system(size: 10))
+                    .font(SettingsFont.footnote)
                     .foregroundColor(
-                        effectiveMode == .autonomous ? theme.warningColor : theme.tertiaryText
+                        effectiveMode == .autonomous ? theme.status.warning.foreground : theme.text.tertiary
                     )
             }
 
@@ -333,20 +220,13 @@ struct AgentChannelDestinationRowCard: View {
                 onCustomize()
             } label: {
                 Text("Customize…", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(SettingsFont.smallLabel)
             }
-            .buttonStyle(SettingsButtonStyle())
+            .assignedSettingsButtonStyle()
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
+        .padding(.horizontal, theme.space.s12)
+        .padding(.vertical, theme.space.s8)
+        .settingsChrome(.surface)
         // Window-level modal: a contained overlay would center inside this
         // one row and clip/z-fight against sibling rows in the scroll view.
         .themedAlert(
@@ -362,29 +242,18 @@ struct AgentChannelDestinationRowCard: View {
     }
 
     private var modeMenu: some View {
-        Menu {
-            ForEach(AgentChannelBindingOutboundMode.allCases, id: \.self) { mode in
-                Button {
-                    select(mode)
-                } label: {
-                    if mode == effectiveMode {
-                        Label(mode.friendlyLabel, systemImage: "checkmark")
-                    } else {
-                        Text(mode.friendlyLabel)
-                    }
+        HStack(spacing: theme.space.s6) {
+            if effectiveMode == .autonomous {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(SettingsFont.glyphSmall)
+                    .foregroundColor(theme.status.warning.foreground)
+            }
+            SettingsMenuPicker(selection: Binding(get: { effectiveMode }, set: { select($0) })) {
+                ForEach(AgentChannelBindingOutboundMode.allCases, id: \.self) { mode in
+                    Text(mode.friendlyLabel).tag(mode)
                 }
             }
-        } label: {
-            HStack(spacing: 4) {
-                Text(effectiveMode.friendlyLabel)
-                    .font(.system(size: 11, weight: .medium))
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 8, weight: .semibold))
-            }
-            .foregroundColor(effectiveMode == .autonomous ? theme.warningColor : theme.accentColor)
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
     }
 
     private func select(_ mode: AgentChannelBindingOutboundMode) {
@@ -410,21 +279,20 @@ struct AgentChannelDestinationRowCard: View {
             onChanged()
         } catch {
             _ = ToastManager.shared.error(
-                L("Couldn't update this destination"),
+                L("Couldn't update this place"),
                 message: error.localizedDescription
             )
         }
     }
 }
 
-// MARK: - Per-Agent Replies Summary (Agent Settings)
+// MARK: - Per-Agent "On channels" (Agent Settings)
 
-/// Read-only summary of where ONE agent answers incoming messages,
-/// embedded in that agent's Channels tab. Reply routing itself is
-/// configured per channel (Settings → Channels → the channel's sheet),
-/// so this section reports the current state and links there instead of
-/// duplicating the editor.
-struct AgentChannelAgentRepliesSection: View {
+/// Read-only list of the channels ONE agent takes part in — whether it
+/// answers messages, replies automatically, and may post on its own —
+/// embedded in that agent's Channels tab. All of it is edited on the
+/// channel (Routing and Sending in its sheet), so each row deep-links there.
+struct AgentChannelAgentOnChannelsSection: View {
     @ObservedObject private var themeManager = ThemeManager.shared
 
     let agentId: UUID
@@ -432,27 +300,29 @@ struct AgentChannelAgentRepliesSection: View {
     @State private var rows: [Row] = []
 
     struct Row: Identifiable {
+        let connectionId: String
         let kind: AgentChannelKind
+        let name: String
         let detail: String
-        var id: String { kind.rawValue }
+        var id: String { connectionId }
     }
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             if rows.isEmpty {
                 Text(
-                    "This agent doesn't reply on any channel yet. Open a connected channel in Channels settings and choose this agent under \u{201C}Reply to incoming messages\u{201D}.",
+                    "This agent isn't on any channel yet. Open a channel under Channels and add it there.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
             } else {
-                VStack(spacing: 8) {
+                VStack(spacing: theme.space.s8) {
                     ForEach(rows) { row in
-                        replyRow(row)
+                        channelRow(row)
                     }
                 }
             }
@@ -460,26 +330,32 @@ struct AgentChannelAgentRepliesSection: View {
             HStack {
                 Spacer()
                 Button {
-                    ManagementStateManager.shared.selectedTab = .agentChannels
+                    AppDelegate.shared?.showManagementWindow(initialTab: .agentChannels)
                 } label: {
-                    HStack(spacing: 4) {
-                        Text("Manage replies in Channels settings", bundle: .module)
+                    HStack(spacing: theme.space.s4) {
+                        Text("Open Channels", bundle: .module)
                         Image(systemName: "arrow.up.right")
-                            .font(.system(size: 9, weight: .semibold))
+                            .glyphSize(.tiny, weight: .semibold)
                     }
-                    .font(.system(size: 11, weight: .medium))
+                    .textStyle(.footnote, weight: 500)
                 }
                 .buttonStyle(PlainButtonStyle())
-                .foregroundColor(theme.accentColor)
+                .foregroundColor(theme.text.link)
             }
         }
         .onAppear(perform: reload)
+        .onReceive(NotificationCenter.default.publisher(for: .eventsChanged).receive(on: DispatchQueue.main)) { _ in
+            reload()
+        }
+        .onReceive(
+            NotificationCenter.default.publisher(for: .agentChannelConfigurationChanged).receive(on: DispatchQueue.main)
+        ) { _ in reload() }
     }
 
-    private func replyRow(_ row: Row) -> some View {
-        HStack(spacing: 10) {
+    private func channelRow(_ row: Row) -> some View {
+        HStack(spacing: theme.space.s10) {
             ZStack {
-                RoundedRectangle(cornerRadius: 7)
+                RoundedRectangle(cornerRadius: theme.radius.medium)
                     .fill(
                         LinearGradient(
                             colors: row.kind.brandGradient,
@@ -488,98 +364,92 @@ struct AgentChannelAgentRepliesSection: View {
                         )
                     )
                 Image(systemName: row.kind.icon)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.white)
+                    .glyphSize(.caption, weight: .semibold)
+                    .foregroundColor(FixedPalette.onMedia)
             }
             .frame(width: 28, height: 28)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(row.kind.displayName)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                Text(row.name)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                 Text(row.detail)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.text.secondary)
+                    .lineLimit(2)
             }
 
             Spacer()
+
+            Button {
+                ManagementStateManager.shared.pendingChannelConnectionId = row.connectionId
+                AppDelegate.shared?.showManagementWindow(initialTab: .agentChannels)
+            } label: {
+                HStack(spacing: theme.space.s4) {
+                    Text("Edit in Channels", bundle: .module)
+                    Image(systemName: "arrow.up.right")
+                        .glyphSize(.tiny, weight: .semibold)
+                }
+                .textStyle(.footnote, weight: 500)
+            }
+            .buttonStyle(PlainButtonStyle())
+            .foregroundColor(theme.text.link)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
+        .padding(.horizontal, theme.space.s12)
+        .padding(.vertical, theme.space.s8)
+        .settingsChrome(.surface)
     }
 
+    /// Every connection the agent is on: any with an automation or a
+    /// posting place for it, in the order Channels lists them.
     private func reload() {
-        // Credential presence comes from the non-blocking availability cache
-        // (seeded at launch, refreshed on credential mutation) — the direct
-        // `hasBotToken()` / `helperAvailable()` probes are synchronous
-        // Keychain / bundle-digest I/O and this runs on the main thread.
-        let availability = AgentChannelCredentialAvailability.shared
-        var next: [Row] = []
-        if availability.hasCredential(.discord),
-            let detail = AgentChannelAgentReplySummary.detail(
-                for: agentId,
-                dispatch: DiscordConnectionService.shared.configuration().inboundDispatch
-            )
-        {
-            next.append(Row(kind: .discord, detail: detail))
+        let events = EventManager.shared.events
+        let bindings = AgentChannelAutoDestinationResolver.effectiveConfiguration().bindings
+        var ids: [String] = []
+        var seen = Set<String>()
+        func note(_ id: String) {
+            let normalized = AgentChannelConnection.normalizedId(id)
+            if seen.insert(normalized).inserted { ids.append(normalized) }
         }
-        if availability.hasCredential(.slack),
-            let detail = AgentChannelAgentReplySummary.detail(
-                for: agentId,
-                dispatch: SlackConnectionService.shared.configuration().inboundDispatch
-            )
-        {
-            next.append(Row(kind: .slack, detail: detail))
+        for event in events {
+            guard let source = event.source.channelMessage,
+                ChannelAgentRoster.target(of: event)?.localAgentId == agentId
+            else { continue }
+            note(source.connectionId)
         }
-        if availability.hasCredential(.telegram),
-            let detail = AgentChannelAgentReplySummary.detail(
-                for: agentId,
-                dispatch: TelegramConnectionService.shared.configuration().inboundDispatch
-            )
-        {
-            next.append(Row(kind: .telegram, detail: detail))
+        for binding in bindings where binding.agentId == agentId {
+            note(binding.connectionId)
         }
-        // iMessage has no remote credential; the verified local helper plays
-        // that role.
-        if availability.hasCredential(.imessage),
-            let detail = AgentChannelAgentReplySummary.detail(
-                for: agentId,
-                dispatch: IMessageConnectionService.shared.configuration().inboundDispatch
+        rows = ids.compactMap { connectionId in
+            let kind = AgentChannelConnectionPresentation.kind(for: connectionId)
+            let roster = ChannelAgentRoster.build(
+                events: events.filter { $0.source.channelMessage?.connectionId == connectionId },
+                bindings: bindings,
+                connectionId: connectionId,
+                writableRoomIds: ChannelAgentRoster.liveWritableRoomIds(connectionId: connectionId)
             )
-        {
-            next.append(Row(kind: .imessage, detail: detail))
+            guard
+                let detail = roster.presenceDetail(
+                    for: agentId, roomName: ChannelRoomChoices.labeler(connectionId: connectionId))
+            else { return nil }
+            return Row(
+                connectionId: connectionId, kind: kind,
+                name: AgentChannelConnectionPresentation.displayName(for: connectionId), detail: detail)
         }
-        // WhatsApp's credential is the helper's linked Web session.
-        if availability.hasCredential(.whatsapp),
-            let detail = AgentChannelAgentReplySummary.detail(
-                for: agentId,
-                dispatch: WhatsAppConnectionService.shared.configuration().inboundDispatch
-            )
-        {
-            next.append(Row(kind: .whatsapp, detail: detail))
-        }
-        rows = next
     }
 }
 
 // MARK: - Per-Agent Destinations (Agent Settings)
 
-/// New-message destinations scoped to ONE agent, embedded in that agent's
-/// settings (Connections → Channels tab) next to the read-only Replies
-/// summary. Shows the same effective rows (automatic + customized) as the
-/// Channels pane and shares its editor sheet.
+/// Places ONE agent may post on its own, embedded in that agent's settings
+/// (Agents → agent → Channels) next to the read-only Replies summary. This
+/// is the only editor for posting places; the Channels pane summarizes
+/// them per agent and links here.
 struct AgentChannelAgentDestinationsSection: View {
     @ObservedObject private var themeManager = ThemeManager.shared
 
     let agentId: UUID
+    var showsChannelsLink = true
 
     @State private var bindings: [AgentChannelBinding] = []
     @State private var storedBindingIds: Set<String> = []
@@ -608,31 +478,31 @@ struct AgentChannelAgentDestinationsSection: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             if sendingPaused && !bindings.isEmpty {
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     Image(systemName: "pause.circle.fill")
-                        .font(.system(size: 11))
+                        .glyphSize(.footnote)
                     Text(
                         "Sending is paused by the global switch in Channels settings — nothing is delivered from these destinations until it's back on.",
                         bundle: .module
                     )
-                    .font(.system(size: 11))
+                    .font(SettingsFont.rowDescription)
                     .fixedSize(horizontal: false, vertical: true)
                 }
-                .foregroundColor(theme.warningColor)
+                .foregroundColor(theme.status.warning.foreground)
             }
 
             if bindings.isEmpty {
                 Text(
-                    "Nothing to post to yet. Destinations appear here automatically once a connected channel lets the bot post somewhere and this agent is chosen to reply there — the agent then always asks before sending. You can also add a specific destination below.",
+                    "Nowhere to post yet. A place appears here automatically when an automation runs this agent for a room the bot may post in — the agent then always asks before sending. You can also add a specific place below.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
             } else {
-                VStack(spacing: 8) {
+                VStack(spacing: theme.space.s8) {
                     ForEach(bindings) { binding in
                         AgentChannelDestinationRowCard(
                             binding: binding,
@@ -650,52 +520,57 @@ struct AgentChannelAgentDestinationsSection: View {
                     "\(autonomousCount) destination(s) are set to Auto-send: this agent posts there without asking.",
                     bundle: .module
                 )
-                .font(.system(size: 10))
-                .foregroundColor(theme.warningColor)
+                .font(SettingsFont.footnote)
+                .foregroundColor(theme.status.warning.foreground)
             }
 
             HStack {
                 Button {
                     sheetTarget = .add
                 } label: {
-                    HStack(spacing: 4) {
+                    HStack(spacing: theme.space.s4) {
                         Image(systemName: "plus")
-                            .font(.system(size: 9, weight: .semibold))
-                        Text("Add Destination", bundle: .module)
+                            .glyphSize(.tiny, weight: .semibold)
+                        Text("Add Place", bundle: .module)
                     }
                 }
-                .buttonStyle(SettingsButtonStyle())
+                .assignedSettingsButtonStyle()
 
                 Spacer()
 
                 // Channel connections, the outbox, and the global write kill
                 // switch are cross-agent concerns and stay in the Channels pane.
-                Button {
-                    ManagementStateManager.shared.selectedTab = .agentChannels
-                } label: {
-                    HStack(spacing: 4) {
-                        Text("Channels & Outbox settings", bundle: .module)
-                        Image(systemName: "arrow.up.right")
-                            .font(.system(size: 9, weight: .semibold))
+                if showsChannelsLink {
+                    Button {
+                        ManagementStateManager.shared.selectedTab = .agentChannels
+                    } label: {
+                        HStack(spacing: theme.space.s4) {
+                            Text("Channels & Outbox settings", bundle: .module)
+                            Image(systemName: "arrow.up.right")
+                                .glyphSize(.tiny, weight: .semibold)
+                        }
+                        .textStyle(.footnote, weight: 500)
                     }
-                    .font(.system(size: 11, weight: .medium))
+                    .buttonStyle(PlainButtonStyle())
+                    .foregroundColor(theme.text.link)
                 }
-                .buttonStyle(PlainButtonStyle())
-                .foregroundColor(theme.accentColor)
             }
         }
         .onAppear(perform: reload)
         .sheet(item: $sheetTarget, onDismiss: reload) { target in
-            switch target {
-            case .add:
-                AgentChannelDestinationEditorSheet(binding: nil, pinnedAgentId: agentId) {
-                    reload()
-                }
-            case .edit(let binding):
-                AgentChannelDestinationEditorSheet(binding: binding, pinnedAgentId: agentId) {
-                    reload()
+            Group {
+                switch target {
+                case .add:
+                    AgentChannelDestinationEditorSheet(binding: nil, pinnedAgentId: agentId) {
+                        reload()
+                    }
+                case .edit(let binding):
+                    AgentChannelDestinationEditorSheet(binding: binding, pinnedAgentId: agentId) {
+                        reload()
+                    }
                 }
             }
+            .themedAlertSheetHost()
         }
     }
 
@@ -779,10 +654,10 @@ struct AgentChannelDestinationEditorSheet: View {
     }
 
     private var connectionOptions: [String] {
-        var options = [
-            AgentChannelConnection.nativeDiscordConnectionId,
-            AgentChannelConnection.nativeSlackConnectionId,
-            AgentChannelConnection.nativeTelegramConnectionId,
+        var options = [AgentChannelKind.discord, .slack, .telegram].flatMap {
+            ChannelAccounts.accounts(kind: $0).map(\.connectionId)
+        }
+        options += [
             AgentChannelConnection.nativeIMessageConnectionId,
             AgentChannelConnection.nativeWhatsAppConnectionId,
         ]
@@ -805,27 +680,27 @@ struct AgentChannelDestinationEditorSheet: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             header
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: theme.space.s20) {
                     identitySection
                     destinationSection
                     behaviorSection
                     advancedSection
                     readinessSection
                 }
-                .padding(24)
+                .padding(theme.space.s24)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             footer
         }
         .fittedSheetFrame(width: 560, height: 680)
-        .background(theme.primaryBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .background(theme.surface.canvas)
+        .clipShape(RoundedRectangle(cornerRadius: theme.radius.xlarge))
         .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(theme.primaryBorder, lineWidth: 1)
+            RoundedRectangle(cornerRadius: theme.radius.xlarge)
+                .stroke(theme.border.subtle, lineWidth: theme.stroke.default)
         )
         .onAppear {
             loadDraft()
@@ -865,9 +740,9 @@ struct AgentChannelDestinationEditorSheet: View {
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             ZStack {
-                RoundedRectangle(cornerRadius: 10)
+                RoundedRectangle(cornerRadius: theme.radius.medium)
                     .fill(
                         LinearGradient(
                             colors: connectionKind.brandGradient,
@@ -876,64 +751,51 @@ struct AgentChannelDestinationEditorSheet: View {
                         )
                     )
                 Image(systemName: connectionKind.icon)
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundColor(.white)
+                    .glyphSize(.large, weight: .semibold)
+                    .foregroundColor(FixedPalette.onMedia)
             }
             .frame(width: 40, height: 40)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(isNew ? L("Add a Destination") : L("Customize Destination"))
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                Text(isNew ? L("Add a Place") : L("Customize Place"))
+                    .font(SettingsFont.detailTitle)
+                    .foregroundColor(theme.text.primary)
                 Text(
                     "Choose where this agent may post on its own, and whether it asks you first.",
                     bundle: .module
                 )
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.caption)
+                .foregroundColor(theme.text.secondary)
             }
 
             Spacer()
 
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                    .frame(width: 28, height: 28)
-                    .background(Circle().fill(theme.tertiaryBackground))
-            }
-            .buttonStyle(PlainButtonStyle())
-            .keyboardShortcut(.escape, modifiers: [])
+            SettingsIconButton("xmark", help: "Close", size: .compact) { dismiss() }
+                .keyboardShortcut(.escape, modifiers: [])
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 20)
-        .background(theme.secondaryBackground)
+        .padding(.horizontal, theme.space.s24)
+        .padding(.vertical, theme.space.s16)
+        .background(theme.surface.subtle)
     }
 
     private var identitySection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             fieldLabel(L("Agent"))
             if pinnedAgentId != nil {
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     Image(systemName: "person.crop.circle")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
+                        .glyphSize(.caption)
+                        .foregroundColor(theme.text.secondary)
                     Text(agentDisplayName(agentId))
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.primary)
                 }
             } else {
-                Picker(selection: $agentId) {
+                SettingsMenuPicker(selection: $agentId) {
                     ForEach(agentManager.agents, id: \.id) { agent in
                         Text(agent.name).tag(agent.id)
                     }
-                } label: {
-                    EmptyView()
                 }
-                .labelsHidden()
-                .pickerStyle(.menu)
                 .frame(maxWidth: 280, alignment: .leading)
             }
 
@@ -943,17 +805,13 @@ struct AgentChannelDestinationEditorSheet: View {
     }
 
     private var destinationSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             fieldLabel(L("Channel"))
-            Picker(selection: $connectionId) {
+            SettingsMenuPicker(selection: $connectionId) {
                 ForEach(connectionOptions, id: \.self) { option in
                     Text(connectionDisplayName(option)).tag(option)
                 }
-            } label: {
-                EmptyView()
             }
-            .labelsHidden()
-            .pickerStyle(.menu)
             .frame(maxWidth: 280, alignment: .leading)
 
             fieldLabel(
@@ -981,52 +839,40 @@ struct AgentChannelDestinationEditorSheet: View {
     @ViewBuilder
     private var roomSelector: some View {
         if isDiscoveringRooms && discoveredRooms.isEmpty {
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
+            HStack(spacing: theme.space.s8) {
+                SettingsSpinner()
                 Text("Finding conversations…", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 22)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.cardBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10).stroke(theme.cardBorder, lineWidth: 1)
-                    )
-            )
+            .padding(.vertical, theme.space.s24)
+            .settingsChrome(.surface)
         } else if discoveredRooms.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 Text("No conversations found on this channel yet.", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.smallLabel)
+                    .foregroundColor(theme.text.secondary)
                 Text(
                     "Check the channel's settings, or enter a conversation id directly under Advanced.",
                     bundle: .module
                 )
-                .font(.system(size: 10))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.footnote)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
                 Button {
                     discoverRooms()
                 } label: {
                     Text("Try Again", bundle: .module)
                 }
-                .buttonStyle(SettingsButtonStyle())
+                .assignedSettingsButtonStyle()
                 .disabled(isDiscoveringRooms)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(14)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.cardBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10).stroke(theme.cardBorder, lineWidth: 1)
-                    )
-            )
+            .padding(theme.space.s12)
+            .settingsChrome(.surface)
         } else {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
                 AgentChannelSelectorSearchField(
                     placeholder: L("Search conversations"),
                     text: $roomQuery
@@ -1043,18 +889,18 @@ struct AgentChannelDestinationEditorSheet: View {
                         "Grayed-out conversations don't allow bot posts yet — enable posting for them in the channel's settings.",
                         bundle: .module
                     )
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
                 }
                 if !roomId.isEmpty, !discoveredRooms.contains(where: { $0.id == roomId }) {
-                    HStack(spacing: 5) {
+                    HStack(spacing: theme.space.s4) {
                         Image(systemName: "info.circle")
-                            .font(.system(size: 10))
+                            .glyphSize(.micro)
                         Text(L("Currently set to \(roomId) (not in this list)"))
-                            .font(.system(size: 10, design: .monospaced))
+                            .font(SettingsFont.monoSmall)
                     }
-                    .foregroundColor(theme.tertiaryText)
+                    .foregroundColor(theme.text.tertiary)
                 }
             }
         }
@@ -1078,48 +924,38 @@ struct AgentChannelDestinationEditorSheet: View {
             roomId = room.id
             if label.isEmpty { label = room.name }
         } label: {
-            HStack(spacing: 9) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(selected ? theme.accentColor : theme.tertiaryText)
+                    .glyphSize(.label, weight: .semibold)
+                    .foregroundColor(selected ? theme.text.link : theme.text.tertiary)
                     .frame(width: 20)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 5) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
+                    HStack(spacing: theme.space.s4) {
                         Text(displayName)
-                            .font(.system(size: 11, weight: .medium))
+                            .font(SettingsFont.smallLabel)
                             .foregroundColor(
-                                room.writeAllowed ? theme.primaryText : theme.tertiaryText
+                                room.writeAllowed ? theme.text.primary : theme.text.tertiary
                             )
                             .lineLimit(1)
                         if let badge = room.kind.badgeLabel {
-                            Text(badge)
-                                .font(.system(size: 8, weight: .semibold))
-                                .foregroundColor(theme.tertiaryText)
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 1)
-                                .background(Capsule().fill(theme.tertiaryBackground))
+                            StatusChip(badge, tone: .neutral)
                         }
                     }
                     Text(room.id)
-                        .font(.system(size: 9, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.tertiary)
                         .lineLimit(1)
                 }
 
                 Spacer(minLength: 6)
 
                 if !room.writeAllowed {
-                    Text("Posting not allowed", bundle: .module)
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(theme.tertiaryText)
-                        .padding(.horizontal, 7)
-                        .padding(.vertical, 4)
-                        .background(Capsule().fill(theme.tertiaryBackground))
+                    StatusChip(L("Posting not allowed"), tone: .neutral)
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
+            .padding(.horizontal, theme.space.s8)
+            .padding(.vertical, theme.space.s8)
             .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
@@ -1128,48 +964,42 @@ struct AgentChannelDestinationEditorSheet: View {
     }
 
     private var behaviorSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             fieldLabel(L("When the agent wants to post"))
-            Picker(selection: $outboundMode) {
-                ForEach(AgentChannelBindingOutboundMode.allCases, id: \.self) { mode in
-                    Text(mode.friendlyLabel).tag(mode)
-                }
-            } label: {
-                EmptyView()
-            }
-            .labelsHidden()
-            .pickerStyle(.segmented)
+            AssignedBaseSegmentedPicker(
+                selection: $outboundMode,
+                options: AgentChannelBindingOutboundMode.allCases.map { .init($0, $0.friendlyLabel, verbatim: true) }
+            )
+            .fixedSize()
+            .accessibilityLabel(Text(verbatim: L("When the agent wants to post")))
 
             Text(modeDescription)
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
             if outboundMode == .autonomous {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
+                    HStack(spacing: theme.space.s8) {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.warningColor)
+                            .glyphSize(.caption)
+                            .foregroundColor(theme.status.warning.foreground)
                         Text(
                             "Auto-send lets this agent post messages without asking you. Room permissions, rate limits, and the global Sending switch still apply.",
                             bundle: .module
                         )
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.warningColor)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.status.warning.foreground)
                         .fixedSize(horizontal: false, vertical: true)
                     }
                     Toggle(isOn: $autonomousAcknowledged) {
                         Text("I understand this agent can post here without asking", bundle: .module)
-                            .font(.system(size: 11))
+                            .font(SettingsFont.rowDescription)
                     }
-                    .toggleStyle(.checkbox)
+                    .settingsCheckbox()
                 }
-                .padding(10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.warningColor.opacity(0.08))
-                )
+                .padding(theme.space.s8)
+                .settingsChrome(.status(.warning))
             }
 
             // Only surfaced when this row arrived disabled (a deleted
@@ -1179,15 +1009,15 @@ struct AgentChannelDestinationEditorSheet: View {
             if binding?.enabled == false {
                 Toggle(isOn: $enabled) {
                     Text("Active", bundle: .module)
-                        .font(.system(size: 12))
+                        .font(SettingsFont.caption)
                 }
-                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
+                .settingsSwitch(showsLabel: true)
                 Text(
                     "This room was turned off — for example its channel was removed, or it arrived from an imported file. Turn it back on to use it again.",
                     bundle: .module
                 )
-                .font(.system(size: 10))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.footnote)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -1213,7 +1043,7 @@ struct AgentChannelDestinationEditorSheet: View {
     /// reference id the agent uses. All have safe defaults.
     private var advancedSection: some View {
         AgentChannelAdvancedSection {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: theme.space.s14) {
                 fieldLabel(
                     L("Room ID"),
                     hint: L("Set the room directly if it doesn't appear in the list above.")
@@ -1235,8 +1065,8 @@ struct AgentChannelDestinationEditorSheet: View {
                         hint: L("The agent refers to this room by this stable id.")
                     )
                     Text(binding.id)
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.secondary)
                         .textSelection(.enabled)
                 }
             }
@@ -1244,18 +1074,18 @@ struct AgentChannelDestinationEditorSheet: View {
     }
 
     private var sourcesSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             fieldLabel(
                 L("Allowed Run Kinds"),
                 hint: L("Which kinds of agent runs may post here. Replies to incoming messages are separate and unaffected.")
             )
-            HStack(spacing: 16) {
+            HStack(spacing: theme.space.s16) {
                 ForEach(AgentChannelBindingRunSource.allCases, id: \.self) { source in
                     Toggle(isOn: sourceBinding(source)) {
                         Text(sourceLabel(source))
-                            .font(.system(size: 11))
+                            .font(SettingsFont.rowDescription)
                     }
-                    .toggleStyle(.checkbox)
+                    .settingsCheckbox()
                 }
             }
         }
@@ -1277,24 +1107,30 @@ struct AgentChannelDestinationEditorSheet: View {
     private func sourceLabel(_ source: AgentChannelBindingRunSource) -> String {
         switch source {
         case .chat: return L("Chat")
-        case .schedule: return L("Schedules")
-        case .watcher: return L("Watchers")
+        case .schedule: return L("Scheduled automations")
+        case .watcher: return L("Folder automations")
         case .selfSchedule: return L("Self-scheduled")
         }
     }
 
     private var rateSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             fieldLabel(L("Rate Limits"))
-            HStack(spacing: 18) {
-                Stepper(value: $maxSendsPerHour, in: 1...120) {
-                    Text(L("Max \(maxSendsPerHour)/hour"))
-                        .font(.system(size: 12))
-                }
-                Stepper(value: $minSecondsBetweenSends, in: 0...3_600, step: 15) {
-                    Text(L("Min \(minSecondsBetweenSends)s between sends"))
-                        .font(.system(size: 12))
-                }
+            HStack(spacing: theme.space.s12) {
+                Text("Max sends per hour", bundle: .module)
+                    .font(SettingsFont.rowTitle)
+                    .foregroundColor(theme.text.primary)
+                Spacer()
+                SettingsStepper(value: $maxSendsPerHour, range: 1 ... 120)
+                    .settingsFieldAccessibility(L("Max sends per hour"))
+            }
+            HStack(spacing: theme.space.s12) {
+                Text("Min seconds between sends", bundle: .module)
+                    .font(SettingsFont.rowTitle)
+                    .foregroundColor(theme.text.primary)
+                Spacer()
+                SettingsStepper(value: $minSecondsBetweenSends, range: 0 ... 3_600, step: 15)
+                    .settingsFieldAccessibility(L("Min seconds between sends"))
             }
         }
     }
@@ -1336,29 +1172,26 @@ struct AgentChannelDestinationEditorSheet: View {
     private var readinessSection: some View {
         let findings = readinessFindings
         if !findings.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 ForEach(findings, id: \.self) { finding in
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         Image(systemName: "exclamationmark.circle.fill")
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.warningColor)
+                            .glyphSize(.footnote)
+                            .foregroundColor(theme.status.warning.foreground)
                         Text(finding)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.warningColor)
+                            .font(SettingsFont.rowDescription)
+                            .foregroundColor(theme.status.warning.foreground)
                     }
                 }
                 Text(
                     "Posting won't work until these are fixed. You can still save now.",
                     bundle: .module
                 )
-                .font(.system(size: 10))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.footnote)
+                .foregroundColor(theme.text.tertiary)
             }
-            .padding(10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.warningColor.opacity(0.08))
-            )
+            .padding(theme.space.s8)
+            .settingsChrome(.status(.warning))
         }
     }
 
@@ -1373,7 +1206,7 @@ struct AgentChannelDestinationEditorSheet: View {
     }
 
     private var footer: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: theme.space.s8) {
             if let statusMessage {
                 AgentChannelInlineStatusMessage(
                     message: statusMessage,
@@ -1410,30 +1243,26 @@ struct AgentChannelDestinationEditorSheet: View {
                 .disabled(!canSave)
             }
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 16)
+        .padding(.horizontal, theme.space.s24)
+        .padding(.vertical, theme.space.s16)
         .background(
-            theme.secondaryBackground
+            theme.surface.subtle
                 .overlay(
-                    Rectangle()
-                        .fill(theme.primaryBorder)
-                        .frame(height: 1),
+                    ThemeHairlineDivider(),
                     alignment: .top
                 )
         )
     }
 
     private func fieldLabel(_ title: String, hint: String? = nil) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
             Text(LocalizedStringKey(title), bundle: .module)
-                .textCase(.uppercase)
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(theme.tertiaryText)
-                .tracking(0.5)
+                .font(SettingsFont.compactLabel)
+                .foregroundColor(theme.text.tertiary)
             if let hint {
                 Text(LocalizedStringKey(hint), bundle: .module)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
             }
         }
     }
@@ -1446,47 +1275,12 @@ struct AgentChannelDestinationEditorSheet: View {
         text: Binding<String>,
         monospaced: Bool = false
     ) -> some View {
-        TextField(placeholder, text: text)
-            .textFieldStyle(.plain)
-            .font(.system(size: 12, design: monospaced ? .monospaced : .default))
-            .foregroundColor(theme.primaryText)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.inputBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10).stroke(theme.inputBorder, lineWidth: 1)
-                    )
-            )
+        SettingsTextField(placeholder: placeholder, text: text, monospaced: monospaced)
     }
 
     /// Multiline input with the same chrome as `styledTextField`.
     private func styledTextEditor(_ placeholder: String, text: Binding<String>) -> some View {
-        ZStack(alignment: .topLeading) {
-            if text.wrappedValue.isEmpty {
-                Text(placeholder)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.placeholderText)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 9)
-                    .allowsHitTesting(false)
-            }
-            TextEditor(text: text)
-                .font(.system(size: 12))
-                .foregroundColor(theme.primaryText)
-                .scrollContentBackground(.hidden)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-        }
-        .frame(minHeight: 52)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10).stroke(theme.inputBorder, lineWidth: 1)
-                )
-        )
+        SettingsTextEditor(text: text, placeholder: placeholder, minHeight: 52)
     }
 
     private func agentDisplayName(_ id: UUID) -> String {
@@ -1680,13 +1474,13 @@ struct AgentChannelOutboxView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
+            SettingsPageContent {
                 Text(
                     "Posts your agents want to send. You always see the exact message and destination before anything goes out, and every safety check runs again at send time.",
                     bundle: .module
                 )
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.caption)
+                .foregroundColor(theme.text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
                 if let statusMessage {
@@ -1720,9 +1514,6 @@ struct AgentChannelOutboxView: View {
                     emptyDetail: L("Sent, failed, and discarded posts appear here.")
                 )
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 24)
-            .frame(maxWidth: .infinity)
         }
         .onAppear {
             Task { @MainActor in
@@ -1754,26 +1545,26 @@ struct AgentChannelOutboxView: View {
         items: [AgentChannelOutboundIntent],
         emptyDetail: String
     ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             Text(LocalizedStringKey(title), bundle: .module)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.compactLabel)
+                .foregroundColor(theme.text.primary)
 
             Group {
                 if items.isEmpty {
-                    VStack(spacing: 6) {
+                    VStack(spacing: theme.space.s6) {
                         Image(systemName: "tray")
-                            .font(.system(size: 18, weight: .medium))
-                            .foregroundColor(theme.tertiaryText)
+                            .glyphSize(.large, weight: .medium)
+                            .foregroundColor(theme.text.tertiary)
                         Text(LocalizedStringKey(emptyDetail), bundle: .module)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.secondaryText)
+                            .font(SettingsFont.rowDescription)
+                            .foregroundColor(theme.text.secondary)
                             .multilineTextAlignment(.center)
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 18)
+                    .padding(.vertical, theme.space.s16)
                 } else {
-                    VStack(spacing: 0) {
+                    VStack(spacing: theme.space.s0) {
                         ForEach(items) { intent in
                             intentRow(intent)
                             if intent.id != items.last?.id {
@@ -1784,12 +1575,12 @@ struct AgentChannelOutboxView: View {
                 }
             }
             .frame(maxWidth: .infinity)
-            .background(theme.cardBackground)
+            .background(theme.surface.raised)
             .overlay(
-                RoundedRectangle(cornerRadius: 8)
-                    .stroke(theme.cardBorder, lineWidth: 1)
+                RoundedRectangle(cornerRadius: theme.radius.medium)
+                    .stroke(theme.border.default, lineWidth: theme.stroke.default)
             )
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .clipShape(RoundedRectangle(cornerRadius: theme.radius.medium))
         }
     }
 
@@ -1804,29 +1595,29 @@ struct AgentChannelOutboxView: View {
     }
 
     private func intentRow(_ intent: AgentChannelOutboundIntent) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 8) {
+        HStack(alignment: .top, spacing: theme.space.s12) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                HStack(spacing: theme.space.s8) {
                     statusBadge(intent.status)
                     Text(routeDescription(intent))
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.footnote)
+                        .foregroundColor(theme.text.tertiary)
                         .help("\(intent.connectionId) · \(intent.roomId)")
                     Text(intent.updatedAt, style: .relative)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.footnote)
+                        .foregroundColor(theme.text.tertiary)
                 }
                 Text(AgentChannelAuditRedactor.redactedPreview(intent.content, maxLength: 240))
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.caption)
+                    .foregroundColor(theme.text.primary)
                     .fixedSize(horizontal: false, vertical: true)
                 if let failure = intent.failureMessage,
                     intent.status == .failed || intent.status == .deliveryUnknown
                 {
                     Text(failure)
-                        .font(.system(size: 10))
+                        .font(SettingsFont.footnote)
                         .foregroundColor(
-                            intent.status == .failed ? theme.errorColor : theme.warningColor
+                            intent.status == .failed ? theme.status.error.foreground : theme.status.warning.foreground
                         )
                 }
             }
@@ -1834,7 +1625,7 @@ struct AgentChannelOutboxView: View {
             Spacer()
 
             if intent.status.isUnresolved && intent.status != .sending {
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     AgentChannelSheetActionButton(
                         title: L("Review…"),
                         busyTitle: L("Working..."),
@@ -1854,27 +1645,22 @@ struct AgentChannelOutboxView: View {
                 }
             }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
+        .padding(.horizontal, theme.space.s12)
+        .padding(.vertical, theme.space.s8)
     }
 
     private func statusBadge(_ status: AgentChannelOutboundIntentStatus) -> some View {
         let color: Color
         switch status {
-        case .draft: color = theme.secondaryText
-        case .pending: color = theme.accentColor
-        case .sending: color = theme.accentColor
-        case .sent: color = theme.successColor
-        case .failed: color = theme.errorColor
-        case .cancelled: color = theme.tertiaryText
-        case .deliveryUnknown: color = theme.warningColor
+        case .draft: color = theme.text.secondary
+        case .pending: color = theme.action.primary.default.background
+        case .sending: color = theme.action.primary.default.background
+        case .sent: color = theme.status.success.foreground
+        case .failed: color = theme.status.error.foreground
+        case .cancelled: color = theme.text.tertiary
+        case .deliveryUnknown: color = theme.status.warning.foreground
         }
-        return Text(statusLabel(status))
-            .font(.system(size: 10, weight: .medium))
-            .foregroundColor(color)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(color.opacity(0.12)))
+        return StatusChip(statusLabel(status), tint: color)
     }
 
     private func statusLabel(_ status: AgentChannelOutboundIntentStatus) -> String {
@@ -2034,58 +1820,51 @@ struct AgentChannelOutboundReviewSheet: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             header
             Divider()
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: theme.space.s14) {
                     destinationSection
                     if intent.status == .deliveryUnknown {
                         unknownDeliveryNotice
                     }
                     payloadSection
                 }
-                .padding(20)
+                .padding(theme.space.s16)
             }
             Divider()
             footer
         }
         .fittedSheetFrame(width: 560, height: 520)
-        .background(theme.primaryBackground)
+        .background(theme.surface.canvas)
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             Image(systemName: "doc.text.magnifyingglass")
-                .font(.system(size: 20))
-                .foregroundColor(theme.accentColor)
-            VStack(alignment: .leading, spacing: 1) {
+                .glyphSize(.xlarge)
+                .foregroundColor(theme.text.link)
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text("Review Outbound Message", bundle: .module)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.cardTitle)
+                    .foregroundColor(theme.text.primary)
                 Text(
                     "This is the exact text and destination; nothing else is added or removed.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.secondary)
             }
             Spacer()
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-            }
-            .buttonStyle(PlainButtonStyle())
+            SettingsIconButton("xmark", help: "Close", size: .compact) { dismiss() }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
+        .padding(.horizontal, theme.space.s16)
+        .padding(.vertical, theme.space.s12)
     }
 
     private var destinationSection: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
             detailRow(L("Agent"), agentName(intent.agentId))
             detailRow(
                 L("Channel"),
@@ -2104,59 +1883,40 @@ struct AgentChannelOutboundReviewSheet: View {
                 intent.createdAt.formatted(date: .abbreviated, time: .shortened)
             )
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
+        .padding(theme.space.s12)
+        .settingsChrome(.surface)
     }
 
     private var unknownDeliveryNotice: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: theme.space.s8) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 12))
-                .foregroundColor(theme.warningColor)
+                .glyphSize(.caption)
+                .foregroundColor(theme.status.warning.foreground)
             Text(
                 "Delivery of this message was not confirmed — it may already be visible in the channel. \"Send Again\" can post a duplicate; use \"Mark as Sent\" if you can see it in the channel.",
                 bundle: .module
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.warningColor)
+            .font(SettingsFont.rowDescription)
+            .foregroundColor(theme.status.warning.foreground)
             .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.warningColor.opacity(0.08))
-        )
+        .padding(theme.space.s8)
+        .settingsChrome(.status(.warning))
     }
 
     private var payloadSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             Text("Exact message", bundle: .module)
-                .textCase(.uppercase)
-                .font(.system(size: 10, weight: .bold))
-                .foregroundColor(theme.tertiaryText)
-                .tracking(0.5)
+                .font(SettingsFont.compactLabel)
+                .foregroundColor(theme.text.tertiary)
             Text(intent.content)
-                .font(.system(size: 12, design: .monospaced))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.monoSmall)
+                .foregroundColor(theme.text.primary)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.cardBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(theme.cardBorder, lineWidth: 1)
-                        )
-                )
+                .padding(theme.space.s12)
+                .settingsChrome(.surface)
         }
     }
 
@@ -2204,20 +1964,20 @@ struct AgentChannelOutboundReviewSheet: View {
             )
             .disabled(isBusy)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
-        .background(theme.secondaryBackground)
+        .padding(.horizontal, theme.space.s16)
+        .padding(.vertical, theme.space.s12)
+        .background(theme.surface.subtle)
     }
 
     private func detailRow(_ title: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: theme.space.s8) {
             Text(LocalizedStringKey(title), bundle: .module)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.chip)
+                .foregroundColor(theme.text.tertiary)
                 .frame(width: 90, alignment: .leading)
             Text(value)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.monoSmall)
+                .foregroundColor(theme.text.primary)
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
         }

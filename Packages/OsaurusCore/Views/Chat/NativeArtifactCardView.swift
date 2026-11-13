@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  AppKit port of the SwiftUI ArtifactCardView: image / PDF / video / audio / HTML / text
-//  previews, gradient icon, capsule type pill, hover border + footer fade, intro glow.
+//  previews with a shared header, preview surface, and action row.
 //
 
 import AppKit
@@ -22,13 +22,13 @@ final class NativeArtifactCardView: NSView {
     /// taps image thumbnail → full-screen preview (wired from `CellRenderingContext.onUserImagePreview`)
     var onImagePreviewTap: ((String) -> Void)?
 
-    private let accentStrip = NSView()
+    private let inner = NSView()
     private let iconBg = NSView()
-    private let iconGradient = CAGradientLayer()
     private let iconBadge = NSImageView()
     private let nameLabel = NSTextField(labelWithString: "")
-    private let descLabel = NSTextField(labelWithString: "")
+    private let descLabel = NSTextField(wrappingLabelWithString: "")
     private let headerRow = NSStackView()
+    private let headerText = NSStackView()
     private let previewHost = NSView()
     private let footerStack = NSStackView()
     private let openInFinderButton = NSButton(title: "", target: nil, action: nil)
@@ -46,15 +46,17 @@ final class NativeArtifactCardView: NSView {
     private let htmlSizeLabel = NSTextField(labelWithString: "")
     private let textPreviewField = NSTextField(wrappingLabelWithString: "")
 
-    private var previewTopToDesc: NSLayoutConstraint?
-    private var previewTopToName: NSLayoutConstraint?
-    private var previewEmptyHeightConstraint: NSLayoutConstraint?
+    private let previewStatus = NSTextField(labelWithString: "")
+    private var previewTop: NSLayoutConstraint!
+    private var footerTop: NSLayoutConstraint!
+    private var previewUnavailable = false
 
     private var borderStrokeLayer: CAShapeLayer?
+    private var cardRadius: CGFloat = 0
     private var hoverOverlayLayer: CALayer?
 
     private var currentArtifactId: String = ""
-    private var currentThemeFingerprint: String = ""
+    private var currentThemeFingerprint: Int?
     private var hostPath: String = ""
     private var isArtifactDirectory = false
     private var previewLoadTask: Task<Void, Never>?
@@ -64,13 +66,16 @@ final class NativeArtifactCardView: NSView {
     private var boundArtifact: SharedArtifact?
 
     private var cachedLayoutHeight: CGFloat = 120
+    private var measuredLayoutWidth: CGFloat = 0
     private var isHovered = false
     private var lastGlowArtifactId: String?
 
     private static let thumbnailHeight: CGFloat = 160
+    private static let audioPlaySize: CGFloat = 36
     private static let innerPadding: CGFloat = 12
-    /// same value above the footer row (preview→footer) and below it (inner→card) so spacing looks even
-    private static let footerVerticalGap: CGFloat = 4
+    private static let previewPadding: CGFloat = 12
+    private static let iconSize: CGFloat = 24
+    private static let minimumActionHeight: CGFloat = 28
 
     override var intrinsicContentSize: NSSize {
         NSSize(width: NSView.noIntrinsicMetric, height: max(1, cachedLayoutHeight))
@@ -93,7 +98,8 @@ final class NativeArtifactCardView: NSView {
     // MARK: - Configure
 
     func configure(artifact: SharedArtifact, theme: any ThemeProtocol) {
-        let themeFP = Self.themeFingerprint(theme)
+        let theme = theme.catalogFamily(37)
+        let themeFP = theme.renderFingerprint
         // must not skip when hostPath or other fields update for the same id (tool result arrives after first paint)
         if artifact.id == currentArtifactId, themeFP == currentThemeFingerprint, boundArtifact == artifact {
             return
@@ -108,32 +114,27 @@ final class NativeArtifactCardView: NSView {
 
         previewLoadTask?.cancel()
         previewLoadTask = nil
-        previewEmptyHeightConstraint?.isActive = false
-        previewEmptyHeightConstraint = nil
+        previewUnavailable = false
         clearPreviewHost()
 
         nameLabel.stringValue = artifact.filename
-        nameLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.bodySize), weight: .semibold)
-        nameLabel.textColor = NSColor(theme.primaryText)
+        nameLabel.toolTip = artifact.filename
+        nameLabel.font = theme.nsFont(.subheading, weight: .semibold)
+        nameLabel.textColor = NSColor(theme.text.primary)
 
-        if let desc = artifact.description, !desc.isEmpty {
-            descLabel.stringValue = desc
-            descLabel.isHidden = false
-        } else {
-            descLabel.isHidden = true
-        }
-        descLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) - 1, weight: .regular)
-        descLabel.textColor = NSColor(theme.tertiaryText)
+        let description = artifact.description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        descLabel.stringValue = description
+        descLabel.toolTip = description.isEmpty ? nil : description
+        descLabel.isHidden = description.isEmpty
+        descLabel.font = theme.nsFont(.bodySmall)
+        descLabel.textColor = NSColor(theme.text.secondary)
 
-        applyIconGradient(for: artifact)
+        iconBg.layer?.backgroundColor = NSColor(theme.surface.subtle).cgColor
+        iconBg.layer?.cornerRadius = theme.radius.small
         let sym = Self.symbolName(for: artifact)
         iconBadge.image = SymbolImageCache.image(sym, accessibilityDescription: nil)
-        iconBadge.contentTintColor = .white
+        iconBadge.contentTintColor = NSColor(theme.text.secondary)
         iconBadge.imageScaling = .scaleProportionallyUpOrDown
-
-        accentStrip.layer?.backgroundColor = NSColor(theme.accentColor).cgColor
-
-        layoutNameTypeRow(theme: theme)
 
         let canOpen = !artifact.hostPath.isEmpty
         openInFinderButton.isHidden = !canOpen
@@ -148,71 +149,104 @@ final class NativeArtifactCardView: NSView {
         updateChrome(theme: theme)
         updateFooterAlpha()
 
-        previewTopConstraint(isDescVisible: !descLabel.isHidden)
-
         buildPreview(for: artifact, theme: theme)
+        applyInspectionStyle(theme)
 
         scheduleIntroGlowIfNeeded(theme: theme, artifactId: artifact.id)
 
-        // do not call layoutSubtreeIfNeeded() here — configure runs from table/cell paths during layout
-        let fit = fittingSize.height
-        // until layout runs, fittingSize can under-report footerStack (inline buttons); keep row height honest
-        let footerActions = !openInFinderButton.isHidden || !openInBrowserButton.isHidden
-        let minWithFooter: CGFloat = footerActions ? Self.minimumHeightWithFooterChrome(for: artifact) : 0
-        cachedLayoutHeight = max(fit, minWithFooter, 120)
+        // Chat calls configure while laying out table rows. Measure without forcing layout.
+        cachedLayoutHeight = cardHeight(for: bounds.width)
         invalidateIntrinsicContentSize()
         scheduleDeferredLayoutMetricsUpdate()
     }
 
-    /// lower bound matching vertical constraints so intrinsic height isn't below footer + preview before first layout pass
-    private static func minimumHeightWithFooterChrome(for artifact: SharedArtifact) -> CGFloat {
-        let innerTopBottom = Self.innerPadding + Self.footerVerticalGap
-        let headerAndGap: CGFloat = 24 + 8
-        let descExtra: CGFloat = (artifact.description.map { !$0.isEmpty } ?? false) ? 22 : 0
-        let previewH: CGFloat = {
-            let path = artifact.hostPath
-            if path.isEmpty {
-                if artifact.isText, let c = artifact.content, !c.isEmpty {
-                    let lines = min(6, max(1, c.components(separatedBy: "\n").count))
-                    return CGFloat(lines) * 14 + Self.footerVerticalGap * 2
-                }
-                return 0
+    private func applyInspectionStyle(_ theme: any ThemeProtocol) {
+        catalogAssignmentTarget(
+            ["background", "hover", "border", "borderWidth", "radius", "height"].map { "component.library.37." + $0 }
+                + ["paddingX", "paddingTop", "paddingBottom", "headerGap", "descriptionGap", "previewGap", "footerGap", "actionGap"]
+                    .map { "component.library.37.elements.layout." + $0 },
+            name: "Artifact card", theme: theme
+        )
+        NativeComponentInspectionStyle.label(nameLabel, family: 37, property: "heading", theme: theme)
+        NativeComponentInspectionStyle.label(descLabel, family: 37, property: "text", theme: theme)
+        for label in [pdfPageBadge, audioMetaLabel, htmlSizeLabel, previewStatus] {
+            NativeComponentInspectionStyle.label(label, family: 37, property: "caption", theme: theme)
+        }
+        for label in [audioTitleLabel, htmlTitleLabel] {
+            NativeComponentInspectionStyle.label(label, family: 37, property: "label", theme: theme)
+        }
+        NativeComponentInspectionStyle.label(textPreviewField, family: 37, property: "code", theme: theme)
+
+        let padding = NativeComponentInspectionStyle.metric(37, "padding", Self.innerPadding, theme)
+        let gap = NativeComponentInspectionStyle.metric(37, "gap", theme.space.s12, theme)
+        for constraint in constraints where constraint.firstItem as? NSView === inner {
+            switch constraint.firstAttribute {
+            case .leading: constraint.constant = layoutMetric("paddingX", padding, theme)
+            case .trailing: constraint.constant = -layoutMetric("paddingX", padding, theme)
+            case .top: constraint.constant = layoutMetric("paddingTop", padding, theme)
+            case .bottom: constraint.constant = -layoutMetric("paddingBottom", padding, theme)
+            default: break
             }
-            if artifact.isImage || artifact.isPDF || artifact.isVideo { return Self.thumbnailHeight }
-            if artifact.isAudio { return 56 }
-            if artifact.isHTML || (artifact.isDirectory && Self.hasIndexHTML(artifact)) { return 40 }
-            if artifact.isText, let c = artifact.content, !c.isEmpty {
-                let lines = min(6, max(1, c.components(separatedBy: "\n").count))
-                // line height ~14 at 11pt mono + vPad above/below text inside preview (same as footerVerticalGap)
-                return CGFloat(lines) * 14 + Self.footerVerticalGap * 2
-            }
-            return 0
-        }()
-        let footerRow: CGFloat = 40
-        return innerTopBottom + headerAndGap + descExtra + previewH + Self.footerVerticalGap + footerRow
+        }
+        headerRow.spacing = layoutMetric("headerGap", 8, theme)
+        headerText.spacing = layoutMetric("descriptionGap", 4, theme)
+        footerStack.spacing = layoutMetric("actionGap", 8, theme)
+        previewTop.constant = previewHost.isHidden ? 0 : layoutMetric("previewGap", gap, theme)
+        footerTop.constant = footerStack.isHidden ? 0 : layoutMetric("footerGap", gap, theme)
     }
 
-    func measuredCardHeight() -> CGFloat {
-        let h = fittingSize.height
-        cachedLayoutHeight = max(max(h, cachedLayoutHeight), 1)
+    private func layoutMetric(_ property: String, _ fallback: CGFloat, _ theme: any ThemeProtocol) -> CGFloat {
+        theme.catalogLayoutMetric("component.library.37.elements.layout." + property, inheriting: fallback)
+    }
+
+    private func updateLayoutMeasurements(for proposedWidth: CGFloat) {
+        guard let theme = boundTheme else { return }
+        let padding = NativeComponentInspectionStyle.metric(37, "padding", Self.innerPadding, theme)
+        let cardWidth = proposedWidth > 1 ? proposedWidth : 420
+        let contentWidth = max(1, cardWidth - 2 * layoutMetric("paddingX", padding, theme))
+        let textWidth = max(1, contentWidth - Self.iconSize - headerRow.spacing)
+        let previewTextWidth = max(1, contentWidth - 2 * Self.previewPadding)
+        if descLabel.preferredMaxLayoutWidth != textWidth { descLabel.preferredMaxLayoutWidth = textWidth }
+        if textPreviewField.preferredMaxLayoutWidth != previewTextWidth {
+            textPreviewField.preferredMaxLayoutWidth = previewTextWidth
+        }
+
+        let actions = footerStack.arrangedSubviews.filter { !$0.isHidden }
+        let actionsWidth = actions.reduce(CGFloat.zero) { $0 + $1.intrinsicContentSize.width }
+            + CGFloat(max(0, actions.count - 1)) * footerStack.spacing
+        let axis: NSUserInterfaceLayoutOrientation = actionsWidth > contentWidth && actions.count > 1 ? .vertical : .horizontal
+        if footerStack.orientation != axis {
+            footerStack.orientation = axis
+            footerStack.alignment = axis == .vertical ? .trailing : .centerY
+        }
+    }
+
+    private func cardHeight(for width: CGFloat) -> CGFloat {
+        guard let theme = boundTheme else { return 1 }
+        updateLayoutMeasurements(for: width)
+        let padding = NativeComponentInspectionStyle.metric(37, "padding", Self.innerPadding, theme)
+        return ceil(max(
+            layoutMetric("paddingTop", padding, theme)
+                + headerRow.fittingSize.height
+                + previewTop.constant + (previewHost.isHidden ? 0 : previewHost.fittingSize.height)
+                + footerTop.constant + (footerStack.isHidden ? 0 : footerStack.fittingSize.height)
+                + layoutMetric("paddingBottom", padding, theme),
+            NativeComponentInspectionStyle.metric(37, "height", 1, theme)
+        ))
+    }
+
+    func measuredCardHeight(width: CGFloat? = nil) -> CGFloat {
+        cachedLayoutHeight = cardHeight(for: width ?? bounds.width)
         return cachedLayoutHeight
     }
 
-    /// commits real fitting height on the next turn — safe when AppKit is already in -layout
     private func scheduleDeferredLayoutMetricsUpdate() {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            self.layoutSubtreeIfNeeded()
-            var newH = max(self.fittingSize.height, 1)
-            if !self.openInFinderButton.isHidden || !self.openInBrowserButton.isHidden,
-                let bound = self.boundArtifact
-            {
-                newH = max(newH, Self.minimumHeightWithFooterChrome(for: bound))
-            }
-            let oldH = self.cachedLayoutHeight
-            self.cachedLayoutHeight = newH
-            self.invalidateIntrinsicContentSize()
-            if abs(newH - oldH) > 0.5 {
+            let oldHeight = self.cachedLayoutHeight
+            let height = self.measuredCardHeight()
+            if abs(height - oldHeight) > 0.5 {
+                self.invalidateIntrinsicContentSize()
                 self.onHeightChanged?()
             }
         }
@@ -221,29 +255,27 @@ final class NativeArtifactCardView: NSView {
     // MARK: - Chrome
 
     private func updateChrome(theme: any ThemeProtocol) {
-        if theme.glassEnabled {
-            layer?.backgroundColor = NSColor(theme.secondaryBackground).withAlphaComponent(0.5).cgColor
-        } else {
-            layer?.backgroundColor = NSColor(theme.secondaryBackground).cgColor
-        }
+        layer?.backgroundColor = NSColor(isHovered ? theme.surface.hover : theme.surface.raised).cgColor
 
-        let borderAlpha: CGFloat = isHovered ? 0.25 : 0.15
         ensureBorderLayer()
-        borderStrokeLayer?.strokeColor = NSColor(theme.primaryBorder).withAlphaComponent(borderAlpha).cgColor
-        borderStrokeLayer?.lineWidth = 1
-
-        if isHovered {
-            hoverOverlayLayer?.backgroundColor = NSColor(theme.accentColor).withAlphaComponent(0.04).cgColor
-        } else {
-            hoverOverlayLayer?.backgroundColor = NSColor.clear.cgColor
+        borderStrokeLayer?.strokeColor = NSColor(isHovered ? theme.border.default : theme.border.subtle).cgColor
+        if borderStrokeLayer?.lineWidth != CGFloat(theme.stroke.default) {
+            borderStrokeLayer?.lineWidth = theme.stroke.default
+            needsLayout = true
         }
+        if cardRadius != theme.radius.medium {
+            cardRadius = theme.radius.medium
+            layer?.cornerRadius = cardRadius
+            needsLayout = true
+        }
+
+        hoverOverlayLayer?.backgroundColor = isHovered ? NSColor(theme.surface.hover).cgColor : NSColor.clear.cgColor
     }
 
     private func ensureBorderLayer() {
         if borderStrokeLayer != nil { return }
         let stroke = CAShapeLayer()
         stroke.fillColor = NSColor.clear.cgColor
-        stroke.lineWidth = 1
         layer?.addSublayer(stroke)
         borderStrokeLayer = stroke
 
@@ -257,23 +289,20 @@ final class NativeArtifactCardView: NSView {
         super.layout()
         let b = bounds
         guard b.width > 2, b.height > 2 else { return }
-        if textPreviewField.superview != nil, textPreviewField.superview !== previewHost {
-            let w = textPreviewField.superview!.bounds.width
-            if w > 16 { textPreviewField.preferredMaxLayoutWidth = w - 16 }
+        if measuredLayoutWidth != b.width {
+            measuredLayoutWidth = b.width
+            scheduleDeferredLayoutMetricsUpdate()
         }
         borderStrokeLayer?.frame = b
-        let inset: CGFloat = 0.5
+        let inset = (borderStrokeLayer?.lineWidth ?? 0) / 2
         let rect = CGRect(x: inset, y: inset, width: b.width - inset * 2, height: b.height - inset * 2)
-        let r = max(10 - inset, 0)
+        let r = max(cardRadius - inset, 0)
         borderStrokeLayer?.path = NSBezierPath(roundedRect: rect, xRadius: r, yRadius: r).cgPath
 
         hoverOverlayLayer?.frame = b
         let mask = CAShapeLayer()
         mask.path = NSBezierPath(roundedRect: rect, xRadius: r, yRadius: r).cgPath
         hoverOverlayLayer?.mask = mask
-
-        let ib = iconBg.bounds
-        iconGradient.frame = CGRect(x: 0, y: 0, width: ib.width, height: ib.height)
 
     }
 
@@ -311,21 +340,19 @@ final class NativeArtifactCardView: NSView {
         guard lastGlowArtifactId != artifactId else { return }
         lastGlowArtifactId = artifactId
         glowAnimationTask?.cancel()
-        layer?.shadowOpacity = 0
+        layer?.applyThemeElevation(.none)
         glowAnimationTask = Task { @MainActor [weak self] in
             guard let self else { return }
             await NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.35
-                self.layer?.shadowColor = NSColor(theme.accentColor).cgColor
-                self.layer?.shadowOpacity = 0.12
-                self.layer?.shadowRadius = 6
-                self.layer?.shadowOffset = NSSize(width: 0, height: -2)
+                ctx.duration = theme.motion.standardInterval
+                self.layer?.applyThemeElevation(theme.elevation.raised)
+                self.layer?.shadowColor = NSColor(theme.border.focus).cgColor
             }
             try? await Task.sleep(nanoseconds: 1_200_000_000)
             guard !Task.isCancelled else { return }
             await NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.5
-                self.layer?.shadowOpacity = 0
+                ctx.duration = theme.motion.slowInterval
+                self.layer?.applyThemeElevation(.none)
             }
         }
     }
@@ -344,87 +371,59 @@ final class NativeArtifactCardView: NSView {
         pdfBadgeBackdrop.isHidden = true
     }
 
-    private func previewTopConstraint(isDescVisible: Bool) {
-        previewTopToDesc?.isActive = false
-        previewTopToName?.isActive = false
-        if isDescVisible {
-            previewTopToDesc = previewHost.topAnchor.constraint(equalTo: descLabel.bottomAnchor, constant: 8)
-            previewTopToDesc?.isActive = true
-        } else {
-            previewTopToName = previewHost.topAnchor.constraint(equalTo: headerRow.bottomAnchor, constant: 8)
-            previewTopToName?.isActive = true
-        }
-    }
-
     private func buildPreview(for artifact: SharedArtifact, theme: any ThemeProtocol) {
         previewHost.isHidden = false
-        previewEmptyHeightConstraint?.isActive = false
-        previewEmptyHeightConstraint = nil
+        let hasPath = !artifact.hostPath.isEmpty
+        previewHost.layer?.cornerRadius = theme.radius.medium
+        previewHost.layer?.backgroundColor = NSColor(theme.surface.subtle).cgColor
+        previewHost.layer?.borderColor = NSColor(theme.border.subtle).cgColor
+        previewHost.layer?.borderWidth = theme.stroke.default
 
-        let path = artifact.hostPath
-        let emptyPath = path.isEmpty
-
-        if artifact.isImage, !emptyPath {
-            buildImagePreview(artifact: artifact, theme: theme)
-        } else if artifact.isPDF, !emptyPath {
+        if artifact.isImage, hasPath {
+            buildImagePreview(artifact: artifact)
+        } else if artifact.isPDF, hasPath {
             buildPDFPreview(artifact: artifact, theme: theme)
-        } else if artifact.isVideo, !emptyPath {
-            buildVideoPreview(artifact: artifact, theme: theme)
-        } else if artifact.isAudio, !emptyPath {
+        } else if artifact.isVideo, hasPath {
+            buildVideoPreview(artifact: artifact)
+        } else if artifact.isAudio, hasPath {
             buildAudioPreview(artifact: artifact, theme: theme)
-        } else if artifact.isHTML || (artifact.isDirectory && Self.hasIndexHTML(artifact)) {
+        } else if hasPath && (artifact.isHTML || (artifact.isDirectory && Self.hasIndexHTML(artifact))) {
             buildHTMLPreview(artifact: artifact, theme: theme)
         } else if artifact.isText, let content = artifact.content, !content.isEmpty {
             buildTextPreview(content: content, theme: theme)
         } else {
             previewHost.isHidden = true
-            let z = previewHost.heightAnchor.constraint(equalToConstant: 0)
-            z.isActive = true
-            previewEmptyHeightConstraint = z
         }
+        footerStack.isHidden = openInFinderButton.isHidden && openInBrowserButton.isHidden
     }
 
-    private func buildImagePreview(artifact: SharedArtifact, theme: any ThemeProtocol) {
-        previewHost.isHidden = false
-        let container = NSView()
-        container.translatesAutoresizingMaskIntoConstraints = false
-        previewHost.addSubview(container)
+    private func showUnavailablePreview() {
+        guard let theme = boundTheme, !previewUnavailable else { return }
+        previewUnavailable = true
+        clearPreviewHost()
+        previewStatus.stringValue = "Preview unavailable"
+        previewStatus.font = theme.nsFont(.caption)
+        previewStatus.textColor = NSColor(theme.text.secondary)
+        addPaddedPreview(previewStatus)
+        applyInspectionStyle(theme)
+        scheduleDeferredLayoutMetricsUpdate()
+    }
 
-        let bg = NSView()
-        bg.wantsLayer = true
-        bg.layer?.backgroundColor = NSColor(theme.tertiaryBackground).withAlphaComponent(0.3).cgColor
-        bg.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(bg)
-
+    private func buildImagePreview(artifact: SharedArtifact) {
         let iv = previewImageView
         iv.translatesAutoresizingMaskIntoConstraints = false
         iv.imageScaling = .scaleProportionallyUpOrDown
-        iv.wantsLayer = true
-        iv.layer?.cornerRadius = 8
-        iv.layer?.masksToBounds = true
-        iv.layer?.borderWidth = 0.5
-        iv.layer?.borderColor = NSColor(theme.primaryBorder).withAlphaComponent(0.1).cgColor
-        container.addSubview(iv)
+        previewHost.addSubview(iv)
 
         let click = NSClickGestureRecognizer(target: self, action: #selector(artifactImagePreviewTapped))
         iv.addGestureRecognizer(click)
 
         NSLayoutConstraint.activate([
-            container.leadingAnchor.constraint(equalTo: previewHost.leadingAnchor),
-            container.trailingAnchor.constraint(equalTo: previewHost.trailingAnchor),
-            container.topAnchor.constraint(equalTo: previewHost.topAnchor),
-            container.heightAnchor.constraint(equalToConstant: Self.thumbnailHeight),
-            previewHost.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-
-            bg.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            bg.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            bg.topAnchor.constraint(equalTo: container.topAnchor),
-            bg.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-
-            iv.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            iv.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            iv.topAnchor.constraint(equalTo: container.topAnchor),
-            iv.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            iv.leadingAnchor.constraint(equalTo: previewHost.leadingAnchor),
+            iv.trailingAnchor.constraint(equalTo: previewHost.trailingAnchor),
+            iv.topAnchor.constraint(equalTo: previewHost.topAnchor),
+            iv.bottomAnchor.constraint(equalTo: previewHost.bottomAnchor),
+            iv.heightAnchor.constraint(equalToConstant: Self.thumbnailHeight),
         ])
 
         if let img = ChatImageCache.shared.cachedImage(for: artifact.id) {
@@ -437,14 +436,10 @@ final class NativeArtifactCardView: NSView {
                     try Data(contentsOf: fileURL)
                 }.value
                 guard !Task.isCancelled else { return }
-                guard let data else { return }
-                let decoded = await ChatImageCache.shared.decode(data, id: artId)
-                await MainActor.run {
-                    guard let self else { return }
-                    guard self.currentArtifactId == artId else { return }
-                    iv.image = decoded
-                    self.notifyHeightChanged()
-                }
+                let decoded = if let data { await ChatImageCache.shared.decode(data, id: artId) } else { nil as NSImage? }
+                guard !Task.isCancelled, let self, self.currentArtifactId == artId else { return }
+                if let decoded { iv.image = decoded }
+                else { self.showUnavailablePreview() }
             }
         }
     }
@@ -458,17 +453,14 @@ final class NativeArtifactCardView: NSView {
         let iv = previewImageView
         iv.translatesAutoresizingMaskIntoConstraints = false
         iv.imageScaling = .scaleProportionallyUpOrDown
-        iv.wantsLayer = true
-        iv.layer?.cornerRadius = 8
-        iv.layer?.masksToBounds = true
         container.addSubview(iv)
 
         let pdfClick = NSClickGestureRecognizer(target: self, action: #selector(openArtifactWithDefaultApp))
         iv.addGestureRecognizer(pdfClick)
 
         pdfBadgeBackdrop.wantsLayer = true
-        pdfBadgeBackdrop.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.6).cgColor
-        pdfBadgeBackdrop.layer?.cornerRadius = 10
+        pdfBadgeBackdrop.layer?.backgroundColor = NSColor(theme.surface.raised).cgColor
+        pdfBadgeBackdrop.layer?.cornerRadius = theme.radius.medium
         pdfBadgeBackdrop.translatesAutoresizingMaskIntoConstraints = false
         pdfBadgeBackdrop.isHidden = true
         container.addSubview(pdfBadgeBackdrop)
@@ -477,8 +469,8 @@ final class NativeArtifactCardView: NSView {
         pdfPageBadge.isEditable = false
         pdfPageBadge.isBordered = false
         pdfPageBadge.drawsBackground = false
-        pdfPageBadge.font = NSFont.systemFont(ofSize: 9, weight: .semibold)
-        pdfPageBadge.textColor = .white
+        pdfPageBadge.font = theme.nsFont(.micro, weight: .semibold)
+        pdfPageBadge.textColor = NSColor(theme.text.secondary)
         pdfPageBadge.stringValue = ""
         container.addSubview(pdfPageBadge)
 
@@ -510,22 +502,24 @@ final class NativeArtifactCardView: NSView {
                 try? Data(contentsOf: url)
             }.value
             await MainActor.run {
-                guard let self else { return }
-                guard self.currentArtifactId == artId else { return }
-                guard let data, let doc = PDFDocument(data: data) else { return }
+                guard !Task.isCancelled, let self, self.currentArtifactId == artId else { return }
+                guard let data, let doc = PDFDocument(data: data), let page = doc.page(at: 0) else {
+                    self.showUnavailablePreview()
+                    return
+                }
                 let count = doc.pageCount
-                guard let page = doc.page(at: 0) else { return }
                 let thumb = page.thumbnail(of: CGSize(width: 400, height: 520), for: .mediaBox)
                 iv.image = thumb
                 self.pdfPageBadge.stringValue = "\(count) page\(count == 1 ? "" : "s")"
+                NativeComponentInspectionStyle.label(self.pdfPageBadge, family: 37, property: "caption", theme: theme)
                 self.pdfPageBadge.isHidden = false
                 self.pdfBadgeBackdrop.isHidden = false
-                self.notifyHeightChanged()
+                self.scheduleDeferredLayoutMetricsUpdate()
             }
         }
     }
 
-    private func buildVideoPreview(artifact: SharedArtifact, theme: any ThemeProtocol) {
+    private func buildVideoPreview(artifact: SharedArtifact) {
         previewHost.isHidden = false
         let container = NSView()
         container.translatesAutoresizingMaskIntoConstraints = false
@@ -534,9 +528,6 @@ final class NativeArtifactCardView: NSView {
         let iv = previewImageView
         iv.translatesAutoresizingMaskIntoConstraints = false
         iv.imageScaling = .scaleProportionallyUpOrDown
-        iv.wantsLayer = true
-        iv.layer?.cornerRadius = 8
-        iv.layer?.masksToBounds = true
         container.addSubview(iv)
 
         videoPlayIcon.translatesAutoresizingMaskIntoConstraints = false
@@ -577,13 +568,12 @@ final class NativeArtifactCardView: NSView {
                 let (cgImage, _) = try await gen.image(at: .zero)
                 let img = NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
                 await MainActor.run {
-                    guard let self else { return }
-                    guard self.currentArtifactId == artId else { return }
+                    guard !Task.isCancelled, let self, self.currentArtifactId == artId else { return }
                     iv.image = img
-                    self.notifyHeightChanged()
                 }
             } catch {
-                await MainActor.run { self?.notifyHeightChanged() }
+                guard !Task.isCancelled, let self, self.currentArtifactId == artId else { return }
+                self.showUnavailablePreview()
             }
         }
     }
@@ -592,66 +582,51 @@ final class NativeArtifactCardView: NSView {
         previewHost.isHidden = false
         let row = NSStackView()
         row.orientation = .horizontal
-        row.spacing = 10
-        row.translatesAutoresizingMaskIntoConstraints = false
-        row.edgeInsets = NSEdgeInsets(
-            top: Self.footerVerticalGap,
-            left: 8,
-            bottom: Self.footerVerticalGap,
-            right: 8
-        )
-        row.wantsLayer = true
-        row.layer?.cornerRadius = 8
-        row.layer?.backgroundColor = NSColor(theme.tertiaryBackground).withAlphaComponent(0.4).cgColor
+        row.alignment = .centerY
+        row.spacing = 8
 
         audioPlayButton.translatesAutoresizingMaskIntoConstraints = false
         audioPlayButton.isBordered = false
         audioPlayButton.image = SymbolImageCache.image("play.fill", accessibilityDescription: "Play")
-        audioPlayButton.contentTintColor = NSColor(theme.accentColor)
+        audioPlayButton.contentTintColor = NSColor(theme.action.primary.default.foreground)
         audioPlayButton.target = self
         audioPlayButton.action = #selector(openArtifactWithDefaultApp)
 
         let circle = NSView()
         circle.translatesAutoresizingMaskIntoConstraints = false
         circle.wantsLayer = true
-        circle.layer?.backgroundColor = NSColor(theme.accentColor).withAlphaComponent(0.12).cgColor
-        circle.layer?.cornerRadius = 18
+        circle.layer?.backgroundColor = NSColor(theme.action.primary.default.background).cgColor
+        circle.layer?.cornerRadius = Self.audioPlaySize / 2
         circle.addSubview(audioPlayButton)
         NSLayoutConstraint.activate([
-            circle.widthAnchor.constraint(equalToConstant: 36),
-            circle.heightAnchor.constraint(equalToConstant: 36),
+            circle.widthAnchor.constraint(equalToConstant: Self.audioPlaySize),
+            circle.heightAnchor.constraint(equalToConstant: Self.audioPlaySize),
             audioPlayButton.centerXAnchor.constraint(equalTo: circle.centerXAnchor),
             audioPlayButton.centerYAnchor.constraint(equalTo: circle.centerYAnchor),
             audioPlayButton.widthAnchor.constraint(equalToConstant: 14),
             audioPlayButton.heightAnchor.constraint(equalToConstant: 14),
         ])
 
-        audioTitleLabel.stringValue = artifact.filename
-        audioTitleLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize), weight: .medium)
-        audioTitleLabel.textColor = NSColor(theme.primaryText)
+        audioTitleLabel.stringValue = "Audio"
+        audioTitleLabel.font = theme.nsFont(.label, weight: .medium)
+        audioTitleLabel.textColor = NSColor(theme.text.primary)
         audioTitleLabel.maximumNumberOfLines = 1
         audioTitleLabel.lineBreakMode = .byTruncatingTail
 
         audioMetaLabel.stringValue = Self.formatSize(artifact.fileSize)
-        audioMetaLabel.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .medium)
-        audioMetaLabel.textColor = NSColor(theme.tertiaryText)
+        audioMetaLabel.font = theme.nsFont(.caption)
+        audioMetaLabel.textColor = NSColor(theme.text.secondary)
 
         let textCol = NSStackView()
         textCol.orientation = .vertical
+        textCol.alignment = .leading
         textCol.spacing = 2
         textCol.addArrangedSubview(audioTitleLabel)
         textCol.addArrangedSubview(audioMetaLabel)
 
         row.addArrangedSubview(circle)
         row.addArrangedSubview(textCol)
-
-        previewHost.addSubview(row)
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: previewHost.leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: previewHost.trailingAnchor),
-            row.topAnchor.constraint(equalTo: previewHost.topAnchor),
-            previewHost.bottomAnchor.constraint(equalTo: row.bottomAnchor),
-        ])
+        addPaddedPreview(row)
 
         let url = URL(fileURLWithPath: artifact.hostPath)
         let artId = artifact.id
@@ -665,13 +640,13 @@ final class NativeArtifactCardView: NSView {
                 let secs = Int(seconds) % 60
                 let formatted = String(format: "%d:%02d", mins, secs)
                 await MainActor.run {
-                    guard let self else { return }
-                    guard self.currentArtifactId == artId else { return }
+                    guard !Task.isCancelled, let self, self.currentArtifactId == artId else { return }
                     self.audioMetaLabel.stringValue = "\(formatted) · \(Self.formatSize(artifact.fileSize))"
-                    self.notifyHeightChanged()
+                    NativeComponentInspectionStyle.label(self.audioMetaLabel, family: 37, property: "caption", theme: theme)
+                    self.scheduleDeferredLayoutMetricsUpdate()
                 }
             } catch {
-                await MainActor.run { self?.notifyHeightChanged() }
+                // The file size still identifies the audio when duration is unavailable.
             }
         }
     }
@@ -680,29 +655,20 @@ final class NativeArtifactCardView: NSView {
         previewHost.isHidden = false
         let row = NSStackView()
         row.orientation = .horizontal
+        row.alignment = .centerY
         row.spacing = 8
-        row.translatesAutoresizingMaskIntoConstraints = false
-        row.edgeInsets = NSEdgeInsets(
-            top: Self.footerVerticalGap,
-            left: 8,
-            bottom: Self.footerVerticalGap,
-            right: 8
-        )
-        row.wantsLayer = true
-        row.layer?.cornerRadius = 8
-        row.layer?.backgroundColor = NSColor(theme.tertiaryBackground).withAlphaComponent(0.4).cgColor
 
         htmlIcon.image = SymbolImageCache.image("globe", accessibilityDescription: nil)
-        htmlIcon.contentTintColor = NSColor(theme.secondaryText)
+        htmlIcon.contentTintColor = NSColor(theme.text.secondary)
         htmlIcon.imageScaling = .scaleProportionallyUpOrDown
 
-        htmlTitleLabel.stringValue = "Web Page"
-        htmlTitleLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize), weight: .medium)
-        htmlTitleLabel.textColor = NSColor(theme.secondaryText)
+        htmlTitleLabel.stringValue = "Web page"
+        htmlTitleLabel.font = theme.nsFont(.label, weight: .medium)
+        htmlTitleLabel.textColor = NSColor(theme.text.primary)
 
         htmlSizeLabel.stringValue = Self.formatSize(artifact.fileSize)
-        htmlSizeLabel.font = NSFont.systemFont(ofSize: 10, weight: .medium)
-        htmlSizeLabel.textColor = NSColor(theme.tertiaryText)
+        htmlSizeLabel.font = theme.nsFont(.caption)
+        htmlSizeLabel.textColor = NSColor(theme.text.secondary)
 
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -712,12 +678,8 @@ final class NativeArtifactCardView: NSView {
         row.addArrangedSubview(spacer)
         row.addArrangedSubview(htmlSizeLabel)
 
-        previewHost.addSubview(row)
+        addPaddedPreview(row)
         NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: previewHost.leadingAnchor),
-            row.trailingAnchor.constraint(equalTo: previewHost.trailingAnchor),
-            row.topAnchor.constraint(equalTo: previewHost.topAnchor),
-            previewHost.bottomAnchor.constraint(equalTo: row.bottomAnchor),
             htmlIcon.widthAnchor.constraint(equalToConstant: 14),
             htmlIcon.heightAnchor.constraint(equalToConstant: 14),
         ])
@@ -727,8 +689,8 @@ final class NativeArtifactCardView: NSView {
         previewHost.isHidden = false
         let lines = content.components(separatedBy: "\n").prefix(6)
         textPreviewField.stringValue = lines.joined(separator: "\n")
-        textPreviewField.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
-        textPreviewField.textColor = NSColor(theme.secondaryText)
+        textPreviewField.font = theme.nsFont(.footnote, family: .code)
+        textPreviewField.textColor = NSColor(theme.text.secondary)
         textPreviewField.maximumNumberOfLines = 6
         textPreviewField.translatesAutoresizingMaskIntoConstraints = false
         textPreviewField.isEditable = false
@@ -740,54 +702,18 @@ final class NativeArtifactCardView: NSView {
         textPreviewField.wantsLayer = false
         textPreviewField.lineBreakMode = .byWordWrapping
 
-        let container = NSView()
-        container.translatesAutoresizingMaskIntoConstraints = false
-        previewHost.addSubview(container)
-
-        let bg = NSView()
-        bg.wantsLayer = true
-        bg.layer?.backgroundColor = NSColor(theme.tertiaryBackground).withAlphaComponent(0.3).cgColor
-        bg.layer?.cornerRadius = 8
-        bg.layer?.masksToBounds = true
-        bg.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(bg)
-
-        container.addSubview(textPreviewField)
-
-        let hPad: CGFloat = 8
-        let vPad = Self.footerVerticalGap
-        NSLayoutConstraint.activate([
-            container.leadingAnchor.constraint(equalTo: previewHost.leadingAnchor),
-            container.trailingAnchor.constraint(equalTo: previewHost.trailingAnchor),
-            container.topAnchor.constraint(equalTo: previewHost.topAnchor),
-            previewHost.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-
-            bg.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            bg.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            bg.topAnchor.constraint(equalTo: container.topAnchor),
-            bg.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-
-            textPreviewField.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: hPad),
-            textPreviewField.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -hPad),
-            textPreviewField.topAnchor.constraint(equalTo: container.topAnchor, constant: vPad),
-            textPreviewField.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -vPad),
-        ])
+        addPaddedPreview(textPreviewField)
     }
 
-    private func notifyHeightChanged() {
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.layoutSubtreeIfNeeded()
-            var newH = max(self.fittingSize.height, 1)
-            if !self.openInFinderButton.isHidden || !self.openInBrowserButton.isHidden,
-                let bound = self.boundArtifact
-            {
-                newH = max(newH, Self.minimumHeightWithFooterChrome(for: bound))
-            }
-            self.cachedLayoutHeight = newH
-            self.invalidateIntrinsicContentSize()
-            self.onHeightChanged?()
-        }
+    private func addPaddedPreview(_ view: NSView) {
+        view.translatesAutoresizingMaskIntoConstraints = false
+        previewHost.addSubview(view)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: previewHost.leadingAnchor, constant: Self.previewPadding),
+            view.trailingAnchor.constraint(equalTo: previewHost.trailingAnchor, constant: -Self.previewPadding),
+            view.topAnchor.constraint(equalTo: previewHost.topAnchor, constant: Self.previewPadding),
+            view.bottomAnchor.constraint(equalTo: previewHost.bottomAnchor, constant: -Self.previewPadding),
+        ])
     }
 
     // MARK: - Actions
@@ -826,22 +752,14 @@ final class NativeArtifactCardView: NSView {
     private func buildViews() {
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
-        layer?.cornerRadius = 10
         layer?.masksToBounds = false
 
-        accentStrip.translatesAutoresizingMaskIntoConstraints = false
-        accentStrip.wantsLayer = true
-        addSubview(accentStrip)
-
-        let inner = NSView()
         inner.translatesAutoresizingMaskIntoConstraints = false
         addSubview(inner)
 
         iconBg.translatesAutoresizingMaskIntoConstraints = false
         iconBg.wantsLayer = true
-        iconBg.layer?.cornerRadius = 5.5
         iconBg.layer?.masksToBounds = true
-        iconBg.layer?.addSublayer(iconGradient)
 
         iconBadge.translatesAutoresizingMaskIntoConstraints = false
         iconBg.addSubview(iconBadge)
@@ -851,15 +769,24 @@ final class NativeArtifactCardView: NSView {
         nameLabel.isBordered = false
         nameLabel.drawsBackground = false
         nameLabel.maximumNumberOfLines = 1
+        nameLabel.lineBreakMode = .byTruncatingMiddle
+        nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         descLabel.translatesAutoresizingMaskIntoConstraints = false
         descLabel.isEditable = false
         descLabel.isBordered = false
         descLabel.drawsBackground = false
-        descLabel.maximumNumberOfLines = 1
+        descLabel.maximumNumberOfLines = 2
+        descLabel.lineBreakMode = .byWordWrapping
+        descLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        headerText.orientation = .vertical
+        headerText.alignment = .leading
+        headerText.addArrangedSubview(nameLabel)
+        headerText.addArrangedSubview(descLabel)
 
         headerRow.orientation = .horizontal
-        headerRow.alignment = .centerY
+        headerRow.alignment = .top
         headerRow.spacing = 8
         headerRow.translatesAutoresizingMaskIntoConstraints = false
         headerRow.setContentHuggingPriority(.required, for: .vertical)
@@ -882,81 +809,62 @@ final class NativeArtifactCardView: NSView {
         openInBrowserButton.action = #selector(openInBrowserTapped)
 
         headerRow.addArrangedSubview(iconBg)
-        headerRow.addArrangedSubview(nameLabel)
+        headerRow.addArrangedSubview(headerText)
 
         // preview draws first (behind) so header/footer stay visible if frames ever disagree
         inner.addSubview(previewHost)
         inner.addSubview(headerRow)
-        inner.addSubview(descLabel)
         inner.addSubview(footerStack)
 
-        NSLayoutConstraint.activate([
-            accentStrip.leadingAnchor.constraint(equalTo: leadingAnchor),
-            accentStrip.topAnchor.constraint(equalTo: topAnchor),
-            accentStrip.bottomAnchor.constraint(equalTo: bottomAnchor),
-            accentStrip.widthAnchor.constraint(equalToConstant: 4),
+        previewTop = previewHost.topAnchor.constraint(equalTo: headerRow.bottomAnchor)
+        footerTop = footerStack.topAnchor.constraint(equalTo: previewHost.bottomAnchor)
 
-            inner.leadingAnchor.constraint(equalTo: accentStrip.trailingAnchor, constant: Self.innerPadding),
+        NSLayoutConstraint.activate([
+            inner.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.innerPadding),
             inner.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.innerPadding),
             inner.topAnchor.constraint(equalTo: topAnchor, constant: Self.innerPadding),
-            inner.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Self.footerVerticalGap),
+            inner.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Self.innerPadding),
 
             headerRow.leadingAnchor.constraint(equalTo: inner.leadingAnchor),
             headerRow.trailingAnchor.constraint(equalTo: inner.trailingAnchor),
             headerRow.topAnchor.constraint(equalTo: inner.topAnchor),
 
-            iconBg.widthAnchor.constraint(equalToConstant: 24),
-            iconBg.heightAnchor.constraint(equalToConstant: 24),
+            iconBg.widthAnchor.constraint(equalToConstant: Self.iconSize),
+            iconBg.heightAnchor.constraint(equalToConstant: Self.iconSize),
 
             iconBadge.centerXAnchor.constraint(equalTo: iconBg.centerXAnchor),
             iconBadge.centerYAnchor.constraint(equalTo: iconBg.centerYAnchor),
             iconBadge.widthAnchor.constraint(equalToConstant: 12),
             iconBadge.heightAnchor.constraint(equalToConstant: 12),
 
-            descLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
-            descLabel.topAnchor.constraint(equalTo: headerRow.bottomAnchor, constant: 2),
-            descLabel.trailingAnchor.constraint(lessThanOrEqualTo: inner.trailingAnchor),
-
             previewHost.leadingAnchor.constraint(equalTo: inner.leadingAnchor),
             previewHost.trailingAnchor.constraint(equalTo: inner.trailingAnchor),
+            previewTop,
 
-            footerStack.centerXAnchor.constraint(equalTo: inner.centerXAnchor),
             footerStack.leadingAnchor.constraint(greaterThanOrEqualTo: inner.leadingAnchor),
-            footerStack.trailingAnchor.constraint(lessThanOrEqualTo: inner.trailingAnchor),
-            footerStack.widthAnchor.constraint(lessThanOrEqualTo: inner.widthAnchor),
-            footerStack.topAnchor.constraint(equalTo: previewHost.bottomAnchor, constant: Self.footerVerticalGap),
+            footerStack.trailingAnchor.constraint(equalTo: inner.trailingAnchor),
+            footerTop,
             inner.bottomAnchor.constraint(equalTo: footerStack.bottomAnchor),
+
+            openInFinderButton.heightAnchor.constraint(greaterThanOrEqualToConstant: Self.minimumActionHeight),
+            openInBrowserButton.heightAnchor.constraint(greaterThanOrEqualToConstant: Self.minimumActionHeight),
         ])
-
-        previewTopToDesc = previewHost.topAnchor.constraint(equalTo: descLabel.bottomAnchor, constant: 8)
-        previewTopToName = previewHost.topAnchor.constraint(equalTo: headerRow.bottomAnchor, constant: 8)
-        previewTopToDesc?.isActive = true
-    }
-
-    private func layoutNameTypeRow(theme: any ThemeProtocol) {
-        nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let emptyPreview = previewHost.heightAnchor.constraint(equalToConstant: 0)
+        emptyPreview.priority = .defaultLow
+        emptyPreview.isActive = true
     }
 
     private func styleFooterButton(_ button: NSButton, title: String, symbol: String, theme: any ThemeProtocol) {
         button.bezelStyle = .inline
         button.isBordered = false
         button.controlSize = .small
-        button.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) - 1, weight: .medium)
-        button.contentTintColor = NSColor(theme.accentColor)
+        button.font = theme.nsFont(.footnote, weight: .medium)
+        button.contentTintColor = NSColor(theme.text.secondary)
         button.title = title
         button.image = SymbolImageCache.image(symbol, accessibilityDescription: nil)
         button.imagePosition = .imageLeading
         button.imageHugsTitle = true
-    }
-
-    private func applyIconGradient(for artifact: SharedArtifact) {
-        let colors = Self.iconGradientNSColors(for: artifact)
-        iconGradient.colors = colors.map { $0.cgColor }
-        iconGradient.locations = [0, 1]
-        iconGradient.startPoint = CGPoint(x: 0, y: 0)
-        iconGradient.endPoint = CGPoint(x: 1, y: 1)
-        iconGradient.cornerRadius = 5.5
-        iconBg.layer?.backgroundColor = colors.last?.cgColor
+        NativeComponentInspectionStyle.button(button, family: 37, property: "label", theme: theme)
     }
 
     // MARK: - Helpers
@@ -985,38 +893,10 @@ final class NativeArtifactCardView: NSView {
         return "doc"
     }
 
-    private static func iconGradientNSColors(for artifact: SharedArtifact) -> [NSColor] {
-        func c(_ hex: String) -> NSColor {
-            let h = hex.trimmingCharacters(in: CharacterSet.alphanumerics.inverted)
-            var int: UInt64 = 0
-            Scanner(string: h).scanHexInt64(&int)
-            let r = CGFloat((int >> 16) & 0xFF) / 255
-            let g = CGFloat((int >> 8) & 0xFF) / 255
-            let b = CGFloat(int & 0xFF) / 255
-            return NSColor(calibratedRed: r, green: g, blue: b, alpha: 1)
-        }
-        if artifact.isImage { return [c("8b5cf6"), c("7c3aed")] }
-        if artifact.isPDF { return [c("ef4444"), c("dc2626")] }
-        switch artifact.officeDocumentKind {
-        case .wordProcessing: return [c("2b579a"), c("1e3f73")]
-        case .spreadsheet: return [c("217346"), c("185a37")]
-        case .presentation: return [c("d24726"), c("b03a1c")]
-        case nil: break
-        }
-        if artifact.isVideo { return [c("ec4899"), c("db2777")] }
-        if artifact.isAudio { return [c("f59e0b"), c("d97706")] }
-        if artifact.isHTML { return [c("3b82f6"), c("2563eb")] }
-        if artifact.isDirectory { return [c("f59e0b"), c("d97706")] }
-        return [c("6b7280"), c("4b5563")]
-    }
 
     private static func formatSize(_ bytes: Int) -> String {
         if bytes < 1024 { return "\(bytes) B" }
         if bytes < 1024 * 1024 { return "\(bytes / 1024) KB" }
         return String(format: "%.1f MB", Double(bytes) / (1024 * 1024))
-    }
-
-    private static func themeFingerprint(_ theme: any ThemeProtocol) -> String {
-        "\(theme.bodySize)|\(theme.captionSize)|\(theme.glassEnabled)|\(NSColor(theme.accentColor).description)|\(NSColor(theme.secondaryBackground).description)|\(NSColor(theme.primaryBorder).description)|\(NSColor(theme.primaryText).description)|\(NSColor(theme.tertiaryText).description)|\(NSColor(theme.tertiaryBackground).description)"
     }
 }

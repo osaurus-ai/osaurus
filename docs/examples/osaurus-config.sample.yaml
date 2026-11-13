@@ -14,8 +14,8 @@
 #     the entries you KEEP listed. Prune is never a document key.
 #   * Secrets never appear here — use env:VAR / keychain:SERVICE/ACCOUNT
 #     references or `set_api_key: true` for the native credential sheet.
-#   * Server runtime, chat behavior, and app shell settings are managed
-#     in the Settings UI, not in this document.
+#   * Server runtime settings are managed in the Settings UI, not in this
+#     document. `chat` and `app` cover a small set of everyday switches.
 #
 # This file is pinned by ConfigSampleDocumentTests: it must decode and
 # strict-validate against the live schema, so it cannot silently rot.
@@ -27,7 +27,7 @@ memory: # cross-chat conversation memory
   budget_tokens: 1200 # 100..4000
   retention_days: 365 # 0..3650 (0 = forever)
 
-harness_runtimes: # external agent harnesses (Agents → Runtimes); HIGH RISK: runs a local program
+harness_runtimes: # external agent harnesses (Settings → Runtimes); HIGH RISK: runs a local program
   - name: Pi
     kind: pi_rpc # claude_code | pi_rpc; immutable after create
     executable: pi # command on PATH, or a path
@@ -42,7 +42,31 @@ default_agent: # the built-in Default agent (the Orchestrator)
   system_prompt: "You are a friendly, concise assistant."
   runtime: builtin # "builtin" or a harness_runtimes name
 
+configurator: # the built-in helper behind configurator_handoff; its name is fixed
+  model: null # same format as default_agent.model; null = the Orchestrator's model
+  temperature: null # 0..2; null = the model's own default
+  system_prompt: "Prefer the smallest change that does what I asked."
+
 new_chat_agent: default # which agent NEW chats open with: "default" or a custom agent's name
+
+model_defaults: # model roles from Models → Model Defaults
+  core_model: foundation # titles, memory, follow-ups, transcript cleanup
+  compaction_model: null # null = the chat's own model summarizes
+
+chat: # everyday Chat page switches
+  smooth_streaming: true
+  group_activity: true
+  expand_thinking: false
+  spell_check: false
+  auto_titles: true
+  follow_up_suggestions: true
+  clipboard_monitoring: true
+  keep_mac_awake: true
+
+app: # app basics from Settings → General
+  hotkey: "cmd+;" # cmd/shift/option/ctrl + one key; null = no hotkey
+  start_at_login: false
+  show_notifications: true
 
 agents: # custom agents (never the Default agent)
   - name: Research Agent
@@ -161,19 +185,38 @@ search_providers:
     - id: tavily # keyed providers need the API key in Settings
       enabled: true
 
-schedules: # scheduled runs of CUSTOM agents
+automations: # triggers; legacy `schedules:` / `watchers:` / `events:` still import
   - name: Morning news
-    agent: Research Agent # custom agent name (never "default")
+    agent: Research Agent # a CUSTOM agent (never "default"), for tool work
     instructions: "Summarize the top technology headlines."
-    frequency: daily # once | every_n_minutes | hourly | daily | weekly | monthly | yearly | cron
-    frequency_time_of_day: "08:00" # HH:mm
+    source:
+      kind: schedule # schedule | folder | webhook | rss | sse | run_failed | app
+      frequency: daily # once | every_n_minutes | hourly | daily | weekly | monthly | yearly | cron
+      frequency_time_of_day: "08:00" # HH:mm
     enabled: true
 
-watchers: # folder watchers running CUSTOM agents
   - name: Downloads sorter
     agent: Research Agent
     instructions: "File new downloads into the right subfolder."
-    path: ~/Downloads # existing directory; ~ expands
-    recursive: false
-    responsiveness: balanced # fast | balanced | patient | relaxed | deferred | extended
+    source:
+      kind: folder
+      path: ~/Downloads # existing directory; ~ expands
+      recursive: false
+      responsiveness: balanced # fast | balanced | patient | relaxed | deferred | extended
     enabled: true
+
+  - name: Weekday digest
+    workflow: Daily Digest # an installed workflow; no agent needed
+    input:
+      day: "{{schedule.scheduled_for}}" # bind every required input
+    source:
+      kind: schedule
+      frequency: cron
+      frequency_value: "0 8 * * 1-5" # minute hour day-of-month month day-of-week
+
+  - name: Morning quote
+    instructions: "Give me one short motivational quote." # no agent or workflow: one tool-less model answer
+    source:
+      kind: schedule
+      frequency: daily
+      frequency_time_of_day: "07:30"

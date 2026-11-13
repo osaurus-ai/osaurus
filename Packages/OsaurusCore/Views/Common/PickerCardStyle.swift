@@ -9,11 +9,9 @@
 import SwiftUI
 
 enum PickerCardMetrics {
-    static let cornerRadius: CGFloat = 16
     static let padding: CGFloat = 16
     static let rowHeight: CGFloat = 36
     static let rowSpacing: CGFloat = 2
-    static let rowCornerRadius: CGFloat = 8
     /// Leading/trailing inset of row content, section titles and footnotes
     /// inside a column; headings sit flush with the column edge.
     static let rowInset: CGFloat = 12
@@ -30,21 +28,13 @@ enum PickerCardMetrics {
     static let infoSectionSpacing: CGFloat = 14
 }
 
-/// Type scale for the single-column info cards. Four sizes only: the
-/// picker's heading, a hero figure, body rows, and captions.
-extension ThemeProtocol {
-    var pickerCardHeroSize: CGFloat { CGFloat(bodySize) + 10 }
-    var pickerCardBodySize: CGFloat { CGFloat(smallBodySize) - 1 }
-    var pickerCardCaptionSize: CGFloat { 11 }
-}
-
 extension View {
-    /// The flat themed card surface: secondary background, continuous 16pt
-    /// corners and the theme border. Cards in their own panel get the
+    /// The flat themed card surface: `surface.overlay`, `radius.xlarge`
+    /// continuous corners and `border.default`. Cards in their own panel get the
     /// window server's shadow; `elevated` adds one for cards drawn inside
     /// the chat window (composer popups, voice input).
-    func pickerCardSurface(elevated: Bool = false) -> some View {
-        modifier(PickerCardSurfaceModifier(elevated: elevated))
+    func pickerCardSurface(elevated: Bool = false, assignmentFamily: Int = 16) -> some View {
+        modifier(PickerCardSurfaceModifier(elevated: elevated, assignmentFamily: assignmentFamily))
     }
 
     /// Row chrome: inset content, minimum row height, and the rounded fill
@@ -56,30 +46,39 @@ extension View {
 
 private struct PickerCardSurfaceModifier: ViewModifier {
     let elevated: Bool
-    @Environment(\.theme) private var theme
+    let assignmentFamily: Int
+    @Environment(\.theme) private var baseTheme
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.anchoredCardMetrics) private var cardMetrics
+    private var theme: any ThemeProtocol { baseTheme.catalogFamily(assignmentFamily, enabled: enabled) }
 
     func body(content: Content) -> some View {
-        let shape = RoundedRectangle(cornerRadius: PickerCardMetrics.cornerRadius, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: theme.radius.xlarge, style: .continuous)
         content
-            .background(theme.secondaryBackground, in: shape)
+            .frame(minHeight: min(theme.catalogMetric("height", fallback: 0), cardMetrics?.visibleSize.height ?? .greatestFiniteMagnitude))
+            .background(theme.surface.overlay, in: shape)
             .clipShape(shape)
             .overlay {
-                shape.strokeBorder(theme.primaryBorder.opacity(theme.borderOpacity), lineWidth: theme.defaultBorderWidth)
+                shape.strokeBorder(theme.border.default, lineWidth: theme.stroke.default)
             }
-            .shadow(color: elevated ? theme.shadowColor.opacity(theme.isDark ? 0.35 : 0.12) : .clear, radius: 16, y: 6)
-            .font(theme.font(size: CGFloat(theme.bodySize)))
-            .foregroundStyle(theme.primaryText)
+            .themeElevation(elevated ? theme.elevation.overlay : theme.elevation.none)
+            .assignedTypography("component.library.\(assignmentFamily).text", fallback: SettingsFont.body)
+            .foregroundStyle(theme.text.primary)
+            .nativeCatalogTarget(["background", "border", "borderWidth", "radius", "height"].map { "component.library.\(assignmentFamily).elements.container." + $0 }, "Picker container")
+            .environment(\.theme, theme)
     }
 }
 
 /// Keyboard hints in a list card's heading ("↑↓ navigate  ↵ select  esc dismiss").
 struct PickerCardKeyHints: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var baseTheme
+    @Environment(\.isEnabled) private var enabled
+    private var theme: any ThemeProtocol { baseTheme.catalogFamily(9, enabled: enabled) }
 
     var body: some View {
         Text("↑↓ navigate  ↵ select  esc dismiss", bundle: .module)
-            .font(theme.font(size: theme.pickerCardCaptionSize))
-            .foregroundStyle(theme.tertiaryText)
+            .assignedTypography("component.library.9.text", fallback: SettingsFont.rowDescription)
+            .foregroundStyle(theme.text.tertiary)
             .lineLimit(1)
     }
 }
@@ -91,12 +90,12 @@ private struct PickerCardRowChromeModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .padding(.horizontal, PickerCardMetrics.rowInset)
+            .padding(.horizontal, theme.assignedMetric("component.library.16.padding", fallback: PickerCardMetrics.rowInset))
             .frame(minHeight: minHeight)
             .contentShape(Rectangle())
             .background(
-                highlighted ? theme.tertiaryBackground : .clear,
-                in: RoundedRectangle(cornerRadius: PickerCardMetrics.rowCornerRadius, style: .continuous)
+                highlighted ? theme.surface.hover : .clear,
+                in: RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
             )
     }
 }
@@ -104,21 +103,25 @@ private struct PickerCardRowChromeModifier: ViewModifier {
 /// Column heading ("Provider", "Model", "Context").
 struct PickerCardHeading<Accessory: View>: View {
     let title: String
+    var assignmentFamily = 16
     @ViewBuilder var accessory: () -> Accessory
     @Environment(\.theme) private var theme
+    @Environment(\.isEnabled) private var enabled
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: theme.assignedMetric("component.library.\(assignmentFamily).gap", fallback: theme.space.s8)) {
             Text(title)
-                .font(theme.font(size: CGFloat(theme.smallBodySize) + 2))
-                .foregroundStyle(theme.secondaryText)
+                .assignedTypography("component.library.\(assignmentFamily)." + (assignmentFamily == 25 ? "label" : "heading"), fallback: SettingsFont.body)
+                .foregroundStyle(theme.assignedColor("component.library.\(assignmentFamily)." + (enabled ? "foreground" : "disabledForeground"), fallback: theme.text.secondary))
                 .lineLimit(1)
                 .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 0)
             accessory()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.bottom, 4)
+        
+        
+        .padding(.bottom, assignmentFamily == 26 ? 0 : theme.assignedMetric("component.library.\(assignmentFamily).gap", fallback: theme.space.s4))
     }
 }
 
@@ -131,22 +134,27 @@ extension PickerCardHeading where Accessory == EmptyView {
 /// Quiet sub-heading above a group of rows ("Thinking", "Sources").
 struct PickerCardSectionTitle<Accessory: View>: View {
     let title: String
+    var assignmentFamily = 16
     @ViewBuilder var accessory: () -> Accessory
     @Environment(\.theme) private var theme
+    @Environment(\.isEnabled) private var enabled
 
     var body: some View {
-        HStack(alignment: .lastTextBaseline, spacing: 6) {
+        HStack(alignment: .lastTextBaseline, spacing: theme.assignedMetric("component.library.\(assignmentFamily).gap", fallback: theme.space.s6)) {
             Text(title)
                 .lineLimit(1)
                 .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 0)
             accessory()
         }
-        .font(theme.font(size: CGFloat(theme.smallBodySize) - 1, weight: .medium))
-        .foregroundStyle(theme.tertiaryText)
-        .padding(.horizontal, PickerCardMetrics.rowInset)
-        .frame(height: PickerCardMetrics.sectionTitleHeight, alignment: .bottomLeading)
-        .padding(.bottom, 2)
+        .assignedTypography("component.library.\(assignmentFamily).label", fallback: SettingsFont.rowTitle)
+        .foregroundStyle(theme.assignedColor("component.library.\(assignmentFamily)." + (enabled ? "foreground" : "disabledForeground"), fallback: theme.text.tertiary))
+        .padding(.horizontal, theme.assignedMetric("component.library.\(assignmentFamily).padding", fallback: PickerCardMetrics.rowInset))
+        .frame(minHeight: PickerCardMetrics.sectionTitleHeight, alignment: .bottomLeading)
+        .padding(.bottom, theme.assignedMetric("component.library.\(assignmentFamily).gap", fallback: theme.space.s2))
+        
+        
+        
     }
 }
 
@@ -160,15 +168,18 @@ extension PickerCardSectionTitle where Accessory == EmptyView {
 struct PickerCardFootnote: View {
     let text: String
     var color: Color? = nil
+    var assignmentFamily = 16
     @Environment(\.theme) private var theme
+    @Environment(\.isEnabled) private var enabled
 
     var body: some View {
         Text(verbatim: text)
-            .font(theme.font(size: 11))
-            .foregroundStyle(color ?? theme.secondaryText)
+            .assignedTypography("component.library.\(assignmentFamily).caption", fallback: SettingsFont.caption)
+            .foregroundStyle(enabled ? (color ?? theme.text.secondary) : theme.assignedColor("component.library.\(assignmentFamily).disabledForeground", fallback: color ?? theme.text.secondary))
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, PickerCardMetrics.rowInset)
+            .padding(.horizontal, theme.assignedMetric("component.library.\(assignmentFamily).padding", fallback: PickerCardMetrics.rowInset))
+        
     }
 }
 
@@ -181,32 +192,188 @@ struct PickerCardTextLink: View {
     var tint: Color? = nil
     /// False lets two links share a row instead of each claiming the width.
     var fillsWidth = true
+    var assignmentFamily: Int? = nil
     let action: () -> Void
     @Environment(\.theme) private var theme
+    @Environment(\.isEnabled) private var enabled
     @State private var hovered = false
 
-    private var subduedTextColor: Color { theme.isDark ? theme.tertiaryText : theme.secondaryText }
+    private var subduedTextColor: Color { theme.isDark ? theme.text.tertiary : theme.text.secondary }
+    private var linkInk: Color {
+        if let assignmentFamily {
+            return theme.assignedColor("component.library.\(assignmentFamily)." + (enabled ? "accent" : "disabledForeground"), fallback: theme.text.link)
+        }
+        return tint ?? (hovered ? theme.text.primary : subduedTextColor)
+    }
+    private var glyphInk: Color {
+        if assignmentFamily != nil { return linkInk }
+        return tint ?? (hovered ? theme.text.primary : theme.text.tertiary)
+    }
+    private func metric(_ property: String, _ fallback: CGFloat) -> CGFloat {
+        guard let assignmentFamily else { return fallback }
+        return theme.assignedMetric("component.library.\(assignmentFamily)." + property, fallback: fallback)
+    }
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 5) {
+            HStack(spacing: metric("gap", theme.space.s4)) {
                 Text(title).underline(hovered)
-                    .foregroundStyle(tint ?? (hovered ? theme.primaryText : subduedTextColor))
-                Image(systemName: icon).font(.system(size: 11)).accessibilityHidden(true)
+                    .foregroundStyle(linkInk)
+                Image(systemName: icon).glyphSize(.footnote).accessibilityHidden(true)
             }
-            .font(theme.font(size: CGFloat(theme.smallBodySize) - 1, weight: tint == nil ? .regular : .medium))
-            .foregroundStyle(tint ?? (hovered ? theme.primaryText : theme.tertiaryText))
-            .padding(.horizontal, PickerCardMetrics.rowInset)
-            .frame(maxWidth: fillsWidth ? .infinity : nil, minHeight: 32, alignment: .leading)
+            .modifier(PickerCardLinkTypography(family: assignmentFamily, tinted: tint != nil))
+            .foregroundStyle(glyphInk)
+            .padding(.horizontal, metric("padding", PickerCardMetrics.rowInset))
+            .frame(maxWidth: fillsWidth ? .infinity : nil, minHeight: metric("height", 32), alignment: .leading)
             .contentShape(Rectangle())
             .overlay(alignment: .bottom) {
-                if focused { Rectangle().fill(theme.secondaryText).frame(height: 1) }
+                if focused { Rectangle().fill(theme.text.secondary).frame(height: 1) }
             }
         }
-        .buttonStyle(.plain)
+        .modifier(PickerCardLinkButtonStyle(family: assignmentFamily))
         .focusable()
         .focusEffectDisabled()
         .onHover { hovered = $0 }
-        .onKeyPress(.return) { action(); return .handled }
+        .onKeyPress(.return) {
+            if assignmentFamily != nil && !enabled { return .ignored }
+            action(); return .handled
+        }
+    }
+}
+
+private struct PickerCardLinkTypography: ViewModifier {
+    let family: Int?
+    let tinted: Bool
+    @Environment(\.theme) private var theme
+    @ViewBuilder func body(content: Content) -> some View {
+        if let family {
+            content.assignedTypography("component.library.\(family).caption", fallback: SettingsFont.body)
+        } else { content.font(theme.font(size: theme.pointSize(.bodySmall), weight: tinted ? .medium : .regular)) }
+    }
+}
+
+private struct PickerCardLinkButtonStyle: ViewModifier {
+    let family: Int?
+    @ViewBuilder func body(content: Content) -> some View {
+        if family != nil { content.assignedBasePlainButtonStyle() }
+        else { content.buttonStyle(.plain) }
+    }
+}
+
+/// One shared assignment contract, independent of the component opening a menu.
+enum ChatContextMenuAssignments {
+    static let prefix = "component.contextMenu."
+    static let defaults: [String: String] = [
+        "container.background":"color.surface.raised", "container.border":"color.border.subtle",
+        "container.borderWidth":"stroke.default", "container.radius":"radius.medium",
+        "container.padding":"space.4", "container.gap":"space.4",
+        "row.foreground":"color.text.primary", "row.disabledForeground":"color.text.disabled",
+        "row.hover":"color.surface.hover", "row.radius":"radius.small", "row.label":"type.label",
+        "row.paddingX":"space.4", "row.paddingTrailing":"space.8", "row.paddingY":"space.2",
+        "row.height":"space.24", "row.gap":"space.8",
+        "divider.border":"color.border.subtle", "divider.borderWidth":"stroke.default"
+    ].reduce(into: [:]) { $0[prefix + $1.key] = $1.value }
+    static func keys(_ element: String, _ properties: [String]) -> [String] {
+        properties.map { prefix + element + "." + $0 }
+    }
+}
+
+/// One opaque action-menu component for Chat, Settings, Workflows and agents.
+/// Action owners supply rows; this owns the surface and layout recipe.
+struct ChatContextMenu<Content: View>: View {
+    @Environment(\.theme) private var inheritedTheme
+    let content: Content
+    init(@ViewBuilder content: () -> Content) { self.content = content() }
+    private var theme: any ThemeProtocol {
+        var base = inheritedTheme
+        while let scoped = base as? CatalogResolvedTheme { base = scoped.base }
+        return base
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: theme.inspectionNumber("component.contextMenu.container.gap", fallback: theme.space.s4)) { content }
+            .padding(theme.inspectionNumber("component.contextMenu.container.padding", fallback: theme.space.s4)
+                + theme.inspectionNumber("component.contextMenu.container.borderWidth", fallback: theme.stroke.default))
+            .fixedSize(horizontal: true, vertical: true)
+            .chatContextMenuSurface(usesAssignments: true)
+            .nativeCatalogTarget(ChatContextMenuAssignments.keys("container", ["padding", "gap"]), "Menu layout")
+            .environment(\.theme, theme)
+    }
+}
+
+/// The same icon gutter and text layout for every action row.
+struct ChatContextMenuLabel<Title: View, Icon: View>: View {
+    @Environment(\.theme) private var theme
+    let title: Title
+    let icon: Icon
+    var body: some View {
+        HStack(spacing: theme.inspectionNumber("component.contextMenu.row.gap", fallback: theme.space.s8)) {
+            icon.frame(width: 20, height: 20)
+            title.lineLimit(1).fixedSize(horizontal: true, vertical: false)
+            Spacer(minLength: 0)
+        }.nativeCatalogTarget(ChatContextMenuAssignments.keys("row", ["gap"]), "Menu icon-to-label gap")
+    }
+}
+
+struct ChatContextMenuDivider: View {
+    @Environment(\.theme) private var theme
+    var body: some View {
+        Rectangle().fill(theme.inspectionColor("component.contextMenu.divider.border", fallback: theme.border.subtle))
+            .frame(height: theme.inspectionNumber("component.contextMenu.divider.borderWidth", fallback: theme.stroke.default))
+            .nativeCatalogTarget(ChatContextMenuAssignments.keys("divider", ["border", "borderWidth"]), "Menu divider")
+    }
+}
+
+extension View {
+    func chatContextMenuSurface(usesAssignments: Bool = false) -> some View { modifier(ChatContextMenuSurface(usesAssignments: usesAssignments)) }
+}
+
+private struct ChatContextMenuSurface: ViewModifier {
+    var usesAssignments = false
+    @Environment(\.theme) private var theme
+    func body(content: Content) -> some View {
+        let shape = RoundedRectangle(cornerRadius: theme.inspectionNumber(usesAssignments ? "component.contextMenu.container.radius" : "radius.medium", fallback: theme.radius.medium), style: .continuous)
+        content
+            .background(theme.inspectionColor(usesAssignments ? "component.contextMenu.container.background" : "color.surface.raised", fallback: theme.surface.raised), in: shape)
+            .clipShape(shape)
+            .overlay { shape.strokeBorder(theme.inspectionColor(usesAssignments ? "component.contextMenu.container.border" : "color.border.subtle", fallback: theme.border.subtle),
+                lineWidth: theme.inspectionNumber(usesAssignments ? "component.contextMenu.container.borderWidth" : "stroke.default", fallback: theme.stroke.default)) }
+            .nativeCatalogTarget(usesAssignments ? ChatContextMenuAssignments.keys("container", ["background", "border", "borderWidth", "radius"]) : [], "Menu container")
+    }
+}
+
+struct ChatContextMenuRowStyle: ButtonStyle {
+    // nil uses a regular button's focus; menu renderers supply explicit
+    // keyboard navigation so automatic initial focus is not a selection.
+    var selected: Bool? = nil
+    func makeBody(configuration: Configuration) -> some View {
+        Row(configuration: configuration, selected: selected)
+    }
+    private struct Row: View {
+        let configuration: ButtonStyleConfiguration
+        let selected: Bool?
+        @Environment(\.assignedMenuButtonInteraction) private var nativeInteraction
+        @Environment(\.theme) private var theme
+        @Environment(\.isEnabled) private var enabled
+        @Environment(\.isFocused) private var focused
+        @State private var hovered = false
+        var body: some View {
+            configuration.label
+                .assignedTypography("component.contextMenu.row.label", fallback: SettingsFont.rowTitle)
+                .foregroundStyle(theme.inspectionColor(enabled ? "component.contextMenu.row.foreground" : "component.contextMenu.row.disabledForeground",
+                    fallback: enabled ? theme.text.primary : theme.text.disabled))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.leading, theme.inspectionNumber("component.contextMenu.row.paddingX", fallback: theme.space.s4))
+                .padding(.trailing, theme.inspectionNumber("component.contextMenu.row.paddingTrailing", fallback: theme.space.s8))
+                .padding(.vertical, theme.inspectionNumber("component.contextMenu.row.paddingY", fallback: theme.space.s2))
+                .frame(minHeight: theme.inspectionNumber("component.contextMenu.row.height", fallback: theme.space.s24))
+                .background(RoundedRectangle(cornerRadius: theme.inspectionNumber("component.contextMenu.row.radius", fallback: theme.radius.small)).fill(
+                    enabled && ((selected ?? (nativeInteraction?.focused ?? focused)) || (nativeInteraction?.hovered ?? hovered)
+                        || (nativeInteraction?.pressed ?? configuration.isPressed))
+                        ? theme.inspectionColor("component.contextMenu.row.hover", fallback: theme.surface.hover) : .clear))
+                .contentShape(Rectangle())
+                .focusEffectDisabled()
+                .onHover { hovered = $0 }
+                .nativeCatalogTarget(ChatContextMenuAssignments.keys("row", ["label", "foreground", "disabledForeground", "hover", "radius", "paddingX", "paddingTrailing", "paddingY", "height"]), "Menu action row")
+        }
     }
 }
