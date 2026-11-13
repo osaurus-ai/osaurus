@@ -60,6 +60,7 @@ iPhone did over HTTP. A Mac's build says what it supports in its directory's `fe
 | `workflow_outputs` | the `workflowOutput` op and its `ai.osaurus.workflow-output/1` message (§5.5) |
 | `workflow_details` | `facts` and `steps` on each manage-state workflow: the Mac page's chips and step badges (§5.4) |
 | `workflow_push` | Workflow notifications on the iPhone through the push service: push registrations on the manage conversation, `pushRegistered` in the manage state (§5.6) |
+| `workflow_step_details` | `steps` on every `workflow_outputs` message, an empty list for a run without any (§5.5) |
 
 - The iPhone MUST check a flag before it writes a record or op that the flag covers, and MUST
   NOT expect a v2 record from a Mac whose directory doesn't list its flag. A directory without
@@ -813,10 +814,21 @@ when a card changed.
                "blob": 0 },
              { "id": "…", "filename": "raw.mov", "mimeType": "video/quicktime", "fileSize": 52428800,
                "skipped": "tooLarge" } ],
+  "steps": [ { "id": "research", "model": "claude-sonnet-4-6", "attempts": 1, "durationMs": 8200,
+               "inputTokens": 1200, "outputTokens": 340, "error": "…",
+               "input": { "company": "Raycast" }, "output": { "notes": "…" }, "logs": [ "…" ],
+               "toolCalls": [ { "name": "web_search", "isError": false, "durationMs": 900, "arguments": "{…}",
+                                "result": "…" } ] } ],
   "digest": "…" }
 ```
 
 - `input` and `output` over 16 KiB move to blobs (`{"$blob": i, "size": n}`).
+- `steps`: what the Mac's run view shows on opening each step, keyed by the card's step `id` (§3.2). Skipped
+  steps are left out; every field but `id` and `attempts` is optional. A step's `input` and `output` over
+  4 KiB move to blobs the same way. A tool call's `arguments` (secrets scrubbed) and `result` are the Mac's
+  previews, at most 4,000 characters each.
+  Sent on every message by a Mac with `workflow_step_details`, an empty list when no step ran. A message
+  without it was written before: the iPhone asks again, and the Mac rewrites it.
 - A file over 10 MiB, or past 32 MiB for the run, is listed with `skipped: "tooLarge"`. A file that
   is gone is listed with `skipped: "missing"`.
 - The same run's message is replaced only when its digest changes. The Mac keeps the last 10 of

@@ -121,7 +121,8 @@ extension SyncDeviceFeedContract {
 @MainActor
 enum SyncWorkflowLibrary {
     static let workflowLimit = 100
-    static let runLimit = 20
+    /// Runs sent per workflow (`runs(nowMs:)`).
+    static let runLimit = 10
     static let summaryLimit = 500
     static let helpLimit = 500
 
@@ -356,8 +357,15 @@ enum SyncWorkflowLibrary {
 
     // MARK: Runs
 
+    /// Each workflow's newest `runLimit` runs, newest first. Capped per workflow, not overall: a busy workflow's
+    /// runs used to fill the whole list and leave the others with none on the phone.
     static func runs(nowMs: Int64) -> SyncDeviceFeedContract.WorkflowRuns {
-        let entries = WorkflowRunStore.shared.recentRuns(limit: runLimit).map { run in
+        var perWorkflow: [UUID: Int] = [:]
+        let kept = WorkflowRunStore.shared.recentRuns().filter { run in
+            perWorkflow[run.workflowID, default: 0] += 1
+            return perWorkflow[run.workflowID, default: 0] <= runLimit
+        }
+        let entries = kept.map { run in
             SyncDeviceFeedContract.WorkflowRunEntry(
                 workflowId: run.workflowID.uuidString.lowercased(),
                 card: SyncWorkflowCard.make(

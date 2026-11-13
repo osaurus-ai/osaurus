@@ -124,4 +124,43 @@ struct SyncWorkflowCardTests {
         // Same run, same files: the same digest, so the message isn't rewritten.
         #expect(SyncWorkflowOutput.payload(for: run, staging: staging).digest == payload.digest)
     }
+
+    @Test func anOutputCarriesEachStepsDetailsLeavingOutSkippedOnes() throws {
+        let staging = FileManager.default.temporaryDirectory.appendingPathComponent("output-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: staging) }
+
+        var run = Self.run()
+        run.status = .completed
+        var research = NodeRun(nodeID: "research", status: .done)
+        research.model = "claude-sonnet"
+        research.attempts = 2
+        research.input = .object(["company": .string("Raycast")])
+        research.output = .object(["notes": .string(String(repeating: "n", count: 5_000))])
+        research.logs = ["searched"]
+        research.toolCallRecords = [
+            WorkflowToolCallRecord(
+                name: "web_search", arguments: "{}", result: "3 hits", durationMs: 40, isError: false)
+        ]
+        run.nodes = [research, NodeRun(nodeID: "branch", status: .skipped)]
+        let before = SyncWorkflowOutput.payload(for: run, staging: staging)
+
+        let steps = try #require(before.object["steps"]?.arrayValue)
+        #expect(steps.count == 1)
+        let step = try #require(steps[0].objectValue)
+        #expect(step["id"] == .string("research"))
+        #expect(step["model"] == .string("claude-sonnet"))
+        #expect(step["attempts"] == .number(2))
+        #expect(step["input"] == .object(["company": .string("Raycast")]))
+        // Over the steps' lower limit: a blob.
+        #expect(step["output"]?.objectValue?["$blob"] == .number(0))
+        #expect(step["logs"] == .array([.string("searched")]))
+        let call = try #require(step["toolCalls"]?.arrayValue?.first?.objectValue)
+        #expect(call["name"] == .string("web_search"))
+        #expect(call["result"] == .string("3 hits"))
+
+        // A step's details changing changes the digest, so the message is written again.
+        run.nodes[0].logs.append("summarised")
+        #expect(SyncWorkflowOutput.payload(for: run, staging: staging).digest != before.digest)
+    }
 }

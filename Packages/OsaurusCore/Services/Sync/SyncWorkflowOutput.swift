@@ -71,22 +71,20 @@ enum SyncWorkflowOutput {
         var blobs: [AttachmentFile] = []
         var hasher = SHA256()
 
-        func place(_ key: String, _ value: JSONValue) {
+        /// `value` inline, or over `limit` staged as a blob and referred to by its index.
+        func placed(_ key: String, _ value: JSONValue, limit: Int = inlineLimit) -> JSONValue? {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-            guard let bytes = try? encoder.encode(value) else { return }
+            guard let bytes = try? encoder.encode(value) else { return nil }
             hasher.update(data: bytes)
-            guard bytes.count > inlineLimit else {
-                object[key] = value
-                return
-            }
+            guard bytes.count > limit else { return value }
             let file = staging.appendingPathComponent("\(stagedPrefix)\(run.id.uuidString)-\(key).json")
-            guard (try? bytes.write(to: file)) != nil else { return }
+            guard (try? bytes.write(to: file)) != nil else { return nil }
             blobs.append(AttachmentFile(path: file.path, mediaType: "application/json", name: "\(key).json"))
-            object[key] = .object(["$blob": .number(Double(blobs.count - 1)), "size": .number(Double(bytes.count))])
+            return .object(["$blob": .number(Double(blobs.count - 1)), "size": .number(Double(bytes.count))])
         }
-        place("input", run.input)
-        if let output = run.output { place("output", output) }
+        object["input"] = placed("input", run.input)
+        if let output = run.output { object["output"] = placed("output", output) }
         if let error = run.error?.reason { object["error"] = .string(error) }
 
         var total = 0
@@ -115,10 +113,65 @@ enum SyncWorkflowOutput {
             files.append(.object(entry))
         }
         if !files.isEmpty { object["files"] = .array(files) }
+        let steps = run.nodes.enumerated().compactMap { index, node in
+            step(node, placed: { name, value in placed("step\(index)-\(name)", value, limit: stepInlineLimit) })
+        }
+        // Always, an empty list too: a message without it was written before steps were sent (`workflow_step_details`).
+        object["steps"] = .array(steps)
+        // The steps in the digest too, with a mark for this shape: a message written before steps were sent
+        // would otherwise match and be kept, leaving the phone without them.
+        hasher.update(data: Data("steps/1".utf8))
+        if let encoded = try? JSONEncoder().encode(JSONValue.array(steps)) { hasher.update(data: encoded) }
         hasher.update(data: Data(run.status.rawValue.utf8))
         let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
         object["digest"] = .string(digest)
         return Payload(runId: run.id.uuidString.lowercased(), object: object, blobs: blobs, digest: digest)
+    }
+
+    /// A step's input or output over this goes to a blob: lower than the run's own, as a run has many.
+    static let stepInlineLimit = 4 * 1024
+
+    /// What the Mac's run view shows on opening a step (`WorkflowRunView.details`): its model, retries,
+    /// tokens and time, its error, input and output (through `placed`, which may make either a blob), its
+    /// log and its tool calls. Keyed by the card's step id (`SyncWorkflowCard`). Nil for a skipped step, which
+    /// the phone doesn't list.
+    static func step(_ node: NodeRun, placed: (String, JSONValue) -> JSONValue?) -> JSONValue? {
+        guard node.status != .skipped else { return nil }
+        var entry: [String: JSONValue] = [
+            "id": .string(node.nodeID),
+            "attempts": .number(Double(node.attempts)),
+        ]
+        if let model = node.model, !model.isEmpty { entry["model"] = .string(model) }
+        if let ms = node.durationMs { entry["durationMs"] = .number(Double(ms)) }
+        if let tokens = node.inputTokens { entry["inputTokens"] = .number(Double(tokens)) }
+        if let tokens = node.outputTokens { entry["outputTokens"] = .number(Double(tokens)) }
+        if let error = node.error, !error.isEmpty { entry["error"] = .string(error) }
+        if let input = node.input, !isEmpty(input) { entry["input"] = placed("input", input) }
+        if let output = node.output, !isEmpty(output) { entry["output"] = placed("output", output) }
+        if !node.logs.isEmpty { entry["logs"] = .array(node.logs.map { .string($0) }) }
+        if !node.toolCallRecords.isEmpty {
+            entry["toolCalls"] = .array(
+                node.toolCallRecords.map { record in
+                    var call: [String: JSONValue] = ["name": .string(record.name), "isError": .bool(record.isError)]
+                    if let ms = record.durationMs { call["durationMs"] = .number(Double(ms)) }
+                    if let result = record.resultPreview, !result.isEmpty { call["result"] = .string(result) }
+                    // As recorded: secrets already scrubbed (`SecretArgumentScrubber`); capped as the result is.
+                    let arguments = String(record.arguments.prefix(WorkflowToolCallRecord.previewLimit))
+                    if !arguments.isEmpty, arguments != "{}" { call["arguments"] = .string(arguments) }
+                    return .object(call)
+                })
+        }
+        return .object(entry)
+    }
+
+    /// Nothing to show: null, or an empty object or list (as the Mac's run view judges it).
+    private static func isEmpty(_ value: JSONValue) -> Bool {
+        switch value {
+        case .null: return true
+        case .object(let object): return object.isEmpty
+        case .array(let array): return array.isEmpty
+        default: return false
+        }
     }
 
     /// Writes `payload` as the run's output message, unless one with the same
