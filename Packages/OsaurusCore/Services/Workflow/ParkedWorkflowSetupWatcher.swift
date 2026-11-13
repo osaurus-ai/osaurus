@@ -29,10 +29,15 @@ final class ParkedWorkflowSetupWatcher {
         else { return }
         watching = subject.id
         let center = NotificationCenter.default
+        // The notification maps must be @Sendable: .localModelsChanged and
+        // .remoteProviderModelsChanged post from background threads, and a
+        // closure that inherited this method's MainActor isolation traps the
+        // runtime's isolation check when Combine runs it on the posting
+        // thread. The debounce hops to RunLoop.main before `check()`.
         Publishers.MergeMany(
-            center.publisher(for: .localModelsChanged).map { _ in () }.eraseToAnyPublisher(),
-            center.publisher(for: .toolsListChanged).map { _ in () }.eraseToAnyPublisher(),
-            center.publisher(for: .remoteProviderModelsChanged).map { _ in () }.eraseToAnyPublisher(),
+            center.publisher(for: .localModelsChanged).map { @Sendable _ in () }.eraseToAnyPublisher(),
+            center.publisher(for: .toolsListChanged).map { @Sendable _ in () }.eraseToAnyPublisher(),
+            center.publisher(for: .remoteProviderModelsChanged).map { @Sendable _ in () }.eraseToAnyPublisher(),
             ModelPickerItemCache.shared.$items.dropFirst().map { _ in () }.eraseToAnyPublisher()
         )
         .debounce(for: .milliseconds(400), scheduler: RunLoop.main)
