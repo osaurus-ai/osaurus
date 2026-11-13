@@ -262,14 +262,13 @@ struct SubagentFeedView: View {
     private var statusIndicator: some View {
         switch observer.status {
         case .running:
-            SettingsSpinner(size: .large, tint: theme.status.info.foreground)
-                .controlSize(.large)
-                .assignedProgressIndicator(tintOverride: theme.status.info.foreground)
-                .scaleEffect(0.5).frame(width: 14, height: 14)
+            SettingsSpinner(size: .small, tint: theme.status.info.foreground)
+                .frame(width: 16, height: 16)
         case .finished(let success, _):
             Image(systemName: success ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
                 .glyphSize(.label)
                 .foregroundColor(success ? theme.status.success.foreground : theme.status.warning.foreground)
+                .frame(width: 16, height: 16)
         }
     }
 

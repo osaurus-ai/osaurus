@@ -115,6 +115,10 @@ struct CellRenderingContext {
     /// replaying.
     var cachedToolGroupView: ((String) -> NativeToolCallGroupView?)? = nil
     var cacheToolGroupView: ((String, NativeToolCallGroupView) -> Void)? = nil
+    /// Whether the table holds a measured height for the block at this
+    /// width. Hosted SwiftUI rows that don't measure themselves up front
+    /// on first mount, so they never show a frame at the estimated height.
+    var hasMeasuredHeight: ((String) -> Bool)? = nil
     /// Workflows supplies outer padding at the panel, so user bubbles fill
     /// the available width.
     var fullWidthMessages: Bool = false
@@ -2446,6 +2450,14 @@ final class NativeMessageCellView: NSTableCellView {
                 hv.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
             ])
             nativeOnboardingView = hv
+            if !(context.hasMeasuredHeight?(id) ?? false) {
+                let content = Self.fittedHostedHeight(
+                    of: rootView, width: context.width - 2 * context.rowHorizontalInset, theme: context.theme)
+                if content > 0 {
+                    onboardingContentHeight = content
+                    context.onHeightMeasured?(rowHeight(content), id)
+                }
+            }
         } else {
             nativeOnboardingView?.rootView = themed
         }
@@ -2454,6 +2466,14 @@ final class NativeMessageCellView: NSTableCellView {
             guard let height = self?.onboardingContentHeight else { return }
             context.onHeightMeasured?(rowHeight(height), id)
         }
+    }
+
+    /// SwiftUI's height for a hosted row's content at the column width, read
+    /// before the host has laid out (its own geometry report lands a pass later).
+    private static func fittedHostedHeight(of root: some View, width: CGFloat, theme: any ThemeProtocol) -> CGFloat {
+        let sizing = NSHostingController(rootView: root.environment(\.theme, theme))
+        let size = sizing.sizeThatFits(in: CGSize(width: max(1, width), height: .greatestFiniteMagnitude))
+        return size.height.isFinite ? ceil(size.height) : 0
     }
 
     private func configureAsConversationEvent(
@@ -2817,14 +2837,10 @@ final class NativeMessageCellView: NSTableCellView {
             theme: context.theme,
             blockId: block.id,
             sessionRedactions: context.sessionRedactions,
-            onToggle: { [weak self] in
-                guard let self else { return }
-                context.onToggleExpand(block.id)
-                self.nativeThinkingView?.onHeightChanged?()
-            },
+            onToggle: { context.onToggleExpand(block.id) },
             onHeightChanged: { [weak self] in
                 guard let self, let tv = self.nativeThinkingView, let id = self.currentBlockId else { return }
-                let h = tv.measuredHeight() + 8
+                let h = tv.displayedHeight() + 8
                 context.onHeightMeasured?(h, id)
             }
         )
@@ -2966,14 +2982,10 @@ final class NativeMessageCellView: NSTableCellView {
             blockId: block.id,
             sessionRedactions: context.sessionRedactions,
             onToggleChild: { id in context.onToggleExpand(id) },
-            onToggle: { [weak self] in
-                guard let self else { return }
-                context.onToggleExpand(block.id)
-                self.nativeActivityGroupView?.onHeightChanged?()
-            },
+            onToggle: { context.onToggleExpand(block.id) },
             onHeightChanged: { [weak self] in
                 guard let self, let av = self.nativeActivityGroupView, let id = self.currentBlockId else { return }
-                let h = av.measuredHeight() + 8
+                let h = av.displayedHeight() + 8
                 context.onHeightMeasured?(h, id)
             }
         )
@@ -3603,6 +3615,15 @@ final class NativeMessageCellView: NSTableCellView {
                 hv.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
             ])
             nativeFollowUpsView = hv
+            if !(context.hasMeasuredHeight?(block.id) ?? false) {
+                let width = context.width - 2 * context.rowHorizontalInset
+                let content = Self.fittedHostedHeight(
+                    of: FollowUpSuggestionsBar(suggestions: suggestions, animate: false, onSelect: { _ in })
+                        .frame(width: max(1, width), alignment: .leading)
+                        .fixedSize(horizontal: false, vertical: true),
+                    width: width, theme: context.theme)
+                if content > 0 { context.onHeightMeasured?(content + 12, block.id) }
+            }
         } else {
             nativeFollowUpsView?.rootView = rootView
         }

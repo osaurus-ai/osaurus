@@ -40,6 +40,7 @@ final class NativeThinkingView: NSView {
     // MARK: Self-sizing height constraint
 
     private var selfHeight: NSLayoutConstraint?
+    private let heightAnimation = DisclosureHeightAnimation()
 
     // MARK: State
 
@@ -109,6 +110,7 @@ final class NativeThinkingView: NSView {
         onHeightChanged: @escaping () -> Void
     ) {
         let theme = theme.catalogFamily(33)
+        heightAnimation.isConfiguring = true
         currentTheme = theme
         self.onToggle = onToggle
         self.onHeightChanged = onHeightChanged
@@ -161,13 +163,12 @@ final class NativeThinkingView: NSView {
         charCountLabel.textColor = NSColor(theme.text.tertiary)
 
         let isSameBlock = configuredBlockId == blockId
+        if !isSameBlock { heightAnimation.cancel() }
         // Same-block collapsed → expanded: fade the reasoning in instead of
         // popping (cell recycling and streaming reconfigures must not fade).
         let expandTransition = isSameBlock && isExpanded && !self.isExpanded
-        updateChevron(
-            expanded: isExpanded,
-            animated: isSameBlock && isExpanded != self.isExpanded
-        )
+        let toggled = isSameBlock && isExpanded != self.isExpanded
+        updateChevron(expanded: isExpanded, animated: toggled)
         self.isExpanded = isExpanded
         headerButton.setAccessibilityLabel(isExpanded ? L("Collapse reasoning") : L("Expand reasoning"))
         headerButton.setAccessibilityValue(isExpanded ? L("Expanded") : L("Collapsed"))
@@ -189,8 +190,10 @@ final class NativeThinkingView: NSView {
         refreshHeaderFill()
         configuredBlockId = blockId
 
-        contentContainer.isHidden = !isExpanded
-        separatorView.isHidden = !isExpanded
+        // A collapse in motion keeps the reasoning drawn until it finishes.
+        let showsContent = isExpanded || toggled || heightAnimation.isRunning
+        contentContainer.isHidden = !showsContent
+        separatorView.isHidden = !showsContent
 
         if isExpanded {
             let mdv = ensureMarkdownView()
@@ -222,7 +225,22 @@ final class NativeThinkingView: NSView {
         // container and do nothing.
         if expandTransition { ExpandFade.run(contentContainer) }
 
-        applyHeight()
+        heightAnimation.isConfiguring = false
+        if toggled {
+            heightAnimation.run(
+                on: self,
+                from: selfHeight?.constant ?? measuredHeight(),
+                target: { [weak self] in self?.measuredHeight() ?? 0 },
+                apply: { [weak self] in self?.setHeight($0) },
+                finish: { [weak self] in
+                    guard let self, !self.isExpanded else { return }
+                    self.contentContainer.isHidden = true
+                    self.separatorView.isHidden = true
+                }
+            )
+        } else {
+            applyHeight()
+        }
     }
 
     // MARK: Measured height (used by cell coordinator)
@@ -240,8 +258,16 @@ final class NativeThinkingView: NSView {
 
     // MARK: - Private
 
+    /// Height the view occupies now: mid-disclosure the animated value.
+    func displayedHeight() -> CGFloat { heightAnimation.height(measured: measuredHeight()) }
+
     private func applyHeight() {
-        selfHeight?.constant = measuredHeight()
+        guard !heightAnimation.holdsHeight else { return }
+        setHeight(measuredHeight())
+    }
+
+    private func setHeight(_ height: CGFloat) {
+        selfHeight?.constant = height
         onHeightChanged?()
     }
 
