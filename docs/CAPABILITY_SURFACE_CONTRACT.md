@@ -56,8 +56,11 @@ non-agentic surface and does not inherit an Osaurus agent's capabilities.
 - Charts, Speak, Memory Recall, Web Search, Self-scheduling, Database, and
   Knowledge are custom-agent settings resolved through `AgentCapabilities`.
 - Knowledge is callable only with at least one enabled granted collection.
-- The built-in Default agent has its fixed configure-oriented baseline and
-  native Web Search. It does not receive Browser Use or Computer Use.
+- The built-in Default agent (the Orchestrator) has a fixed routing schema,
+  `ToolRegistry.orchestratorRoutingToolNames` (`status`, `state`,
+  `configurator_handoff`, `architect_handoff`, `run_workflow`, `clarify`).
+  It receives no Web Search, file, Browser Use, or Computer Use tools; the
+  Configurator's schema is the configure surface (`configureToolNames`).
 - Folder and sandbox tools are session execution-mode capabilities, not
   persisted subagent toggles.
 
@@ -66,7 +69,8 @@ non-agentic surface and does not inherit an Osaurus agent's capabilities.
 - `ToolConfiguration` and the per-agent allow-list decide which dynamic tools
   are enabled.
 - `capabilities_discover` and `capabilities_load` operate only on loadable
-  dynamic capabilities (plus the Default agent's deferred configure writes).
+  dynamic capabilities. Neither the Orchestrator nor the Configurator carries
+  them.
 - The Enabled capabilities manifest describes loadable dynamic tools and
   installed skills. Always-injected gated built-ins are grounded by their live
   schema and capability-specific guidance; they must not be advertised as
@@ -95,8 +99,9 @@ non-agentic surface and does not inherit an Osaurus agent's capabilities.
 
 ### Spawn
 
-- Default agent: configured by the main-chat pools in
-  `SubagentConfiguration`.
+- Default agent: has no `spawn_agent`. Its **Allowed subagents** pool
+  (`SubagentConfiguration.spawnableAgentIDs`) decides which agents
+  `run_workflow` can hand a task to.
 - Custom agent: requires `spawnDelegationEnabled` and its own pool.
 - At least one target must be runnable. Missing local models, deleted agents,
   disconnected providers, self-only pools, and cold target discovery remain
@@ -107,16 +112,16 @@ non-agentic surface and does not inherit an Osaurus agent's capabilities.
 
 ### Image
 
-- Default agent uses `SubagentConfiguration.imageDelegationEnabled`; custom
-  agents use `AgentSettings.imageEnabled`.
+- Custom agents only, through `AgentSettings.imageEnabled`. The former
+  `SubagentConfiguration.imageDelegationEnabled` key is ignored on load.
 - Requires an installed ready generation or edit model. The schema narrows to
   generation-only when no edit model is ready.
 - Permission and residency policy are enforced at execution.
 
 ### AppleScript
 
-- Default agent uses `SubagentConfiguration.appleScriptDelegationEnabled`;
-  custom agents use `AgentSettings.appleScriptEnabled`.
+- Custom agents only, through `AgentSettings.appleScriptEnabled`. The former
+  `SubagentConfiguration.appleScriptDelegationEnabled` key is ignored on load.
 - Requires an installed curated AppleScript model.
 - Script execution mode, macOS Automation consent, read/write classification,
   and residency policy remain execution-time gates.

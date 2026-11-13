@@ -1016,7 +1016,7 @@ public final class ToolRegistry: ObservableObject {
                 // tools hit this gate before their body runs).
                 var userInfo: [String: Any] = [
                     NSLocalizedDescriptionKey:
-                        "Missing system permissions for tool: \(name). Required: \(missingNames). Ask the user to grant it in System Settings → Privacy & Security (or the Osaurus Permissions tab), then try again."
+                        "Missing system permissions for tool: \(name). Required: \(missingNames). Ask the user to grant it in System Settings → Privacy & Security (or Osaurus Settings → Privacy & Security → Permissions), then try again."
                 ]
                 if let first = stillMissing.first {
                     userInfo[Self.missingPermissionUserInfoKey] = first.rawValue

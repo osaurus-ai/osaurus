@@ -19,7 +19,7 @@ document is for developers changing the integration.
 | `SyncConversationMapper` | Session and turn to conversation and message, with app data, tags and blobs. |
 | `SyncInboundApplier` | Applies other devices' changes to the sidebar and to open chats. |
 | `SyncTurnStreamer` | Streams the reply being generated to other devices. |
-| `SyncLegacyImporter` | Copies chats from the read-only SQLCipher `chat-history` database, once, rebuilding chats whose turns were lost from their Memory transcript. |
+| `SyncLegacyImporter` | Copies chats from the read-only `chat-history` database (SQLCipher when storage encryption is on), once, rebuilding chats whose turns were lost from their Memory transcript. |
 | `SyncStatusModel`, `SyncSettingsView` | Settings → Devices. |
 | `SyncNetworkDirectory` | The relay and discovery servers **Anywhere (Beta)** uses, fetched from `https://osaurus.ai/sync/network.json` (`OSAURUS_SYNC_NETWORK_URL` overrides it with an `https` URL, or `http` on localhost). A launch fetches at each open and network change until one fetch succeeds, at most every 15 minutes. |
 | `SyncAgentDirectory` | Publishes this Mac's agents for the user's other devices and reads theirs. |
@@ -43,7 +43,7 @@ On disk:
 | `~/.osaurus/sync-local/` | Per-session state that never syncs (`SyncLocalSessionState`): the folder bookmark, tool step logs, turn fields over the app-data cap. Also `legacy-import.json`, the importer's ledger; `host-runs.json`, the host runner's; `served-deliveries.json`, the owner turns from other devices this Mac delivered; and `served-promoted.json`, set once served chats from before they synced were promoted. |
 | `~/.osaurus/config/sync.json` | `SyncConfiguration`: `networkEnabled`, `networkMode`, `hostAgentsForOtherDevices`. |
 | `~/.osaurus/config/sync-network.json` | The last good server list from `SyncNetworkDirectory`. |
-| `~/.osaurus/file-history/` | File history (`FileChangeJournal`) in its own SQLCipher database. It never syncs: snapshots are of files on this Mac. |
+| `~/.osaurus/file-history/` | File history (`FileChangeJournal`) in its own database (SQLCipher when storage encryption is on). It never syncs: snapshots are of files on this Mac. |
 | Keychain service `OsaurusKeychainServices.sync` | The device key, user secret and database key. Under `OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS` a file store in `~/.osaurus/sync-keys/`; unit tests use an in-memory store. |
 
 ## What syncs
@@ -372,15 +372,17 @@ builds, and to be removed once those are gone:
 
 The user-facing version is the in-app guide topic `guide-sync.md`.
 
-1. **Pairing my device shares all my agents?** Yes, every non-built-in agent while **Run Agents
-   for My Other Devices** is on (the default); there is no per-agent choice. Agent settings,
+1. **Pairing my device shares all my agents?** Yes, every custom agent while **Run Agents
+   for My Other Devices** is on (the default); there is no per-agent choice. The Default agent
+   is published too, marked `isDefault`: the iPhone offers it and other Macs skip it. Agent settings,
    memory, tools and files don't copy: the other device sends hosted runs to the Mac that runs
    the agent. Chats the user starts sync; headless chats don't. Pairing covers the user's own
    devices only.
 2. **A device on my network finds my agents automatically?** Only devices paired into the same
    sync account, through **Same Network** (the default) or **Anywhere (Beta)**. Per-agent Bonjour
-   (`_osaurus._tcp`) is gone, and so is the iPhone's `_osaurus-mobile._tcp`: the iPhone joins
-   with a Sync pairing code like any device.
+   (`_osaurus._tcp`) is gone. The iPhone joins with a Sync pairing code like any device; the
+   Mac's `_osaurus-mobile._tcp` advertiser for the 6-digit flow stays up only until an iPhone
+   joins Sync.
 3. **Workspaces let me choose which agents to share?** Yes, one agent at a time
    (`WorkspacesService.shareAgent`), with other people through the router and relay. Sync never
    shares an agent with a workspace.
@@ -415,7 +417,8 @@ The user-facing version is the in-app guide topic `guide-sync.md`.
    - Older builds can no longer pair over the LAN: `/pair` and `/pair/challenge` return an
      error. Agents they already paired that way stay as providers and keep working until the
      key expires (90 days by default) or is revoked. The relay still works. The iPhone's
-     `/pair/code` and its phone-only routes are gone: it pairs through Sync.
+     `/pair/code` and its phone-only routes keep working for iPhone apps without Sync until an
+     iPhone joins Sync; from then on they answer `410` and the iPhone pairs through Sync.
    - A downgrade to a pre-sync build shows the pre-sync chats from the untouched `chat-history`
      backup. Chats started after sync exist only in the sync store.
 

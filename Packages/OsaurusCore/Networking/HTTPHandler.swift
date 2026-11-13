@@ -4284,7 +4284,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         return (
             "peer_inference_disabled",
             "This Osaurus does not share its models for inference with paired agents. "
-                + "Ask the owner to enable it in Server → Overview."
+                + "Ask the owner to enable it in Settings → Sharing → Access → Model Sharing."
         )
     }
 
@@ -13609,7 +13609,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 context: context,
                 status: .badRequest,
                 message:
-                    "No image model specified and no default image generation model is configured (Settings → Agent Delegation).",
+                    "No image model specified and no default image generation model is configured (Settings → Model Defaults → Images & Video).",
                 path: "/images/generations",
                 startTime: startTime,
                 userAgent: userAgent,
@@ -14390,7 +14390,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 context: context,
                 status: .badRequest,
                 message:
-                    "No image model specified and no default image edit model is configured (Settings → Agent Delegation).",
+                    "No image model specified and no default image edit model is configured (Settings → Model Defaults → Images & Video).",
                 path: "/images/edits",
                 startTime: startTime,
                 userAgent: userAgent,

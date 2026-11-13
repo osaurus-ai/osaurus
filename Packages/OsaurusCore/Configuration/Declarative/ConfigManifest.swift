@@ -135,7 +135,7 @@ public enum ConfigManifest {
 
         ConfigSectionSpec(
             .harnessRuntimes,
-            comment: "external agent harnesses an agent can run on (Settings → Runtimes)",
+            comment: "external agent harnesses an agent can run on (Settings → Agent Runtimes)",
             value: .entityList(
                 [
                     ConfigKeySpec(

@@ -6,7 +6,7 @@ order: 175
 
 # Insights and the Activity Log
 
-Insights is the audit dashboard. Every interaction Osaurus performs is recorded as one row, persisted on this Mac, and marked **Local** (data stayed on this Mac) or **Cloud** (data left this Mac). Open it from Settings… (⌘,) → Insights, from Privacy & Security → Activity Log → **Review Activity in Insights**, or from the Insights button on any assistant message (which jumps to that turn's row).
+Insights is the audit dashboard. Every interaction Osaurus performs is recorded as one row, persisted on this Mac, and marked **Local** (data stayed on this Mac) or **Cloud** (data left this Mac). Open it from Settings… (⌘,) → Insights, from Privacy & Security → Activity Log → **Review Activity in Insights**, or from **Inspect response** in any assistant message's **…** menu (which opens that turn's request and response).
 
 ## What gets recorded
 
@@ -18,7 +18,7 @@ Insights is the audit dashboard. Every interaction Osaurus performs is recorded 
 - **Channel** — messages delivered to Slack, Discord, Telegram, WhatsApp, iMessage, n8n or a custom webhook — both proactive posts (`PUBLISH`) and automatic replies to incoming messages (`REPLY`). Metadata only (destination, room, size, outcome, attachments sent) — the message text is not copied into the log.
 - **Router** — Osaurus Router control-plane calls (workspaces, credits, media, pairing, account).
 - **API** — inbound requests to the local HTTP server from API clients and paired peers, with the caller address.
-- **Plugin call / Plugin log** — host API calls and log lines from installed plugins (log lines are hidden until you enable **Show plugin console logs** in the Filter popover).
+- **Plugin call / Plugin log** — host API calls and log lines from installed plugins (log lines are shown by default; turn off **Show plugin console logs** in the Filter popover to hide them).
 - **Embedding** — each local embedding batch used for memory recall, memory indexing and tool / skill search, and `/v1/embeddings` API calls. Counts and sizes only; the embedded text is never stored.
 - **Transcription** — each dictation session (live) or audio file transcribed on this Mac, with the transcript, audio length and model.
 - **Speech** — each spoken reply (Read Aloud or the `speak` tool), with the text spoken, voice, audio length and engine. On-device Pocket TTS is **Local**; an OpenAI-compatible TTS server is **Cloud**.

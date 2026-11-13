@@ -12,7 +12,7 @@ All voice features run on-device — no audio ever leaves your Mac.
 
 - Settings… (⌘,) → Voice → Setup: grant Microphone access, download a Parakeet model (~600 MB), set the detection sensitivity, and test with the mic button. The Voice page has **Voice Input in Chat** and rows for **Setup**, **Transcription**, **Text to Speech**, **Wake Word** and **Speech Models** (Local Models → Speech). The default speech model is in Models → Model Defaults → **Speech-to-Text Model**.
 - Models: Parakeet TDT v3 (multilingual, 25 European languages — recommended) or v2 (English-only, slightly better English recall). Runs on the Neural Engine.
-- In chat: turn on **Voice Input in Chat** on the Voice page, then tap the mic button. Sensitivity lives on Setup; Stop Mode, Pause Duration (default 2.0s auto-send; 0 = manual send), Confirmation Delay, and Clean Up Transcription live under Voice → Transcription → Stop Behavior & Cleanup.
+- In chat: turn on **Voice Input in Chat** on the Voice page, then tap the mic button. Sensitivity lives on Setup; Stop Mode, Pause Detection (default 1.5s of silence; 0 = manual send), Confirmation Delay (default 2.0s), and Clean Up Transcription live under Voice → Transcription → Stop Behavior & Cleanup.
 - Audio Input can also capture System Audio (needs Screen Recording permission; excludes Osaurus's own output).
 
 ## Wake phrase / VAD mode
@@ -21,13 +21,13 @@ Off by default. Enable **Wake Word** (Voice → Wake Word) to listen for a custo
 
 ## Dictation anywhere
 
-Voice → Transcription → **Enable Transcription Mode** turns on system-wide dictation into any app via a global hotkey (needs Accessibility permission). An overlay shows Listening / Done; Esc cancels. The same tab holds the hotkey and the Stop Behavior & Cleanup controls shared with chat voice input.
+Voice → Transcription → **Enable Transcription Mode** turns on system-wide dictation into any app via a global hotkey (needs Accessibility permission). An overlay shows **Listening** / **Processing**, with **Stop and insert** to finish early; Esc cancels. The same tab holds the hotkey and the Stop Behavior & Cleanup controls shared with chat voice input.
 
 ## Text-to-speech
 
 - Voice → Text to Speech: enable, pick a voice, and Preview. The engine (Pocket TTS or an OpenAI-compatible server) is under Advanced.
 - Default engine: On-Device (PocketTTS) — English, ~700 MB one-time download, offline afterwards; choose a voice (default `alba`).
-- Voice models load on first use, not at launch: the first spoken reply (or the first mic tap) loads the model before it starts, and Text to Speech shows **Load Now** to load it ahead of time. Under heavy memory pressure, idle voice models unload and reload on next use.
+- Voice models load on first use, not at launch: the first spoken reply (or the first mic tap) loads the model before it starts, and Text to Speech shows **Load Now** to load it ahead of time. Only under critical memory pressure do idle voice models unload; they reload on next use.
 - Alternative: any OpenAI-compatible TTS server (`/v1/audio/speech`) — endpoint, model, voice, speed, optional API key (Keychain).
-- In chat, a speaker button appears on assistant messages when TTS is on; agents can also be granted a `speak` tool in the agent's Abilities settings.
+- In chat, a speaker button appears on assistant messages when TTS is on; agents can also be granted a `speak` tool with **Speak Tool** in the agent's Abilities settings.
 - Every dictation session and every spoken reply is recorded in Settings… (⌘,) → Insights (**Audio & Media** scope tab, **Transcription** / **Speech** rows). On-device work is **Local**; an OpenAI-compatible TTS server shows as **Cloud** with the text that was sent.
