@@ -204,6 +204,31 @@ struct ModelUpdatePollingTests {
         #expect(schedule.isDue("OsaurusAI/second", at: now))
         #expect(!schedule.isDue("OsaurusAI/first", at: now))
     }
+
+    @Test func scheduleLoadAndPersistRoundTripOffMain() async throws {
+        let suite = "ModelUpdatePollingTests.\(UUID().uuidString)"
+        let key = "schedule"
+        defer { UserDefaults().removePersistentDomain(forName: suite) }
+        let now = Date(timeIntervalSince1970: 1000)
+        var schedule = ModelUpdatePollingSchedule()
+        schedule.record("OsaurusAI/model", at: now, succeeded: true)
+        let snapshot = schedule
+        let restored = try await Task.detached(priority: .utility) {
+            let defaults = try #require(UserDefaults(suiteName: suite))
+            #expect(ModelUpdatePollingSchedule.load(forKey: key, from: defaults).attempts.isEmpty)
+            snapshot.persist(forKey: key, to: defaults)
+            return ModelUpdatePollingSchedule.load(forKey: key, from: defaults)
+        }.value
+        #expect(!restored.isDue("osaurusai/model", at: now.addingTimeInterval(21599)))
+    }
+
+    @Test func corruptPersistedScheduleFallsBackToEmpty() throws {
+        let suite = "ModelUpdatePollingTests.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(Data("not json".utf8), forKey: "schedule")
+        #expect(ModelUpdatePollingSchedule.load(forKey: "schedule", from: defaults).attempts.isEmpty)
+    }
 }
 
 /// Counts real service requests using the existing metadata transport seam.
