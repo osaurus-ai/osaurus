@@ -44,6 +44,30 @@ public enum Teammate: String, CaseIterable, Sendable {
         }
     }
 
+    /// SF Symbol for what the teammate works with. Badged on its avatar
+    /// wherever the team is listed, so a teammate reads by its job and not
+    /// only by its name or dino colour.
+    public var symbol: String {
+        switch self {
+        case .planner: return "calendar"
+        case .courier: return "envelope"
+        case .keeper: return "folder"
+        case .scout: return "globe"
+        case .builder: return "hammer"
+        }
+    }
+
+    /// The job in a few words, spoken for the symbol.
+    public var role: String {
+        switch self {
+        case .planner: return L("Calendar and reminders")
+        case .courier: return L("Email in Mail")
+        case .keeper: return L("Files and notes")
+        case .scout: return L("Research on the web")
+        case .builder: return L("Code in a project folder")
+        }
+    }
+
     /// The bundled template resource, `teammate-<name>.json`.
     var resourceName: String { "teammate-\(rawValue)" }
 

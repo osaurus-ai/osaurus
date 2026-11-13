@@ -87,13 +87,18 @@ struct AgentAvatarView: View {
     /// (no inner inset). Use for hero treatments; leave default for small
     /// list/sidebar avatars where the inset reads as more iconic.
     var bleedsToEdge: Bool = false
+    /// False keeps `diameter` over the library's avatar size, for an avatar
+    /// whose size is part of its layout (the setup's team list).
+    var followsLibrarySize: Bool = true
 
     @Environment(\.theme) private var baseTheme
     @Environment(\.isEnabled) private var baseComponentEnabled
     private var theme: any ThemeProtocol { baseTheme.catalogFamily(11, enabled: baseComponentEnabled) }
     @Environment(\.displayScale) private var displayScale
 
-    private var resolvedDiameter: CGFloat { theme.catalogMetric("avatarSize", fallback: diameter) }
+    private var resolvedDiameter: CGFloat {
+        followsLibrarySize ? theme.catalogMetric("avatarSize", fallback: diameter) : diameter
+    }
     private var avatarShape: AnyShape {
         AnyShape(RoundedRectangle(cornerRadius: theme.catalogMetric("radius", fallback: resolvedDiameter / 2)))
     }

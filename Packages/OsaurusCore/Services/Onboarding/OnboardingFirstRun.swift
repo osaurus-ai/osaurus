@@ -15,6 +15,7 @@
 import AppKit
 import Combine
 import Foundation
+import SwiftUI
 
 @MainActor
 final class OnboardingFirstRun {
@@ -72,6 +73,10 @@ final class OnboardingFirstRun {
     private var lastBrain: OnboardingBrainState?
     private var requestInFlight = false
     private var routingTask: Task<Void, Never>?
+    /// The window whose sidebar setup closed, so it comes back when setup
+    /// ends. Closed once per launch: reopening it during setup sticks.
+    private var focusedWindowId: UUID?
+    private var didFocusWindow = false
 
     var plan: OnboardingPlan? {
         if let cachedPlan { return cachedPlan }
@@ -154,6 +159,7 @@ final class OnboardingFirstRun {
     }
 
     private func attach(_ session: ChatSession) {
+        focusWindow(on: session)
         lastBrain = brainState(of: session)
         startPreload(session)
         brainObservation = session.$selectedModel.combineLatest(session.$pickerItems)
@@ -163,6 +169,25 @@ final class OnboardingFirstRun {
                 self.brainMayHaveChanged(session)
             }
         session.rebuildVisibleBlocks()
+    }
+
+    /// Setup keeps the person on the conversation: the sidebar stays
+    /// closed until the walkthrough ends.
+    private func focusWindow(on session: ChatSession) {
+        guard !didFocusWindow, let plan, !plan.isFinished,
+            let window = ChatWindowManager.shared.windowState(holding: session)
+        else { return }
+        didFocusWindow = true
+        guard window.showSidebar else { return }
+        window.showSidebar = false
+        focusedWindowId = window.windowId
+    }
+
+    private func restoreSidebar() {
+        guard let id = focusedWindowId else { return }
+        focusedWindowId = nil
+        guard let window = ChatWindowManager.shared.windowState(id: id), !window.showSidebar else { return }
+        withAnimation(window.theme.motion.quick) { window.showSidebar = true }
     }
 
     /// Starts loading the local model the chat will answer with, through
@@ -231,7 +256,13 @@ final class OnboardingFirstRun {
     func panel(for session: ChatSession) -> (turnId: UUID, panel: OnboardingPanel)? {
         guard ownsSession(session), let plan, let sessionId = session.sessionId, !session.isStreaming,
             !session.isTypingOutAuthoredLine,
-            let last = session.turns.last, last.role == .assistant, last.origin == .authored,
+            let last = Self.lastLine(of: session), last.role == .assistant
+        else { return nil }
+        if plan.canExplore, plan.browse == nil {
+            guard plan.offerTurnId == last.id else { return nil }
+            return (last.id, OnboardingPanel.exploreOffer(sessionId: sessionId))
+        }
+        guard last.origin == .authored,
             let panel = OnboardingPanel.make(
                 plan: plan,
                 brain: brainState(of: session),
@@ -241,6 +272,12 @@ final class OnboardingFirstRun {
             )
         else { return nil }
         return (last.id, panel)
+    }
+
+    /// The latest line in the chat. A run can end on a tool's result,
+    /// which shows on its call's reply rather than as a line of its own.
+    static func lastLine(of session: ChatSession) -> ChatTurn? {
+        session.turns.last { $0.role != .tool }
     }
 
     /// The label for a reply this chat just generated.
@@ -259,7 +296,12 @@ final class OnboardingFirstRun {
     /// `echo` shows a tapped card as the person's line; a typed one is
     /// already on screen.
     func perform(_ action: OnboardingAction, in session: ChatSession, echo: Bool) {
-        guard ownsSession(session), var plan, !plan.isFinished else { return }
+        guard ownsSession(session), var plan else { return }
+        if plan.isFinished {
+            guard plan.canExplore else { return }
+            explore(action, plan: &plan, in: session, echo: echo)
+            return
+        }
         let brain = brainState(of: session)
         switch action {
         case .selectPath(let id):
@@ -288,9 +330,7 @@ final class OnboardingFirstRun {
             SystemPermissionService.shared.openSystemSettings(for: permission)
             return
         case .openFilesAndFolders:
-            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders") {
-                NSWorkspace.shared.open(url)
-            }
+            openFilesAndFolders()
             return
         case .ask(let id):
             guard let ask = OnboardingPaths.ask(id: id) else { return }
@@ -300,13 +340,102 @@ final class OnboardingFirstRun {
             guard !trimmed.isEmpty else { return }
             runAsk(OnboardingPaths.topicAsk(trimmed), plan: &plan, brain: brain, session: session)
         case .chooseBrain:
-            let windows = ChatWindowManager.shared
-            BrainChooserSheet.present(
-                over: windows.windowState(holding: session).flatMap { windows.getNSWindow(id: $0.windowId) })
+            presentBrainChooser(for: session)
+            return
+        case .exploreTeam, .doneExploring:
             return
         }
         plan.advance(OnboardingAppSnapshot(plan: plan, brain: brain))
         commit(plan, session: session)
+    }
+
+    private func presentBrainChooser(for session: ChatSession) {
+        let windows = ChatWindowManager.shared
+        BrainChooserSheet.present(
+            over: windows.windowState(holding: session).flatMap { windows.getNSWindow(id: $0.windowId) })
+    }
+
+    // MARK: - Exploring after the first task
+
+    /// The offer under a task's reply, and the team it opens: the same
+    /// cards, requests, and asks, recorded apart from the first task.
+    private func explore(_ action: OnboardingAction, plan: inout OnboardingPlan, in session: ChatSession, echo: Bool) {
+        let brain = brainState(of: session)
+        switch action {
+        case .exploreTeam:
+            guard plan.browse == nil else { return }
+            if echo { appendAuthored(.user, L("Meet Another Teammate"), to: session) }
+            plan.exploreTeam()
+            appendAuthored(.assistant, Self.exploreLine, to: session)
+        case .selectPath(let id):
+            guard plan.browse?.pathId == nil, let path = OnboardingPaths.path(id: id) else { return }
+            if echo { appendAuthored(.user, cardName(path), to: session) }
+            plan.browseSelect(pathId: id)
+            if id == plan.pathId, plan.requestOutcome == .granted {
+                plan.browse?.requestOutcome = .granted
+            } else if case .permission(let permission) = path.request, isPermissionGranted(permission) {
+                plan.browse?.requestOutcome = .granted
+            }
+            appendAuthored(.assistant, path.introLine, to: session)
+        case .back:
+            guard plan.browse?.pathId != nil else { return }
+            plan.browseBack()
+            appendAuthored(.assistant, Self.exploreLine, to: session)
+        case .doneExploring, .dismissSetup, .skip:
+            plan.endExploring()
+            appendAuthored(.assistant, L("Setup is done. Ask me anything."), to: session)
+        case .request:
+            Task { await runRequest(session) }
+            return
+        case .openSettings(let permission):
+            SystemPermissionService.shared.openSystemSettings(for: permission)
+            return
+        case .openFilesAndFolders:
+            openFilesAndFolders()
+            return
+        case .chooseBrain:
+            presentBrainChooser(for: session)
+            return
+        case .ask(let id):
+            guard let ask = OnboardingPaths.ask(id: id) else { return }
+            sendBrowsedAsk(ask, plan: &plan, brain: brain, session: session)
+            return
+        case .topic(let topic):
+            let trimmed = topic.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            sendBrowsedAsk(OnboardingPaths.topicAsk(trimmed), plan: &plan, brain: brain, session: session)
+            return
+        case .discover, .openDiscovery:
+            return
+        }
+        commit(plan, session: session)
+    }
+
+    static var exploreLine: String { L("Who do you want to try next?") }
+
+    /// Committed before the send, so the run's end finds the offer pending.
+    private func sendBrowsedAsk(
+        _ ask: OnboardingAsk,
+        plan: inout OnboardingPlan,
+        brain: OnboardingBrainState,
+        session: ChatSession
+    ) {
+        guard brain.canAnswer, !(ask.readsPersonalData && brain.holdsPersonalAsks), !session.isStreaming
+        else { return }
+        let browsing = plan
+        plan.browseSent()
+        commit(plan, session: session)
+        guard session.sendPreparedAsk(label: ask.label, dispatch: Self.dispatch(for: ask)) else {
+            plan = browsing
+            commit(plan, session: session)
+            return
+        }
+    }
+
+    private func openFilesAndFolders() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     private func runAsk(
@@ -329,8 +458,11 @@ final class OnboardingFirstRun {
     /// A typed message in the walkthrough comes here instead of going
     /// straight to the Orchestrator.
     func routesTypedMessage(in session: ChatSession) -> Bool {
-        guard ownsSession(session), let plan, plan.current != nil else { return false }
-        return !plan.isFinished
+        guard ownsSession(session), let plan else { return false }
+        if plan.canExplore {
+            return plan.browse != nil || (plan.offerTurnId != nil && plan.offerTurnId == Self.lastLine(of: session)?.id)
+        }
+        return plan.current != nil && !plan.isFinished
     }
 
     /// Handled in order, so a second message waits for the first.
@@ -348,7 +480,14 @@ final class OnboardingFirstRun {
     }
 
     private func route(_ text: String, attachments: [Attachment], in session: ChatSession) async {
-        guard routesTypedMessage(in: session), let plan else {
+        guard routesTypedMessage(in: session), var plan else {
+            sendToOrchestrator(session, text, attachments)
+            return
+        }
+        // Exploring: their own message is the end of setup.
+        if plan.canExplore {
+            plan.endExploring()
+            commit(plan, session: session)
             sendToOrchestrator(session, text, attachments)
             return
         }
@@ -472,7 +611,9 @@ final class OnboardingFirstRun {
     }
 
     private func runRequest(_ session: ChatSession) async {
-        guard !requestInFlight, let path = plan?.path, let request = path.request else { return }
+        let browsing = plan?.canExplore == true
+        guard !requestInFlight, let path = browsing ? plan?.browse?.path : plan?.path, let request = path.request
+        else { return }
         requestInFlight = true
         defer { requestInFlight = false }
         let granted: Bool
@@ -486,8 +627,14 @@ final class OnboardingFirstRun {
         case .projectFolder: granted = pickProjectFolder().map(setBuilderFolder) ?? false
         case .topic: return
         }
-        guard var plan, plan.pathId == path.id, !plan.isFinished else { return }
-        plan.requestOutcome = granted ? .granted : .denied
+        guard var plan else { return }
+        if browsing {
+            guard plan.canExplore, plan.browse?.pathId == path.id else { return }
+            plan.browse?.requestOutcome = granted ? .granted : .denied
+        } else {
+            guard plan.pathId == path.id, !plan.isFinished else { return }
+            plan.requestOutcome = granted ? .granted : .denied
+        }
         appendAuthored(
             .assistant,
             granted
@@ -534,9 +681,11 @@ final class OnboardingFirstRun {
 
     /// Settles the first task once its run ends: a typed task counts as
     /// the first task too.
+    /// A walkthrough task's reply gets the offer to meet another teammate;
+    /// any other run means the person moved on.
     func runEnded(in session: ChatSession) {
         guard ownsSession(session), var plan else { return }
-        guard plan.firstTaskSucceeded == nil else { return }
+        let before = plan
         if plan.finishReason == nil {
             guard
                 session.turns.contains(where: {
@@ -546,7 +695,18 @@ final class OnboardingFirstRun {
             plan.finish(.firstTask)
         }
         guard plan.finishReason == .firstTask else { return }
-        plan.firstTaskSucceeded = Self.firstTaskSucceeded(session.turns)
+        if plan.firstTaskSucceeded == nil {
+            plan.firstTaskSucceeded = Self.firstTaskSucceeded(session.turns)
+        }
+        if plan.offerPending == true {
+            plan.offerPending = nil
+            if plan.canExplore, let last = Self.lastLine(of: session), last.role == .assistant {
+                plan.offerTurnId = last.id
+            }
+        } else if plan.canExplore, plan.offerTurnId != nil || plan.browse != nil {
+            plan.endExploring()
+        }
+        guard plan != before else { return }
         plan.advance(OnboardingAppSnapshot(plan: plan, brain: brainState(of: session)))
         commit(plan, session: session)
     }
@@ -639,6 +799,7 @@ final class OnboardingFirstRun {
                 ask: plan.firstAskId != nil
             )
         }
+        if plan.isClosed, previous?.isClosed != true { restoreSidebar() }
         cachedPlan = .some(plan)
         store.save(plan)
         session.rebuildVisibleBlocks()
@@ -654,5 +815,7 @@ final class OnboardingFirstRun {
         lastBrain = nil
         routingTask = nil
         brainOverride = nil
+        focusedWindowId = nil
+        didFocusWindow = false
     }
 }

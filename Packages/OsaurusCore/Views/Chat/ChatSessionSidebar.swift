@@ -2158,7 +2158,11 @@ private struct AgentSidebarRow: View {
         .padding(.trailing, NavigatorRowMetrics.trailingInset)
         .frame(height: NavigatorRowMetrics.rowHeight)
         .sidebarRowChrome(isSelected: false, isHovered: isHovered, compactChatStyle: true)
-        .help(activityStatus.map { liveStatusLine($0) } ?? agent.displayName)
+        .help(
+            activityStatus.map { liveStatusLine($0) }
+                ?? agent.teammate.map { "\(agent.displayName) · \($0.role)" }
+                ?? agent.displayName
+        )
         .contentShape(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous))
         .offset(y: dragOffset)
         .zIndex(isDragging ? 1 : 0)
