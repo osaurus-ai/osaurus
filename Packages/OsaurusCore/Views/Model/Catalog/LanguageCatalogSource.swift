@@ -31,8 +31,17 @@ enum LanguageModelCatalog {
         /// from the unfiltered merged catalog so the detail view's version
         /// picker always shows the full family while the table is filtered.
         var variantsByFamily: [String: [MLXModel]] = [:]
+        /// Lowercased ids of rows that are decision models, resolved off the
+        /// main actor in `makeLists`. Rows read this instead of
+        /// `MLXModel.isDecision`, whose cold path probes the bundle on disk
+        /// (`DecisionBundle.declaresDecisionModel`) and hung the main thread.
+        var decisionIds: Set<String> = []
 
         var catalog: [MLXModel] { suggested + others }
+
+        func isDecision(_ model: MLXModel) -> Bool {
+            decisionIds.contains(model.id.lowercased())
+        }
 
         static let empty = Lists(suggested: [], others: [], downloaded: [])
     }
@@ -262,11 +271,16 @@ enum LanguageModelCatalog {
         // Warm disk-backed verdicts while still off the main actor: rows read
         // `isVLM`, `isMLXFormat` and `isDownloaded` on the main thread, and a
         // cold cache would fault config / safetensors-header reads per row
-        // there (the app-hang path).
+        // there (the app-hang path). Decision verdicts are captured into
+        // `decisionIds` rather than only warmed: a `.localModelsChanged`
+        // between here and `apply` clears that cache, and a cold
+        // `isDecision` on the main actor stats the bundle on disk.
+        var decisionIds: Set<String> = []
         for model in topPicks + others + downloaded {
             _ = model.isVLM
             _ = model.isMLXFormat
             _ = model.isDownloaded
+            if model.isDecision { decisionIds.insert(model.id.lowercased()) }
         }
 
         return Lists(
@@ -274,7 +288,8 @@ enum LanguageModelCatalog {
             others: others,
             downloaded: downloaded,
             ownedFamilies: ownedFamilies,
-            variantsByFamily: variantsByFamily
+            variantsByFamily: variantsByFamily,
+            decisionIds: decisionIds
         )
     }
 
@@ -463,7 +478,7 @@ final class LanguageCatalogSource: LocalModelCatalogSource {
         let isUnsupported = model.isDownloaded && !model.isMLXFormat
 
         var subtitle: [String] = []
-        if model.isDecision {
+        if lists.isDecision(model) {
             subtitle.append(L("Decision"))
         } else {
             if let useCase = model.useCase, useCase != .smallest { subtitle.append(useCase.displayName) }
