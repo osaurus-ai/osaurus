@@ -36,6 +36,12 @@ extension SyncDeviceFeedContract {
         var facts: [WorkflowChip]?
         /// Its steps in run order, each with the badges the Mac's page gives it.
         var steps: [WorkflowStep]?
+        /// What it hands back, as the page's "You get" names it (the phone's Overview).
+        var outputs: [String]?
+        /// What it can reach (the phone's About tab): the page's "Your files" and "Before It Runs".
+        var access: WorkflowAccess?
+        /// Where its file came from (the phone's About tab).
+        var source: WorkflowSource?
     }
 
     /// A small labelled capsule. `tone`: neutral, success, warning (needs attention), caution,
@@ -52,6 +58,37 @@ extension SyncDeviceFeedContract {
         var kind: String
         var icon: String
         var badges: [WorkflowChip]
+    }
+
+    /// One line of what a workflow can reach: a label and its value, `problem` when it needs setting up.
+    struct WorkflowAccessRow: Codable, Equatable, Sendable {
+        var icon: String
+        var title: String
+        var detail: String
+        var problem: Bool?
+    }
+
+    struct WorkflowAccess: Codable, Equatable, Sendable {
+        /// What it reads, writes and replaces, and what reaches past its folders ("Your files").
+        var files: [WorkflowAccessRow]
+        /// Where that happens: "Your Mac", "Sandbox".
+        var places: [String]
+        /// The page's sentence under them.
+        var note: String?
+        /// Models, keys, internet, workflows it runs, tools, packages and folders ("Before It Runs").
+        var needs: [WorkflowAccessRow]
+    }
+
+    /// The installed version's file: its author when it names one, and whether it came from the Store.
+    struct WorkflowSource: Codable, Equatable, Sendable {
+        var author: String?
+        /// The signing key, when the file is signed.
+        var key: String?
+        var version: Int
+        var changelog: String?
+        var hash: String
+        var createdMs: Int64
+        var fromStore: Bool
     }
 
     struct WorkflowInputField: Codable, Equatable, Sendable {
@@ -112,7 +149,10 @@ enum SyncWorkflowLibrary {
                     phoneStartable: fields.allSatisfy { !$0.required || phoneTypes.contains($0.type) },
                     blocked: report.hasBlockers ? report.blocking.map(\.title).joined(separator: "; ") : nil,
                     facts: facts(workflow, report: report),
-                    steps: steps(workflow, catalog: catalog)
+                    steps: steps(workflow, catalog: catalog),
+                    outputs: WorkflowSummary.outputs(workflow.definition),
+                    access: access(workflow),
+                    source: source(workflow)
                 )
             }
     }
@@ -193,6 +233,93 @@ enum SyncWorkflowLibrary {
                 name: step.name, kind: step.kind, icon: step.icon,
                 badges: badges.map { .init(icon: $0.systemImage, text: $0.label, tone: $0.tone.rawValue) })
         }
+    }
+
+    // MARK: Access and source (the phone's About tab)
+
+    /// What it can reach, as the page shows it: its "Your files" rows (`WorkflowAccessRows`) and the
+    /// "Before It Runs" list (`WorkflowDetailPage.beforeItRuns`), without the setup actions. Keys by name
+    /// only: their state is the Mac's to manage, and the phone already hears when one blocks a run.
+    private static func access(_ workflow: InstalledWorkflow) -> SyncDeviceFeedContract.WorkflowAccess {
+        typealias Row = SyncDeviceFeedContract.WorkflowAccessRow
+        let store = InstalledWorkflowStore.shared
+        let scope = WorkflowAccessScope.derive(workflow.definition)
+        let files = scope.rows.map { Row(icon: $0.systemImage, title: $0.title, detail: $0.value, problem: nil) }
+
+        let reach = WorkflowRequirementsDeriver.reach(workflow.definition) { store.workflow(named: $0)?.definition }
+        let reqs = reach.requirements
+        let env = SetupChecker.Environment.live()
+        var needs: [Row] = []
+        for slot in reqs.models {
+            let label =
+                reqs.models.count > 1 ? WorkflowSummary.slotLabel(slot.slot, in: workflow.definition) : L("Runs on")
+            let model = SetupChecker.resolvedModel(for: slot, bindings: workflow.bindings, environment: env)
+            needs.append(
+                Row(
+                    icon: "cube", title: label, detail: model.map(WorkflowModelChoices.runsOn) ?? L("Not chosen yet"),
+                    problem: model == nil ? true : nil))
+        }
+        for secret in reqs.secrets { needs.append(Row(icon: "key", title: secret.label, detail: "", problem: nil)) }
+        if !reqs.network.isEmpty {
+            needs.append(
+                Row(
+                    icon: "network", title: L("Internet access"), detail: reqs.network.joined(separator: ", "),
+                    problem: nil))
+        }
+        for child in reach.subworkflows {
+            needs.append(
+                Row(
+                    icon: "flowchart", title: L("Runs \(child.name)"),
+                    detail: TemplateImportReviewView.summary(of: child),
+                    problem: child.requirements == nil ? true : nil))
+        }
+        for tool in workflow.definition.calledTools {
+            needs.append(
+                Row(
+                    icon: "wrench.and.screwdriver", title: tool.name, detail: WorkflowToolCatalog.status(of: tool.name),
+                    problem: nil))
+        }
+        for dependency in reqs.dependencies {
+            let status = WorkflowSandboxEnvironment.shared.status(of: dependency, environmentID: workflow.templateID)
+            needs.append(
+                Row(
+                    icon: "shippingbox", title: dependency.summary, detail: WorkflowDependenciesStep.label(status),
+                    problem: status != .installed ? true : nil))
+        }
+        for folder in reqs.folders {
+            let path = workflow.bindings.folders[folder.key]
+            needs.append(
+                Row(
+                    icon: "folder", title: folder.label, detail: path ?? L("Not chosen yet"),
+                    problem: path == nil ? true : nil))
+        }
+        let grants: [(paths: [String], title: String, icon: String)] = [
+            (workflow.bindings.folderGrants, L("Always allowed to save"), "folder"),
+            (workflow.bindings.folderReadGrants, L("Always allowed to read"), "folder"),
+            (workflow.bindings.replaceGrants, L("Always allowed to replace files"), "arrow.triangle.2.circlepath"),
+        ]
+        for grant in grants {
+            for path in grant.paths {
+                needs.append(Row(icon: grant.icon, title: grant.title, detail: path, problem: nil))
+            }
+        }
+        return SyncDeviceFeedContract.WorkflowAccess(
+            files: files, places: scope.places.map(\.title), note: scope.architectSentence, needs: needs)
+    }
+
+    /// The installed version's file, as its template carries it.
+    private static func source(_ workflow: InstalledWorkflow) -> SyncDeviceFeedContract.WorkflowSource {
+        let template = workflow.template
+        let author = template.author
+        let changelog = template.changelog.trimmingCharacters(in: .whitespacesAndNewlines)
+        return SyncDeviceFeedContract.WorkflowSource(
+            author: author?.name.flatMap { $0.isEmpty ? nil : $0 },
+            key: author?.isSigned == true ? author?.address : nil,
+            version: template.version,
+            changelog: changelog.isEmpty ? nil : changelog,
+            hash: template.contentHash,
+            createdMs: Int64(template.createdAt.timeIntervalSince1970 * 1000),
+            fromStore: workflow.source != nil)
     }
 
     // MARK: Starting

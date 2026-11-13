@@ -756,6 +756,28 @@ The manage state lists the Mac's installed workflows, sorted by name (at most 10
   - `icon` is an SF Symbol name.
   - `tone` is `neutral`, `success`, `warning`, `caution` or `risky`. It is kept open.
   - The state is written again when a run ends, since the time and token badges come from past runs.
+- `outputs`, `access` and `source` fill the phone's Overview and About tabs. All three are optional; a phone
+  hides what's missing. They come from the installed version alone; nothing is fetched from the registry.
+
+```json
+"outputs": [ "Briefing" ],
+"access": {
+  "files": [ { "icon": "doc.text.magnifyingglass", "title": "Reads", "detail": "nothing" } ],
+  "places": [ "Your Mac" ],
+  "note": "It reads and saves nothing on your Mac.",
+  "needs": [ { "icon": "cube", "title": "Runs on", "detail": "Not chosen yet", "problem": true },
+             { "icon": "network", "title": "Internet access", "detail": "api.example.com" } ]
+},
+"source": { "author": "Ada", "key": "0x…", "version": 3, "changelog": "Shorter briefings.",
+            "hash": "…", "createdMs": 1731400000000, "fromStore": true }
+```
+
+  - `outputs` names what it hands back, as the page's "You get" does.
+  - `access.files`, `places` and `note` are the page's "Your files". `access.needs` is its "Before It
+    Runs" list: models, keys (by name only), internet hosts, workflows it runs, tools, packages, folders
+    and standing folder permissions. `problem` marks what still has to be set up.
+  - `source` is the installed version's file. `key` is present only when the file is signed.
+    `fromStore` is true when it was installed from the registry.
 
 `runWorkflow` (`workflowId`, `input`) starts one as the Mac's Run button does, as a background
 run. Fields left out keep their defaults, and the input is checked against the schema.
