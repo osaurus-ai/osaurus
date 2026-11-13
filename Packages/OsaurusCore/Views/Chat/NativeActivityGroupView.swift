@@ -207,7 +207,8 @@ final class NativeActivityGroupView: NSView {
             allStepsExpanded ? L("Collapse all steps") : L("Expand all steps")
         expandAllButton.setAccessibilityLabel(expandAllButton.toolTip ?? "")
         expandAllButton.contentTintColor = NSColor(theme.text.tertiary)
-        let expandTitle = NSTextField(labelWithString: expandAllButton.title)
+        // NSButton draws a leading image flush against its title.
+        let expandTitle = NSTextField(labelWithString: "\u{2009}" + expandAllButton.title)
         expandTitle.textColor = NSColor(theme.text.tertiary)
         ActivityInspectionStyle.label(expandTitle, property: "caption", theme: theme)
         expandAllButton.attributedTitle = expandTitle.attributedStringValue
