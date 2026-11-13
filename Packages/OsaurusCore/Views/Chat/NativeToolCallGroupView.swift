@@ -984,6 +984,12 @@ final class NativeToolCallRowView: NSView {
     private var sectionInset: CGFloat { ActivityInspectionStyle.layout("toolInnerPaddingX", "padding", Self.sectionContentInset, lastConfiguredTheme ?? CustomizableTheme.light()) }
     private var outerInset: CGFloat { ActivityInspectionStyle.layout("toolOuterPaddingX", "padding", Self.sectionContentInset, lastConfiguredTheme ?? CustomizableTheme.light()) }
     private var sectionWidthDeduction: CGFloat { 2 * outerInset + 2 * sectionInset }
+    private var contentGap: CGFloat { ActivityInspectionStyle.layout("toolContentGap", "gap", (lastConfiguredTheme ?? CustomizableTheme.light()).space.s8, lastConfiguredTheme ?? CustomizableTheme.light()) }
+    /// A section label sits closer to its own content than to the section above it.
+    private var sectionTitleGap: CGFloat { contentGap / 2 }
+    private var sectionGap: CGFloat { contentGap * 2 }
+    private var sectionTitleHeight: CGFloat { ceil(argumentsSectionTitle.intrinsicContentSize.height) }
+    private var argsViewTopToTitle: NSLayoutConstraint?
     private var assignedHeaderHeight: CGFloat { ActivityInspectionStyle.headerHeight(lastConfiguredTheme ?? CustomizableTheme.light()) }
     private let inspectionHeader = InspectorActivityHeaderSurface()
     /// `nonisolated(unsafe)` so deinit can read it; only ever set in
@@ -1447,10 +1453,10 @@ final class NativeToolCallRowView: NSView {
             let view = c.firstItem as? NSView
             if c.firstAttribute == .leading, c.secondItem as? NSView === contentContainer { c.constant = sectionInset }
             if c.firstAttribute == .trailing, c.secondItem as? NSView === contentContainer { c.constant = -sectionInset }
-            if c.firstAttribute == .top, view !== argumentsSectionTitle { c.constant = gap }
+            if c.firstAttribute == .top, view !== argumentsSectionTitle { c.constant = sectionGap }
         }
-        resultTitleTopToArgs?.constant = gap
-        resultViewTopToTitle?.constant = gap
+        argsViewTopToTitle?.constant = sectionTitleGap
+        resultViewTopToTitle?.constant = sectionTitleGap
     }
 
     // MARK: Measured height
@@ -1459,14 +1465,13 @@ final class NativeToolCallRowView: NSView {
         let rowH = assignedHeaderHeight
         let theme = lastConfiguredTheme ?? CustomizableTheme.light()
         guard isExpanded else { return rowH + ActivityInspectionStyle.metric("borderWidth", 1, theme) }
-        // matches InlineToolCallView ToolDetailSection header row (~9pt bold + padding)
-        let gap = ActivityInspectionStyle.layout("toolContentGap", "gap", theme.space.s8, theme)
-        let sectionTitleH = ActivityInspectionStyle.fieldHeight("caption", theme, fallback: 22)
+        let gap = contentGap
+        let sectionTitleH = sectionTitleHeight + sectionTitleGap
         let textW = max(0, currentWidth - sectionWidthDeduction)
         let argsH = argsView?.measuredHeight(for: textW) ?? 0
         let resultH: CGFloat
         if let rv = resultView, !rv.isHidden {
-            resultH = gap + sectionTitleH + rv.measuredHeight(for: textW)
+            resultH = sectionGap + sectionTitleH + rv.measuredHeight(for: textW)
         } else {
             resultH = 0
         }
@@ -1474,11 +1479,11 @@ final class NativeToolCallRowView: NSView {
         // view's adaptive measured height (60–140pt body + 30pt header).
         let terminalH: CGFloat
         if let tv = terminalView {
-            terminalH = gap + tv.currentMeasuredHeight
+            terminalH = sectionGap + tv.currentMeasuredHeight
         } else {
             terminalH = 0
         }
-        let subagentH: CGFloat = subagentFeedHostingView != nil ? (gap + Self.subagentPaneHeight) : 0
+        let subagentH: CGFloat = subagentFeedHostingView != nil ? (sectionGap + Self.subagentPaneHeight) : 0
         return rowH + ActivityInspectionStyle.metric("borderWidth", 1, theme) + gap + sectionTitleH + argsH + terminalH + subagentH + resultH + ActivityInspectionStyle.layout("toolBottomPadding", "padding", theme.space.s8, theme)
     }
 
@@ -1626,7 +1631,7 @@ final class NativeToolCallRowView: NSView {
                     equalTo: contentContainer.trailingAnchor,
                     constant: -sectionInset
                 ),
-                view.topAnchor.constraint(equalTo: av.bottomAnchor, constant: 8),
+                view.topAnchor.constraint(equalTo: av.bottomAnchor, constant: sectionGap),
                 heightConst,
             ])
             let pin = contentContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor)
@@ -1729,7 +1734,7 @@ final class NativeToolCallRowView: NSView {
                     equalTo: contentContainer.trailingAnchor,
                     constant: -sectionInset
                 ),
-                hosting.topAnchor.constraint(equalTo: av.bottomAnchor, constant: 8),
+                hosting.topAnchor.constraint(equalTo: av.bottomAnchor, constant: sectionGap),
                 heightConst,
             ])
             let pin = contentContainer.bottomAnchor.constraint(equalTo: hosting.bottomAnchor)
@@ -1776,7 +1781,7 @@ final class NativeToolCallRowView: NSView {
         _ result: String, toolName: String = ""
     ) -> String {
         if ToolEnvelope.isError(result) {
-            return result
+            return markdownForErrorResult(result)
         }
         let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -1818,6 +1823,33 @@ final class NativeToolCallRowView: NSView {
             return "```json\n\(pretty)\n```"
         }
         return trimmed
+    }
+
+    /// A failed envelope leads with its message, the part a person reads;
+    /// the remaining fields follow as formatted JSON for diagnosis. Text
+    /// errors (`[REJECTED] …`) and unparseable results stay verbatim.
+    /// Internal (not private) so unit tests can pin the rendering contract.
+    static func markdownForErrorResult(_ result: String) -> String {
+        let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let data = trimmed.data(using: .utf8),
+            var payload = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else { return trimmed }
+        var message = payload.removeValue(forKey: "message") as? String
+        if message?.isEmpty ?? true, let error = payload["error"] as? String {
+            message = error
+            payload["error"] = nil
+        }
+        payload["ok"] = nil
+        var parts: [String] = []
+        if let message, !message.isEmpty { parts.append(message) }
+        if !payload.isEmpty,
+            let pretty = try? JSONSerialization.data(
+                withJSONObject: payload, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]),
+            let details = String(data: pretty, encoding: .utf8)
+        {
+            parts.append("```json\n\(details)\n```")
+        }
+        return parts.isEmpty ? trimmed : parts.joined(separator: "\n\n")
     }
 
     /// Render an `osaurus_config` plan or apply payload as a readable
@@ -2284,11 +2316,13 @@ final class NativeToolCallRowView: NSView {
         v.translatesAutoresizingMaskIntoConstraints = false
         v.onHeightChanged = { [weak self] in self?.applyHeight() }
         contentContainer.addSubview(v)
+        let top = v.topAnchor.constraint(equalTo: argumentsSectionTitle.bottomAnchor, constant: sectionTitleGap)
         NSLayoutConstraint.activate([
             v.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor, constant: sectionInset),
             v.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor, constant: -sectionInset),
-            v.topAnchor.constraint(equalTo: argumentsSectionTitle.bottomAnchor, constant: 4),
+            top,
         ])
+        argsViewTopToTitle = top
         argsView = v
 
         let pinArgs = contentContainer.bottomAnchor.constraint(equalTo: v.bottomAnchor)
@@ -2312,7 +2346,7 @@ final class NativeToolCallRowView: NSView {
         applyToolDetailSectionHeading(to: t, text: resultLabel, theme: theme)
         contentContainer.addSubview(t)
         let av = ensureArgsView()
-        let top = t.topAnchor.constraint(equalTo: av.bottomAnchor, constant: 8)
+        let top = t.topAnchor.constraint(equalTo: av.bottomAnchor, constant: sectionGap)
         top.isActive = true
         resultTitleTopToArgs = top
         NSLayoutConstraint.activate([
@@ -2353,7 +2387,7 @@ final class NativeToolCallRowView: NSView {
         pinResult.isActive = true
         contentBottomToResult = pinResult
 
-        let topToTitle = v.topAnchor.constraint(equalTo: rt.bottomAnchor, constant: 4)
+        let topToTitle = v.topAnchor.constraint(equalTo: rt.bottomAnchor, constant: sectionTitleGap)
         topToTitle.isActive = true
         resultViewTopToTitle = topToTitle
 

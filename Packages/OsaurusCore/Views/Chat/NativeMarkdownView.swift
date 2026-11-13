@@ -1233,8 +1233,9 @@ final class NativeMarkdownView: NSView {
                 ])
             }
             if !structureUnchanged {
+                let spacing = seg.id == segments.first?.id ? 0 : RichTextInspectionStyle.spacing(before: seg, theme: theme)
                 NSLayoutConstraint.activate([
-                    segView.topAnchor.constraint(equalTo: prevAnchor, constant: prevOffset + RichTextInspectionStyle.spacing(before: seg, theme: theme))
+                    segView.topAnchor.constraint(equalTo: prevAnchor, constant: prevOffset + spacing)
                 ])
             }
 

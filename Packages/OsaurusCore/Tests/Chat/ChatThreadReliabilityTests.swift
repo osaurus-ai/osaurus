@@ -104,6 +104,46 @@ struct ChatThreadReliabilityTests {
         expectClickable(button, in: row, "after streaming reconfigures")
     }
 
+    // MARK: - Expanded sections
+
+    private func descendants<T: NSView>(_ view: NSView, _ type: T.Type) -> [T] {
+        view.subviews.flatMap { subview -> [T] in
+            let own: [T] = (subview as? T).map { [$0] } ?? []
+            return own + descendants(subview, type)
+        }
+    }
+
+    @Test func expandedRowFitsItsArgumentsAndErrorResult() throws {
+        let (window, row) = hostedRow()
+        defer { window.close() }
+        row.widthAnchor.constraint(equalToConstant: 640).isActive = true
+        let item = ToolCallItem(
+            call: ToolCall(
+                id: "call_handoff_" + UUID().uuidString,
+                type: "function",
+                function: ToolCallFunction(
+                    name: "configurator_handoff",
+                    arguments: #"{"brief": "Tour of Osaurus features and capabilities", "user_message": "What can Osaurus do? Give me a quick tour of its features."}"#
+                )
+            ),
+            result: #"{"ok":false,"kind":"user_denied","message":"Stopped by the user.","retryable":false,"tool":"configurator_handoff"}"#
+        )
+        configure(row, item, expanded: true)
+        window.contentView?.layoutSubtreeIfNeeded()
+
+        let blocks = descendants(row, NativeCodeBlockView.self).map { $0.convert($0.bounds, to: row) }
+        try #require(blocks.count == 2, "arguments and result details each render a code block")
+        let fromTop = { (rect: NSRect) in row.isFlipped ? rect.maxY : row.bounds.height - rect.minY }
+        for block in blocks {
+            #expect(fromTop(block) <= row.measuredHeight(), "a code block runs past the row's measured height")
+        }
+        let result = try #require(descendants(row, NSTextField.self).first { $0.stringValue == L("RESULT") })
+        let title = result.convert(result.bounds, to: row)
+        let args = try #require(blocks.min { fromTop($0) < fromTop($1) })
+        let gap = row.isFlipped ? title.minY - args.maxY : args.minY - title.maxY
+        #expect(gap >= 8, "RESULT sits \(gap)pt below the arguments block")
+    }
+
     // MARK: - Markdown reuse
 
     private func renderedStrings(_ view: NSView) -> [String] {

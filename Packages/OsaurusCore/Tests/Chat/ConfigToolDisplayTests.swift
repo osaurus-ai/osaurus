@@ -150,4 +150,26 @@ struct ConfigToolDisplayTests {
                 "results": [["path": "/tmp/x", "type": "file"]]
             ]) == nil)
     }
+
+    // MARK: - Failed results
+
+    @Test("a failed envelope leads with its message, then the details as JSON")
+    func failedEnvelopeLeadsWithItsMessage() {
+        let result =
+            #"{"ok":false,"kind":"rejected","message":"The local model has no free capacity.","retryable":false,"memory_decision":{"ram_slots":0}}"#
+        let rendered = NativeToolCallRowView.markdownForErrorResult(result)
+        #expect(rendered.hasPrefix("The local model has no free capacity.\n\n```json\n"))
+        #expect(rendered.contains(#""kind" : "rejected""#))
+        #expect(rendered.contains(#""ram_slots" : 0"#))
+        #expect(!rendered.contains(#""ok""#))
+        #expect(!rendered.contains(#""message""#))
+    }
+
+    @Test("legacy and text errors render verbatim")
+    func textErrorsStayVerbatim() {
+        #expect(NativeToolCallRowView.markdownForErrorResult("[REJECTED] not allowed") == "[REJECTED] not allowed")
+        let legacy = NativeToolCallRowView.markdownForErrorResult(#"{"error":"boom","retryable":true}"#)
+        #expect(legacy.hasPrefix("boom\n\n```json\n"))
+        #expect(!legacy.contains(#""error""#))
+    }
 }
