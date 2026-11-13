@@ -37,7 +37,7 @@ remain errors. Metadata checks never download or replace model weights.
 
 - Bigger models are smarter but slower and need more RAM; quantized variants (4-bit/8-bit) trade a little quality for much lower memory.
 - The Models catalog is curated for Osaurus (tool calling, reasoning, and template support are validated), and the OsaurusAI page on Hugging Face hosts optimized bundles.
-- Temperature, top-k, and the other sampling values come from each model bundle's own configuration unless you explicitly override them in Server → Settings → Sampling Defaults.
+- Temperature, top-k, and the other sampling values come from each model bundle's own configuration unless you explicitly override them in Server → Server Settings → Sampling Defaults.
 
 ## Download size and estimated memory
 
@@ -73,7 +73,7 @@ restores bundle-aware policy, so a capable bundle can show Adaptive again.
 Legacy manual depths migrate to Adaptive and are re-evaluated by runtime admission.
 
 On is a request, not proof of active speculation. Unsupported media and
-schema-constrained requests run AR. Server → Settings → **Speculative Decoding**
+schema-constrained requests run AR. Server → Server Settings → **Speculative Decoding**
 shows the loaded model's actual resolution and reason. Sampling stays bundle-driven
 unless explicitly overridden. Remote models do not expose this local control.
 
@@ -83,8 +83,8 @@ On macOS 26+ with Apple Intelligence, the on-device Apple Foundation model is av
 
 ## Model memory and loading
 
-- Models load on first use. Residency (keep loaded / unload when idle) is configured in Server → Settings → Model Memory.
-- RAM-safety settings (Server → Settings → Memory Safety) govern load admission and cache caps so a large model can't take down the system.
+- Models load on first use. Residency (keep loaded / unload when idle) is configured in Server → Server Settings → Model Memory.
+- RAM-safety settings (Server → Server Settings → Memory Safety) govern load admission and cache caps so a large model can't take down the system.
 - If a model is too large for available RAM, Osaurus refuses the load with a clear error instead of letting the system swap or crash.
 
 Automatic checks of installed official OsaurusAI repositories run periodically without downloading model files. Use **Automatically Check Model Updates** in Models → Model Defaults → Downloads & Updates to opt out. Manual detail checks and explicit Verify/Repair/Update actions remain available. Metadata matching does not replace file verification.

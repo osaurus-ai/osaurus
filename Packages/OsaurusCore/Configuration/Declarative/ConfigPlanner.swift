@@ -2435,7 +2435,7 @@ enum ConfigPlanner {
             } else {
                 var changes = ["add search provider"]
                 if let def = manager.definition(id: entry.id), !def.isKeyless {
-                    changes.append("needs an API key — paste it in Settings → Search after apply")
+                    changes.append("needs an API key — paste it in Settings → Web Search after apply")
                 }
                 actions.append(
                     ConfigPlanAction(

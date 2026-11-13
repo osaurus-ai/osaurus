@@ -16,7 +16,7 @@ Two app shortcuts are available the moment Osaurus is installed — no setup:
 | Shortcut | Intent | Behavior |
 |----------|--------|----------|
 | **Ask Osaurus** | `AskOsaurusIntent` | Sends a prompt to the **currently active** agent (`AgentManager.activeAgentId`) and returns/speaks the reply. Awaits the result. |
-| **Run Osaurus Agent** | `RunAgentIntent` | Starts one of your custom agents in the background (fire-and-confirm). Progress and results surface in Osaurus's own Work Mode and toasts. |
+| **Run Osaurus Agent** | `RunAgentIntent` | Starts one of your custom agents in the background (fire-and-confirm). Progress and results surface in Osaurus's background tasks (Tasks) and toasts. |
 
 Example phrases (each must contain the app name):
 
@@ -74,8 +74,9 @@ group and no shared snapshot file — the live source of truth is read directly.
 | Ask Osaurus | `POST /agents/{activeId}/run` | The full agent loop (persona, memory, skills, tools) on the currently active agent. Streams SSE; the client reads to the `[DONE]` frame and concatenates `choices[].delta.content`. Short asks finish well within the intent time budget. |
 | Run Osaurus Agent | `POST /agents/{id}/dispatch` | A **detached** background run that survives the client disconnecting. Returns `202` immediately with a `poll_url`; the run continues in the app. |
 
-`POST /agents/{id}/run` is a streaming, **connection-bound** loop (capped at 30
-tool iterations). If the client disconnects, the run is cancelled. That is fine
+`POST /agents/{id}/run` is a streaming, **connection-bound** loop (up to 30
+tool iterations by default: Chat → Advanced → **Max Tool Attempts**, clamped
+to 120). If the client disconnects, the run is cancelled. That is fine
 for a short "ask" but wrong for a long, tool-heavy run — which is exactly why
 `RunAgentIntent` uses the detached `/dispatch` path instead of awaiting.
 

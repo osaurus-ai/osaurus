@@ -176,8 +176,8 @@ The process is **idempotent and crash-safe**: it's re-runnable, and because open
 Convergence **never auto-deletes data**. If a store can't be converted or opened — almost always an encrypted store whose Keychain key is gone after a migration or re-sign — Osaurus keeps running on whatever opens and surfaces the failure instead of hiding it.
 
 - Failures are classified by [`PersistenceHealth`](../Packages/OsaurusCore/Storage/PersistenceHealth.swift) into `locked` (key unavailable), `corrupt` (unreadable / key mismatch), `migration` (schema upgrade failed), or `unknown`, with the underlying error message and file path retained.
-- The **Memory → Diagnostics** panel shows the real cause for the memory DB and offers inline **Retry** and **Reset** actions.
-- **Privacy & Security → Data & Storage** shows a **Stores Needing Attention** panel listing every degraded store with its cause and the same actions.
+- The **Memory → Diagnostics** panel shows the real cause for the memory DB and offers inline **Retry open** and **Reset store…** actions.
+- **Privacy & Security → Data & Storage** shows a **Stores Needing Attention** panel listing every degraded store with its cause and **Retry** / **Reset…** actions.
 
 Recovery actions are provided by [`StorageRecoveryService`](../Packages/OsaurusCore/Storage/StorageRecoveryService.swift):
 

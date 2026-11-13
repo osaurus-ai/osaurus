@@ -2,8 +2,8 @@
 
 Schedules are now **schedule automations**. See [AUTOMATIONS.md](AUTOMATIONS.md).
 
-- Settings → Automations → Add Automation → **Schedule** (once, daily, weekly, monthly,
-  yearly) with a workflow, an agent, or Ask a Model (one tool-less answer) as
+- Settings → Automations → Add Automation → **Schedule** (once, every N minutes, hourly,
+  daily, weekly, monthly, yearly, or a cron expression) with a workflow, an agent, or Ask a Model (one tool-less answer) as
   the action.
 - On first launch each `~/.osaurus/schedules/*.json` became a schedule automation
   with the same id; its run history moved into the run ledger and the

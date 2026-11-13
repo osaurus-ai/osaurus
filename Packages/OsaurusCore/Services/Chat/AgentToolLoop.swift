@@ -1668,7 +1668,7 @@ enum AgentToolLoop {
         guard windowSource == .userCap else { return overBudgetMessage }
         return
             "Context window cannot fit this request. The limit in force is your "
-            + "Context Window Cap (Settings → Server → Cache → Context & KV Policy), "
+            + "Context Window Cap (Settings → Server → Server Settings → Cache → Context Window Cap (tokens)), "
             + "not the model's own window — raise or clear it, or shorten the input."
     }
 
