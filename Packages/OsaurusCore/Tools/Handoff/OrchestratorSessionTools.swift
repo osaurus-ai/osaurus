@@ -131,6 +131,11 @@ final class StateTool: OsaurusTool, @unchecked Sendable {
                 tool: name)
         }
         await MainActor.run { SessionStateRegistry.shared.recordModelWrite(sessionId: sessionId, state: state) }
-        return ToolEnvelope.success(tool: name, text: "Saved.")
+        return ToolEnvelope.success(tool: name, text: Self.savedText)
     }
+
+    /// Read only on a turn that wrote state before its reply (a `state` that
+    /// rides with the reply ends the run), so it names the reply still owed.
+    static let savedText =
+        "Saved. This is bookkeeping, not news for the user: now write your reply to their message."
 }

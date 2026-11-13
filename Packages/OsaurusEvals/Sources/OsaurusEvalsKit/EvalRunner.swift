@@ -1796,6 +1796,15 @@ public enum EvalRunner {
 
         let rubric = exp.rubric ?? []
         let judgeModel = EvalJudgeModel.resolveAndWarnOnce(runModelId: modelId)
+        let workingFolder: URL?
+        do {
+            workingFolder = try seedChatWorkingFolder(testCase.fixtures.workspaceFiles)
+        } catch {
+            return Self.errored(
+                testCase, label: label, modelId: modelId,
+                note: "workspace fixture setup failed: \(error.localizedDescription)")
+        }
+        defer { if let workingFolder { try? FileManager.default.removeItem(at: workingFolder) } }
         let started = Date()
         // Seed any fixture agents so create cases can target a real agent
         // (and not loop on a not-found id), then tear them down once the run
@@ -1855,10 +1864,20 @@ public enum EvalRunner {
             if testCase.domain == "configurator" {
                 return await ConfiguratorEvaluator.run(query: testCase.query, model: pinnedModel)
             }
+            if let followUps = exp.followUpTurns, !followUps.isEmpty {
+                return CapabilityClaimsTranscript.merging(
+                    await DefaultAgentConfigurationEvaluator.runTurns(
+                        queries: [testCase.query] + followUps,
+                        maxIterations: exp.maxIterations ?? 6,
+                        model: pinnedModel,
+                        workingFolder: workingFolder
+                    ))
+            }
             return await DefaultAgentConfigurationEvaluator.run(
                 query: testCase.query,
                 maxIterations: exp.maxIterations ?? 6,
-                model: pinnedModel
+                model: pinnedModel,
+                workingFolder: workingFolder
             )
         }
         await MainActor.run { closeDefaultAgentCaseWindows(except: windowsBeforeCase) }
@@ -2027,7 +2046,14 @@ public enum EvalRunner {
                 + "iters=\(transcript.iterations)"
         )
         if testCase.domain == "orchestrator" {
-            notes.append(StateCallScorecard.sourcePrefix + (transcript.stateSource ?? "none"))
+            if let sources = transcript.turnStateSources {
+                notes.append(StateCallScorecard.turnSourcesPrefix + sources.joined(separator: ","))
+            } else {
+                notes.append(StateCallScorecard.sourcePrefix + (transcript.stateSource ?? "none"))
+            }
+        }
+        for (index, text) in (transcript.turnFinalTexts ?? []).dropLast().enumerated() {
+            notes.append("turn \(index + 1) final: \(text.replacingOccurrences(of: "\n", with: " "))")
         }
         notes.append("final: \(transcript.finalText.replacingOccurrences(of: "\n", with: " "))")
 
@@ -2108,6 +2134,27 @@ public enum EvalRunner {
         }
         if !ids.isEmpty { AgentManager.shared.refresh() }
         return ids
+    }
+
+    /// Writes `files` into a fresh folder to attach to the case's chat; nil
+    /// when the case attaches none. The caller removes the folder.
+    static func seedChatWorkingFolder(_ files: [EvalCase.WorkspaceFile]?) throws -> URL? {
+        guard let files else { return nil }
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-evals-chat-folder-\(UUID().uuidString)", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            for file in files {
+                let target = folder.appendingPathComponent(file.path)
+                try FileManager.default.createDirectory(
+                    at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try workspaceFileData(file).write(to: target, options: .atomic)
+            }
+        } catch {
+            try? FileManager.default.removeItem(at: folder)
+            throw error
+        }
+        return folder
     }
 
     /// Creates the fixture teammates in a scratch folder; returns the folder

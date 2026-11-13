@@ -518,7 +518,7 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
             // Nobody was asked, so the model must not be told the user said
             // no: that reads as a decision and ends the setup it was doing.
             return ToolEnvelope.failure(
-                kind: .permissionDenied,
+                kind: .rejected,
                 message: "Configuration changes need the user's approval in the Osaurus app, "
                     + "and this run has no way to show it. Nothing was applied.",
                 tool: name,
@@ -761,7 +761,8 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
         if !workflowTemplates.isEmpty {
             result["workflow_usage"] =
                 "Workflow templates are installed by the user through the setup wizard. "
-                + "List installed workflows with {action: \"workflows\"}; run one with run_workflow."
+                + "List installed workflows with {action: \"workflows\"}; the Orchestrator runs one when the user "
+                + "asks for it in chat."
         }
         return ToolEnvelope.success(tool: name, result: result)
     }
@@ -847,11 +848,11 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
             "No workflows are installed. A trigger that needs no workflow is still an `automations` entry: a "
             + "simple text task (a quote, a reminder) takes `instructions` alone however often it fires, tool "
             + "work an existing agent + `instructions`. Only a new multi-step process (fetch, then summarize, "
-            + "then post) is designed with architect_handoff (put its trigger in the brief); the user can also "
-            + "add one in Main window → Workflows."
+            + "then post) needs a new workflow: the user asks for it in chat and the Architect designs it (with its "
+            + "trigger); the user can also add one in Main window → Workflows."
         let runUsage =
-            "Run one with orchestrator_can_run now with run_workflow {workflow: \"<name>\", input: {...}} matching "
-            + "its input_schema; the others the user must mark \"Osaurus can run this for you\" in Main window → "
+            "The Orchestrator runs one with orchestrator_can_run when the user asks for it in chat, with an input "
+            + "matching its input_schema; the others the user must mark \"Osaurus can run this for you\" in Main window → "
             + "Workflows first. A workflow with needs_setup cannot run until the user finishes setup there. To let a "
             + "custom agent call workflows, apply `agents: [{name: \"<agent>\", workflows: [\"<name>\"]}]`."
         let triggerUsage =

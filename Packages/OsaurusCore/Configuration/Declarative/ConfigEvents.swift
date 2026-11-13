@@ -789,7 +789,7 @@ enum ConfigEvents {
                     return .failure(
                         .init(
                             "\(label).agent: no custom agent named `\(raw)` exists or is created by this document. "
-                                + "Name an existing agent (osaurus_inspect list agents), bind an installed "
+                                + "Name an existing agent (osaurus_inspect {action: list, scope: agents}), bind an installed "
                                 + "`workflow` instead, or leave `agent` out so `instructions` run as one tool-less "
                                 + "model answer."))
                 }

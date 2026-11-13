@@ -239,4 +239,32 @@ struct ModelFamilyGuidanceObedienceTests {
             )
         )
     }
+
+    /// A schema with no shell or file tool gets each family block without
+    /// the lines that direct that work, and keeps the rest.
+    @Test func noWorkspaceTools_dropsShellFileAndDirectoryLines() {
+        let ids = [
+            "gpt-5", "google/gemma-3-12b-it", "gemini-2.5-pro", "qwen3-32b", "deepseek-v4",
+            "OsaurusAI/LFM2.5-8B-A1B-MXFP8", "foundation",
+        ]
+        var everyLine: [String] = []
+        for id in ids {
+            for compact in [false, true] {
+                let full = ModelFamilyGuidance.guidance(forModelId: id, compact: compact) ?? ""
+                everyLine += full.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+                let routing =
+                    ModelFamilyGuidance.guidance(forModelId: id, compact: compact, workspaceTools: false) ?? ""
+                #expect(!routing.isEmpty, "\(id)")
+                for word in ["shell", "`date`", "directory", "file", "command", "non-interactive"] {
+                    #expect(!routing.lowercased().contains(word), "\(id) compact=\(compact) keeps \(word)")
+                }
+            }
+        }
+        for prefix in ModelFamilyGuidance.workspaceLinePrefixes {
+            #expect(everyLine.contains { $0.hasPrefix(prefix) }, "stale prefix \(prefix)")
+        }
+        #expect(
+            ModelFamilyGuidance.guidance(forModelId: "google/gemma-3-12b-it", workspaceTools: false)?
+                .contains("never mention a name that isn't in your schema") == true)
+    }
 }

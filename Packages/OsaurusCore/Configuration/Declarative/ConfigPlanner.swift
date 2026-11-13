@@ -83,8 +83,8 @@ enum ConfigRisk {
     static func emptiesSpawnPool(removed: Int, customAgents: Int) -> String {
         "Empties the Orchestrator's spawn pool (`spawnable_agents` replaces the whole list; "
             + "\(removed) spawnable agent\(removed == 1 ? "" : "s") removed, \(customAgents) custom "
-            + "agent\(customAgents == 1 ? "" : "s") exist) — the Orchestrator loses `spawn_agent` "
-            + "and cannot delegate until an agent is listed again."
+            + "agent\(customAgents == 1 ? "" : "s") exist) — the Orchestrator cannot hand work to any "
+            + "custom agent until one is listed again."
     }
     static func emptiesWorkspaceSpawnPool(removed: Int) -> String {
         "Removes every teammate agent from the Orchestrator's pool (`spawnable_workspace_agents` "

@@ -288,7 +288,7 @@ public enum HandoffResult: Equatable, Sendable {
         case .awaitingUser:
             return "Ask the user `text` as written; their reply resumes the run. Then call state."
         case .needsChoice:
-            return "Call clarify with `text` as the question and `options` as the options."
+            return "Call clarify with `question` set to `text` and `options` set to `options`."
         }
     }
 

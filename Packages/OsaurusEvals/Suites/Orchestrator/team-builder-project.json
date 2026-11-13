@@ -1,0 +1,36 @@
+{
+  "id": "orchestrator.team-builder-project",
+  "domain": "orchestrator",
+  "label": "orchestrator • a question about the code project goes to Builder",
+  "query": "Look at my code project and tell me what changed in the last few commits.",
+  "notes": "Developer-Mac team: Planner, Courier, Keeper, Scout and Builder, created from the bundled templates in a scratch folder. Builder owns the project folder and takes the Code worker's asks while it is on the team, so the Orchestrator calls `run_workflow` with \"Builder\". The scratch folder is not a git repository; this case scores the route, not Builder's answer.",
+  "fixtures": {
+    "seedTeammates": [
+      "planner",
+      "courier",
+      "keeper",
+      "scout",
+      "builder"
+    ]
+  },
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "run_workflow"
+      ],
+      "mustNotCallTools": [
+        "architect_handoff",
+        "configurator_handoff"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "run_workflow",
+          "args": {
+            "workflow": "Builder"
+          }
+        }
+      ],
+      "maxIterations": 6
+    }
+  }
+}

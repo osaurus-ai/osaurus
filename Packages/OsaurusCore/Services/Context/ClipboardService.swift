@@ -109,6 +109,7 @@ public final class ClipboardService: ObservableObject {
         // Poll every 0.5 seconds for pasteboard changes
         timer = Timer.publish(every: 0.5, on: .main, in: .common)
             .autoconnect()
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.checkPasteboard()
             }

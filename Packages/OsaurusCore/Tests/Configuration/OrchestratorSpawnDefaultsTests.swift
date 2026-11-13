@@ -60,11 +60,14 @@ struct SpawnPoolAutoAddTests {
         #expect(
             SubagentConfigurationStore.snapshot().spawnableAgentIDs.contains(created.id),
             "a newly created agent must join the Default agent's spawn pool")
-        // The create result must tell the orchestrator it can act NOW.
+        // The create result says the agent is usable NOW, without naming
+        // `spawn_agent`, which is not in the Orchestrator's schema.
         let createResult = results.first { $0.section == "agents" && $0.target == name }
+        let createMessage = createResult?.message ?? ""
         #expect(
-            createResult?.message?.contains("spawn_agent") == true,
-            "create result must point at spawn_agent: \(String(describing: createResult))")
+            createMessage.contains("can hand `\(name)` work now"),
+            "create result must say the agent is usable now: \(String(describing: createResult))")
+        #expect(!createMessage.contains("spawn_agent"), "\(createMessage)")
 
         // Re-applying the same document updates (not re-creates) the agent
         // and must not duplicate the pool entry.

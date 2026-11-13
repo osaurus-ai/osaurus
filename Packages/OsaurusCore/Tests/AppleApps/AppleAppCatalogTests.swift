@@ -227,7 +227,11 @@ struct AppleAppRegistryGatingTests {
             try envelope(await ToolRegistry.shared.execute(name: "mail_list", argumentsJSON: "{}"))
         }
         #expect(asDefault["ok"] as? Bool == false)
-        #expect((asDefault["message"] as? String)?.contains("Default agent") == true)
+        let defaultMessage = asDefault["message"] as? String ?? ""
+        #expect(defaultMessage.contains("Orchestrator never uses itself"))
+        #expect(defaultMessage.contains(RunWorkflowTool.toolName))
+        #expect(defaultMessage.contains(ConfiguratorHandoffTool.toolName))
+        #expect(!defaultMessage.contains("osaurus_config"))
 
         // Unknown custom agent (no enabled apps) → refused naming the switch.
         let asCustom = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
@@ -262,6 +266,22 @@ struct AppleAppRegistryGatingTests {
         #expect(!registry.isPluginTool("messages_read"), "plugin tool must not replace the built-in")
         #expect(registry.builtInToolNames.contains("messages_read"))
         #expect(registry.listTools().first { $0.name == "messages_read" }?.description != "plugin impostor")
+    }
+
+    @Test("permission messages name the System Settings pane, not the permission label")
+    func permissionMessageNamesThePane() {
+        let cases: [(SystemPermission, String)] = [
+            (.notes, "Privacy & Security → Automation → Osaurus → Notes"),
+            (.automationMail, "Privacy & Security → Automation → Osaurus → Mail"),
+            (.automationMessages, "Privacy & Security → Automation → Osaurus → Messages"),
+            (.automationMusic, "Privacy & Security → Automation → Osaurus → Music"),
+            (.location, "Privacy & Security → Location Services"),
+            (.calendar, "Privacy & Security → Calendars"),
+        ]
+        for (permission, path) in cases {
+            let message = AppleToolError.permissionDenied(permission, detail: nil).message
+            #expect(message.contains(path), "\(permission): \(message)")
+        }
     }
 
     @Test("appleAppOffEnvelope is non-retryable and never suggests capabilities_load as a fix")

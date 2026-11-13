@@ -1,0 +1,28 @@
+{
+  "id": "orchestrator.helper-code-script",
+  "domain": "orchestrator",
+  "label": "orchestrator • writing and running a script goes to the Code helper",
+  "query": "Write a small Python script that converts 32, 68 and 100 degrees Fahrenheit to Celsius, run it, and tell me the results.",
+  "notes": "No teammates: the built-in helpers (Research, Files, Browser, Code) are the only `run_workflow` targets. Writing and running code is the Code helper's job, so the Orchestrator calls `run_workflow` with \"Code\". Scores the route only; the sandbox may be unavailable in the harness.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "run_workflow"
+      ],
+      "mustNotCallTools": [
+        "architect_handoff",
+        "configurator_handoff"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "run_workflow",
+          "args": {
+            "workflow": "Code"
+          }
+        }
+      ],
+      "maxIterations": 6
+    }
+  }
+}

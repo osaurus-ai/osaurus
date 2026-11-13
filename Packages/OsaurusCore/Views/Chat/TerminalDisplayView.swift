@@ -357,8 +357,8 @@ final class TerminalDisplayView: NSView {
         elapsedLabel.stringValue = Self.formatElapsed(0)
         elapsedTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) {
             [weak self] _ in
-            guard let self else { return }
-            MainActor.assumeIsolated {
+            onMainRunLoopTick {
+                guard let self else { return }
                 let secs = Date().timeIntervalSince(startedAt)
                 self.elapsedLabel.stringValue = Self.formatElapsed(secs)
                 self.refreshInspectionLabels()

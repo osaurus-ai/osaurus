@@ -346,7 +346,7 @@ private final class AnchoredCardCoordinator {
             updateContent(target: frame.size, isAnimating: true)
             if resizeTimer == nil {
                 let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.advanceResize() }
+                    onMainRunLoopTick { self?.advanceResize() }
                 }
                 resizeTimer = timer
                 RunLoop.main.add(timer, forMode: .common)

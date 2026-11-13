@@ -43,6 +43,16 @@ struct StateToolTests {
         #expect(!next.stale)
     }
 
+    /// A bare "Saved." read before the reply was relayed as "Done." on
+    /// answers where nothing was done.
+    @Test
+    func theSaveResultNamesTheReplyStillOwed() async {
+        let result = await Self.callState(#"{"goal":"g"}"#, sessionId: "state-saved-\(UUID().uuidString)")
+        #expect(ToolEnvelope.isSuccess(result))
+        #expect(result.contains("not news for the user"))
+        #expect(result.contains("now write your reply"))
+    }
+
     @Test
     func theLastCallInATurnWins() async {
         let registry = SessionStateRegistry.shared

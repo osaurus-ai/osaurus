@@ -661,15 +661,15 @@ enum ConfigApplier {
                     if case .resolved(let runtime)? = AgentManager.shared.effectiveHarness(for: agent.id) {
                         message =
                             "Created on harness runtime `\(runtime.displayName)`. Chat with `\(agent.name)` "
-                            + "directly; `spawn_agent` only runs agents on the built-in runtime."
+                            + "directly; the Orchestrator hands work only to agents on the built-in runtime."
                     } else if !joinsPool {
                         message =
                             "Created. `\(agent.name)` is not in the Orchestrator's delegation list "
                             + "(`orchestrator_spawnable: false`); add it in Settings → Agents → Delegation to delegate to it."
                     } else {
                         message =
-                            "Created. `\(agent.name)` is spawnable now — "
-                            + "call `spawn_agent` to run a task with it."
+                            "Created. The Orchestrator can hand `\(agent.name)` work now when the user "
+                            + "asks for it in chat."
                     }
                     if !outcome.notes.isEmpty {
                         message += " " + outcome.notes.joined(separator: " ")

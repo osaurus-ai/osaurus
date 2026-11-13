@@ -86,6 +86,18 @@ struct ConfiguratorSystemPromptBuilderTests {
         }
     }
 
+    /// A handoff like "make a Summarizer and use it on this text" must come back with the
+    /// summary undone and named, so the Orchestrator routes it instead of relaying an
+    /// answer the new agent never produced.
+    @Test
+    func leavesNonSettingsWorkToTheAssistant() {
+        for compact in [false, true] {
+            let rendered = ConfiguratorSystemPromptBuilder._renderForTests(domains: Self.domains, compact: compact)
+            #expect(rendered.contains("Do only the Osaurus part"))
+            #expect(rendered.contains("leave it undone and end with one sentence naming it"))
+        }
+    }
+
     @Test
     func listsRegisteredWriteToolsAndAppendsInstructions() {
         let rendered = ConfiguratorSystemPromptBuilder._renderForTests(domains: Self.domains)

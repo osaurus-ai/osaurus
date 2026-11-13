@@ -173,6 +173,8 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
             }
             resolvedTarget = MediaModelTarget(backend: .local, modelID: model)
             return ResolvedModel(name: model, id: model, isLocal: true)
+        } catch ImageGenerationError.invalidRequest(let message) {
+            throw SubagentError.invalidArgs(message: message)
         } catch {
             throw SubagentError.unavailable(String(describing: error))
         }

@@ -133,6 +133,15 @@ struct DefaultAgentSystemPromptBuilderTests {
             #expect(!bare.contains("`run_workflow`"))
             #expect(bare.contains("`architect_handoff`, which builds it and runs it now"))
             #expect(bare.contains("Folder chip"))
+            #expect(!bare.contains("A teammate that works in its own folder"))
+
+            // With no folder, a Downloads request still goes to the teammate
+            // that owns Downloads instead of stopping at the Folder chip.
+            let noFolder = DefaultAgentSystemPromptBuilder._renderForTests(
+                compact: compact,
+                exposure: .init(folderBound: false, runWorkflowAvailable: true))
+            #expect(noFolder.contains("Work on the user's project or folder files needs one"))
+            #expect(noFolder.contains("A teammate that works in its own folder or app"))
 
             let full = DefaultAgentSystemPromptBuilder._renderForTests(compact: compact, exposure: .full)
             #expect(full.contains("`run_workflow`"))

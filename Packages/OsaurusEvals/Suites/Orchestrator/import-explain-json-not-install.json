@@ -14,7 +14,8 @@
         "spawn_agent"
       ],
       "rubric": [
-        "Explains that it registers one remote MCP server named acme-docs at that URL so an agent can use its tools, without installing it."
+        "Explains that it registers one remote MCP server named acme-docs at that URL so an agent can use its tools.",
+        "Does not claim that anything was installed, connected, or changed."
       ],
       "maxIterations": 3
     }

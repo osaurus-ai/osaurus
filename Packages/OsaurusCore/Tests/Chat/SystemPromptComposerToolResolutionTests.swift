@@ -101,7 +101,6 @@ struct SystemPromptComposerToolResolutionTests {
         )
         FolderToolManager.shared.ensureFolderToolsRegistered()
         body(folder)
-        FolderToolManager.shared._unregisterAllForTesting()
     }
 
     private func capabilityManifestFixtureTool() -> SandboxPluginTool {
@@ -961,7 +960,6 @@ struct SystemPromptComposerToolResolutionTests {
             }
             #expect(result.contains("read only"), "\(result)")
             #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("a.txt").path))
-            FolderToolManager.shared._unregisterAllForTesting()
             _ = await AgentManager.shared.delete(id: agent.id)
         }
     }
@@ -1620,7 +1618,6 @@ struct SystemPromptComposerToolResolutionTests {
         // Rewrites the shared sandbox tool registration: hold SandboxTestLock (see sandboxPreservesEnabled…).
         await SandboxTestLock.shared.run { @MainActor in
             FolderToolManager.shared.ensureFolderToolsRegistered()
-            defer { FolderToolManager.shared._unregisterAllForTesting() }
 
             for autonomousEnabled in [false, true] {
                 for pluginCreate in [false, true] {

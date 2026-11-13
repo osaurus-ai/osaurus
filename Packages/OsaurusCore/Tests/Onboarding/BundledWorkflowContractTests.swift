@@ -45,6 +45,24 @@ struct BundledWorkflowContractTests {
         try JSONDecoder().decode(JSONValue.self, from: Data(json.utf8))
     }
 
+    // MARK: - Error phrases
+
+    /// Builder's git steps tell the writing model which tool error to look
+    /// for. The phrase must appear in what the folder tools really return.
+    @Test
+    func builderNoFolderPhrase_matchesTheToolMessage() throws {
+        let phrase = "no working folder is selected"
+        #expect(FolderToolHelpers.noActiveFolderMessage.lowercased().contains(phrase))
+        for name in ["default-workflow-repo-digest", "prepared-ask-builder-uncommitted", "prepared-ask-builder-week"] {
+            let def = try #require(try Self.template(name).workflow, "\(name)")
+            let instructions = def.nodes.compactMap { node -> String? in
+                if case .inference(let spec) = node.kind { return spec.instructions }
+                return nil
+            }
+            #expect(instructions.contains { $0.contains(phrase) }, "\(name)")
+        }
+    }
+
     // MARK: - Graph and arguments
 
     @Test

@@ -104,7 +104,6 @@ struct ConfigureToolExposureTests {
             isGitRepo: false
         )
         FolderToolManager.shared.ensureFolderToolsRegistered()
-        defer { FolderToolManager.shared._unregisterAllForTesting() }
         let tools = SystemPromptComposer.resolveTools(
             snapshot: Self.makeSnapshot(agentId: Agent.defaultId),
             executionMode: .hostFolder(folder)

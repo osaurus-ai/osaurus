@@ -113,7 +113,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// (creating intermediate directories), runs the agent loop with
         /// `executionMode: .hostFolder(<temp dir>)`, scores the
         /// `expect.agentLoop` assertions against the resulting tree, and
-        /// deletes the directory afterwards. Other domains ignore this.
+        /// deletes the directory afterwards. `orchestrator` /
+        /// `default_agent` cases attach the seeded folder to the chat, as
+        /// the Folder chip does (an empty list attaches an empty folder).
+        /// Other domains ignore this.
         public let workspaceFiles: [WorkspaceFile]?
         /// Agent-loop execution-surface override. false composes a plain Chat
         /// turn with `executionMode: .none`, which is useful for deferred
@@ -2558,6 +2561,12 @@ public struct EvalCase: Sendable, Codable, Identifiable {
         /// "A › B") must appear in what the model was given or read this run
         /// (its seed and tool results). Catches invented Settings paths.
         public let settingsPathsMustBeGrounded: Bool?
+        /// Later user messages in the same Orchestrator chat, sent in order
+        /// after `query`. Each turn sees what the Orchestrator context
+        /// policy keeps of the earlier ones and the state the previous turn
+        /// committed. Tool expectations cover every turn; `rubric` grades
+        /// the last turn's answer. Not used by `configurator` cases.
+        public let followUpTurns: [String]?
 
         public init(
             rubric: [String]? = nil,
@@ -2568,8 +2577,10 @@ public struct EvalCase: Sendable, Codable, Identifiable {
             maxIterations: Int? = nil,
             expectAutomations: [AutomationMatcher]? = nil,
             expectAutomationCount: Int? = nil,
-            settingsPathsMustBeGrounded: Bool? = nil
+            settingsPathsMustBeGrounded: Bool? = nil,
+            followUpTurns: [String]? = nil
         ) {
+            self.followUpTurns = followUpTurns
             self.rubric = rubric
             self.mustCallTools = mustCallTools
             self.mustNotCallTools = mustNotCallTools

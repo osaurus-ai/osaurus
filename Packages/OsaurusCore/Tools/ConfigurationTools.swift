@@ -548,12 +548,12 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
             } else {
                 if providerCount == 0 {
                     suggestions.append(
-                        "No cloud providers configured — search 'add provider' via capabilities_discover."
+                        "No cloud providers configured — add one with an osaurus_config `providers:` entry."
                     )
                 }
                 if installedModels.isEmpty {
                     suggestions.append(
-                        "No local models installed — search 'download model' via capabilities_discover."
+                        "No local models installed — call osaurus_inspect({action: 'list', scope: 'models', filter: 'recommended'}) for top picks; an osaurus_config `models:` entry downloads one."
                     )
                 }
             }

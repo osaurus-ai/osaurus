@@ -305,46 +305,22 @@ private let macHostPathPrefixes = [
     "/Users/", "/Volumes/", "/Applications/", "/System/", "/Library/", "/private/",
 ]
 
-/// When a `sandbox_*` path tool is handed a path that belongs to the
-/// host filesystem (not the Linux sandbox), return a hint redirecting the
-/// model to the read-only `file_*` host tools. Two signals, strongest
-/// first:
-///   1. The path is the combined-mode host workspace root or under it
-///      (`ChatExecutionContext.hostReadOnlyScope`).
-///   2. The path starts with a macOS-distinctive root the sandbox can't
-///      have.
-/// Returns nil for relative paths and for legitimate sandbox absolute
-/// paths (under the agent home, `/workspace`, generic Linux roots).
+/// When a sandbox-routed path tool is handed a path on the user's Mac,
+/// say that nothing in this chat can reach it: every workspace tool in
+/// sandbox mode runs inside the VM. Returns nil for relative paths and for
+/// legitimate sandbox absolute paths (under the agent home, `/workspace`,
+/// generic Linux roots).
 internal func hostPathRedirectHint(path: String) -> String? {
-    guard path.hasPrefix("/") else { return nil }
-
-    if let scope = ChatExecutionContext.hostReadOnlyScope {
-        let root = scope.path
-        if path == root || path.hasPrefix(root.hasSuffix("/") ? root : root + "/") {
-            return
-                "`\(path)` is on your read-only host workspace (`\(root)`), which the "
-                + "sandbox cannot see. Use `file_read` to list the directory or read "
-                + "host files, or `file_search` to search them — not `sandbox_*` tools."
-        }
-    }
-
-    if macHostPathPrefixes.contains(where: { path.hasPrefix($0) }) {
-        return
-            "`\(path)` looks like a host path outside the sandbox, which the sandbox "
-            + "cannot see. If you meant a file in your host workspace, use "
-            + "`file_read` / `file_search` instead."
-    }
-
-    return nil
+    guard path.hasPrefix("/"), macHostPathPrefixes.contains(where: { path.hasPrefix($0) }) else { return nil }
+    return hostPathOutsideSandboxMessage(path: path)
 }
 
-/// `sandbox_read_file` was pointed at a directory, so `cat` fails with
-/// "Is a directory". The model wanted to *list* it. Tell it how — and,
-/// when a read-only host workspace is mounted (combined mode), that the
-/// host workspace is listed with `file_read`, not `sandbox_*`. Catches
-/// the "I tried to read my Desktop with sandbox_read_file" slip that
-/// `hostPathRedirectHint` misses because the path is a valid sandbox
-/// directory rather than a rejected host path.
+private func hostPathOutsideSandboxMessage(path: String) -> String {
+    "`\(path)` looks like a path on the user's Mac. This chat works inside the sandbox, which cannot see "
+        + "the Mac, and no tool here can reach that path. If the user wants it used, ask them to attach "
+        + "that folder with the Folder chip."
+}
+
 /// Refusal envelope for a raw sandbox read of a binary document package
 /// (PDF, Word, Excel, PowerPoint, …). The sandbox route has no document
 /// extraction — that lives on the host `file_read` route, which is
@@ -390,41 +366,13 @@ internal func sandboxBinaryDocumentRefusal(path: String, tool: String) -> String
     )
 }
 
+/// A sandbox read was pointed at a directory, so `cat` fails with
+/// "Is a directory". The model wanted to *list* it.
 internal func sandboxDirectoryReadHint(stderr: String) -> String? {
     guard stderr.lowercased().contains("is a directory") else { return nil }
-    var hint =
+    return
         "That path is a directory, not a file. To list a directory inside the "
         + "sandbox, use `file_read` or `file_search` with `target=\"files\"`."
-    if ChatExecutionContext.hostReadOnlyScope != nil {
-        hint +=
-            " To list your read-only host workspace instead, use `file_read` — "
-            + "the sandbox cannot see the host workspace."
-    }
-    return hint
-}
-
-/// Combined host-read mode only: an empty `sandbox_search_files` rooted at
-/// the sandbox home usually means the model searched the (separate, often
-/// empty) Linux sandbox when it meant the host workspace — exactly the
-/// "what's in my Desktop?" → `sandbox_search_files` slip. The sandbox
-/// tools succeed emptily here, so there's no rejection to hook
-/// `hostPathRedirectHint` onto; this soft warning provides the missing
-/// signal. Narrowly gated (combined mode + home-root + empty result) so a
-/// real, legitimately-empty sandbox search elsewhere is never nagged.
-internal func hostWorkspaceSearchRedirectHint(resolvedPath: String, home: String) -> String? {
-    guard ChatExecutionContext.hostReadOnlyScope != nil else { return nil }
-    func normalize(_ p: String) -> String {
-        var s = p
-        if s.hasSuffix("/.") { s = String(s.dropLast(2)) }
-        while s.count > 1 && s.hasSuffix("/") { s = String(s.dropLast()) }
-        return s
-    }
-    guard normalize(resolvedPath) == normalize(home) else { return nil }
-    return
-        "No matches — this searched your sandbox home, which is separate "
-        + "from (and usually empty compared to) your read-only host workspace. "
-        + "If you meant your workspace, use `file_read` to list it or "
-        + "`file_search` to search it."
 }
 
 // MARK: - Combined-mode file routing
@@ -885,21 +833,16 @@ internal func shellWorkingDirectoryHint(
         + "Omit the leading `cd` unless an out-of-workspace read is intentional."
 }
 
-/// Combined-mode backstop for the one read surface that can't be
-/// path-routed: a raw `sandbox_exec` command (`ls`/`cat` a `/Users/...`
-/// path) still hits the Linux sandbox, which has no copy of the host
-/// workspace, so it fails or comes back empty. The unified `file_*` tools
-/// cover everything else; this redirect catches the model that reached for
-/// the shell anyway. Gated on combined mode + a macOS host path in the
-/// command + a missing-file/empty signal so legitimate sandbox commands
-/// are never nagged.
+/// A shell command that named a `/Users/...`-style path ran inside the Linux
+/// sandbox, which has no copy of the Mac's files, so it failed or came back
+/// empty. Gated on a macOS host path in the command plus a missing-file or
+/// empty signal so legitimate sandbox commands are never nagged.
 internal func sandboxExecHostPathHint(
     command: String,
     exitCode: Int32,
     stderr: String
 ) -> String? {
-    guard ChatExecutionContext.hostReadOnlyScope != nil else { return nil }
-    guard macHostPathPrefixes.contains(where: { command.contains($0) }) else { return nil }
+    guard let path = macHostPath(in: command) else { return nil }
     let lowered = stderr.lowercased()
     let looksMissing =
         exitCode != 0
@@ -908,10 +851,17 @@ internal func sandboxExecHostPathHint(
             || lowered.contains("cannot access")
             || lowered.isEmpty)
     guard looksMissing else { return nil }
-    return
-        "That path looks like a host path outside the sandbox, which it can't "
-        + "see. To read your read-only host workspace, use `file_read` "
-        + "(reads files, lists directories) / `file_search` — not `shell_run`."
+    return hostPathOutsideSandboxMessage(path: path)
+}
+
+/// The first whitespace-delimited token in `command` that starts with a
+/// macOS-distinctive root, quotes stripped.
+private func macHostPath(in command: String) -> String? {
+    for token in command.split(whereSeparator: { $0 == " " || $0 == "\t" || $0 == "\n" }) {
+        let trimmed = token.trimmingCharacters(in: CharacterSet(charactersIn: "\"'`;|&()<>"))
+        if macHostPathPrefixes.contains(where: { trimmed.hasPrefix($0) }) { return trimmed }
+    }
+    return nil
 }
 
 /// Lowercased stderr fragments that mark a shell-parse failure (as
@@ -1993,16 +1943,6 @@ private struct SandboxSearchFilesTool: OsaurusTool, @unchecked Sendable {
         }
     }
 
-    /// When a search comes back empty, surface the combined-mode
-    /// host-workspace redirect (if applicable) as a soft warning.
-    private func emptySearchWarnings(matches: String, resolved: String) -> [String]? {
-        guard matches.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
-        guard let hint = hostWorkspaceSearchRedirectHint(resolvedPath: resolved, home: home) else {
-            return nil
-        }
-        return [hint]
-    }
-
     /// Shared success shaping for both search targets: flags a result set
     /// that hit the `head -N` cut with `truncated: true` plus a narrowing
     /// hint, so the model knows the match list is incomplete instead of
@@ -2022,7 +1962,7 @@ private struct SandboxSearchFilesTool: OsaurusTool, @unchecked Sendable {
             "path": resolved,
             "matches": matches,
         ]
-        var warnings = emptySearchWarnings(matches: matches, resolved: resolved) ?? []
+        var warnings: [String] = []
         if truncated {
             payload["truncated"] = true
             warnings.append(

@@ -240,6 +240,12 @@ struct SoulSectionTests {
                 autonomousExec: AutonomousExecConfig(enabled: true)
             )
             AgentManager.shared.add(agent)
+            BuiltinSandboxTools.register(
+                agentId: agent.id.uuidString,
+                agentName: agent.name,
+                config: AutonomousExecConfig(enabled: true)
+            )
+            defer { ToolRegistry.shared.unregisterAllSandboxTools() }
             let linuxName = SandboxAgentProvisioner.linuxName(for: agent.id.uuidString)
             let agentDir = OsaurusPaths.containerAgentDir(linuxName)
             try? FileManager.default.createDirectory(

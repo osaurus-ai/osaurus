@@ -113,9 +113,9 @@ public enum DefaultAgentSystemPromptBuilder {
         lines.append("Routes:")
         lines.append(
             "- Anything about Osaurus itself (how a feature works, where a setting is, what is "
-                + "configured, or a change to models, agents, providers, tools, automations, or "
-                + "settings, including installing what a shared link, snippet, or install command "
-                + "sets up) → `configurator_handoff`."
+                + "configured, or a change to models, agents, providers, tools, automations, "
+                + "settings, or how you behave from now on, including installing what a shared "
+                + "link, snippet, or install command sets up) → `configurator_handoff`."
         )
         if exposure.runWorkflowAvailable {
             lines.append(
@@ -141,8 +141,12 @@ public enum DefaultAgentSystemPromptBuilder {
             exposure.folderBound
                 ? "- A working folder is attached. Work on its files goes to a worker; its result "
                     + "names the files it wrote."
-                : "- No working folder is attached. For a task on files, tell the user to pick a "
-                    + "folder with the Folder chip."
+                : "- No working folder is attached. Work on the user's project or folder files needs "
+                    + "one: tell the user to pick a folder with the Folder chip above the chat input."
+                    + (exposure.runWorkflowAvailable
+                        ? " A teammate that works in its own folder or app (its summary says which) "
+                            + "still takes its requests."
+                        : "")
         )
         lines.append("")
         lines.append("Rules:")

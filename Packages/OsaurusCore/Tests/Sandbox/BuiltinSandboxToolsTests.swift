@@ -1688,12 +1688,10 @@ struct BuiltinSandboxToolsTests {
     }
 
     /// Host-vs-sandbox confusion regression: a small model handed a host
-    /// filesystem path to `sandbox_read_file`. The rejection must redirect
-    /// it to the `file_*` host tools instead of just saying "outside the
-    /// agent home". (`ToolRegistry.execute` rebinds `hostReadOnlyScope`
-    /// from its own combined-mode policy, which is nil in this harness, so
-    /// the broad macOS-path branch produces the redirect here; the precise
-    /// workspace-scope wording is pinned in `HostPathRedirectTests`.)
+    /// filesystem path to `sandbox_read_file`. The rejection must say the
+    /// sandbox cannot reach the Mac and point at the Folder chip, never at
+    /// `file_read`, which runs inside the same VM in sandbox mode. The full
+    /// wording is pinned in `HostPathRedirectTests`.
     @Test @MainActor
     func sandboxReadFile_hostPathRedirectsToFileTools() async throws {
         let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
@@ -1709,7 +1707,8 @@ struct BuiltinSandboxToolsTests {
         let payload = try failurePayload(output)
         #expect(payload["kind"] as? String == "invalid_args")
         let message = payload["message"] as? String ?? ""
-        #expect(message.contains("file_read"))
+        #expect(message.contains("Folder chip"))
+        #expect(!message.contains("file_read"))
 
         // The read must NOT have run against the sandbox.
         let calls = await runner.calls

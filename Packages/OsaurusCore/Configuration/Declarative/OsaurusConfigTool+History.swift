@@ -138,7 +138,7 @@ extension OsaurusConfigTool {
     func handleRevert(_ args: [String: Any]) async -> String {
         if ChatExecutionContext.hasRemoteReviewer {
             return ToolEnvelope.failure(
-                kind: .permissionDenied,
+                kind: .rejected,
                 message: "Reverting configuration is started from Osaurus on the Mac. Nothing was changed.",
                 tool: name, retryable: false)
         }
