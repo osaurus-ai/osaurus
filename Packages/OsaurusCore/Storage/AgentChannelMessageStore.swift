@@ -675,9 +675,19 @@ public final class AgentChannelMessageStore: @unchecked Sendable {
     }
 
     private func migrateToV3() throws {
-        try executeRaw(
-            "ALTER TABLE channel_messages ADD COLUMN attachments_json TEXT NOT NULL DEFAULT '[]'"
-        )
+        // Stores converted by an older build lost `user_version` and re-run
+        // this step with the column already there.
+        var found = false
+        try executeRaw("PRAGMA table_info(channel_messages)") { stmt in
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let name = sqlite3_column_text(stmt, 1), String(cString: name) == "attachments_json" { found = true }
+            }
+        }
+        if !found {
+            try executeRaw(
+                "ALTER TABLE channel_messages ADD COLUMN attachments_json TEXT NOT NULL DEFAULT '[]'"
+            )
+        }
         try setSchemaVersion(3)
     }
 

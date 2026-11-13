@@ -318,6 +318,9 @@ public actor StorageExportService {
             let msg = String(cString: sqlite3_errmsg(src))
             return .failure(StorageExportError.writeFailed("export: \(msg)"))
         }
+        if let failure = StorageFormatConverter.copyHeaderPragmas(on: src, into: "plaintext") {
+            return .failure(StorageExportError.writeFailed("export: \(failure)"))
+        }
         return .success(())
     }
 
