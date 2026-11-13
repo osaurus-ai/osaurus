@@ -2867,8 +2867,13 @@ public enum SettingsSearchIndex {
             tab: .privacy,
             section: "Data & Storage",
             title: "Encrypt Local Data at Rest",
-            keywords: ["sqlcipher", "encryption", "filevault", "at rest", "storage key", "backup", "data & storage", "storage"],
-            subTab: "storage"
+            keywords: [
+                "sqlcipher", "encryption", "filevault", "at rest", "storage key", "backup", "data & storage", "storage",
+                "conversations encrypted", "rotate storage key",
+            ],
+            subTab: "storage",
+            disambiguation:
+                "Covers local stores such as memory, knowledge, tasks and attachments. Synced conversations are always encrypted with their own key, whether or not this is on."
         ),
         .init(
             id: "storage.fileHistory.retention",

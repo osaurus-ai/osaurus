@@ -58,9 +58,12 @@ When that happened, `StorageKeyManager.currentKey()` threw `keyUnavailableForExi
 | Another logged-in user on the same Mac reading your files | Filesystem permissions only (`~/.osaurus` is user-owned); **not** cryptographically separated | Cryptographically separated — the DEK is scoped to your account |
 | You don't use FileVault | Data is readable from the raw disk | Encrypted at rest regardless of FileVault |
 | Backups / Time Machine / cloud sync of `~/.osaurus` | Copied as plaintext | Copied as ciphertext |
+| Another process or agent running as **your** user (a coding agent, a script, a malicious package) | Readable — they have the same file access you do | Files on disk are ciphertext, but a process running as you can still ask the Keychain for the key; macOS may prompt, and a user who clicks **Always Allow** grants it |
 | Keychain key lost (migration, re-sign, wipe) | **No impact** — nothing depends on the key | Encrypted stores can't be opened until the key is restored or the store is reset |
 
-Plain-language summary: **plaintext is the most reliable option and is well-protected if FileVault is on.** Turn on SQLCipher if you share the Mac account, don't run FileVault, or sync/back up `~/.osaurus` to a place you don't fully trust — and keep a plaintext backup in case the key is ever lost.
+Plain-language summary: **plaintext is the most reliable option and is well-protected if FileVault is on.** Turn on SQLCipher if you share the Mac account, don't run FileVault, run tools or agents that read files under your account, or sync/back up `~/.osaurus` to a place you don't fully trust — and keep a plaintext backup in case the key is ever lost.
+
+Conversations are the exception: they live in the osaurus-sync store, which is always encrypted with its own Keychain key whatever this setting says (see [SYNC.md](SYNC.md)).
 
 ---
 
@@ -97,16 +100,28 @@ To back up your data in plaintext (for example, before reinstalling macOS), open
 
 | Artifact | Default (plaintext) | Opt-in (encrypted) | On-disk location |
 |---|---|---|---|
-| Conversations | osaurus-sync (see [SYNC.md](SYNC.md)) | osaurus-sync | `~/.osaurus/sync/` |
+| Conversations | osaurus-sync, always encrypted with its own key (see [SYNC.md](SYNC.md)) | osaurus-sync, always encrypted with its own key | `~/.osaurus/sync/` |
+| Sync session state (per-chat local state, host runs, served deliveries) | plaintext JSON | AES-GCM (`.osec`) | `~/.osaurus/sync-local/` |
 | Pre-sync chat history (read-only import source and backup) | SQLite | SQLCipher | `~/.osaurus/chat-history/history.sqlite` |
+| File history (snapshots of files agents changed) | SQLite | SQLCipher | `~/.osaurus/file-history/history.sqlite` |
 | Router billing ledger | SQLite | SQLCipher | `~/.osaurus/billing/ledger.sqlite` |
 | Memory (identity, pinned facts, episodes, transcript, FTS5 mirrors) | SQLite | SQLCipher | `~/.osaurus/memory/memory.sqlite` |
+| Knowledge index (document text) | SQLite | SQLCipher | `~/.osaurus/knowledge/knowledge.sqlite` |
+| Knowledge write log (prior content of every agent edit) | SQLite | SQLCipher | `~/.osaurus/knowledge/write_log.sqlite` |
 | Methods catalog | SQLite | SQLCipher | `~/.osaurus/methods/methods.sqlite` |
 | Tool index | SQLite | SQLCipher | `~/.osaurus/tool-index/tool_index.sqlite` |
+| Tasks | SQLite | SQLCipher | `~/.osaurus/tasks/tasks.sqlite` |
+| Automation runs | SQLite | SQLCipher | `~/.osaurus/events/runs.sqlite` |
+| Workflow runs | SQLite | SQLCipher | `~/.osaurus/workflows/runs.sqlite` |
+| Agent channel messages | SQLite | SQLCipher | `~/.osaurus/agent-channels/messages.sqlite` |
+| Insights activity log | SQLite | SQLCipher | `~/.osaurus/activity/activity.sqlite` |
+| Configuration history | SQLite | SQLCipher | `~/.osaurus/config/history.sqlite` |
 | Per-plugin databases | SQLite | SQLCipher | `~/.osaurus/Tools/<plugin-id>/data/data.db` |
 | Per-agent database (opt-in feature) | SQLite | SQLCipher | `~/.osaurus/agents/<uuid>/db.sqlite` |
 | Self-scheduling slots | SQLite | SQLCipher | `~/.osaurus/scheduler.sqlite` |
 | Large chat attachments | plaintext blob | AES-GCM (`.osec`) | `~/.osaurus/chat-history/blobs/<sha256>` |
+
+Every database here is listed in [`StorageDatabaseCatalog`](../Packages/OsaurusCore/Storage/StorageDatabaseCatalog.swift), which convergence, key rotation, plaintext export and the storage key's fail-closed guard all read. `StorageDatabaseCatalogTests` fails if an `OsaurusPaths` database helper is left out of it.
 
 **Attachment spillover.** Every `Attachment.image` or `Attachment.document` payload greater than or equal to **16 KB** is hashed (SHA-256, content-addressed so duplicates dedup) and written to its own file via [`AttachmentBlobStore`](../Packages/OsaurusCore/Storage/AttachmentBlobStore.swift). In plaintext mode the blob is written raw; in encrypted mode it is written as an AES-GCM `.osec` twin. Reads are detection-first (sniff the file, prefer the plaintext twin, fall back to `.osec`) via [`EncryptedFileStore`](../Packages/OsaurusCore/Storage/EncryptedFileStore.swift), so a posture change never strands existing blobs. The chat row stores only `{ "ref": "<sha256>", ... }`. Smaller payloads stay inline in the row.
 
@@ -117,7 +132,9 @@ To back up your data in plaintext (for example, before reinstalling macOS), open
 - The encryption posture marker `~/.osaurus/.storage-encryption.json` (it cannot be encrypted — see [Overview](#overview)).
 - JSON config under `~/.osaurus/config/`, `agents/`, `providers/`, `schedules/`, `watchers/`, `skills/` that is read as raw JSON by various consumers. (In encrypted mode, sensitive app-layer artifacts that go through `EncryptedFileStore` are wrapped; pure config that must be world-readable JSON stays plaintext.)
 - Plugin manifests under `~/.osaurus/sandbox-plugins/`.
-- Vector index files under `~/.osaurus/memory/vectura/<agentId>/`. These are rebuilt from the SQLite source on demand; see [Limitations](#limitations-and-trade-offs).
+- Vector index files under `~/.osaurus/memory/vectura/<agentId>/` and the knowledge collection vectors under `~/.osaurus/knowledge/vectura/<collectionId>/`. These are rebuilt from the SQLite source on demand; see [Limitations](#limitations-and-trade-offs).
+- The sync importer's ledger `~/.osaurus/sync-local/legacy-import.json` (session ids only).
+- Knowledge collection folders (the markdown source of truth the knowledge index is built from), the collection registry under `~/.osaurus/knowledge/collections/`, and any folder you point a collection at.
 
 ---
 
@@ -142,7 +159,13 @@ For each database in [`StorageDatabaseCatalog`](../Packages/OsaurusCore/Storage/
 - **encrypted → plaintext** (the default migration off SQLCipher): decrypt in place using SQLCipher's `sqlcipher_export` into a temporary file, fsync, atomically replace the original, then remove the `-wal`/`-shm` sidecars.
 - **plaintext → encrypted** (opt-in): the inverse — export into a new SQLCipher database keyed with the DEK, then atomically replace.
 
-Convergence reuses the proven rotation machinery: it parks new opens on [`StorageMutationGate`](../Packages/OsaurusCore/Storage/StorageMutationGate.swift), closes every live handle, performs the conversions off the main actor, **releases the gate, then reopens** the handles (so a re-opening handle never deadlocks waiting on a still-held gate). Attachment blobs and `.osec` trees converge alongside the databases.
+`sqlcipher_export` copies schema and rows but not the header, so both directions (and the plaintext backup) copy `user_version` and `application_id` across explicitly. Every store gates its migrations on `user_version`; older builds dropped it, which re-ran migrations on the next open and left stores with a non-idempotent step (Tasks' `ADD COLUMN`) unable to open. Those `ADD COLUMN` steps now skip a column that is already there, so stores converted by an older build open again.
+
+Convergence parks new opens on [`StorageMutationGate`](../Packages/OsaurusCore/Storage/StorageMutationGate.swift), closes every live handle, performs the conversions off the main actor, **releases the gate, then reopens** the handles (so a re-opening handle never deadlocks waiting on a still-held gate). Attachment blobs and the `sync-local/` state files converge alongside the databases (the importer ledger is left raw); when both twins of a file exist, the one already in the target format wins.
+
+**The key comes first.** Encrypting needs the DEK, so turning the toggle on resolves (or creates) it before the posture marker changes. If the Keychain can't produce a key — locked, a write refused, or encrypted data already on disk whose key is gone — the toggle reports the reason and the posture stays as it was. Convergence that can't get the key reports every store it couldn't convert, records a `storage-key` issue in `PersistenceHealth` (shown on the Data & Storage panel), and launch logs it instead of silently skipping the storage-dependent services.
+
+A new key is minted only when no encrypted artifact exists on disk: the guard in `StorageKeyManager.currentKey()` sniffs every catalog database with `StorageFileFormat` and looks for `.osec` files. The `.storage-key.provisioned` marker is diagnostic only and no longer blocks a fresh key on an install whose data is all plaintext ([#3385](https://github.com/osaurus-ai/osaurus/issues/3385)).
 
 The process is **idempotent and crash-safe**: it's re-runnable, and because opening is detection-first, a partially converged tree recovers on the next launch — each file is opened according to what it actually is on disk.
 
@@ -197,8 +220,9 @@ For users who want their DEK reproducible across devices via the iCloud-synced I
 
 | Operation | Effect |
 |---|---|
-| `rotate()` | Generate a fresh CSPRNG key, persist it to Keychain, return both old + new keys. The export service re-keys every database before unblocking the gate. |
+| `rotate()` | Generate and persist a fresh CSPRNG key without re-encrypting anything. Low-level; the Settings rotation goes through `StorageExportService.rotateStorageKey()` instead. |
 | `install(key:)` | Replace the Keychain entry with a caller-provided key (used inside `rotateStorageKey`). |
+| `stagePendingRotationKey(_:)` / `clearPendingRotationKey()` | Hold the key a rotation is moving to in the Keychain (`data-encryption-key.pending`) until every artifact is under one key again. |
 | `wipeCache()` | Clear in-process cache only; Keychain entry remains. |
 | `resetForWipe()` | Delete the Keychain key + salt + sidecar and clear the cache. **Irreversible without the original key or a plaintext backup.** |
 
@@ -222,11 +246,13 @@ Writes a plaintext copy of every database, attachment, and config under `~/.osau
 
 ### Rotate storage key (encrypted mode only)
 
-Shown only when encryption is on. Generates a fresh DEK and re-keys every registered database in place via [`StorageExportService.rotateStorageKey()`](../Packages/OsaurusCore/Storage/StorageExportService.swift). Rotation is a no-op / disabled in plaintext mode (there is no key to rotate).
+Shown only when encryption is on. Generates a fresh DEK and re-keys every encrypted catalog database and `.osec` file in place via [`StorageExportService.rotateStorageKey()`](../Packages/OsaurusCore/Storage/StorageExportService.swift). Plaintext stores are skipped. Rotation is disabled in plaintext mode (there is no key to rotate).
+
+Rotation is two-phase. The new key is staged in the Keychain as the pending key before anything is re-encrypted; if a rekey, rewrap or the final install fails, everything already moved is put back under the old key and the pending key is dropped. If Osaurus quits or crashes part-way, the next launch finds the pending key and moves every database and file still under it back to the current key before convergence runs, then drops it.
 
 ### Stores needing attention
 
-Appears only when one or more stores failed to open this session. Lists each degraded store with its classified cause and **Retry** / **Reset** actions (see [Recovery](#recovery)).
+Appears only when one or more stores failed to open this session. Lists each degraded store with its classified cause and **Retry** / **Reset** actions (see [Recovery](#recovery)). A storage key that can't be read is shown on the Encryption card instead, since it isn't a single store to retry or reset.
 
 ---
 
@@ -253,10 +279,14 @@ State is persisted in `~/.osaurus/.storage-maintenance.json`. The first load sta
 | `~/.osaurus/.storage-encryption.json` | Desired at-rest posture marker (always plaintext) |
 | `~/.osaurus/.storage-maintenance.json` | Last `optimize` / `checkpoint` / `vacuum` timestamps |
 | `~/.osaurus/.storage-key.salt` | HKDF salt sidecar (only present when DEK is master-derived) |
+| `~/.osaurus/.storage-key.provisioned` | Diagnostic marker: a key was created on this install at some point. Never decides whether a new key may be minted |
+| `~/.osaurus/.storage-key.rotating` | Present only while a key rotation is staged; launch checks it before looking for a pending key, so plaintext installs never read the Keychain at startup |
 | `~/.osaurus/quarantine/` | Unreadable stores moved here by Reset recovery (never deleted) |
 | `~/.osaurus/billing/ledger.sqlite` | Router billing ledger (SQLite, or SQLCipher when encrypted) |
-| `~/.osaurus/sync/` | Conversations, in the osaurus-sync core's data directory (see [SYNC.md](SYNC.md)) |
+| `~/.osaurus/sync/` | Conversations, in the osaurus-sync core's data directory, always encrypted with its own key (see [SYNC.md](SYNC.md)) |
+| `~/.osaurus/sync-local/` | Per-chat sync session state (plaintext JSON, or `.osec` when encrypted) and the importer ledger (always plaintext) |
 | `~/.osaurus/chat-history/history.sqlite` | Pre-sync chat database, read-only: imported into sync once and kept as a backup (SQLite, or SQLCipher when encrypted) |
+| `~/.osaurus/knowledge/knowledge.sqlite`, `write_log.sqlite` | Knowledge index and agent-edit write log (SQLite, or SQLCipher when encrypted) |
 | `~/.osaurus/chat-history/blobs/<sha256>` | Cached large attachments (plaintext blob, or `.osec` when encrypted) |
 | `~/.osaurus/memory/memory.sqlite` | Memory database (SQLite, or SQLCipher when encrypted) |
 | `~/.osaurus/memory/vectura/<agentId>/` | Per-agent VecturaKit vector index (plaintext, see Limitations) |

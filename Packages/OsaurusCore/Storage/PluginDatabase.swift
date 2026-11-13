@@ -95,8 +95,9 @@ final class PluginDatabase: @unchecked Sendable {
     // MARK: - Lifecycle
 
     /// Opens an in-memory SQLite database (for tests). **Plaintext** —
-    /// production plugin DBs are SQLCipher-encrypted using the
-    /// shared storage key, transparently to plugin SQL. Honors the
+    /// production plugin DBs follow the storage posture (SQLCipher with
+    /// the shared storage key when encryption is on), transparently to
+    /// plugin SQL. Honors the
     /// `maxBytes` cap so size-limit tests can exercise the same
     /// `applyMaxPageCount` path as production.
     func openInMemory() throws {

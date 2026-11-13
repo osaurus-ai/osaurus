@@ -566,9 +566,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // MemorySearchService.initialize() needs it for reverse maps.
         // MetalGate serializes CoreML/MLX at runtime; this task is only held
         // for startup sequencing of orphan recovery + activity tracking below.
-        // Databases are created/opened already SQLCipher-encrypted via
-        // `EncryptedSQLiteOpener`; each `*Database.shared.open()` only parks
-        // on `StorageMutationGate` while a key rotation is in flight.
+        // Databases open through `OsaurusStorageOpener`, which sniffs each
+        // file and only asks for the key when it is SQLCipher-encrypted; each
+        // `*Database.shared.open()` parks on `StorageMutationGate` while
+        // convergence or a key rotation is in flight.
         let embeddingInitTask = Task.detached(priority: .utility) {
             // Converge on-disk storage to the selected posture (default:
             // plaintext) before opening anything. For existing encrypted
@@ -585,10 +586,20 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             // thread inside the synchronous Keychain read. In plaintext mode
             // no key is required, so storage-dependent services always come up.
             if StorageEncryptionPolicy.shared.isEncryptionEnabled {
-                try? await StorageKeyManager.shared.prewarmCurrentKeyOffCooperativeExecutor()
+                var prewarmError: Error?
+                do {
+                    try await StorageKeyManager.shared.prewarmCurrentKeyOffCooperativeExecutor()
+                } catch {
+                    prewarmError = error
+                }
                 guard StorageKeyManager.shared.hasCachedKey else {
                     MemoryLogger.database.error(
                         "Storage-dependent search/index services disabled — storage key is not already unlocked"
+                    )
+                    // Memory, methods, file history and the tool index stay
+                    // closed; say so in Data & Storage and /health.
+                    StorageMigrationCoordinator.recordKeyUnavailable(
+                        prewarmError ?? StorageKeyError.keyUnavailableForExistingData
                     )
                     return
                 }

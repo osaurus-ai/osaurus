@@ -259,6 +259,7 @@ struct SettingsSearchSelfFindProbe {
             ("Sources", "storage.location"),
             ("Data & Storage", "storage.encryption"),
             ("Encrypt Local Data at Rest", "storage.encryption"),
+            ("Rotate Storage Key", "storage.encryption"),
             ("Factory Reset", "settings.general.reset"),
             // Command Line Tool moved to Server → Overview.
             ("Command Line Tool", "server.cli"),
