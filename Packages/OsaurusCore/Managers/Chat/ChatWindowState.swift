@@ -271,7 +271,12 @@ final class ChatWindowState: ObservableObject {
     /// (the persisted `chatSidebarWidth` default only updates on release),
     /// so the tab strip tracks the rail's edge without lagging it. Mirror
     /// of `inspectorColumnWidth`.
-    @Published var sidebarColumnWidth: CGFloat = 0
+    @Published var sidebarColumnWidth: CGFloat = 0 {
+        didSet { if sidebarColumnWidth > 0 { lastDockedSidebarColumnWidth = sidebarColumnWidth } }
+    }
+    /// The rail's width the last time it was docked, so a toggle can publish
+    /// the width it is animating to in its own transaction.
+    private var lastDockedSidebarColumnWidth: CGFloat = 0
 
     /// Width class of the window's content area (`ChatView` sets it from
     /// its geometry through `updateShellBreakpoint`). Compact windows turn
@@ -358,6 +363,16 @@ final class ChatWindowState: ObservableObject {
             return
         }
         showSidebar.toggle()
+        // ChatView republishes the laid-out width afterwards; setting it here
+        // moves the tab strip in the same animation as the rail instead of
+        // one render pass later.
+        if !isSidebarAutoHidden, mainSurface == .chat {
+            if !showSidebar {
+                sidebarColumnWidth = 0
+            } else if lastDockedSidebarColumnWidth > 0 {
+                sidebarColumnWidth = lastDockedSidebarColumnWidth
+            }
+        }
     }
 
     /// Drives the "a local model is already running in another window" alert

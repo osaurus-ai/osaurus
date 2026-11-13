@@ -92,31 +92,92 @@ struct BundledWorkflowContractTests {
 
     // MARK: - Code steps on real result shapes
 
-    /// `search_and_extract` per query, collected by the map: an extracted
-    /// page carries `markdown`, a page that could not be read only its
-    /// `snippet`, and a query whose every extraction failed lands in `failed`.
+    /// `web_search` per query, collected by the map: the pages to open
+    /// alternate between the queries' results, a repeated URL is opened
+    /// once, at most five are opened, and a failed query's error loses its
+    /// "tool failed (kind):" prefix.
     @Test
-    func researchBrief_readsExtractedMarkdown_fallsBackToTheSnippet_andPassesSearchErrorsOn() async throws {
+    func researchBrief_picksPagesAcrossTheQueries_andKeepsTheSearchErrors() async throws {
         let search = try Self.decode(
             """
-            {"count": 1, "failed": [{"index": 1, "error": "Every page failed to load. Check Settings → Search."}],
-             "items": [{"query": "q", "results": [
-               {"url": "https://a.test/1", "title": "One", "snippet": "short one", "extracted": true,
-                "markdown": "# One\\nThe full page.", "extract_status": "ok"},
-               {"url": "https://b.test/2", "title": "Two", "snippet": "only a snippet", "extracted": false,
-                "markdown": "", "extract_status": "failed"},
-               {"url": "https://a.test/1", "title": "One again", "snippet": "dup", "extracted": true, "markdown": "dup"}
-             ]}]}
+            {"count": 2, "failed": [{"index": 2, "error": "web_search failed (not_found): No results from any search provider. Try a broader query."}],
+             "items": [
+               {"query": "q1", "results": [
+                 {"url": "https://a.test/1", "title": "A1", "snippet": "a one"},
+                 {"url": "https://a.test/2", "title": "A2", "snippet": "a two"},
+                 {"url": "https://a.test/3", "title": "A3", "snippet": "a three"},
+                 {"url": "https://a.test/4", "title": "A4", "snippet": "a four"}]},
+               {"query": "q2", "results": [
+                 {"url": "https://a.test/1", "title": "dup", "snippet": "dup"},
+                 {"url": "https://b.test/1", "title": "B1", "snippet": "b one"}]},
+               null]}
             """)
         let out = try await Self.runCode(
-            "default-workflow-research-brief", node: "pages", input: .object(["search": search]))
+            "default-workflow-research-brief", node: "pick", input: .object(["search": search]))
+        let targets = try #require(out.objectValue?["targets"]?.arrayValue)
+        #expect(
+            targets.compactMap { $0.objectValue?["url"]?.stringValue }
+                == ["https://a.test/1", "https://a.test/2", "https://b.test/1", "https://a.test/3", "https://a.test/4"])
+        #expect(targets.first?.objectValue?["snippet"] == .string("a one"))
+        #expect(
+            out.objectValue?["errors"]
+                == .array([.string("No results from any search provider. Try a broader query.")]))
+    }
+
+    /// `search_and_extract` per picked page: an opened page carries its
+    /// `markdown`; a page that could not be opened, whether its call failed
+    /// or it came back unread, keeps its search snippet.
+    @Test
+    func researchBrief_readsOpenedPages_andFallsBackToTheSnippet() async throws {
+        let targets = try Self.decode(
+            """
+            [{"url": "https://a.test/1", "title": "One", "snippet": "short one"},
+             {"url": "https://b.test/2", "title": "Two", "snippet": "only a snippet"},
+             {"url": "https://c.test/3", "title": "Three", "snippet": "blocked"},
+             {"url": "https://d.test/4", "title": "Four", "snippet": ""}]
+            """)
+        let extract = try Self.decode(
+            """
+            {"count": 3, "failed": [{"index": 2, "error": "search_and_extract failed (execution_error): No page content"}],
+             "items": [
+               {"mode": "direct_url", "results": [{"url": "https://a.test/1", "title": "One, full", "extracted": true,
+                 "markdown": "# One\\nThe full page.", "extract_status": "ok"}]},
+               {"mode": "direct_url", "results": [{"url": "https://b.test/2", "extracted": false, "extract_status": "challenge"}]},
+               null, null]}
+            """)
+        let out = try await Self.runCode(
+            "default-workflow-research-brief", node: "pages",
+            input: .object(["targets": targets, "errors": .array([]), "extract": extract]))
         let pages = try #require(out.objectValue?["pages"]?.arrayValue)
-        #expect(pages.count == 2, "a repeated URL is read once")
-        #expect(pages.first?.objectValue?["text"] == .string("# One\nThe full page."))
-        #expect(pages.first?.objectValue?["read"] == .bool(true))
-        #expect(pages.last?.objectValue?["text"] == .string("only a snippet"))
-        #expect(pages.last?.objectValue?["read"] == .bool(false))
-        #expect(out.objectValue?["errors"] == .array([.string("Every page failed to load. Check Settings → Search.")]))
+        #expect(pages.count == 3, "a page with neither text nor snippet is left out")
+        #expect(pages[0].objectValue?["text"] == .string("# One\nThe full page."))
+        #expect(pages[0].objectValue?["title"] == .string("One, full"))
+        #expect(pages[0].objectValue?["read"] == .bool(true))
+        #expect(pages[1].objectValue?["text"] == .string("only a snippet"))
+        #expect(pages[1].objectValue?["read"] == .bool(false))
+        #expect(pages[2].objectValue?["text"] == .string("blocked"))
+        #expect(out.objectValue?["search_problem"] == .string(""), "findings exist, so there is no problem to report")
+    }
+
+    /// With no pages at all, the note's text is the search's own error, not
+    /// advice a model makes up.
+    @Test
+    func researchBrief_withNothingFound_reportsTheFirstSearchError() async throws {
+        let error = "No results from any search provider. Try a broader query."
+        let out = try await Self.runCode(
+            "default-workflow-research-brief", node: "pages",
+            input: .object([
+                "targets": .array([]), "errors": .array([.string(error)]),
+                "extract": .object(["items": .array([]), "count": .number(0), "failed": .array([])]),
+            ]))
+        #expect(out.objectValue?["pages"] == .array([]))
+        #expect(out.objectValue?["search_problem"] == .string("The web search did not work: " + error))
+        let instructions = try #require(
+            try Self.template("default-workflow-research-brief").workflow?.node("write").flatMap { node -> String? in
+                guard case .inference(let spec) = node.kind else { return nil }
+                return spec.instructions
+            })
+        #expect(!instructions.contains("Settings"), "the writer is never handed a fix to repeat")
     }
 
     /// The sources are the read pages the note cites, in the order cited, so

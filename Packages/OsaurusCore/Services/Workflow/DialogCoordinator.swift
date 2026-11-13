@@ -99,7 +99,10 @@ public final class DialogCoordinator: ObservableObject {
     /// Suspends until the form is answered. Throws `CancellationError` when
     /// the calling task is cancelled (run cancel, node timeout) and
     /// `WorkflowNodeError.dialogDismissed` when the user dismisses it.
-    func present(_ dialog: PendingDialog) async throws -> [String: JSONValue] {
+    /// `onQueued` runs once the form is in `pending` and can be answered.
+    func present(
+        _ dialog: PendingDialog, onQueued: (@Sendable () -> Void)? = nil
+    ) async throws -> [String: JSONValue] {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { cont in
                 if Task.isCancelled {
@@ -109,6 +112,7 @@ public final class DialogCoordinator: ObservableObject {
                 continuations[dialog.id] = cont
                 pending.append(dialog)
                 WorkflowDialogNotifier.dialogPresented(dialog)
+                onQueued?()
             }
         } onCancel: {
             Task { @MainActor in DialogCoordinator.shared.resolve(dialog.id, with: .failure(CancellationError())) }

@@ -31,7 +31,7 @@ struct TeamWorkerSummaryTests {
 struct BundledTeamTests {
     static let readOnlyTools: Set<String> = [
         "calendar_events", "reminders_fetch", "mail_list", "mail_read", "mail_search", "notes_search",
-        "file_search", "file_read", "search_and_extract", "git_status", "git_diff", "git_log",
+        "file_search", "file_read", "web_search", "search_and_extract", "git_status", "git_diff", "git_log",
     ]
 
     private func entry(_ teammate: Teammate) throws -> AgentEntry {
@@ -130,7 +130,8 @@ struct BundledTeamTests {
         let teammateIDs = Set(Teammate.allCases.map(\.templateID.uuidString))
         for template in workflows {
             let def = try #require(template.workflow, "\(template.name)")
-            #expect(def.nodes.count <= 6, "\(template.name) has \(def.nodes.count) nodes")
+            let slow = def.nodes.filter { $0.kindName != "code" }.count
+            #expect(slow <= 6, "\(template.name) has \(slow) model or tool steps")
             #expect(template.formatVersion == 5, "\(template.name)")
             let refs = def.nodes.flatMap(\.calledTools)
             #expect(!refs.isEmpty)
