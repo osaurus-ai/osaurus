@@ -31,9 +31,9 @@ The mental model: agents are *who* you talk to; a project is *what* you're worki
 
 ## Getting Started
 
-1. Sidebar → **Projects** tab → **New Project**
+1. Settings… (⌘,) → **Projects** (in the Context group) → **New Project**. Settings is the only place projects are created, edited, and deleted.
 2. On the project page, set **Instructions**, grant **Knowledge** collections, optionally pick a **Default Agent**, and optionally choose a **Working Folder**
-3. **New Chat** from the project page — the chat is a member of the project
+3. In the chat sidebar, the project has its own group below Agents. Click the group's **+** (**New Chat**, also in its right-click menu) — the chat is a member of the project and starts on the project's Default Agent (or the window's agent when none is set). The group's gear opens the project in Settings.
 4. Chat with any agent. Instructions and knowledge apply automatically, and everything the chats learn accumulates in the project's shared memory
 
 Existing chats can be moved in from the sidebar (right-click → **Move to Project**).
@@ -62,7 +62,7 @@ All optional fields decode with `decodeIfPresent`, so records written by older b
 A chat belongs to a project via `ChatSessionData.projectId` (chat-history schema **v15** adds the `project_id` column). The live `ChatSession.projectId` mirrors it for the compose pipeline.
 
 - **Set/clear:** `ChatSessionsManager.setProject(id:projectId:)` persists the column and posts `.chatSessionProjectDidChange` so any open window holding a live `ChatSession` updates its copy — otherwise the next compose would inject the wrong project's context.
-- **New chat from the project page** stamps `session.projectId` before the first turn.
+- **New Chat in the project's sidebar group** stamps `session.projectId` before the first turn.
 - **Switching agents** preserves `projectId` (a fresh chat started by an agent switch stays in the project).
 - **Delete:** `ChatSessionsManager.deleteProject(id:)` detaches every member session, removes the record, and purges the project's memory namespace.
 
@@ -105,8 +105,8 @@ Everything stays under the global memory switch (`bufferTurn` and `performDistil
 A project can pin a **working folder** that new chats in the project open with, so you don't re-select it on every chat.
 
 - **Model.** `Project.folderBookmark` (a `.withSecurityScope` bookmark) plus a non-sensitive `Project.folderPath` for display, mirroring how a chat session persists its own folder (`ChatSessionData`). Minted off the main actor in `ProjectManager.setFolder` to stay clear of the app-hang watchdog.
-- **Apply.** When a new chat starts from the project (`ChatView.applyProjectFolderIfNeeded`), the project's bookmark is restored onto the chat's `ChatFolderState` — the same path a persisted chat folder takes on reopen. The chat then persists its own copy of the folder, so it survives independently of the project.
-- **A default, not a lock.** The folder is applied only when the new chat has no folder of its own, and it never overrides a folder the user later picks in that chat. Existing chats moved into the project are left untouched — silently repointing a live chat's working directory would be surprising.
+- **Apply.** When a new chat starts from the project (`ChatWindowState.adoptProjectFolder`), the project's bookmark is restored onto the chat's `ChatFolderState` — the same path a persisted chat folder takes on reopen. The chat then persists its own copy of the folder, so it survives independently of the project.
+- **A default, not a lock.** The folder replaces only an agent-default folder the chat was seeded with, never a folder the chat picked itself, and a folder the user later picks in that chat wins. Once applied, the agent's sandbox is turned off, as the composer's Folder chip does. Existing chats moved into the project are left untouched — silently repointing a live chat's working directory would be surprising.
 - **Stale handling.** If the folder is moved or deleted, restore fails gracefully and keeps `folderPath` for display, exactly like a stale chat-session bookmark.
 
 ---

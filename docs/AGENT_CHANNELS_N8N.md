@@ -38,9 +38,12 @@ Everything channel-specific lives in:
 
 The `/channels/` prefix is exempt from the server bearer/`osk-v1` gate. The
 connection secret is the only authentication, so the ingress **verifies the
-secret before it reads a single byte of the body**. A caller with the wrong
-secret gets `401 unauthorized` whether or not the body is valid JSON, and
-nothing is stored or logged beyond a signature-failure counter.
+secret before it parses the body**. The only checks that come first are the
+per-IP rate limit (`429`), the connection lookup and transport policy, and the
+body size cap (`413 payload_too_large`), which looks at the length alone. A
+caller with the wrong secret gets `401 unauthorized` whether or not the body
+is valid JSON, and nothing is stored or logged beyond a signature-failure
+counter.
 
 Two verification methods are supported (`AgentChannelSourceVerificationMethod`,
 enforced by `AgentChannelAsyncSubstrate.verifyWebhookSource`):

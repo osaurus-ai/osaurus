@@ -49,7 +49,7 @@ Canonical reference for all Osaurus features, their status, and documentation.
 | Agent Loop & Folder Context      | Stable    | AGENT_LOOP.md                 | Services/Chat/AgentToolLoop.swift, Services/Chat/AgentTaskState.swift, Folder/, Tools/AgentLoopTools.swift, Tools/FolderToolManager.swift, Models/Chat/AgentTodo.swift, Models/Chat/AgentTodoStore.swift, Models/Chat/SharedArtifact.swift |
 | Agent Channels (Slack / Discord / Telegram) | Beta | AGENT_CHANNELS.md             | Services/AgentChannel/, Models/AgentChannel/, Tools/AgentChannelTools.swift, Storage/AgentChannelMessageStore.swift, Views/Settings/AgentChannelConnectionCenterView.swift, Views/Settings/AgentChannelDestinationViews.swift |
 | Insights / Activity Log          | Stable    | DEVELOPER_TOOLS.md, ACTIVITY_LOG.md | Views/Insights/, Managers/InsightsService.swift, Storage/ActivityLogStore.swift, Services/Insights/, Models/Chat/RequestLog.swift, Models/Insights/ |
-| Developer Tools: Server Explorer | Stable    | DEVELOPER_TOOLS.md            | Views/Settings/ServerView.swift                                                                |
+| Developer Tools: Server & API Reference | Stable | DEVELOPER_TOOLS.md            | Views/Settings/ServerView.swift                                                                |
 | Apple Foundation Models          | macOS 26+ | Guide: guide-local-models.md  | Services/Inference/FoundationModelService.swift                                                 |
 | Chat window & menu bar panel     | Stable    | Guide: guide-chat.md          | Views/Chat/ChatView.swift, Managers/Chat/ChatWindowManager.swift, Views/Settings/StatusPanelView.swift |
 | Chat Session Management          | Stable    | Guide: guide-chat.md          | Managers/Chat/ChatSessionsManager.swift, Models/Chat/ChatSessionData.swift                      |
@@ -219,10 +219,10 @@ Canonical reference for all Osaurus features, their status, and documentation.
 **Runtime behavior:**
 
 - **Window-scoped warm-up** — Models are loaded and prefix-cached when a chat window opens, not at app launch. Each window warms its own model independently, using the window's agent context (system prompt, memory, tools) for the prefix cache.
-- **Smart unloading** — The "Keep model loaded after use" setting controls whether a local model unloads immediately after use, stays warm for 5/15/30/60 minutes, or stays resident until an explicit unload/cleanup. Strict single-model switches still unload the replaced model immediately, and idle unload never deletes downloaded models or disk KV cache entries. The warm-up indicator (yellow dot) signals when a model is loading.
+- **Smart unloading** — Server → Server Settings → Model Memory → **Model Residency** controls when an idle local model unloads: **Keep Model Loaded** keeps it resident until an explicit unload/cleanup; otherwise **Unload After** picks 30 seconds (the default; also when the last chat window using it closes), 5/15/30 minutes, 1 hour, or Immediately. Strict single-model switches still unload the replaced model immediately, and idle unload never deletes downloaded models or disk KV cache entries. The warm-up indicator (yellow dot) signals when a model is loading.
 - **Continuous batching** — `BatchEngine` shares a single forward pass across overlapping requests for the same model. Server Settings resolves its capacity from the explicit Memory Safety sequence override, explicit Concurrent Sessions value, or Memory Safety profile, in that order. Performance/Balanced automatically resolve to `2`, Safe Auto/Strict to `1`, and Continuous Batching off pins `1`. The registry hot-resizes the cached engine via vmlx's `BatchEngine.updateMaxBatchSize(_:)`.
 - **Library-managed KV cache** — vmlx-swift's `CacheCoordinator` owns KV cache geometry (paged for global attention, rotating for sliding-window, SSM state for Mamba) sized per-model. Multi-turn KV reuse, mediaSalt for VLMs, and sliding-window correctness are all handled inside the engine — osaurus configures only `modelKey`, `diskCacheDir`, and a writability fallback.
-- **Model eviction policy** — Configurable in Settings > Local Inference > Model Management. "Strict (One Model)" keeps only one model loaded (default). "Flexible (Multi Model)" allows concurrent models for high-RAM systems. `/health` exposes additive `resident_models[]` diagnostics with in-flight counts and idle-unload timing for each loaded model.
+- **Model eviction policy** — Server → Server Settings → Model Memory → **Eviction Policy**. "Strict (One Model)" keeps only one model loaded (default). "Flexible (Multi Model)" allows concurrent models for high-RAM systems. `/health` exposes additive `resident_models[]` diagnostics with in-flight counts and idle-unload timing for each loaded model.
 
 **Configuration:**
 
@@ -424,11 +424,11 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 - Privacy → Activity Log: *Keep Activity History*, *Store Prompts and Responses*
 - Spec: [ACTIVITY_LOG.md](ACTIVITY_LOG.md)
 
-#### Server Explorer
+#### Server and API Reference
 
 **Components:**
 
-- `Views/Settings/ServerView.swift` — Server explorer UI
+- `Views/Settings/ServerView.swift` — the Server page (Overview, Server Settings, API Reference tabs)
 
 **Features:**
 
@@ -523,30 +523,30 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 - `Managers/AgentManager.swift` — Agent lifecycle and active agent management
 - `Views/Agent/AgentsView.swift` — Agent gallery and management UI
 
-**The Orchestrator (built-in default agent):** the in-memory `Agent.default` ("Osaurus", `Agent.defaultId`) is the default chat agent. Unspecified new windows open on it; a chat can also open directly on a custom agent. It is a configuration + delegation agent: it inspects and changes Osaurus through the declarative `osaurus_config` tool (plan → approval card → apply) and delegates work to allowed custom agents and local/cloud models as subagents. It never gets a sandbox, working folder, browser, or computer use — for filesystem work, create or switch to a custom agent and pick the working folder there. Its identity (custom display name via `DefaultAgentConfiguration.displayName`, persona, temperature, max tokens) and delegation helpers (spawn allow-list, budgets, RAM safety — `SubagentConfiguration`) are edited in **Settings → Orchestrator** (`Views/Settings/OrchestratorSettingsView.swift`) and covered by the declarative document's `default_agent` / `delegation` sections. See [ORCHESTRATOR.md](ORCHESTRATOR.md) for the full guide.
+**The Orchestrator (built-in default agent):** the in-memory `Agent.default` ("Osaurus", `Agent.defaultId`) is the default chat agent. Unspecified new windows open on it; a chat can also open directly on a custom agent. It is a router: its tools are `status`, `state`, `configurator_handoff` (changes to Osaurus go to the Configurator, which owns `osaurus_config`: plan → approval card → apply), `architect_handoff` (workflow design goes to the Architect), `run_workflow` (work goes to allowed custom agents and local/cloud models) and `clarify`. It does no hands-on work: no file, shell, sandbox, browser, web search or computer use tools, and a working folder set on it is only inherited by the agents it delegates to. Its identity (custom display name via `DefaultAgentConfiguration.displayName`, persona, temperature, max tokens) is edited in **Settings → Agents → Orchestrator** (`Views/Settings/OrchestratorSettingsView.swift`) and its delegation settings (allowed subagents, limits, RAM safety — `SubagentConfiguration`) in **Settings → Agents → Delegation** (`Views/Settings/SubagentSettingsSection.swift`); both are covered by the declarative document's `default_agent` / `delegation` sections. See [ORCHESTRATOR.md](ORCHESTRATOR.md) for the full guide.
 
 **Features:**
 
 - **Custom System Prompts** — Define unique instructions for each agent
 - **Automated Capabilities** — Tools, skills, and methods are automatically selected via RAG search based on the task
-- **Per-Agent Feature Gates** — Configure → Features groups every capability by purpose and keeps extra ones off by default to keep the tool list lean (see below)
-- **Apple Apps** — Calendar, Reminders, Contacts, Notes, Mail, Messages, Maps & Location, Music, and Shortcuts are built-in tool families toggled per app under Abilities → Tools; enabling asks for the macOS grant, sends and deletes always ask for approval, and the Orchestrator provisions them via `capabilities.apple_apps` (see [APPLE_APPS.md](APPLE_APPS.md))
+- **Per-Agent Feature Gates** — Abilities → Overview groups every capability by purpose and keeps extra ones off by default to keep the tool list lean (see below)
+- **Apple Apps** — Calendar, Reminders, Contacts, Notes, Mail, Messages, Maps & Location, Music, and Shortcuts are built-in tool families toggled per app under Abilities → Tools; enabling asks for the macOS grant, sends and deletes always ask for approval, and the Configurator provisions them via `capabilities.apple_apps` (see [APPLE_APPS.md](APPLE_APPS.md))
 - **Generation Settings** — Configure default model, temperature, and max tokens
 - **Import/Export** — Share agents as JSON files for backup or sharing
 - **Live Switching** — Click to activate an agent
-- **Working Folder (sticky per-agent folder)** — The one macOS folder the agent works inside. Picking a folder with the chat Folder chip remembers it on the agent; new chats open in it, and schedules, watchers, and other background runs that set no folder of their own run in it. Authenticated remote agent runs (Secure Channel) get file read/write confined to it with shell and git disabled. Configure → Features → Working Folder; see [SECURITY.md](SECURITY.md) and [OpenAI_API_GUIDE.md](OpenAI_API_GUIDE.md).
+- **Working Folder (sticky per-agent folder)** — The one macOS folder the agent works inside. Picking a folder with the chat Folder chip remembers it on the agent; new chats open in it, and schedules, watchers, and other background runs that set no folder of their own run in it. Authenticated remote agent runs (Secure Channel) get file read/write confined to it with shell and git disabled. Abilities → Overview → Working Folder (with a **Read Only** switch); see [SECURITY.md](SECURITY.md) and [OpenAI_API_GUIDE.md](OpenAI_API_GUIDE.md).
 
-**Feature Gates (Configure → Features):** stored on `Agent.settings`; [`SystemPromptComposer.resolveTools`](../Packages/OsaurusCore/Services/Chat/SystemPromptComposer.swift) strips the matching tools when a gate is off (auto mode). Capabilities are grouped by purpose; extra ones default **off** to reduce token cost.
+**Feature Gates (Abilities → Overview):** stored on `Agent.settings`; [`SystemPromptComposer.resolveTools`](../Packages/OsaurusCore/Services/Chat/SystemPromptComposer.swift) strips the matching tools when a gate is off (auto mode). Capabilities are grouped by purpose; extra ones default **off** to reduce token cost.
 
 | Group | Setting | Toggle | Default | Gates |
 |---|---|---|---|---|
 | Model Access | `toolsEnabled` | Tools | on | All tool use (custom agents only) |
 | Model Access | `disableMemory` (inverted) | Memory | on | Passive memory injection + recording |
 | Output | `renderChartEnabled` | Charts | off | `render_chart` |
-| Output | `speakEnabled` | Voice | off | `speak` |
+| Output | `speakEnabled` | Speak Tool | off | `speak` |
 | Memory & Recall | `searchMemoryEnabled` | Memory Recall | off | `search_memory` |
 | Autonomy | `selfSchedulingEnabled` | Self-scheduling | off | `schedule_next_run` / `cancel_next_run` / `notify` + scheduling UI |
-| Autonomy | `computerUseEnabled` | Computer Use | off | `computer_use` entry tool (custom agents only; plus per-agent autonomy ceiling) |
+| Abilities → Subagents | `computerUseEnabled` | Computer Use | off | `computer_use` entry tool (custom agents only; plus per-agent autonomy ceiling) |
 | Apple Apps | `enabledAppleApps` | one picker group per app under Abilities → Tools | off (all) | That app's `calendar_*` / `reminders_*` / `contacts_*` / `notes_*` / `mail_*` / `messages_*` / `location_*` + `maps_*` / `music_*` / `shortcuts_*` tools — stripped in auto **and** manual mode, refused at execution, never discoverable (see [APPLE_APPS.md](APPLE_APPS.md)) |
 | Data | `dbEnabled` | Database | off | `db_*` tools + DB tabs |
 | Code Execution | sandbox settings | Autonomous Execution / Plugin Creation / Sandbox Network / Read Secret Files | off | Sandbox capabilities (visible but disabled when the container isn't running) |
@@ -560,7 +560,7 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 | `defaultModel` | Optional model ID for this agent |
 | `temperature` | Optional temperature override |
 | `maxTokens` | Optional max tokens override |
-| `workingFolderBookmark` | Machine-local security-scoped bookmark for the agent's sticky working folder. Set by the chat composer's Folder chip or **Agent → Configure → Working Folder**; applied to every fresh chat for the agent (a project's own folder wins inside that project), to background dispatches that name no folder (schedule and folder events without one, self-schedules, delegation, channels, `/agents/{id}/dispatch`), and to authenticated remote agent runs as their confined file-tool root (never sent to a paired peer). Legacy JSON key `hostWorkspaceBookmark` is still read. |
+| `workingFolderBookmark` | Machine-local security-scoped bookmark for the agent's sticky working folder. Set by the chat composer's Folder chip or **Agent → Abilities → Overview → Working Folder**; applied to every fresh chat for the agent (a project's own folder wins inside that project), to background dispatches that name no folder (schedule and folder events without one, self-schedules, delegation, channels, `/agents/{id}/dispatch`), and to authenticated remote agent runs as their confined file-tool root (never sent to a paired peer). Legacy JSON key `hostWorkspaceBookmark` is still read. |
 | `workingFolderPath` | Advisory display path for the working folder (source of truth is the bookmark; used as the plain-path fallback when the bookmark is stale). Legacy JSON key `hostWorkspacePath` is still read. |
 
 ---
@@ -616,7 +616,7 @@ This command bridge is for external clients connecting to Osaurus. If Server > N
 - **Branching** — Conditional edges on the source step's output, `on: error|always` edges, `join: any|all`, `on_error: fail|continue|skip`, retries, retry-from-failed-step
 - **Templates** — Versioned, content-hashed, optionally signed `.osaurustemplate`; `format_version` 2 only when post-v1 features are used; shared online at store.osaurus.ai
 - **Secrets and connections** — Keychain-only values; shared connections matched by service; `declare_connection` with a provider catalog; OAuth 2.0 PKCE sign-in with refresh
-- **Callers** — Workflow tab, `/` in chat, `workflow_<slug>` agent tools with a live tool-card feed, `run_workflow` for the Orchestrator, Work Mode, HTTP API and MCP (`awaiting_user` for forms)
+- **Callers** — Workflow tab, `/` in chat, `workflow_<slug>` agent tools with a live tool-card feed, `run_workflow` for the Orchestrator, background tasks, HTTP API and MCP (`awaiting_user` for forms)
 - **Architect** — Clarify, plan, build, test with evidence on the declared models before save; discover MCP servers, OpenAPI docs, registry templates, and the models that fit each slot; repair failed runs and self-heal on request
 - **Model contract** — A step's model is either required (setup blocks without it) or suggested (the person may pick another)
 - **Audit** — Every run and step in Insights with secrets redacted; test runs flagged and kept out of Recent Runs
@@ -704,12 +704,14 @@ See [WORKFLOWS.md](./WORKFLOWS.md).
 | `file_edit`       | Core     | Surgical exact-string replacement with optional `dry_run` diff preview |
 | `file_operation_history` | Core | Recent applied file writes/edits for the current chat session |
 | `file_search`     | Core     | ripgrep-style content search, or `target="files"` filename-glob find |
-| `shell_run`       | Core     | Run a shell command (requires approval). Reserve for `mv`/`cp`/`rm`/`mkdir`, builds, tests, git, installs. |
+| `file_copy`       | Core     | Binary-safe byte copy of one file to a new path (`overwrite: true` replaces; the old bytes stay undoable) |
+| `file_undo`       | Core     | Revert a recorded write, edit, or copy from this chat's file history |
+| `shell_run`       | Core     | Run a shell command (requires approval). Reserve for `mv`/`rm`/`mkdir`, builds, tests, git, installs. |
 | `git_status`      | Git      | Repository status. Registered when `.git` present.                |
 | `git_diff`        | Git      | Show diffs                                                        |
 | `git_commit`      | Git      | Stage + commit (requires approval)                                |
 
-The previously-discrete `file_move`, `file_copy`, `file_delete`, `dir_create`, and `batch` tools were dropped — the same operations go through `shell_run` (`mv`, `cp`, `rm`, `mkdir`) so the model has fewer near-identical tool names to differentiate. The standalone `file_tree` listing tool was likewise folded into `file_read`: pass a directory path and `file_read` returns a listing (the path carries the file-vs-directory decision, so there is no separate tool for the model to mis-select). That listing is a **structured `entries[]` object**, not a prose tree — the model descends by copying an entry's `path` field, and the agent loop's [`AgentTaskState`](../Packages/OsaurusCore/Services/Chat/AgentTaskState.swift) harness classifies the result to de-dupe re-reads and, only if the model is observed wandering (two listings without a read), reactively nudge the next step — so capable models are never backseat-driven. See [Agent Loop — Harness Task State](AGENT_LOOP.md#harness-task-state-agenttaskstate).
+The previously-discrete `file_move`, `file_delete`, `dir_create`, and `batch` tools were dropped — the same operations go through `shell_run` (`mv`, `rm`, `mkdir`); `file_copy` stays as its own tool because a byte copy cannot pass through the conversation so the model has fewer near-identical tool names to differentiate. The standalone `file_tree` listing tool was likewise folded into `file_read`: pass a directory path and `file_read` returns a listing (the path carries the file-vs-directory decision, so there is no separate tool for the model to mis-select). That listing is a **structured `entries[]` object**, not a prose tree — the model descends by copying an entry's `path` field, and the agent loop's [`AgentTaskState`](../Packages/OsaurusCore/Services/Chat/AgentTaskState.swift) harness classifies the result to de-dupe re-reads and, only if the model is observed wandering (two listings without a read), reactively nudge the next step — so capable models are never backseat-driven. See [Agent Loop — Harness Task State](AGENT_LOOP.md#harness-task-state-agenttaskstate).
 
 **Workflow:**
 
@@ -1099,24 +1101,28 @@ All three search services use VecturaKit (hybrid BM25 + vector search):
 **Features:**
 
 - **Real-time streaming transcription** — See words as you speak
-- **Multiple Parakeet models** — Tiny (75 MB) to Large V3 (3 GB)
-- **English-only and multilingual** — Choose based on your needs
+- **Two Parakeet models** — Parakeet TDT v3 (0.6B, multilingual, 25 European languages, recommended) and Parakeet TDT v2 (0.6B, English-only, highest recall), about 600 MB each
+- **Automatic or manual stop** — Send after a pause, or wait for the stop button
 - **Microphone input** — Built-in or external device selection
 - **System audio capture** — Transcribe computer audio (macOS 12.3+)
 - **Configurable sensitivity** — Low, Medium, High thresholds
 - **Auto-send with confirmation** — Hands-free message sending
 - **Pause duration control** — Adjust silence detection timing
+- **Transcript cleanup** — Optionally removes filler words, stutters and self-corrections with the core model
 
 **Configuration:**
 
 | Setting               | Description                                   |
 | --------------------- | --------------------------------------------- |
-| `defaultModel`        | Selected Parakeet model ID                    |
-| `languageHint`        | ISO 639-1 language code (e.g., "en", "es")    |
-| `sensitivity`         | Voice detection sensitivity (low/medium/high) |
-| `pauseDuration`       | Seconds of silence before auto-send           |
-| `confirmationDelay`   | Seconds to show confirmation before sending   |
+| `modelVersion`        | Parakeet model: `v3` (default, multilingual) or `v2` (English-only) |
+| `sensitivity`         | Voice detection sensitivity (low/medium/high, default medium) |
+| `transcriptionStopMode` | `automatic` (default) or `manual`           |
+| `pauseDuration`       | Seconds of silence before auto-send (default 1.5; 0 = manual send) |
+| `confirmationDelay`   | Seconds to show confirmation before sending (default 2.0) |
+| `silenceTimeoutSeconds` | Seconds of silence before voice input closes (default 30; 0 = off) |
+| `postProcessTranscription` | Clean up the transcript with the core model (default on) |
 | `selectedInputSource` | Microphone or system audio                    |
+| `selectedInputDeviceId` | Input device (nil = system default)         |
 
 **Model Storage:** `~/Library/Application Support/FluidAudio/Models/`
 
@@ -1149,11 +1155,13 @@ All three search services use VecturaKit (hybrid BM25 + vector search):
 | Setting                 | Description                                  |
 | ----------------------- | -------------------------------------------- |
 | `vadModeEnabled`        | Master toggle for VAD mode                   |
-| `enabledAgentIds`     | UUIDs of agents that respond to wake-words |
+| `enabledAgentIds`       | UUIDs of agents that respond to wake-words   |
 | `customWakePhrase`      | Optional phrase like "Hey Osaurus"           |
-| `wakeWordSensitivity`   | Detection sensitivity level                  |
 | `autoStartVoiceInput`   | Start recording after activation             |
-| `silenceTimeoutSeconds` | Auto-close timeout (0 = disabled)            |
+
+There is no separate wake-word sensitivity. The silence timeout that closes
+voice input after activation is the voice input setting above
+(`silenceTimeoutSeconds`).
 
 **Workflow:**
 
@@ -1460,7 +1468,7 @@ The post-scrub invariant only re-scans categories whose built-in regex toggle is
 | [REMOTE_PROVIDERS.md](REMOTE_PROVIDERS.md)                     | Remote provider setup and configuration           |
 | [REMOTE_MCP_PROVIDERS.md](REMOTE_MCP_PROVIDERS.md)             | Remote MCP provider setup                         |
 | [CREDENTIALS.md](CREDENTIALS.md)                               | Vault: unified credential store, resolution, migration |
-| [DEVELOPER_TOOLS.md](DEVELOPER_TOOLS.md)                       | Insights and Server Explorer guide                |
+| [DEVELOPER_TOOLS.md](DEVELOPER_TOOLS.md)                       | Insights and Server / API Reference guide         |
 | [ACTIVITY_LOG.md](ACTIVITY_LOG.md)                             | Activity log reviewer spec: schema, hash chain, limits, threat model |
 | [VOICE_INPUT.md](VOICE_INPUT.md)                               | Voice input, FluidAudio, and VAD mode guide       |
 | [SKILLS.md](SKILLS.md)                                         | Skills, methods, and context management guide    |

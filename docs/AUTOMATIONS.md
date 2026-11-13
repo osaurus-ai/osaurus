@@ -1,7 +1,7 @@
 # Automations
 
 Automations are the one way work starts on its own in Osaurus. In the UI an
-automation is **When → Only When → Do → Queueing → Reply**; in code it is an
+automation is **When → Only When → Do → Queue → Reply**; in code it is an
 *event* (`OsaurusEvent`, `EventManager`, `/events/{token}`) — the internal
 names predate the rename and are kept. An automation is
 
@@ -28,11 +28,12 @@ sidebar group) is where agents talk — connections, credentials, allowlists,
 the Outbox, and per channel **Agents on this channel** (who answers, whether
 the reply is sent automatically, who may post on its own; see
 `docs/AGENT_CHANNELS.md`, "Inbound routing is automations"). **Automations**
-(Automate group) is what runs on its own — schedules, folders, webhooks,
-feeds, event streams, failure handlers and app events — plus
-the collapsible **Message rules** group that holds every `channel_message`
-automation (the rule behind each channel row and any advanced rule) and the
-History of everything that happened.
+(pinned at the top of the Settings sidebar) is what runs on its own —
+schedules, folders, webhooks, feeds, event streams, failure handlers and app
+events. `channel_message` automations (channel routing rules) are not listed
+there: they are edited in Channels → the platform → Routing, and Automations
+shows only a note with their count and **Open Channels**. Every run is a task
+in **Tasks → History**.
 
 ## Model (`Models/Event/`)
 
@@ -538,28 +539,28 @@ On the first start with no `events/migration.json`:
 
 ## UI (`Views/Event/`)
 
-Sidebar: Automate → **Automations** (`ManagementTab.automations`; the raw
-ids `events`, `schedules`, `watchers` resolve to it).
+Sidebar: **Automations**, pinned at the top (`ManagementTab.automations`; the
+raw ids `events`, `schedules`, `watchers` resolve to it).
 
-- `EventsView` — two tabs (`AutomationsPage`): **Automations** (list, Add
-  Automation, Import/Export) and **History** (`AutomationHistoryView`). The
-  list shows the trigger kinds' groups first and channel ones under
-  a collapsible **Message rules** header; a *simple* channel rule
-  (`EventsView.isSimpleChannelRule`, via `ChannelAgentRoster.isSimple`) shows
-  **Edit in Channels** (`pendingChannelConnectionId`) and keeps the full
-  editor under *More options…*. The Add Automation picker shows the
-  registry's triggers, then **App Webhooks** (one webhook template per named
-  provider), then a hint pointing to Channels for message rules.
-- `AutomationHistoryView` — `EventManager.recentRuns` merged with channel
-  audit rows that never reached an automation
-  (`AgentChannelMessageStore.recentAuditEvents(statuses: [.denied, .failed])`)
-  by the pure `AutomationHistoryFeed.merge(runs:audit:filter:)`. Source chips
-  (All, one per kind with a `historyChipTitle`, Messages), status (All / Ran / Skipped
-  / Failed), a channel picker and Received / Denied / Duplicates tiles under
-  Messages, refresh, and Copy redacted export
-  (`AgentChannelAuditWorkbenchService.exportRedactedJSON`). Run rows open the
-  automation; message rows show the guidance text and open Channels.
-- `EventEditorSheet` (source templates, When / Only When / Do / Queueing /
+- `EventsView` — two pages (`AutomationsPage`): **Automations** (the list,
+  **Add Automation**, and the header's **History** button, which opens
+  **Tasks → History** filtered to automations) and **Channel Messages**
+  (`AutomationHistoryView`, from the header's ⋯ menu, which also holds
+  Import/Export). The list shows one group per trigger kind; channel rules are
+  not listed, only a note with their count and **Open Channels**. The Add
+  Automation picker shows the registry's triggers, then **App Webhooks** (one
+  webhook template per named provider), then a hint pointing to Channels for
+  message rules.
+- `AutomationHistoryView` (**Channel Messages**) — channel messages that never
+  reached an automation (refused by an allowlist, failed, or claimed by no
+  automation) and those taken as a workflow form's answer, each with the
+  reason and the fix. Automation runs are not listed: they are tasks in
+  Tasks → History. The rows come from the channel audit store through
+  `AutomationHistoryFeed.merge(runs: [], audit:filter:)`; the page has a
+  channel picker, Received / Denied / Duplicates tiles, refresh, and Copy
+  redacted export (`AgentChannelAuditWorkbenchService.exportRedactedJSON`).
+  Message rows show the guidance text and open Channels.
+- `EventEditorSheet` (source templates, When / Only When / Do / Queue /
   Reply; each kind's section is in `EventSourceEditors.swift`; a stored
   email automation shows `EmailSourceRetiredNotice`), `EventDetailView`
   (overview with the source status, Run Now, Stop Runs, Webhook URL with

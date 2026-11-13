@@ -2,9 +2,9 @@
 
 Every Osaurus agent can opt into its own private SQLite database **and** a single self-scheduled "next run" slot. Together they turn the agent from a stateless chat into something that remembers structured data across runs and wakes itself up to act on it — a journal that can also set its own alarm. Like the rest of Osaurus storage, the agent DB is plaintext by default (protected by FileVault) and follows the app-wide [opt-in encryption posture](STORAGE.md#why-encryption-is-opt-in).
 
-This is distinct from [Memory](MEMORY.md). Memory is a global, app-wide system that distills conversational context across all your chats; Agent DB is **per-agent** structured storage the agent decides on, schemas and queries via dedicated tools. You can run an agent with one, both, or neither.
+This is distinct from [Memory](MEMORY.md). Memory distills conversational context per agent and per project; Agent DB is **per-agent** structured storage the agent decides on, schemas and queries via dedicated tools. You can run an agent with one, both, or neither.
 
-This doc is the reference for developers and power users. It covers the on-disk layout, the `db_*` tool surface, the next-run scheduler, the four schedule-mode presets, and the detail-view tabs that surface all of it.
+This doc is the reference for developers and power users. It covers the on-disk layout, the `db_*` tool surface, the next-run scheduler, the four schedule-mode presets, and the Database tab that surfaces all of it.
 
 ---
 
@@ -31,7 +31,7 @@ This doc is the reference for developers and power users. It covers the on-disk 
 
 Each agent carries an `Agent.settings.dbEnabled` flag (see [`Agent.swift`](../Packages/OsaurusCore/Models/Agent/Agent.swift)). Toggling it on does three things:
 
-1. **Tabs appear in the detail view.** The agent management screen at [`AgentsView.swift`](../Packages/OsaurusCore/Views/Agent/AgentsView.swift) gains five DB-backed tabs — `Home`, `Schema`, `Data`, `Views`, `Activity` — gated by `DetailTab.allTabsForAgent(_:)`. Turning the flag off snaps back to the `Configure` tab so you never sit on a now-hidden DB tab with stale state.
+1. **The Database tab fills in.** Every custom agent's detail view in [`AgentsView.swift`](../Packages/OsaurusCore/Views/Agent/AgentsView.swift) has one **Database** tab ([`DatabaseWorkspaceView`](../Packages/OsaurusCore/Views/Agent/Database/DatabaseWorkspaceView.swift)) with four sections — **Overview**, **Tables**, **Saved Views**, **History**. The tab is always visible; with the flag off it shows an explanatory empty state with an Enable action.
 2. **The model sees the `db_*` tools.** [`SystemPromptComposer`](../Packages/OsaurusCore/Services/Chat/SystemPromptComposer.swift) strips every `db_*` tool from the resolved tool list when `dbEnabled == false`; with it on, the agent gets the full surface listed in [Tool Reference](#tool-reference).
 3. **The agent gets a fresh, empty database on first write.** The file is lazy-opened on demand — no I/O happens until the agent calls a `db_*` tool. It's created in the app's current storage posture: plaintext by default, or SQLCipher if you opted in.
 
@@ -66,7 +66,7 @@ Every table the agent creates via `db_create_table` is augmented with three rese
 
 `db_delete` is a **soft delete**: it stamps `_deleted_at` rather than removing the row. `db_restore` clears the stamp. Typed mutation tools (`db_update`, etc.) hide soft-deleted rows by default. **`db_query` runs your SQL as written** — add `_deleted_at IS NULL` to the WHERE when you want to exclude tombstones.
 
-The Data tab's `Active` / `Deleted` / `All` segmented control (in [`AgentDBTabViews.swift`](../Packages/OsaurusCore/Views/Agent/AgentDBTabViews.swift)) maps to that filter in the UI: `Active` hides tombstones, `Deleted` only shows tombstones, `All` shows both with the soft-deleted rows dimmed.
+The Tables section's `Active` / `Deleted` / `All` filter (in [`DatabaseTablesView.swift`](../Packages/OsaurusCore/Views/Agent/Database/DatabaseTablesView.swift)) maps to that filter in the UI: `Active` hides tombstones, `Deleted` only shows tombstones, `All` shows both with the soft-deleted rows dimmed.
 
 There is **no hard-delete tool**. If you need to actually purge a row, do it from the host (the migrator or a developer console) — the model can't.
 
@@ -103,7 +103,7 @@ All `db_*` tools live in [`Tools/Database/DatabaseTools.swift`](../Packages/Osau
 | ---------------- | ----------------------------------------------------------------------------------------- |
 | `db_query`       | Run a read-only SELECT. Accepts `limit` / `offset` for paging; rows are capped (hard max **5000**) and a `truncated` flag flips when the cap or an oversized payload kicks in. |
 | `db_execute`     | First-class SQL, including **multi-statement** transform scripts (`INSERT … SELECT`, CTEs, window functions) inside one transaction. Pass `path` instead of `sql` to run a `.sql` script from disk. Restricted by host policy (see below); reach for the typed tools first. |
-| `db_define_view` | Save a SELECT/CTE definition under a name. The name becomes queryable from read-only SQL and surfaces in the Views tab. |
+| `db_define_view` | Save a SELECT/CTE definition under a name. The name becomes queryable from read-only SQL and surfaces in the Saved Views section. |
 | `db_run_view`    | Execute a saved view's stored definition directly by name. Use `db_query` / `db_export` with the view name in `FROM` or `JOIN` for filtering, composition, aggregation, or paging. |
 | `db_list_views`  | Enumerate saved views.                                                                     |
 | `db_drop_view`   | Delete a saved view definition.                                                            |
@@ -125,7 +125,7 @@ The agent DB's first wall used to be data movement: a model that needed to load 
 
 ### Three ways to load data
 
-1. **`db_import(table, path, …)` — host-mediated file load.** When the data already lives in a file in the agent's sandbox workspace (`/workspace/...`) or host working folder, this is the right tool. The host resolves the path (sandbox agent dir or [`FolderToolManager`](../Packages/OsaurusCore/Services/Folder/FolderToolManager.swift) root), reads and parses it (CSV/TSV/JSON/JSONL, auto-detected), creates the table from the file's columns when needed, and bulk-loads every row — in **one** tool call, with **zero** row bytes in the model context. `mode` accepts exactly `insert` (the default; plain row appends) or `upsert` with `key_columns` (dedupes on the conflict columns) — there is no `append` mode. Parsing and schema resolution are shared with the UI importer through [`AgentImportRunner`](../Packages/OsaurusCore/Tools/Database/AgentImportRunner.swift).
+1. **`db_import(table, path, …)` — host-mediated file load.** When the data already lives in a file in the agent's sandbox workspace (`/workspace/...`) or host working folder, this is the right tool. The host resolves the path (sandbox agent dir or [`FolderToolManager`](../Packages/OsaurusCore/Tools/FolderToolManager.swift) root), reads and parses it (CSV/TSV/JSON/JSONL, auto-detected), creates the table from the file's columns when needed, and bulk-loads every row — in **one** tool call, with **zero** row bytes in the model context. `mode` accepts exactly `insert` (the default; plain row appends) or `upsert` with `key_columns` (dedupes on the conflict columns) — there is no `append` mode. Parsing and schema resolution are shared with the UI importer through [`AgentImportRunner`](../Packages/OsaurusCore/Tools/Database/AgentImportRunner.swift).
 2. **`db_insert` / `db_upsert` with `rows[]` — in-context bulk write.** When the rows are something the model *computed* (not a file), it can hand the whole batch over in a single call instead of looping. Backed by [`AgentDatabase.insertMany` / `upsertMany`](../Packages/OsaurusCore/Storage/AgentDatabase.swift), which chunk the write and run it inside one transaction.
 3. **`db_execute` multi-statement transforms — don't move the data at all.** For aggregation/derivation, the most efficient path is to compute *in SQL* (`INSERT INTO totals SELECT … GROUP BY …`) rather than pulling rows into context. The whole script runs in one transaction.
 
@@ -139,7 +139,7 @@ Bulk operations are also exempted from the agent's reasoning budget. [`AgentLoop
 
 ### Importing from the UI
 
-The **Data** tab has an **Import** button and accepts **drag-and-drop** of a file onto the table view ([`AgentDBTabViews.swift`](../Packages/OsaurusCore/Views/Agent/AgentDBTabViews.swift)). This runs the same `AgentImportRunner` path as the tool, but stamps the rows with `actor = user` in the `_changelog` (the parse happens off the main actor; the import itself runs back on the main actor inside the `currentRunActor = "user"` scope) so a human-initiated import is distinguishable from an agent one in the audit log.
+The **Tables** section has an **Import** button and accepts **drag-and-drop** of a file onto the table view ([`DatabaseTablesView.swift`](../Packages/OsaurusCore/Views/Agent/Database/DatabaseTablesView.swift)). This runs the same `AgentImportRunner` path as the tool, but stamps the rows with `actor = user` in the `_changelog` (the parse happens off the main actor; the import itself runs back on the main actor inside the `currentRunActor = "user"` scope) so a human-initiated import is distinguishable from an agent one in the audit log.
 
 ---
 
@@ -151,7 +151,7 @@ Every mutation appends a row to a hidden `_changelog` table. Entries carry:
 - `op` — `insert`, `update`, `soft_delete`, `restore`, `execute`, … (`AgentDatabaseOp`).
 - `table`, `row_id`, `at`, plus tool-payload metadata so an audit can reconstruct what changed and why.
 
-The `Activity` tab in the detail view surfaces these alongside the agent's tasks (its run history, see [TASK_QUEUE.md](TASK_QUEUE.md)) in a split pane. When a background run starts, [`BackgroundTaskManager`](../Packages/OsaurusCore/Managers/BackgroundTaskManager.swift) seeds `ChatExecutionContext.currentRunId` (the task id) / `currentRunActor` on the chat session so any `db_*` writes inside that run get stamped against the correct task.
+The **History** section of the Database tab surfaces these alongside the agent's tasks (its run history, see [TASK_QUEUE.md](TASK_QUEUE.md)) in a split pane. When a background run starts, [`BackgroundTaskManager`](../Packages/OsaurusCore/Managers/BackgroundTaskManager.swift) seeds `ChatExecutionContext.currentRunId` (the task id) / `currentRunActor` on the chat session so any `db_*` writes inside that run get stamped against the correct task.
 
 ---
 
@@ -160,15 +160,15 @@ The `Activity` tab in the detail view surfaces these alongside the agent's tasks
 Each agent declares its own quota via `Agent.settings.limits.storageBytesMax`. Two things consume it:
 
 - **Hard limit.** [`AgentDatabase.enforceStorageQuotaUnlocked()`](../Packages/OsaurusCore/Storage/AgentDatabase.swift) rejects writes once the on-disk file exceeds the limit. The error envelope tells the model what to do (typically delete or migrate older rows).
-- **Soft warning.** An edge-triggered `.agentStorageWarn` notification fires when usage crosses a configurable threshold (default ~80%). The UI surfaces this as a banner in the detail view and a system notification that deep-links into the Data tab.
+- **Soft warning.** An edge-triggered `.agentStorageWarn` notification fires when usage crosses a configurable threshold (default ~80%). The UI surfaces this as a banner in the detail view and a system notification that deep-links into the Database tab's Tables section.
 
-The Data tab also shows a small per-agent **in-flight mutation** badge driven by [`AgentMutationActivity`](../Packages/OsaurusCore/Services/AgentBridge/AgentMutationActivity.swift). The counter is bumped by `LocalAgentBridge.serialized` on every mutation entry/exit, so when an agent run is mid-write you can see the spinner instead of wondering whether the view is stale.
+The Tables section also shows a small per-agent **in-flight mutation** badge driven by [`AgentMutationActivity`](../Packages/OsaurusCore/Services/AgentBridge/AgentMutationActivity.swift). The counter is bumped by `LocalAgentBridge.serialized` on every mutation entry/exit, so when an agent run is mid-write you can see the spinner instead of wondering whether the view is stale.
 
 ---
 
 ## The Self-Scheduling Slot
 
-> **Opt-in per agent.** Self-scheduling is gated by `Agent.settings.selfSchedulingEnabled` (default **off**), surfaced as the **Self-scheduling** toggle under Configure → Features. When off, [`SystemPromptComposer`](../Packages/OsaurusCore/Services/Chat/SystemPromptComposer.swift) strips the `schedule_next_run` / `cancel_next_run` / `notify` tools from the model's tool list, the Scheduling mode picker and the Next Run banner are hidden, and flipping the toggle off cancels any pending slot so an orphaned run can't fire after the user opted out. This flag is **independent of the schedule mode** — the mode only sets the bounds (below), while this flag decides whether the tools exist at all.
+> **Opt-in per agent.** Self-scheduling is gated by `Agent.settings.selfSchedulingEnabled` (default **off**), surfaced as the **Self-scheduling** toggle under Abilities → Overview → Autonomy. When off, [`SystemPromptComposer`](../Packages/OsaurusCore/Services/Chat/SystemPromptComposer.swift) strips the `schedule_next_run` / `cancel_next_run` / `notify` tools from the model's tool list, the Scheduling mode picker and the Next Run banner are hidden, and flipping the toggle off cancels any pending slot so an orphaned run can't fire after the user opted out. This flag is **independent of the schedule mode** — the mode only sets the bounds (below), while this flag decides whether the tools exist at all.
 
 Schedules in Osaurus follow a deliberately minimal contract: **one wake per agent**, stored as a one-shot schedule automation the agent owns ([`SelfScheduleAutomations.swift`](../Packages/OsaurusCore/Services/Event/SelfScheduleAutomations.swift); details in [TASK_QUEUE.md → Self-scheduled wake-ups](TASK_QUEUE.md#self-scheduled-wake-ups)).
 
@@ -195,7 +195,7 @@ Because firing disables the wake, **wakeups are single-shot**. If an agent wants
 
 **Every wake runs in a fresh chat session.** A wake never reattaches to the chat from a previous self-scheduled run, so the context window never accretes across wakes. Continuity is the agent's job: carry state forward through the `instructions` on the next `schedule_next_run` call and through the agent DB. The dispatched prompt carries a host-composed preamble — who scheduled the wake, when, and the previous wake's finish time and status from its task — followed by the stored instructions verbatim (see `SelfScheduleAutomations.composeDispatchPrompt`).
 
-A wake that could not run (skipped, or failed to start) finishes as a task with that state, so the miss is visible in the Activity tab and in **Tasks → History** instead of vanishing.
+A wake that could not run (skipped, or failed to start) finishes as a task with that state, so the miss is visible in the Database tab's History section and in **Tasks → History** instead of vanishing.
 
 Older builds kept the slot in `agent_next_run` and the history in `agent_runs` (`~/.osaurus/scheduler.sqlite`). On launch their rows are moved over and each table is renamed to `*_legacy`, then recreated empty so a downgraded build still opens the file.
 
@@ -266,7 +266,7 @@ All five go through [`LocalAgentBridge.pauseAgent(_:until:reason:)`](../Packages
 
 ## Detail-View Tour
 
-All five DB tabs (and the scheduling chrome that sits above them) live in two files: [`AgentDBTabViews.swift`](../Packages/OsaurusCore/Views/Agent/AgentDBTabViews.swift) and [`NextRunPanelView.swift`](../Packages/OsaurusCore/Views/Agent/NextRunPanelView.swift).
+The Database tab's sections live in [`Views/Agent/Database/`](../Packages/OsaurusCore/Views/Agent/Database/) (`DatabaseOverviewView`, `DatabaseTablesView`, `DatabaseSavedViewsView`, `DatabaseHistoryView`); the scheduling chrome above the detail view is [`NextRunPanelView.swift`](../Packages/OsaurusCore/Views/Agent/NextRunPanelView.swift).
 
 ### Next Run banner
 
@@ -280,17 +280,18 @@ The Mode chip is read-only and tapping it posts an `.agentDetailDeeplink` notifi
 
 ### Configure → Scheduling
 
-Gated behind the **Self-scheduling** toggle: the mode picker and the Next Run banner only render once `selfSchedulingEnabled` is on. When shown, the picker is three radio cards (`scheduleModeCard` in [`AgentsView.swift`](../Packages/OsaurusCore/Views/Agent/AgentsView.swift)) for the Ambient / Reactive / Project presets, each showing the mode name, a one-line tagline, and the resolved preset summary so the user knows what they're switching to before they click.
+Gated behind the **Self-scheduling** toggle (Abilities → Overview → Autonomy): the mode picker and the Next Run banner only render once `selfSchedulingEnabled` is on. When shown, the picker is three radio rows (`scheduleModeRow` in [`AgentsView.swift`](../Packages/OsaurusCore/Views/Agent/AgentsView.swift)) for the Ambient / Reactive / Project presets, each showing the mode name, a one-line tagline, and the resolved preset summary so the user knows what they're switching to before they click.
 
-### Schema / Data / Views / Activity / Home
+### Database tab sections
 
-| Tab        | What it shows                                                                                 |
-| ---------- | --------------------------------------------------------------------------------------------- |
-| `Schema`   | Read-only catalogue of every table, its columns + types, and indexes. System tables grouped separately. |
-| `Data`     | Browse + edit rows. Table dropdown + `Active` / `Deleted` / `All` filter; per-row "Open" affordance; bulk soft-delete via row checkboxes; CSV export; **Import** button + drag-and-drop file ingest (CSV/TSV/JSON/JSONL), stamped `actor = user`. |
-| `Views`    | Manage saved views. Split pane: list of view names on the left, definition + live preview on the right. Pin a view to show on `Home`. |
-| `Activity` | Split pane of the agent's tasks (left) and the selected run's `_changelog` entries (right). The audit log. |
-| `Home`     | Dashboard of pinned views. The agent's "what should I look at right now?" tab.                |
+| Section       | What it shows                                                                                 |
+| ------------- | --------------------------------------------------------------------------------------------- |
+| `Overview`    | Summary of what is stored plus the dashboard of pinned saved views. The agent's "what should I look at right now?" page. |
+| `Tables`      | Schema and data together: each table's columns, types and indexes, and its rows. `Active` / `Deleted` / `All` filter; bulk soft-delete via row checkboxes; CSV export; **Import** button + drag-and-drop file ingest (CSV/TSV/JSON/JSONL), stamped `actor = user`. System tables are grouped separately. |
+| `Saved Views` | Manage saved views: definition + live preview. **Pin to Overview** shows a view as a card on Overview. |
+| `History`     | The agent's runs alongside the selected run's `_changelog` entries. The audit log.            |
+
+Legacy deep links (`tab: "home" / "schema" / "data" / "views" / "activity"`) still resolve onto the matching section (`AgentDetailTabRoute`).
 
 ---
 
@@ -301,17 +302,17 @@ A single `NotificationCenter` channel (`Notification.Name.agentDetailDeeplink` o
 | Key         | Type              | Meaning                                                      |
 | ----------- | ----------------- | ------------------------------------------------------------ |
 | `agentId`   | `UUID` (required) | Which agent to focus.                                        |
-| `tab`       | `String`          | `DetailTab` raw value (`configure`, `schema`, `data`, …).    |
-| `tableRef`  | `String?`         | Optional table name to pre-select on the Data / Schema tab.  |
-| `viewRef`   | `String?`         | Optional view name to pre-select on the Views tab.           |
+| `tab`       | `String`          | `DetailTab` raw value (`configure`, `database`, …) or a legacy database section name. |
+| `tableRef`  | `String?`         | Optional table name to pre-select in Tables.                 |
+| `viewRef`   | `String?`         | Optional view name to pre-select in Saved Views.             |
 
-Posters include the Mode chip in [`NextRunPanelView`](../Packages/OsaurusCore/Views/Agent/NextRunPanelView.swift), the Data-tab "Open" buttons, the Schema-tab "Browse" buttons, and the system notifications fired by [`NotificationService`](../Packages/OsaurusCore/Services/NotificationService.swift). [`AgentsView`](../Packages/OsaurusCore/Views/Agent/AgentsView.swift) is the sole subscriber — it flips `selectedTab` and threads the optional refs through to the focused tab's `initialFocused…` parameter.
+Posters include the Mode chip in [`NextRunPanelView`](../Packages/OsaurusCore/Views/Agent/NextRunPanelView.swift) and the system notifications fired by [`NotificationService`](../Packages/OsaurusCore/Services/NotificationService.swift). [`AgentsView`](../Packages/OsaurusCore/Views/Agent/AgentsView.swift) flips `selectedTab` and passes the section and refs to the Database tab; `DatabaseWorkspaceView` also subscribes (filtered by agent id) so a link still focuses the right section, table or view while the tab is already open.
 
 ---
 
 ## Related Documentation
 
-- [Memory](MEMORY.md) — Global, app-wide memory system. Orthogonal to Agent DB; an agent can use neither, either, or both.
+- [Memory](MEMORY.md) — Per-agent and per-project conversational memory. Orthogonal to Agent DB; an agent can use neither, either, or both.
 - [Storage](STORAGE.md) — Key management, SQLCipher encryption, and the full list of on-disk artifacts.
 - [Agent Loop](AGENT_LOOP.md) — The chat loop, the always-on `todo` / `complete` / `clarify` tools, and how `db_*` slots into the same `ToolRegistry`.
 - [Features Overview](FEATURES.md) — Complete feature inventory.

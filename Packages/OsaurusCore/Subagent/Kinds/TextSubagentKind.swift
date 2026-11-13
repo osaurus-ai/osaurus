@@ -1727,7 +1727,7 @@ final class TextSubagentKind:
     ) -> String {
         isDefault
             ? "\(kind) '\(name)' is not spawnable. Add it in Settings → Agents → Delegation → Allowed subagents."
-            : "\(kind) '\(name)' is not spawnable from this agent. Add it in the agent's Subagents tab."
+            : "\(kind) '\(name)' is not spawnable from this agent. Add it in the agent's Abilities → Subagents → Allowed subagents."
     }
 
     private func seedMessages(

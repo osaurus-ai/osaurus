@@ -20,15 +20,15 @@ Osaurus gives every participant — you, each agent, and each device — a crypt
 - Agents created on each device get their own unique addresses — the same "agent #1" on two devices is two different agents and never collides at the relay.
 - In a workspace, agents running on your other device show up as "Yours · other device" and you chat with them through the relay like a teammate's agent. Agents running on the device you're using open locally.
 - An agent lives on one device at a time. If the same agent's Remote Access is turned on from a second machine (for example after copying a backup), the newer one serves it and the other shows **On another Mac** (Sharing → Access → Remote Access); use **Serve From This Mac** to take it back.
-- A device that holds your identity can request access to an agent hosted on another of your devices directly — no workspace or invite needed. It proves it holds the master key by signing a one-time challenge; the host then issues a 90-day agent-scoped access key labelled "Owner device – <device name>", which shows up in that agent's key list and can be revoked like any other.
+- Your other Macs and your iPhone reach this Mac's agents through Sync (Sharing → Devices → **Run Agents for My Other Devices**; see the Sync topic). The older owner-device handshake is kept only for Macs on older builds: such a device proves it holds the master key by signing a one-time challenge, and the host issues a 90-day agent-scoped access key labelled "Owner device – <device name>", which shows up in that agent's key list and can be revoked like any other.
 - Rotating an agent's key moves everything that pointed at the old address: its Remote Access reconnects with the new one and every workspace share is re-issued. Access keys for the old address stop working; other devices and teammates re-request access automatically.
 - If an agent's address was saved by an older version of Osaurus that did not know about device-scoped addresses, the Identity view restores the missing device scope automatically when it can reproduce the address. No keys change and nothing needs to be re-shared.
-- The built-in Default agent is never reachable from another device.
+- The built-in Default agent is never reachable through Remote Access, guest links or access keys. Sync does offer it to your own iPhone (other Macs skip it).
 
 ## Backup and recovery
 
-- On setup you are shown a 24-word recovery phrase exactly once — copy, save, or print it. It is the only way to rebuild your master key if the Keychain entry is lost.
-- The Identity view shows a warning banner until you confirm the phrase is saved, and offers explicit "Reset Identity" and "Recover from phrase" flows. Your identity is never silently replaced.
+- Your identity has a 24-word recovery phrase. Open it any time with **View recovery phrase** in Settings… (⌘,) → Osaurus ID, then copy, save, or print it. It is the only way to rebuild your master key if the Keychain entry is lost.
+- Osaurus ID → **Danger Zone** has explicit **Restore From Recovery Phrase** and **Reset Identity** flows. Your identity is never silently replaced.
 
 ## Access keys (osk-v1)
 
@@ -39,7 +39,7 @@ Osaurus gives every participant — you, each agent, and each device — a crypt
 
 ## Pairing
 
-Other people reach one of your agents through a guest link (**Share Agent** → **Guest link** on the agent in Settings… (⌘,) → Agents) or a workspace (see the Workspaces topic); each redeemed guest link gets an agent-scoped access key, and everyone holding one is listed under Settings… (⌘,) → Sharing → Access → **Guests**. Your own Macs and your iPhone use Sync instead: add them under Settings… (⌘,) → Sharing → Devices (see the Sync topic). Osaurus no longer advertises agents on the local network, and keys from the old local-network pairing keep working until they expire or you revoke them. A whitelist controls which external addresses may hold keys, globally or per agent.
+Other people reach one of your agents through a guest link (**Share…** → **Guest Link** on the agent in Settings… (⌘,) → Agents) or a workspace (see the Workspaces topic); each redeemed guest link gets an agent-scoped access key, and everyone holding one is listed under Settings… (⌘,) → Sharing → Access → **Guests**. Your own Macs and your iPhone use Sync instead: add them under Settings… (⌘,) → Sharing → Devices (see the Sync topic). Osaurus no longer advertises agents on the local network, and keys from the old local-network pairing keep working until they expire (90 days) or you revoke them. Pairings approved before agent scoping are master-scoped and never expire; Server → Access Keys marks them **Legacy** so you can revoke them. A whitelist controls which external addresses may hold keys, globally or per agent.
 
 ## Sign in with Osaurus
 

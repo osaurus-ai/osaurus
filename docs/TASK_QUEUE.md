@@ -367,15 +367,18 @@ newest 24 at most.
 
 ## UX
 
-- **Tasks** tab in the Developer Tools group of Management, after Server,
-  Sandbox and Insights. Every deep link (`TaskControl.showHistory` /
-  `showDetail`, Automations → History, See All, Insights → Open Task) opens
-  it wherever it sits.
-  - **Board**: one row per queue, split into Waiting, Running and a short
-    Recently finished tail. No time axis.
+- **Tasks** page in the Developer Tools group of the Settings sidebar, after
+  Server, Sandbox and Insights, with two tabs, **Queues** and **History**.
+  Every deep link (`TaskControl.showHistory` / `showDetail`, Automations →
+  History, See All, Insights → Open Task) opens it wherever it sits.
+  - **Queues**: one section per queue (subtitle "N running · N waiting · up
+    to N at once") listing running, then waiting, then a short tail of
+    finished tasks with **See All Finished**. No time axis.
   - **Card**: title, the agent's or workflow's icon, one status line. Running
     shows elapsed time and `progressNote`. Waiting shows a reason only when it
-    waits on something (`foreground chat`, `queue full`, `paused`). Failed
+    waits on something (**Waiting for the chat to finish**, **Queue full**,
+    **Queue paused**); a task waiting on you shows **Waiting for your
+    answer**. Failed
     shows the last error. Running cards are locked; the only action is
     **Stop**, journaled with who stopped it.
   - **Foreground** section, above the queues, while anything holds a
@@ -385,8 +388,9 @@ newest 24 at most.
     `TaskBus.reservationsChanged`, never from the stored history. Its
     subtitle and **Yielding** chip appear only while a reservation actually
     holds a task.
-  - **Needs you**: a count of tasks in `waitingUser` plus failed tasks whose
-    retries ran out (the last day's).
+  - Tasks waiting on you (`waitingUser`) are answered in the **Inbox**
+    (**Needs You**), not on this page; the `tasks.needsYou` search landing
+    opens the Inbox.
   - **History**: every task, newest first, narrowed by origin, result
     (ran / skipped / failed), queue, or one agent or workflow. Automations →
     History, an agent's See All and a workflow's All Tasks open it
@@ -398,7 +402,8 @@ newest 24 at most.
     ordering, paused.
 - Chat sidebar: a session's context menu has **Tasks from This Chat**
   (History filtered by `originSessionId`) when it started any.
-- Automation editor: **When → Only When → Do → Queue**.
+- Automation editor: **When → Only When → Do → Queue → Reply** (Reply only
+  for channel rules).
 - One queue, no choice: while only Default exists
   (`TaskStore.hasMultipleQueues` is false) the editor hides its queue picker
   (the section keeps the overlap and queued-message controls), the task

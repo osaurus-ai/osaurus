@@ -40,7 +40,8 @@ struct OsaurusGuideTests {
     func settingsTopic_namesServerCacheContextCap() throws {
         let body = try #require(OsaurusGuide.topic(id: "settings")?.body)
         #expect(body.contains("Context Window Cap"))
-        #expect(body.contains("Server → Settings → Cache") || body.contains("Server → Settings → Cache → Context"))
+        #expect(body.contains("Server → Server Settings → Cache"))
+        #expect(!body.contains("Server → Settings → Cache"))
         #expect(!body.contains("Chat behavior: core model for background jobs, context length"))
         #expect(!body.contains("Warm Models on Load"))
     }
