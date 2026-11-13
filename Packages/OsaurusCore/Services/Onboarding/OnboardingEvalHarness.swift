@@ -365,7 +365,7 @@ public enum OnboardingEvalHarness {
 
     static let readOnlyTools: Set<String> = [
         "calendar_events", "reminders_fetch", "mail_list", "mail_read", "mail_search", "notes_search", "notes_list",
-        "file_search", "file_read", "search_and_extract", "git_status", "git_diff", "git_log",
+        "file_search", "file_read", "web_search", "search_and_extract", "git_status", "git_diff", "git_log",
     ]
 
     static func defaultWorkflows(_ probe: inout Probe) {
@@ -385,7 +385,9 @@ public enum OnboardingEvalHarness {
             )
             let calls = toolSteps(template).map(\.spec.tool.name)
             probe.expect(Set(calls).isSubset(of: readOnlyTools), "\(template.name): reads only \(calls)")
-            probe.expect(def.nodes.count <= 6, "\(template.name): \(def.nodes.count) steps")
+            // Code steps run instantly in the sandbox; the budget is the steps that wait on a model or a tool.
+            let slow = def.nodes.filter { $0.kindName != "code" }.count
+            probe.expect(slow <= 6, "\(template.name): \(slow) model or tool steps")
         }
     }
 

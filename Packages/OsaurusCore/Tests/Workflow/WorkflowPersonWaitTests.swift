@@ -192,6 +192,31 @@ struct WorkflowPersonWaitTests {
         #expect(await second.value.status == .completed)
         #expect(await MainActor.run { DialogCoordinator.shared.draft(workflowID: workflowID, nodeID: "ask") }.isEmpty)
     }
+
+    /// A caller parked on the run reads the form the moment the run says
+    /// it is waiting; the form has to be there by then.
+    @Test
+    func theFormIsQueued_beforeTheRunSaysItIsWaiting() async throws {
+        actor Seen { var queued: [Bool] = []; func add(_ v: Bool) { queued.append(v) } }
+        let seen = Seen()
+        let workflowID = UUID()
+        let executor = ClosureExecutor { ctx, awaiting in
+            guard case .dialog(let spec) = ctx.node.kind else { return WorkflowNodeOutcome(output: .object([:])) }
+            return try await DialogNodeExecutor.run(spec: spec, context: ctx) { waiting in
+                if waiting {
+                    await seen.add(
+                        await MainActor.run { DialogCoordinator.shared.pending.contains { $0.workflowID == workflowID } })
+                }
+                await awaiting(waiting)
+            }
+        }
+        let def = WorkflowDefinition(nodes: [Self.form()])
+        let running = Task { await WorkflowRunner(request: Self.request(def, workflowID: workflowID), executor: executor).execute() }
+        let shown = try await Self.shownDialog(workflowID: workflowID)
+        _ = await MainActor.run { DialogCoordinator.shared.answer(shown.id, values: ["jd": .string("Barista")]) }
+        #expect(await running.value.status == .completed)
+        #expect(await seen.queued == [true])
+    }
 }
 }
 
