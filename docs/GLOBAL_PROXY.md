@@ -12,7 +12,7 @@ The current rollout includes the validated URL format, shared URLSession
 factory, settings persistence, and call-site wiring for remote provider traffic,
 HTTP/SSE MCP provider discovery, MCP auth-challenge probes, model downloads,
 Hugging Face lookups, plugin HTTP, plugin repository refreshes, plugin artifact
-installs, relay, theme sharing, GitHub skill import, and sandbox provisioning.
+installs, relay, GitHub skill import, and sandbox provisioning.
 Local loopback health checks remain direct by design. Per-provider proxy
 selection and model mirror selection remain separate designs.
 

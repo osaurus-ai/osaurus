@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  Shared mosaic transition for grids whose visible item set changes —
-//  search/filter/sort in ModelDownloadView, add/remove in AgentsView, etc.
+//  add/remove in AgentsView, search in WorkspacesView, etc.
 //
 //  Usage:
 //    LazyVGrid(...) {
@@ -25,8 +25,8 @@ import SwiftUI
 /// Namespace for the shared spring + transition. Exposed so callers can
 /// compose with other animations or override per-call site if needed.
 enum GridDiff {
-    static var spring: Animation {
-        .spring(response: 0.42, dampingFraction: 0.82)
+    @MainActor static var spring: Animation {
+        ThemeManager.shared.currentTheme.motion.springAnimation
     }
 
     static var cellTransition: AnyTransition {

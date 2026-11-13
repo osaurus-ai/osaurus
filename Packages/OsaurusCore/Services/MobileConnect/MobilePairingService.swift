@@ -165,10 +165,14 @@ final class MobilePairingService: ObservableObject {
     private var keepAwakeToken: NSObjectProtocol?
     private let defaults: UserDefaults
     private var agentsCancellable: AnyCancellable?
+    /// Custom agents that had an address at the last `$agents` publish, so
+    /// only agents that just got one count as new.
+    private var addressedAgentIds: Set<UUID>
     private var deviceExpiryTask: Task<Void, Never>?
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
+        addressedAgentIds = Self.addressedAgentIds(in: AgentManager.shared.agents)
         if let data = defaults.data(forKey: Self.pairedDeviceDefaultsKey) {
             pairedDevice = try? JSONDecoder().decode(PairedMobileDevice.self, from: data)
         } else if let adopted = adoptMultiPhonePairing() {
@@ -182,11 +186,12 @@ final class MobilePairingService: ObservableObject {
         refreshKeepAwake()
         // A key that lapsed while the app was closed ends the pairing now.
         scheduleDeviceExpiry()
-        // Agents created while a phone is paired get the relay too.
+        // Agents created while a phone is paired get the relay too. Their
+        // address is assigned after creation, so this watches every publish.
         agentsCancellable = AgentManager.shared.$agents
             .dropFirst()
-            .sink { [weak self] _ in
-                Task { @MainActor in self?.syncRelay() }
+            .sink { [weak self] agents in
+                Task { @MainActor in self?.relayNewlyAddressedAgents(agents) }
             }
     }
 
@@ -197,6 +202,10 @@ final class MobilePairingService: ObservableObject {
         guard !isGeneratingCode else { return }
         cancelCode()
         lastError = nil
+        guard !MobileConnectMigration.isRetired(defaults: defaults) else {
+            lastError = L("Your iPhone uses Sync now. Add it in Sharing → Devices.")
+            return
+        }
         guard OsaurusIdentity.exists() else {
             lastError = L("Set up your Osaurus identity first (Settings → Identity).")
             return
@@ -342,6 +351,7 @@ final class MobilePairingService: ObservableObject {
                 isSimulator: isSimulator == true ? true : nil
             )
         )
+        if isSimulator != true { FeatureTelemetry.phonePaired() }
     }
 
     // MARK: Redeem v2 (POST /pair/code, then POST /pair/confirm)
@@ -486,7 +496,7 @@ final class MobilePairingService: ObservableObject {
             let info = APIKeyManager.shared.listKeys().first(where: { $0.id == device.keyId }),
             PairingCode.constantTimeEquals(info.nonce, keyNonce)
         else { return false }
-        revokeDevice()
+        revokeDevice(via: "phone")
         return true
     }
 
@@ -527,9 +537,20 @@ final class MobilePairingService: ObservableObject {
         return kept
     }
 
-    func revokeDevice() {
+    /// `via` is the `phone_unpaired` token: `mac` (removed here) or `phone`.
+    func revokeDevice(via: String = "mac") {
         guard let device = pairedDevice else { return }
         APIKeyManager.shared.revoke(id: device.keyId)
+        setPairedDevice(nil)
+        if device.isSimulator != true { FeatureTelemetry.phoneUnpaired(via: via) }
+    }
+
+    /// The iPhone joined Sync (`MobileConnectMigration`), which revoked the
+    /// pairing keys and cleared the pairing defaults: drop what this service
+    /// still holds, a showing code and the paired phone with its keep-awake.
+    func retire() {
+        cancelCode()
+        guard pairedDevice != nil else { return }
         setPairedDevice(nil)
     }
 
@@ -580,7 +601,7 @@ final class MobilePairingService: ObservableObject {
         if shouldHold, keepAwakeToken == nil {
             keepAwakeToken = ProcessInfo.processInfo.beginActivity(
                 options: [.idleSystemSleepDisabled],
-                reason: "Osaurus Mobile: keep this Mac reachable from the paired phone"
+                reason: "Osaurus Mobile: keep this Mac reachable from your iPhone"
             )
         } else if !shouldHold, let token = keepAwakeToken {
             ProcessInfo.processInfo.endActivity(token)
@@ -601,9 +622,14 @@ extension MobilePairingService {
         Set((defaults.stringArray(forKey: Self.relayManagedAgentsKey) ?? []).compactMap { UUID(uuidString: $0) })
     }
 
-    /// Keeps the relay tunnel on for every remote agent while a phone is
-    /// paired and "Reach From Anywhere" is on; otherwise turns off exactly
-    /// the tunnels this service turned on.
+    /// Turns the relay tunnel on for every remote agent not kept off on
+    /// purpose while a phone is paired and "Remote Access for This iPhone" is
+    /// on; otherwise turns off exactly the tunnels this service turned on.
+    ///
+    /// Runs only on one-off events: a pairing change, the toggle in
+    /// `OsaurusConnectView`, or adopting a migrated pairing. Agent edits go
+    /// through `relayNewlyAddressedAgents`, which never touches an agent
+    /// that already had an address, so a tunnel someone turned off stays off.
     func syncRelay() {
         let relay = RelayTunnelManager.shared
         var managed = relayManagedAgentIds
@@ -611,7 +637,7 @@ extension MobilePairingService {
 
         if shouldReach {
             let remoteIds = Set(Self.remoteAgents().compactMap { UUID(uuidString: $0.id) })
-            for agentId in remoteIds where !relay.isTunnelEnabled(for: agentId) {
+            for agentId in remoteIds where !relay.isTunnelEnabled(for: agentId) && !relay.isTunnelKeptOff(for: agentId) {
                 relay.setTunnelEnabled(true, for: agentId)
                 managed.insert(agentId)
             }
@@ -624,5 +650,30 @@ extension MobilePairingService {
             managed.removeAll()
         }
         defaults.set(managed.map(\.uuidString).sorted(), forKey: Self.relayManagedAgentsKey)
+    }
+
+    /// Turns the relay on for agents that just got an address while a phone
+    /// is paired and "Remote Access for This iPhone" is on, unless they were
+    /// kept off on purpose (`RelayTunnelManager.keepTunnelOff`).
+    func relayNewlyAddressedAgents(_ agents: [Agent]) {
+        let addressed = Self.addressedAgentIds(in: agents)
+        let fresh = addressed.subtracting(addressedAgentIds)
+        addressedAgentIds = addressed
+        guard !fresh.isEmpty, pairedDevice != nil, Self.isReachAnywhereEnabled(in: defaults) else { return }
+        let relay = RelayTunnelManager.shared
+        var managed = relayManagedAgentIds
+        for agentId in fresh.sorted(by: { $0.uuidString < $1.uuidString })
+        where !relay.isTunnelEnabled(for: agentId) && !relay.isTunnelKeptOff(for: agentId) {
+            relay.setTunnelEnabled(true, for: agentId)
+            managed.insert(agentId)
+        }
+        defaults.set(managed.map(\.uuidString).sorted(), forKey: Self.relayManagedAgentsKey)
+    }
+
+    private static func addressedAgentIds(in agents: [Agent]) -> Set<UUID> {
+        Set(agents.compactMap { agent in
+            guard !agent.isBuiltIn, let address = agent.agentAddress, !address.isEmpty else { return nil }
+            return agent.id
+        })
     }
 }

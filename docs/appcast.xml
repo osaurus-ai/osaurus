@@ -3,6 +3,41 @@
   <channel>
     <title>Osaurus</title>
         <item>
+            <title>1.0.2</title>
+            <pubDate>Thu, 12 Nov 2026 11:41:16 +0000</pubDate>
+            <sparkle:version>1.0.2</sparkle:version>
+            <sparkle:shortVersionString>1.0.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/1.0.2/Osaurus-1.0.2.dmg" length="121329160" type="application/octet-stream" sparkle:edSignature="YlcF+BCXfNLfWtLk1pKK6ydiERVneZiWZSzKj6sK/VDEunCH66u+XPgZEWdWOcmRovcvw1wgBCiJH2U+wD4NDw=="/>
+            <description sparkle:format="markdown"><![CDATA[
+## What's Changed
+* Eagerly prime telemetry consent cache at launch and guard undecided reads by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3354
+* Compile simpleName regexes once and memoize familyDisplayName by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3344
+* Accelerate Markdown line splitting with UTF-8 newline scanning by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3337
+* Memoize connected spawn target index in RemoteProviderManager by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3321
+* Consume bounded screen-context status-bar coordinate checks by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3335
+* Move keychain wipe off the main actor during factory reset by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3361
+* Coalesce download progress publishes and throttle ModelManager objectWillChange by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3338
+* Cache resolved home directory in ExecutableLocator to stop main thread hangs by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3320
+* Debounce network path monitor updates to avoid main thread hangs by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3295
+* Refresh model lists for Grok 4.7, GPT-6.1, Gemini 4, and Nano Banana 2.1 by @tpae in https://github.com/osaurus-ai/osaurus/pull/3388
+* Report read-only folders and empty share_artifact content accurately by @tpae in https://github.com/osaurus-ai/osaurus/pull/3389
+* Fix config apply turning on Remote Access for every agent by @tpae in https://github.com/osaurus-ai/osaurus/pull/3392
+* Report attached folders accurately when loading a workspace tool by @tpae in https://github.com/osaurus-ai/osaurus/pull/3397
+* Show the Working Folder picker and Knowledge grants in agent settings by @tpae in https://github.com/osaurus-ai/osaurus/pull/3398
+* Offer only Raptor 0.7 in onboarding and refresh Models tab Top Picks by @tpae in https://github.com/osaurus-ai/osaurus/pull/3400
+* Harden device Sync: owner checks, safer removal, clearer pairing and status, Osaurus servers by @tpae in https://github.com/osaurus-ai/osaurus/pull/3399
+* Make the design library the single source for spacing, color and dividers by @tpae in https://github.com/osaurus-ai/osaurus/pull/3401
+* Don't time workflow steps while a person is answering by @tpae in https://github.com/osaurus-ai/osaurus/pull/3402
+
+
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/1.0.1...1.0.2
+]]></description>
+            <sparkle:channel>beta</sparkle:channel>
+            <sparkle:minimumAutoupdateVersion>1.0.0</sparkle:minimumAutoupdateVersion>
+        </item>
+        <item>
             <title>0.25.33</title>
             <pubDate>Mon, 09 Nov 2026 16:26:20 +0000</pubDate>
             <sparkle:channel>release</sparkle:channel>

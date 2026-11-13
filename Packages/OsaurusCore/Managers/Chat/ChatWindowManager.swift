@@ -111,6 +111,18 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         return createWindowInternal(agentId: agentId, sessionData: nil, showImmediately: showImmediately)
     }
 
+    /// The first chat after onboarding: opens at `initialFrame` instead of
+    /// the remembered or full-screen size, fully transparent so the caller
+    /// can crossfade it in. The frame still becomes the remembered one.
+    @discardableResult
+    func createWindow(agentId: UUID? = nil, initialFrame: NSRect) -> UUID {
+        let id = createWindowInternal(
+            agentId: agentId, sessionData: nil, showImmediately: false, initialFrame: initialFrame)
+        nsWindows[id]?.alphaValue = 0
+        showWindow(id: id)
+        return id
+    }
+
     /// Create a new chat window with existing session data
     /// - Parameters:
     ///   - agentId: The agent for this window (defaults to active agent)
@@ -130,7 +142,8 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     private func createWindowInternal(
         agentId: UUID?,
         sessionData: ChatSessionData?,
-        showImmediately: Bool
+        showImmediately: Bool,
+        initialFrame: NSRect? = nil
     ) -> UUID {
         if let sessionId = sessionData?.id,
             let owner = revealOpenSession(sessionId, showImmediately: showImmediately)
@@ -168,7 +181,8 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         let window = createNSWindow(
             windowId: windowId,
             agentId: effectiveAgentId,
-            sessionData: sessionData
+            sessionData: sessionData,
+            initialFrame: initialFrame
         )
 
         nsWindows[windowId] = window
@@ -316,6 +330,9 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         // quit before the post-onboarding window opened.
         FeatureTelemetry.firstTimeChatShown()
         SparkleChatGate.markChatVisible()
+        if let session = windowStates[id]?.session {
+            OnboardingFirstRun.shared.windowShown(session)
+        }
     }
 
     /// Hide a window by ID
@@ -398,28 +415,64 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         return nil
     }
 
+    /// Route every legacy Settings/Workflows entry into the main app surface.
+    /// `tab` opens the Workflows home on that tab with nothing pushed.
+    func showWorkflowsSurface(tab: ChatWindowState.WorkflowsTab? = nil) {
+        showWorkflowsSurface(destination: tab.map { .home($0) })
+    }
+
+    /// Where a Settings search result for Workflows lands.
+    func showWorkflowsSurface(destination: ChatWindowState.WorkflowsDestination?) {
+        let state: ChatWindowState
+        if let current = shortcutTargetState {
+            state = current
+        } else {
+            let id = createWindow()
+            guard let created = windowStates[id] else { return }
+            state = created
+        }
+        state.showWorkflows(destination)
+        showWindow(id: state.windowId)
+    }
+
+    /// Settings in the window the person is in (else a new one), on `tab`
+    /// when given. Every Settings entry point lands here.
+    func showSettingsSurface(tab: ManagementTab? = nil) {
+        let state: ChatWindowState
+        if let current = shortcutTargetState {
+            state = current
+        } else {
+            let id = createWindow()
+            guard let created = windowStates[id] else { return }
+            state = created
+        }
+        state.showSettings(tab: tab)
+        showWindow(id: state.windowId)
+    }
+
     /// ⌘B: hide/show the focused chat window's session sidebar, mirroring
     /// the toolbar's sidebar button.
     public func toggleSidebarInFocusedWindow() {
         guard let state = shortcutTargetState else { return }
-        withAnimation(state.theme.animationQuick()) {
+        if state.mainSurface == .settings {
+            withAnimation(state.theme.motion.springAnimation) { state.isSettingsSidebarCollapsed.toggle() }
+            return
+        }
+        withAnimation(state.theme.motion.quick) {
             state.toggleSidebar()
         }
     }
 
     /// ⇧⌘.: switch the focused chat window to the next agent, wrapping at the
     /// end of the list. Mirrors picking the next entry in the toolbar's agent
-    /// pill, so it is a no-op on the project page (where the pill hides) and
-    /// while a remote/discovered agent is selected (cycling covers local
-    /// agents only, matching what `agentId` points at).
+    /// pill, so it is a no-op while a remote agent is selected (cycling
+    /// covers local agents only, matching what `agentId` points at).
     public func cycleAgentInFocusedWindow() {
-        guard let state = shortcutTargetState,
-            !state.isProjectPageVisible
-        else { return }
+        guard let state = shortcutTargetState else { return }
         // Legacy (non-workspace) Mode 2 selections aren't part of the cycle;
         // team-agent tabs are, in sidebar order after the local agents.
         if state.workspaceAgentAddress == nil,
-            state.selectedDiscoveredAgent != nil || state.selectedRelayAgent != nil
+            state.selectedRelayAgent != nil
         {
             return
         }
@@ -480,6 +533,24 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         }
         guard let state = windowStates[targetId] else { return }
         state.switchAgent(to: agentId)
+    }
+
+    /// Open a workflow's run (or its form) in the Workflows view: the window
+    /// already showing that workflow, else the last focused one, else a new
+    /// window.
+    func openWorkflowTab(workflowID: UUID, runID: UUID?, agentId: UUID) {
+        let targetId: UUID
+        if let existing = windowStates.first(where: { $0.value.workflowsPath.last?.workflowID == workflowID })?.key {
+            targetId = existing
+        } else if let lastId = lastFocusedWindowId, windowStates[lastId] != nil {
+            targetId = lastId
+        } else if let firstId = windowStates.keys.first {
+            targetId = firstId
+        } else {
+            targetId = createWindow(agentId: agentId)
+        }
+        showWindow(id: targetId)
+        windowStates[targetId]?.openWorkflowTab(workflowID: workflowID, runID: runID, agentId: agentId)
     }
 
     /// Always open a NEW window on a shared agent (sidebar row context menu
@@ -589,6 +660,35 @@ public final class ChatWindowManager: NSObject, ObservableObject {
             }
         }
         return nil
+    }
+
+    /// The window whose active or hydrated tabs hold `session` itself.
+    func windowState(holding session: ChatSession) -> ChatWindowState? {
+        windowStates.values.first { state in
+            state.session === session || state.liveTabSessions.contains { $0 === session }
+        }
+    }
+
+    /// Every hydrated tab's session in every window, active tabs included.
+    var allLiveTabSessions: [ChatSession] {
+        var seen = Set<ObjectIdentifier>()
+        return windowStates.values.flatMap { [$0.session] + $0.liveTabSessions }
+            .filter { seen.insert(ObjectIdentifier($0)).inserted }
+    }
+
+    /// Every hydrated tab showing the given persisted session id.
+    func sessions(forSessionId sessionId: UUID) -> [ChatSession] {
+        windowStates.values.flatMap { $0.liveTabSessions.filter { $0.sessionId == sessionId } }
+    }
+
+    /// Whether `sessionId` is the active tab of the key window while the app
+    /// is frontmost — the person is looking at it, so its own inline card
+    /// is enough and a notification would be noise.
+    func isSessionFrontmost(_ sessionId: UUID) -> Bool {
+        guard NSApp.isActive else { return false }
+        return windowStates.contains { id, state in
+            state.session.sessionId == sessionId && nsWindows[id]?.isKeyWindow == true
+        }
     }
 
     /// Check if any windows are visible
@@ -873,36 +973,9 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         print("[ChatWindowManager] Window \(id) pinned: \(pinned)")
     }
 
-    /// Focus all existing windows (for dock icon click)
-    public func focusAllWindows() {
-        guard !windows.isEmpty else { return }
-
-        NSApp.unhide(nil)
-        _ = NSRunningApplication.current.activate(options: [.activateAllWindows])
-
-        // Bring all windows to front without churn on key window state
-        for (_, window) in nsWindows {
-            if window.isMiniaturized {
-                window.deminiaturize(nil)
-            }
-            window.orderFrontRegardless()
-        }
-
-        // Make the intended window key once
-        if let lastId = lastFocusedWindowId, let window = nsWindows[lastId] {
-            window.makeKeyAndOrderFront(nil)
-        } else if let firstWindow = nsWindows.values.first {
-            firstWindow.makeKeyAndOrderFront(nil)
-        }
-
-        print("[ChatWindowManager] Focused all \(windows.count) windows")
-        // `windows` can be non-empty while `nsWindows` is empty (stale
-        // info, no NSWindow on screen). Only arm the Sparkle chat gate
-        // when a real chat window was brought forward.
-        if !nsWindows.isEmpty {
-            SparkleChatGate.markChatVisible()
-        }
-    }
+    /// Every chat window, shown or not, for the Dock reopen
+    /// (`AppDelegate.presentInitialWindow`).
+    var nsWindowsByID: [UUID: NSWindow] { nsWindows }
 
     // MARK: - Background Task Window Support
 
@@ -1086,15 +1159,12 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         windowId: UUID,
         windowState: ChatWindowState
     ) -> NSWindow {
-        let hostingController = NSHostingController(
-            rootView: ChatWindowRootView(windowState: windowState)
-        )
+        let hostingController = makeHostingController(for: windowState)
 
         let panel = createChatPanel(windowId: windowId, windowState: windowState)
-        attach(hostingController, to: panel)
-
         applyWindowFramePersistence(panel: panel)
         fitToScreen(panel, windowState: windowState, repositions: true)
+        attach(hostingController, to: panel)
 
         return panel
     }
@@ -1104,7 +1174,8 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     private func createNSWindow(
         windowId: UUID,
         agentId: UUID,
-        sessionData: ChatSessionData?
+        sessionData: ChatSessionData?,
+        initialFrame: NSRect? = nil
     ) -> NSWindow {
         // Create per-window state container (isolates from shared singletons)
         let windowState = ChatWindowState(
@@ -1114,15 +1185,14 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         )
         windowStates[windowId] = windowState
 
-        let hostingController = NSHostingController(
-            rootView: ChatWindowRootView(windowState: windowState)
-        )
+        let hostingController = makeHostingController(for: windowState)
 
+        // Final frame first: the root's first layout must already see the
+        // size the window opens at (see `attach`).
         let panel = createChatPanel(windowId: windowId, windowState: windowState)
-        attach(hostingController, to: panel)
-
-        applyWindowFramePersistence(panel: panel)
+        applyWindowFramePersistence(panel: panel, initialFrame: initialFrame)
         fitToScreen(panel, windowState: windowState, repositions: true)
+        attach(hostingController, to: panel)
 
         return panel
     }
@@ -1138,26 +1208,37 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         return vf.size
     }
 
-    /// Install the SwiftUI root without letting it dictate the window size,
-    /// while still letting it enforce the minimum.
+    /// The chat root in a controller that never sizes the window. With
+    /// `sizingOptions = [.minSize]` SwiftUI republished the window's content
+    /// size extrema on every constraint pass, and a column animating during
+    /// the first layout raised AppKit's "more Update Constraints passes than
+    /// views" exception (see `AppKitOwnedWindowHostingController`). The
+    /// floor reaches `contentMinSize` through `preferredMinimumSize` instead,
+    /// from the same `minimumContentSize` the root applies as
+    /// `.frame(minWidth:minHeight:)`.
+    private func makeHostingController(for windowState: ChatWindowState) -> NSViewController {
+        let controller = AppKitOwnedWindowHostingController(
+            rootView: ChatWindowRootView(windowState: windowState),
+            minimumContentSize: windowState.minimumContentSize)
+        floorSubscriptions[windowState.windowId] = windowState.$minimumContentSize
+            .sink { [weak controller] size in controller?.minimumContentSize = size }
+        return controller
+    }
+
+    /// Forwards each window's clamped floor to its hosting controller.
+    private var floorSubscriptions: [UUID: AnyCancellable] = [:]
+
+    /// Install the SwiftUI root. AppKit owns chat window size via the
+    /// default size and frame autosave.
     ///
-    /// AppKit owns chat window size via the default size and frame autosave.
-    /// With the hosting controller's default `sizingOptions`, attaching it
-    /// pushes the root view's measured size onto the window, which resolved
-    /// to the view's *minimum* (800pt) and shrank every new window, so
-    /// `.intrinsicContentSize` stays off. `.minSize` must stay ON, though:
-    /// a window with a content view controller mirrors that controller's
-    /// `preferredMinimumSize` into `contentMinSize` whenever it changes, and
-    /// a hosting controller without `.minSize` reports zero. Setting
-    /// `contentMinSize` by hand here was therefore overwritten on the next
-    /// layout pass and the window could be dragged down to nothing. With
-    /// `.minSize` on, the root view's `.frame(minWidth:minHeight:)` is the
-    /// single source of truth for the floor.
-    private func attach(_ hostingController: NSHostingController<some View>, to panel: ChatPanel) {
-        if #available(macOS 13.0, *) {
-            hostingController.sizingOptions = [.minSize]
-        }
+    /// The hosting view must already have the window's content size when it
+    /// is installed. A zero-sized view collapses the window to its content
+    /// for one pass, so SwiftUI lays the shell out at its minimum (the
+    /// compact breakpoint) and then animates every column out to the real
+    /// size as the window opens.
+    private func attach(_ hostingController: NSViewController, to panel: ChatPanel) {
         let contentSize = panel.contentRect(forFrameRect: panel.frame).size
+        hostingController.view.frame = NSRect(origin: .zero, size: contentSize)
         panel.contentViewController = hostingController
         panel.setContentSize(contentSize)
     }
@@ -1202,11 +1283,12 @@ public final class ChatWindowManager: NSObject, ObservableObject {
             defer: false
         )
 
-        panel.isOpaque = true
-        // Use the theme's background rather than the system color: in native
-        // full screen the content view no longer extends under the toolbar,
-        // so the titlebar strip exposes the window background directly.
-        panel.backgroundColor = NSColor(windowState.theme.primaryBackground)
+        // Transparent window: `WindowMaterialView` (behind-window material +
+        // canvas tint) is the base layer and must be able to blur the desktop
+        // behind the window. The clear backgroundColor also keeps the
+        // full-size titlebar strip consistent with the content material.
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
         panel.hasShadow = true
         panel.animationBehavior = .none
         panel.becomesKeyOnlyIfNeeded = false
@@ -1238,8 +1320,10 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         toolbar.delegate = toolbarDelegate
         panel.chatToolbarDelegate = toolbarDelegate
         panel.chatWindowState = windowState
-        panel.toolbar = toolbar
-        panel.toolbarStyle = .unified
+        // The shared SwiftUI header owns the exact 44pt Figma geometry.
+        // Retain native window controls, but avoid NSToolbar's extra vertical inset.
+        panel.toolbar = nil
+        panel.alignTrafficLightsWithHeader()
 
         // Set up delegate for lifecycle events
         let delegate = ChatWindowDelegate(windowId: windowId, manager: self)
@@ -1249,20 +1333,24 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         // The root view's floor must already fit the target screen when the
         // hosting controller attaches: its first layout pass mirrors that
         // floor into `contentMinSize`, and a too-tall floor at that point
-        // would grow the window past the screen before `fitToScreen` runs.
+        // would grow the window past the screen after `fitToScreen` ran.
         pushMinimumContentSize(for: panel, on: screen, windowState: windowState)
 
         return panel
     }
 
     /// Common method for window frame persistence and cascading.
-    private func applyWindowFramePersistence(panel: NSPanel) {
+    private func applyWindowFramePersistence(panel: NSPanel, initialFrame: NSRect? = nil) {
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
         let cascadeOffset = CGFloat(max(0, windows.count - 1)) * 25.0
 
-        // Try to load saved frame for ALL windows to get the user's preferred size
-        _ = panel.setFrameUsingName(WindowFrameAutosaveKey.chat.rawValue)
+        if let initialFrame {
+            panel.setFrame(initialFrame, display: false)
+        } else {
+            // Try to load saved frame for ALL windows to get the user's preferred size
+            _ = panel.setFrameUsingName(WindowFrameAutosaveKey.chat.rawValue)
+        }
 
         if windows.count > 1 {
             // Recalculate origin for subsequent windows in case the size changed from default
@@ -1296,9 +1384,6 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     // Called by delegate when window becomes key
     fileprivate func windowDidBecomeKey(id: UUID) {
         lastFocusedWindowId = id
-        // Once-per-user layout tour for users updating from the pre-tabs
-        // layout; a no-op after it has run or been skipped.
-        ChatLayoutTour.shared.autoStartIfEligible(windowId: id)
         // Refresh the residency-backed dot. Focus never loads a model or
         // cancels its idle deadline; the next Send loads on demand.
         windowStates[id]?.session.notifySessionBecameActive()
@@ -1318,6 +1403,9 @@ public final class ChatWindowManager: NSObject, ObservableObject {
     // Called by delegate when window will close
     fileprivate func windowWillClose(id: UUID) {
         print("[ChatWindowManager] Window \(id) will close")
+        if let session = windowStates[id]?.session {
+            OnboardingFirstRun.shared.windowClosing(session)
+        }
 
         // Snapshot the tabs while they are all still here: the teardown
         // below drops the inactive ones, and this record is what the next
@@ -1410,12 +1498,14 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         // Sever NSWindow -> NSHostingController link so the SwiftUI view tree
         // and its @State storage are released even if the panel lingers briefly.
         nsWindows[id]?.contentViewController = nil
+        floorSubscriptions.removeValue(forKey: id)
         nsWindows.removeValue(forKey: id)
         windows.removeValue(forKey: id)
 
         // Update last focused if this was the focused window
         if lastFocusedWindowId == id {
-            lastFocusedWindowId = windows.keys.first
+            let next = WindowFocusHistory.shared.mostRecentFirst(Array(nsWindows.values)).first
+            lastFocusedWindowId = next.flatMap { window in nsWindows.first { $0.value === window }?.key }
         }
 
         // Post notification for VAD resume
@@ -1444,14 +1534,15 @@ private struct ChatWindowRootView: View {
     @ObservedObject var windowState: ChatWindowState
 
     var body: some View {
-        VStack(spacing: 0) {
-            if windowState.isFullScreen {
+        ChatView(windowState: windowState)
+            .id(ObjectIdentifier(windowState.session))
+            .overlay(alignment: .top) {
                 ChatFullScreenHeaderView(windowState: windowState)
             }
-            ChatView(windowState: windowState)
-                .id(ObjectIdentifier(windowState.session))
-        }
-        .environment(\.theme, windowState.theme)
+            .clipShape(RoundedRectangle(
+                cornerRadius: windowState.isFullScreen ? 0 : 16, style: .continuous))
+            .ignoresSafeArea()
+            .environment(\.theme, windowState.theme)
     }
 }
 
@@ -1460,21 +1551,23 @@ private struct ChatWindowRootView: View {
 /// sidebar toggle leading, tab strip centered, the File Changes / History /
 /// Pin row trailing.
 private struct ChatFullScreenHeaderView: View {
+    @Environment(\.theme) private var theme
     @ObservedObject var windowState: ChatWindowState
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s0) {
+            if !windowState.isFullScreen {
+                // 58pt native traffic-light group plus 16pt separation.
+                Color.clear.frame(width: 74, height: windowState.theme.assignedMetric("component.button.size.small.height", fallback: 28))
+                    .allowsHitTesting(false)
+            }
             ChatToolbarSidebarView(windowState: windowState)
-            // The track fills the row up to the trailing buttons, like the
-            // toolbar item does.
-            // Trailing fallback: two 28pt buttons, their 8pt gap, the HStack
-            // spacing and the row's horizontal padding — until measured.
-            ChatTabStripView(windowState: windowState, leadingChromeWidth: 76, trailingChromeWidth: 84)
+            Spacer(minLength: windowState.theme.assignedMetric("component.library.43.gap", fallback: windowState.theme.space.s8))
             ChatToolbarTrailingView(windowState: windowState)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(windowState.theme.primaryBackground)
+        .padding(windowState.theme.assignedMetric("component.library.43.padding", fallback: windowState.theme.space.s8))
+        .frame(height: ChatView.headerHeight(windowState.theme))
+        .background(Color.clear)
     }
 }
 
@@ -1491,6 +1584,75 @@ private final class ChatPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 
+    /// NSPanel closes on an Esc nothing else took. On Settings the pages'
+    /// own Esc shortcuts and fields have had it by now, and the window
+    /// must stay open.
+    override func cancelOperation(_ sender: Any?) {
+        if chatWindowState?.mainSurface == .settings { return }
+        super.cancelOperation(sender)
+    }
+
+    // MARK: Window controls
+
+    private var trafficLightObservers: [NSObjectProtocol] = []
+
+    /// The SwiftUI header (`ChatFullScreenHeaderView`) centers its buttons
+    /// in a strip `ChatView.headerHeight` tall, while AppKit places the
+    /// window controls for a plain titlebar, higher up. Re-centering them
+    /// on the strip keeps the three controls and the header buttons on one
+    /// line. AppKit lays the titlebar out again on resize, key changes,
+    /// screen changes and full-screen exit, so each of those re-applies it.
+    func alignTrafficLightsWithHeader() {
+        if trafficLightObservers.isEmpty {
+            let names: [Notification.Name] = [
+                NSWindow.didResizeNotification, NSWindow.didEndLiveResizeNotification,
+                NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification,
+                NSWindow.didChangeScreenNotification, NSWindow.didExitFullScreenNotification,
+            ]
+            trafficLightObservers = names.map { name in
+                NotificationCenter.default.addObserver(forName: name, object: self, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.layoutTrafficLights() }
+                }
+            }
+            trafficLightObservers.append(
+                NotificationCenter.default.addObserver(
+                    forName: NSWindow.willCloseNotification, object: self, queue: .main
+                ) { [weak self] _ in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        self.trafficLightObservers.forEach(NotificationCenter.default.removeObserver)
+                        self.trafficLightObservers = []
+                    }
+                })
+        }
+        layoutTrafficLights()
+    }
+
+    private func layoutTrafficLights() {
+        guard !styleMask.contains(.fullScreen), let theme = chatWindowState?.theme,
+            let close = standardWindowButton(.closeButton),
+            let titlebar = close.superview, let container = titlebar.superview
+        else { return }
+        let height = ChatView.headerHeight(theme)
+        // The controls' container must be as tall as the strip, or the
+        // re-centered buttons would hang below it.
+        if abs(container.frame.height - height) > 0.5 {
+            var frame = container.frame
+            frame.size.height = height
+            frame.origin.y = (container.superview?.bounds.height ?? self.frame.height) - height
+            container.frame = frame
+        }
+        if titlebar.frame != container.bounds { titlebar.frame = container.bounds }
+        for type in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+            guard let button = standardWindowButton(type), let parent = button.superview else { continue }
+            let top = ((height - button.frame.height) / 2).rounded()
+            let y = parent.isFlipped ? top : parent.bounds.height - top - button.frame.height
+            if abs(button.frame.origin.y - y) > 0.5 {
+                button.setFrameOrigin(NSPoint(x: button.frame.origin.x, y: y))
+            }
+        }
+    }
+
     /// ⌘W (the Close menu item) closes the active TAB, like a browser: the
     /// agent's last conversation tab is replaced by a blank chat so the
     /// window stays up (Osaurus is a menu-bar app, so closing its only
@@ -1506,8 +1668,7 @@ private final class ChatPanel: NSPanel {
 
     /// Browser-style tab shortcuts, handled as KEY EQUIVALENTS so they win
     /// over menu items and over views that swallow key-downs: ⌘N new tab
-    /// (overrides File ▸ New Window while the chat surface is showing; on
-    /// the project page the menu keeps ⌘N), ⌘T new tab, ⇧⌘T reopen the
+    /// (overrides File ▸ New Window), ⌘T new tab, ⇧⌘T reopen the
     /// last closed tab, ⌃Tab / ⌃⇧Tab and ⇧⌘] / ⇧⌘[ cycle tabs. AppKit
     /// asks the key window before the menu bar, so returning true here is
     /// what keeps New Window from firing.
@@ -1526,8 +1687,12 @@ private final class ChatPanel: NSPanel {
             state.selectAdjacentTab(offset: flags.contains(.shift) ? -1 : 1)
             return true
         }
+        let inWorkflowsLibrary = state.mainSurface == .workflows && state.showsWorkflowLibrary
         switch (flags, key) {
-        case (.command, "n") where !state.isProjectPageVisible:
+        case (.command, "n") where inWorkflowsLibrary:
+            withAnimation(state.theme.motion.quick) { state.showNewWorkflow() }
+            return true
+        case (.command, "n"):
             // Always a NEW tab (like ⌘T), staying in the current project.
             state.newTabInCurrentProject()
             return true
@@ -1581,10 +1746,11 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     // AppKit's inter-item spacing and leave a dead gap at the right edge,
     // and the buttons would not share one spacing rule.
     private static let itemIdentifiers: [NSToolbarItem.Identifier] = [
-        sidebarItem, tabsItem, pinItem,
+        sidebarItem, .flexibleSpace, pinItem,
     ]
 
     private weak var windowState: ChatWindowState?
+    private var inspectionSizing: AnyCancellable?
 
     init(windowState: ChatWindowState) {
         self.windowState = windowState
@@ -1669,12 +1835,13 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
         // stretches it into the free space. Do not pin a large preferred
         // width instead: the toolbar measures the item's fitting size, reads
         // that width as the space it needs, and hides the item as too wide.
-        NSLayoutConstraint.activate([
-            hostingView.widthAnchor.constraint(
-                greaterThanOrEqualToConstant: ChatTabStripView.minimumItemWidth),
-            hostingView.widthAnchor.constraint(lessThanOrEqualToConstant: 10_000),
-            hostingView.heightAnchor.constraint(equalToConstant: ChatTabStripView.stripHeight),
-        ])
+        let minimum = hostingView.widthAnchor.constraint(greaterThanOrEqualToConstant: ChatTabStripView.minimumItemWidth)
+        let height = hostingView.heightAnchor.constraint(equalToConstant: ChatTabStripView.stripHeight)
+        NSLayoutConstraint.activate([minimum, hostingView.widthAnchor.constraint(lessThanOrEqualToConstant: 10_000), height])
+        inspectionSizing = windowState?.$theme.sink { theme in
+            minimum.constant = ChatTabStripView.inspectionMinimumItemWidth(theme)
+            height.constant = ChatTabStripView.inspectionStripHeight(theme)
+        }
         hostingView.setContentHuggingPriority(.defaultLow - 1, for: .horizontal)
         hostingView.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
         item.view = hostingView
@@ -1692,24 +1859,55 @@ private struct ChatToolbarSidebarView: View {
     @ObservedObject var windowState: ChatWindowState
 
     var body: some View {
+        Group {
+        if windowState.mainSurface == .chat {
         HeaderActionButton(
             icon: "sidebar.left",
-            help: windowState.isSidebarVisible ? "Hide sidebar" : "Show sidebar",
-            action: {
-                withAnimation(windowState.theme.animationQuick()) {
-                    windowState.toggleSidebar()
+            help: windowState.isSidebarVisible ? "Hide sidebar" : "Show sidebar"
+        ) {
+            withAnimation(windowState.theme.motion.quick) {
+                windowState.toggleSidebar()
+            }
+        }
+        .environment(\.theme, windowState.theme)
+        } else if windowState.mainSurface == .workflows {
+            WorkflowsTitleBarBackButton(windowState: windowState)
+                .environment(\.theme, windowState.theme)
+        } else if windowState.mainSurface == .settings {
+            HeaderActionButton(
+                icon: "sidebar.left",
+                help: windowState.isSettingsSidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"
+            ) {
+                withAnimation(windowState.theme.motion.springAnimation) {
+                    windowState.isSettingsSidebarCollapsed.toggle()
                 }
             }
-        )
-        .environment(\.theme, windowState.theme)
+            .environment(\.theme, windowState.theme)
+        }
+        }
+    }
+}
+
+/// The one back button of every Workflows screen but the home: from the
+/// editor to the page under it, or from a pushed page to the one before.
+private struct WorkflowsTitleBarBackButton: View {
+    @ObservedObject var windowState: ChatWindowState
+
+    var body: some View {
+        let path = windowState.workflowsPath
+        if !windowState.showsWorkflowLibrary {
+            SettingsBackButton(title: WorkflowsView.backTitle(to: path.last), verbatim: true) {
+                windowState.goBack()
+            }
+        } else if !path.isEmpty {
+            SettingsBackButton(title: WorkflowsView.backTitle(to: path.dropLast().last), verbatim: true) {
+                withAnimation(windowState.theme.motion.quick) { _ = windowState.goBack() }
+            }
+        }
     }
 }
 
 extension Notification.Name {
-    static let chatToolbarSelectDiscoveredAgent = Notification.Name("chatToolbarSelectDiscoveredAgent")
-    /// Posted by the toolbar's back button to reopen the current chat's
-    /// project page in the window identified by `userInfo["windowId"]`.
-    static let chatToolbarBackToProject = Notification.Name("chatToolbarBackToProject")
     /// Posted by the `/agent` slash command to pop open the toolbar's agent
     /// picker for the window identified in `userInfo["windowId"]`.
     static let chatToolbarOpenAgentPicker = Notification.Name("chatToolbarOpenAgentPicker")
@@ -1722,76 +1920,68 @@ extension Notification.Name {
     static let chatSessionProjectDidChange = Notification.Name("chatSessionProjectDidChange")
 }
 
-/// The single trailing toolbar item: the inspector toggle and Pin Window
-/// as one row of `HeaderActionButton`s with one spacing rule. The toggle
-/// mirrors the sidebar button at the other end of the toolbar: it opens
-/// the right-hand rail (on the pane it last showed; the rail's own lens
-/// bar switches between File Changes and History) or closes it, rendering
-/// active while open. While closed it carries the count of files this chat
-/// changed. Everything hides on the project page, which has no chat to
-/// inspect or pin.
+/// Shown only while something waits on the owner (a tool call, a
+/// teammate's request, a question) from any chat or agent, so a request
+/// raised in another window is never missed. Opens Inbox.
+private struct InboxToolbarButton: View {
+    @ObservedObject private var center = AttentionCenter.shared
+
+    var body: some View {
+        let waiting = ApprovalPresentation.waiting(in: center).count
+        if waiting > 0 {
+            HeaderActionButton(icon: "tray.full.fill", help: "Open Inbox", badge: waiting) {
+                AppDelegate.shared?.showManagementWindow(initialTab: .approvals)
+            }
+            .accessibilityLabel(Text(String(format: L("Inbox, %lld waiting"), waiting)))
+        }
+    }
+}
+
+/// The single trailing toolbar item: Inbox and the context panel toggle
+/// as one row of `HeaderActionButton`s with one spacing rule, the
+/// same button the sidebar toggle uses at the other end. The context
+/// toggle (a change-list glyph) opens the File Changes card or closes it,
+/// rendering
+/// active while open. It only exists once the chat has changed a file;
+/// while closed it carries the count of files this chat changed.
 ///
 /// Must observe `windowState` directly: with a plain `let`, SwiftUI sees
 /// the unchanged object reference and skips this body when only a
 /// published property (e.g. `fileChangesCount` after an undo) changed.
 private struct ChatToolbarTrailingView: View {
+    @Environment(\.theme) private var theme
     @ObservedObject var windowState: ChatWindowState
 
     var body: some View {
-        HStack(spacing: 8) {
-            // One right-rail toggle for both kinds of content: the chat
-            // inspector for a chat, Project Settings for a project. Only
-            // the window pin is chat-only chrome.
-            let isProject = windowState.isProjectPageVisible
-            let isOpen = windowState.isRightRailOpen
-            HeaderActionButton(
-                icon: "sidebar.right",
-                help: railToggleHelp(isProject: isProject, isOpen: isOpen),
-                isActive: isOpen,
-                badge: isProject ? nil : windowState.inspectorBadgeCount,
-                action: {
-                    withAnimation(windowState.theme.animationQuick()) {
-                        if isProject {
-                            windowState.toggleProjectInspector()
-                        } else {
-                            windowState.toggleInspector()
-                        }
+        HStack(spacing: theme.space.s8) {
+            InboxToolbarButton()
+            if windowState.mainSurface == .chat, windowState.hasContextPanel {
+                HeaderActionButton(
+                    icon: "list.bullet.rectangle",
+                    help: contextToggleHelp,
+                    isActive: windowState.isContextPanelOpen,
+                    badge: windowState.inspectorBadgeCount
+                ) {
+                    withAnimation(windowState.theme.motion.quick) {
+                        windowState.toggleContextPanel()
                     }
                 }
-            )
-            .accessibilityLabel(railToggleAccessibilityLabel(isProject: isProject, isOpen: isOpen))
-            // Tour spotlight anchor (invisible; reports the button's frame).
-            .background(TourAnchorMarker(anchor: .historyButton))
-
-            if !isProject {
-                HeaderActionButton(
-                    icon: windowState.isWindowPinned ? "pin.fill" : "pin",
-                    help: windowState.isWindowPinned ? "Unpin Window" : "Pin Window",
-                    action: {
-                        windowState.isWindowPinned.toggle()
-                        ChatWindowManager.shared.setWindowPinned(
-                            id: windowState.windowId, pinned: windowState.isWindowPinned)
-                    }
-                )
+                .accessibilityLabel(contextToggleAccessibilityLabel)
             }
         }
         .environment(\.theme, windowState.theme)
     }
 
     /// Key of the toggle's tooltip (a `HeaderActionButton.help` string).
-    private func railToggleHelp(isProject: Bool, isOpen: Bool) -> String {
-        switch (isProject, isOpen) {
-        case (true, true): return "Hide project settings"
-        case (true, false): return "Show project settings"
-        case (false, true): return "Hide inspector"
-        case (false, false): return "Show inspector"
-        }
+    private var contextToggleHelp: String {
+        windowState.isContextPanelOpen ? "Hide File Changes" : "Show File Changes"
     }
 
-    private func railToggleAccessibilityLabel(isProject: Bool, isOpen: Bool) -> Text {
-        let base = Text(LocalizedStringKey(railToggleHelp(isProject: isProject, isOpen: isOpen)), bundle: .module)
-        guard !isProject, let count = windowState.inspectorBadgeCount else { return base }
-        return base + Text(", ") + Text("\(count) files changed", bundle: .module)
+    private var contextToggleAccessibilityLabel: Text {
+        let base = Text(LocalizedStringKey(contextToggleHelp), bundle: .module)
+        guard let count = windowState.inspectorBadgeCount else { return base }
+        return base + Text(", ")
+            + (count == 1 ? Text("1 file changed", bundle: .module) : Text("\(count) files changed", bundle: .module))
     }
 }
 

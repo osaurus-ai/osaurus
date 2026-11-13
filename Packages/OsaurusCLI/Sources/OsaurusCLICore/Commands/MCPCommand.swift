@@ -121,7 +121,7 @@ public struct MCPCommand: Command {
             guard let url = URL(string: "\(baseURL)/mcp/call") else {
                 return .init(content: [.text(text: "Invalid URL", annotations: nil, _meta: nil)], isError: true)
             }
-            var request = makeProxyRequest(url: url, method: "POST", timeout: 30.0, credential: credential)
+            var request = makeProxyRequest(url: url, method: "POST", timeout: callTimeout(), credential: credential)
             request.setValue("application/json; charset=utf-8", forHTTPHeaderField: "Content-Type")
 
             do {
@@ -184,6 +184,18 @@ public struct MCPCommand: Command {
         environment: [String: String] = ProcessInfo.processInfo.environment
     ) -> AccessKeyCredential? {
         AccessKeyResolver.resolve(args: args, environment: environment)
+    }
+
+    static let callTimeoutEnvironmentKey = "OSAURUS_MCP_CALL_TIMEOUT"
+
+    /// Seconds a `tools/call` may take. A tool like `workflow_test` runs a
+    /// whole workflow and sends nothing until it ends, so the request's idle
+    /// timeout is the call's budget.
+    static func callTimeout(environment: [String: String] = ProcessInfo.processInfo.environment) -> TimeInterval {
+        if let raw = environment[callTimeoutEnvironmentKey], let seconds = TimeInterval(raw), seconds > 0 {
+            return seconds
+        }
+        return 15 * 60
     }
 
     static func makeProxyRequest(

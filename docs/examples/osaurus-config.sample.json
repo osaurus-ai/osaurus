@@ -22,7 +22,24 @@
     "system_prompt": "You are a friendly, concise assistant.",
     "runtime": "builtin"
   },
+  "configurator": {
+    "model": null,
+    "temperature": null,
+    "system_prompt": "Prefer the smallest change that does what I asked."
+  },
   "new_chat_agent": "default",
+  "model_defaults": { "core_model": "foundation", "compaction_model": null },
+  "chat": {
+    "smooth_streaming": true,
+    "group_activity": true,
+    "expand_thinking": false,
+    "spell_check": false,
+    "auto_titles": true,
+    "follow_up_suggestions": true,
+    "clipboard_monitoring": true,
+    "keep_mac_awake": true
+  },
+  "app": { "hotkey": "cmd+;", "start_at_login": false, "show_notifications": true },
   "agents": [
     {
       "name": "Research Agent",
@@ -144,25 +161,50 @@
       }
     ]
   },
-  "schedules": [
+  "automations": [
     {
       "name": "Morning news",
       "agent": "Research Agent",
       "instructions": "Summarize the top technology headlines.",
-      "frequency": "daily",
-      "frequency_time_of_day": "08:00",
+      "source": {
+        "kind": "schedule",
+        "frequency": "daily",
+        "frequency_time_of_day": "08:00"
+      },
       "enabled": true
-    }
-  ],
-  "watchers": [
+    },
     {
       "name": "Downloads sorter",
       "agent": "Research Agent",
       "instructions": "File new downloads into the right subfolder.",
-      "path": "~/Downloads",
-      "recursive": false,
-      "responsiveness": "balanced",
+      "source": {
+        "kind": "folder",
+        "path": "~/Downloads",
+        "recursive": false,
+        "responsiveness": "balanced"
+      },
       "enabled": true
+    },
+    {
+      "name": "Weekday digest",
+      "workflow": "Daily Digest",
+      "input": {
+        "day": "{{schedule.scheduled_for}}"
+      },
+      "source": {
+        "kind": "schedule",
+        "frequency": "cron",
+        "frequency_value": "0 8 * * 1-5"
+      }
+    },
+    {
+      "name": "Morning quote",
+      "instructions": "Give me one short motivational quote.",
+      "source": {
+        "kind": "schedule",
+        "frequency": "daily",
+        "frequency_time_of_day": "07:30"
+      }
     }
   ]
 }

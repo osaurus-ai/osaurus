@@ -28,29 +28,22 @@ struct KnowledgeWritePreviewView: View {
     @State private var expanded: Set<String> = []
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             header
 
             if let parseError = preview.parseError {
                 problemRow(parseError)
             } else {
                 ScrollView(.vertical, showsIndicators: true) {
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: theme.space.s6) {
                         ForEach(preview.entries) { entry in
                             entryRow(entry)
                         }
                     }
-                    .padding(.vertical, 6)
+                    .padding(.vertical, theme.space.s6)
                 }
                 .frame(maxHeight: 240)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(theme.codeBlockBackground)
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(theme.primaryBorder.opacity(0.6), lineWidth: 1)
-                )
+                .settingsChrome(.subtle)
             }
         }
     }
@@ -58,17 +51,13 @@ struct KnowledgeWritePreviewView: View {
     // MARK: - Header
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        SettingsRowText(compact: true) {
             Text(preview.summary)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.primaryText)
                 .fixedSize(horizontal: false, vertical: true)
-
+        } description: {
             if !preview.rationale.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 Text(preview.rationale)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .foregroundColor(theme.text.secondary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -77,17 +66,17 @@ struct KnowledgeWritePreviewView: View {
     // MARK: - Entries
 
     private func entryRow(_ entry: KnowledgeWritePreviewEntry) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
             Button {
                 toggle(entry.id)
             } label: {
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     operationBadge(entry.operation)
 
                     Text(entry.relPath)
-                        .font(theme.monoFont(size: 11))
+                        .textStyle(.footnote, family: .code)
                         .foregroundColor(
-                            entry.isValid ? theme.primaryText : theme.secondaryText
+                            entry.isValid ? theme.text.primary : theme.text.secondary
                         )
                         .lineLimit(1)
                         .truncationMode(.middle)
@@ -105,23 +94,23 @@ struct KnowledgeWritePreviewView: View {
                                 ? "\(entry.priorLineCount) → \(entry.newLineCount) lines"
                                 : "+\(entry.addedLines) -\(entry.removedLines)"
                         )
-                        .font(theme.monoFont(size: 10))
-                        .foregroundColor(theme.secondaryText)
+                        .textStyle(.micro, family: .code)
+                        .foregroundColor(theme.text.secondary)
                     }
 
                     Image(systemName: isExpanded(entry) ? "chevron.down" : "chevron.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
+                        .glyphSize(.tiny, weight: .semibold)
+                        .foregroundColor(theme.text.secondary)
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
+                .padding(.horizontal, theme.space.s8)
+                .padding(.vertical, theme.space.s6)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
 
             if let problem = entry.problem {
                 problemRow(problem)
-                    .padding(.horizontal, 10)
+                    .padding(.horizontal, theme.space.s8)
             }
 
             // Non-blocking: the write is fine, the content will just not
@@ -130,13 +119,13 @@ struct KnowledgeWritePreviewView: View {
             // want to catch before approving rather than after searching.
             ForEach(entry.warnings, id: \.self) { warning in
                 problemRow(warning)
-                    .padding(.horizontal, 10)
+                    .padding(.horizontal, theme.space.s8)
             }
 
             if isExpanded(entry) {
                 detail(entry)
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 4)
+                    .padding(.horizontal, theme.space.s8)
+                    .padding(.bottom, theme.space.s4)
             }
         }
     }
@@ -146,14 +135,14 @@ struct KnowledgeWritePreviewView: View {
         let body = entry.operation == .delete ? entry.deletedContent : entry.diff
         if body.isEmpty {
             Text("Nothing to show.", bundle: .module)
-                .font(.system(size: 10))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.footnote)
+                .foregroundColor(theme.text.secondary)
         } else {
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 ScrollView(.horizontal, showsIndicators: true) {
                     Text(body)
-                        .font(theme.monoFont(size: 10.5))
-                        .foregroundColor(theme.primaryText.opacity(0.9))
+                        .textStyle(.micro, family: .code)
+                        .foregroundColor(theme.text.primary)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -161,38 +150,28 @@ struct KnowledgeWritePreviewView: View {
                     // Say it plainly: implying the reader saw the whole
                     // document is exactly the failure this view exists to fix.
                     Text("Shortened for display. Not the whole document.", bundle: .module)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.warningColor)
+                        .font(SettingsFont.footnote)
+                        .foregroundColor(theme.status.warning.foreground)
                 }
             }
-            .padding(8)
-            .background(
-                RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .fill(theme.tertiaryBackground.opacity(0.5))
-            )
+            .padding(theme.space.s8)
+            .settingsChrome(.inset)
         }
     }
 
     private func operationBadge(_ operation: KnowledgeWriteOperation) -> some View {
-        Text(label(for: operation))
-            .font(.system(size: 9, weight: .semibold))
-            .foregroundColor(color(for: operation))
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(
-                Capsule().fill(color(for: operation).opacity(0.15))
-            )
+        StatusChip(label(for: operation), tint: color(for: operation))
     }
 
     private func problemRow(_ text: String) -> some View {
-        HStack(alignment: .top, spacing: 4) {
+        HStack(alignment: .top, spacing: theme.space.s4) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 9))
+                .glyphSize(.tiny)
             Text(text)
-                .font(.system(size: 10))
+                .font(SettingsFont.footnote)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .foregroundColor(theme.warningColor)
+        .foregroundColor(theme.status.warning.foreground)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -210,10 +189,10 @@ struct KnowledgeWritePreviewView: View {
 
     private func color(for operation: KnowledgeWriteOperation) -> Color {
         switch operation {
-        case .create: return theme.successColor
-        case .replace: return theme.accentColor
+        case .create: return theme.status.success.foreground
+        case .replace: return theme.action.primary.default.background
         // Delete reads as the destructive one at a glance, because it is.
-        case .delete: return theme.errorColor
+        case .delete: return theme.status.error.foreground
         }
     }
 

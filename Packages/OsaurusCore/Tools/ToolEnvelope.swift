@@ -239,6 +239,57 @@ public enum ToolEnvelope {
                     expected: "relative path under the working folder",
                     tool: tool
                 )
+            case .pathOutsideWorkflowScopes(let path, let absolutePath, let allowed):
+                var seen = Set<String>()
+                let folders = allowed.filter { seen.insert($0).inserted }
+                return failure(
+                    kind: .rejected,
+                    message:
+                        "'\(path)' is outside the folders this workflow may use: "
+                        + folders.joined(separator: ", ") + ". Save into one of them, use a folder the "
+                        + "person picks (a `folder` input), or declare a fixed folder with `declare_folder` and "
+                        + "write to {{folders.<key>}}/<name>.",
+                    field: "path",
+                    expected: "a path inside one of the workflow's folders",
+                    tool: tool,
+                    retryable: false,
+                    metadata: [
+                        WorkflowFolderGrant.needsGrantKey: absolutePath,
+                        WorkflowFolderGrant.accessKey: FolderRequirement.Access.read.rawValue,
+                        "allowed_folders": folders,
+                    ]
+                )
+            case .pathOutsideWorkflowWriteScope(let path, let absolutePath, let writable):
+                var seen = Set<String>()
+                let folders = writable.filter { seen.insert($0).inserted }
+                return failure(
+                    kind: .rejected,
+                    message:
+                        "'\(path)' is in a folder this workflow may only read. It may save only in: "
+                        + folders.joined(separator: ", ") + ". Save the result there (for example a subfolder "
+                        + "the steps already write to), or write it in the run's workspace.",
+                    field: "path",
+                    expected: "a path inside one of the folders the workflow saves to",
+                    tool: tool,
+                    retryable: false,
+                    metadata: [
+                        WorkflowFolderGrant.needsGrantKey: absolutePath,
+                        WorkflowFolderGrant.accessKey: FolderRequirement.Access.write.rawValue,
+                        "writable_folders": folders,
+                    ]
+                )
+            case .replaceDenied(let path, let folder):
+                return failure(
+                    kind: .rejected,
+                    message:
+                        "'\(path)' already exists and the person did not allow this workflow to replace files in "
+                        + "\(folder). Save under a new name instead, or ask them to allow replacing files.",
+                    field: "path",
+                    expected: "a new file name, or the person's approval to replace",
+                    tool: tool,
+                    retryable: false,
+                    metadata: [WorkflowFolderGrant.replaceDeniedKey: folder]
+                )
             case .fileNotFound(let path):
                 return failure(
                     kind: .notFound,
@@ -433,15 +484,11 @@ public enum ToolEnvelope {
 
     // MARK: - Detection
 
-    /// True when `result` looks like a failure envelope (new shape) OR a
-    /// legacy `ToolErrorEnvelope` JSON OR a legacy `[REJECTED]` /
-    /// `[TIMEOUT]` prefix string. Used by UI / accounting code that
-    /// needs to count failures without a full parse.
     /// Leading window used for envelope detection.
     ///
     /// `isError`/`isSuccess` only need the head of the payload: the canonical
-    /// envelope emits `ok`/`error`/`retryable` as leading top-level keys, and
-    /// the `[REJECTED]`/`[TIMEOUT]` tags are prefixes. Tool outputs can be
+    /// envelope emits `ok` as its leading key, and the `[REJECTED]`/`[TIMEOUT]`
+    /// tags are prefixes. Tool outputs can be
     /// hundreds of megabytes (file reads, base64 blobs) and these checks run
     /// on the main-actor registry path, so trimming and scanning the whole
     /// string could hang the UI. Skipping leading whitespace and bounding the
@@ -459,6 +506,24 @@ public enum ToolEnvelope {
         return result[start ..< end]
     }
 
+    /// The value of a leading `"ok"` key, the canonical envelope's first key.
+    /// A success whose payload describes a failure (a failed workflow run's
+    /// `error` and `retryable`, a nested `"ok":false`) is still a success.
+    private static func leadingOK(_ head: Substring) -> Bool? {
+        var rest = head.dropFirst().drop(while: \.isWhitespace)
+        guard rest.hasPrefix("\"ok\"") else { return nil }
+        rest = rest.dropFirst(4).drop(while: \.isWhitespace)
+        guard rest.first == ":" else { return nil }
+        rest = rest.dropFirst().drop(while: \.isWhitespace)
+        if rest.hasPrefix("true") { return true }
+        if rest.hasPrefix("false") { return false }
+        return nil
+    }
+
+    /// True when `result` looks like a failure envelope (new shape) OR a
+    /// legacy `ToolErrorEnvelope` JSON OR a legacy `[REJECTED]` /
+    /// `[TIMEOUT]` prefix string. Used by UI / accounting code that
+    /// needs to count failures without a full parse.
     public static func isError(_ result: String) -> Bool {
         let head = envelopeHead(result)
         if head.isEmpty { return false }
@@ -466,7 +531,8 @@ public enum ToolEnvelope {
             return true
         }
         guard head.first == "{" else { return false }
-        // New envelope: `"ok":false`. Cheap structural sniff before parse.
+        if let ok = leadingOK(head) { return !ok }
+        // Envelopes from other emitters may not lead with `ok`.
         if head.contains("\"ok\":false") || head.contains("\"ok\": false") {
             return true
         }
@@ -482,6 +548,7 @@ public enum ToolEnvelope {
     public static func isSuccess(_ result: String) -> Bool {
         let head = envelopeHead(result)
         guard head.first == "{" else { return false }
+        if let ok = leadingOK(head) { return ok }
         return head.contains("\"ok\":true") || head.contains("\"ok\": true")
     }
 

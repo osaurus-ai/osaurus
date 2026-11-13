@@ -40,7 +40,7 @@ Your prompts, your models' responses, and your access keys stay between your mac
 
 5. **No downgrade, ever.** Remote requests to agent execution routes (`/agents/{id}/run`, `/agents/{id}/dispatch`) that arrive outside the channel are refused with `426 Upgrade Required`, and so is every owner route — reads included — when a remote caller presents an owner (master-scoped) key: agents, sessions, run streams, review and approval queues, secret prompts, artifacts, unpairing. (For one release `GET /agents`, which holds no prompts or secrets, stays readable so phones up to 1.0(5) can learn their pin.) There is no fallback mode an attacker can force. Local callers (CLI, App Intents, scripts on the same machine) keep working unchanged, and OpenAI-style routes (`/models`, `/chat/completions`, `/images/*`) stay plaintext-compatible for third-party SDK clients.
 
-6. **Zero configuration.** There is nothing to set up. Pairing two agents — over Bonjour on the LAN or via a relay invite — is all it takes. Capability is advertised automatically (`osc=1` in Bonjour TXT, `secureChannel` in pair responses), sessions are established and refreshed transparently, and mixed-version setups produce a clear "upgrade Osaurus" message instead of a cryptic failure.
+6. **Zero configuration.** There is nothing to set up. Pairing two agents through a relay invite, or a phone through its pairing code, is all it takes. Capability is advertised automatically (`secureChannel` in pair responses), sessions are established and refreshed transparently, and mixed-version setups produce a clear "upgrade Osaurus" message instead of a cryptic failure.
 
 ---
 
@@ -129,7 +129,6 @@ These codes arrive outside the encryption (the handshake's answer, or `/secure/c
 | Transparent response encryption (NIO outbound handler) | `Packages/OsaurusCore/Networking/SecureChannelResponseEncryptor.swift` |
 | Client session cache, identity verification, re-handshake, SSE decrypt | `Packages/OsaurusCore/Services/Provider/SecureChannelClient.swift` |
 | Remote-provider integration (`.osaurus` providers) | `Packages/OsaurusCore/Services/Provider/RemoteProviderService.swift` |
-| Capability advertisement (`osc=1`) | `Packages/OsaurusCore/Networking/BonjourAdvertiser.swift` / `BonjourBrowser.swift` |
 | Transcript signature domain prefix | `Packages/OsaurusCore/Identity/CryptoHelpers.swift` |
 | Connect identity for the paired phone | `Packages/OsaurusCore/Services/MobileConnect/MobileConnectIdentity.swift` |
 

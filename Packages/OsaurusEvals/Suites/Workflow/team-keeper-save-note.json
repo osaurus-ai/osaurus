@@ -1,0 +1,37 @@
+{
+  "id": "workflow.team-keeper-save-note",
+  "domain": "workflow",
+  "label": "workflow • Save to Notes creates the note under Keeper",
+  "query": "Save to Notes creates the note under Keeper",
+  "notes": "Runs the shipped file. Every tool step returns its fixture under its teammate, so nothing on this Mac is read. Fixture dates and expected arguments are `{{date:…}}` tokens on this Mac's calendar at run time.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "bundled": "prepared-keeper-save-note",
+      "input": {
+        "title": "Heat pump notes",
+        "body": "Cold-climate heat pumps keep most capacity down to -15 C."
+      },
+      "toolResults": {
+        "save": {
+          "id": "x-coredata://note/42",
+          "title": "Heat pump notes"
+        }
+      },
+      "toolArguments": {
+        "save": {
+          "title": "Heat pump notes",
+          "body": "Cold-climate heat pumps keep most capacity down to -15 C."
+        }
+      },
+      "outputKeys": [
+        "title"
+      ],
+      "outputContains": {
+        "title": [
+          "Heat pump notes"
+        ]
+      }
+    }
+  }
+}

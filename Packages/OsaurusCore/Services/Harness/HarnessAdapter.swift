@@ -101,6 +101,8 @@ struct HarnessLaunchContext: Sendable {
     var apiBase: String?
     var serverReachable: Bool
     var sessionMode: SessionMode = .automatic
+    /// Optional flags the installed Claude Code accepts.
+    var claudeCodeFeatures: ClaudeCodeCLIFeatures = .none
 
     struct Fingerprint: Hashable {
         let runtime: HarnessRuntime
@@ -110,6 +112,10 @@ struct HarnessLaunchContext: Sendable {
         let claudeCode: ClaudeCodeAgentConfig
         let serverReachable: Bool
     }
+
+    /// The Architect keeps its fixed persona and tool surface on every
+    /// harness; the runtime's own tool options don't apply to it.
+    var isArchitect: Bool { agentId == Agent.architectId }
 
     var fingerprint: Fingerprint {
         Fingerprint(

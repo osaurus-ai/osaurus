@@ -17,18 +17,18 @@ import SwiftUI
 enum OnboardingMotion {
     /// Crisp micro-interaction spring (hover, press, checkbox) — settles
     /// fast with no visible wobble.
-    static let snappy = Animation.spring(response: 0.25, dampingFraction: 0.9)
+    @MainActor static var snappy: Animation { ThemeManager.shared.currentTheme.motion.springAnimation(responseMultiplier: 0.71, dampingMultiplier: 1.1) }
     /// Playful spring with a single soft overshoot (avatar swap, selection
     /// pops, speech bubble, modals). Restrained on purpose: one bounce
     /// reads as character, two reads as cartoon.
-    static let bouncy = Animation.spring(response: 0.35, dampingFraction: 0.72)
+    @MainActor static var bouncy: Animation { ThemeManager.shared.currentTheme.motion.springAnimation(dampingMultiplier: 0.88) }
     /// Critically damped glide for step slides and entrances — decelerates
     /// smoothly into place and stops dead, no terminal wobble.
-    static let gentle = Animation.spring(response: 0.45, dampingFraction: 1.0)
+    @MainActor static var gentle: Animation { ThemeManager.shared.currentTheme.motion.springAnimation(responseMultiplier: 1.29, dampingMultiplier: 1.22) }
     /// Non-overshooting spring for scrims, layout reflows, and modal
     /// presentation — anything where overshoot would read as a pulse or
     /// jank rather than character.
-    static let smooth = Animation.spring(response: 0.4, dampingFraction: 1.0)
+    @MainActor static var smooth: Animation { ThemeManager.shared.currentTheme.motion.springAnimation(responseMultiplier: 1.14, dampingMultiplier: 1.22) }
 
     /// Delay between consecutive staggered-entrance indices. Tight enough
     /// that the cascade reads as one gesture, not items queueing up.
@@ -59,7 +59,7 @@ enum OnboardingMotion {
     /// SwiftUI still hit-tests views at opacity 0 — an invisible outgoing
     /// step was eating the first clicks after every navigation. The modifier
     /// disables hit testing the instant the removal begins.
-    static func pushFade(
+    @MainActor static func pushFade(
         direction: OnboardingDirection,
         reduceMotion: Bool
     ) -> AnyTransition {
@@ -75,7 +75,7 @@ enum OnboardingMotion {
                 active: PushOutModifier(progress: 0, travel: reduceMotion ? 0 : outX),
                 identity: PushOutModifier(progress: 1, travel: reduceMotion ? 0 : outX)
             )
-            .animation(.easeIn(duration: 0.2))
+            .animation(ThemeManager.shared.currentTheme.motion.quick)
         )
     }
 
@@ -120,29 +120,11 @@ private struct PushOutModifier: ViewModifier {
 
 // MARK: - Staggered entrance
 
-/// Whether staggered entrances are live in this subtree. The onboarding
-/// root enables them only for the window's very first screen: content
-/// materializing element-by-element makes sense while the window itself is
-/// arriving, but on later step navigation the content must ride in with
-/// the slide as one composed surface — fading into already-reserved gaps
-/// reads as a glitch, not a flourish.
-private struct OnboardingEntranceEnabledKey: EnvironmentKey {
-    static let defaultValue = true
-}
-
-extension EnvironmentValues {
-    var onboardingEntranceEnabled: Bool {
-        get { self[OnboardingEntranceEnabledKey.self] }
-        set { self[OnboardingEntranceEnabledKey.self] = newValue }
-    }
-}
-
 /// Reveals the view after `baseDelay + index × stagger`: a fade with a
 /// small upward drift (and an optional settle from `scaleFrom`). Two
 /// properties, nothing else — no blur, no theatrics — so the cascade reads
-/// as content arriving, not performing. Renders the content untouched when
-/// entrances are disabled for the subtree. Under Reduce Motion the drift
-/// and scale are dropped and only the fade remains.
+/// as content arriving, not performing. Under Reduce Motion the drift and
+/// scale are dropped and only the fade remains.
 private struct OnboardingEntranceModifier: ViewModifier {
     let index: Int
     let baseDelay: Double
@@ -150,25 +132,19 @@ private struct OnboardingEntranceModifier: ViewModifier {
 
     @State private var revealed = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.onboardingEntranceEnabled) private var enabled
 
-    @ViewBuilder
     func body(content: Content) -> some View {
-        if enabled {
-            content
-                .opacity(revealed ? 1 : 0)
-                .offset(y: revealed || reduceMotion ? 0 : OnboardingMotion.entranceRise)
-                .scaleEffect(revealed || reduceMotion ? 1 : scaleFrom)
-                .onAppearAfter(baseDelay + Double(index) * OnboardingMotion.stagger) {
-                    // Ease-out, not a spring: opacity has no mass to settle,
-                    // and a spring only stretches the fade's tail.
-                    withAnimation(.easeOut(duration: reduceMotion ? 0.3 : 0.35)) {
-                        revealed = true
-                    }
+        content
+            .opacity(revealed ? 1 : 0)
+            .offset(y: revealed || reduceMotion ? 0 : OnboardingMotion.entranceRise)
+            .scaleEffect(revealed || reduceMotion ? 1 : scaleFrom)
+            .onAppearAfter(baseDelay + Double(index) * OnboardingMotion.stagger) {
+                // Ease-out, not a spring: opacity has no mass to settle,
+                // and a spring only stretches the fade's tail.
+                withAnimation(ThemeManager.shared.currentTheme.motion.slow) {
+                    revealed = true
                 }
-        } else {
-            content
-        }
+            }
     }
 }
 
@@ -184,6 +160,62 @@ extension View {
         modifier(
             OnboardingEntranceModifier(index: index, baseDelay: baseDelay, scaleFrom: scaleFrom)
         )
+    }
+}
+
+// MARK: - Progressive row
+
+extension OnboardingMotion {
+    /// When the first row of a setup card resolves, after the card lands.
+    static let rowRevealBaseDelay: Double = 0.35
+    /// Between rows resolving, top to bottom.
+    static let rowRevealStagger: Double = 0.14
+    /// One breath of a placeholder's pulse.
+    static let placeholderPulse: Double = 0.9
+}
+
+/// A setup-card row arriving the way a streamed reply does: first a
+/// placeholder in the row's own shape, pulsing softly, then the row itself
+/// fading up in its place. The placeholder holds the row's size, so nothing
+/// below it moves. Under Reduce Motion the row simply fades in.
+private struct OnboardingRowRevealModifier: ViewModifier {
+    let index: Int
+
+    @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var revealed = false
+    @State private var dimmed = false
+
+    func body(content: Content) -> some View {
+        ZStack {
+            content
+                .opacity(revealed ? 1 : 0)
+                .offset(y: revealed || reduceMotion ? 0 : OnboardingMotion.entranceRise)
+            if !revealed && !reduceMotion {
+                content
+                    .redacted(reason: .placeholder)
+                    .opacity(dimmed ? 0.45 : 0.9)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                    .transition(.opacity)
+            }
+        }
+        .onAppear {
+            withAnimation(theme.motion.loop(duration: OnboardingMotion.placeholderPulse, autoreverses: true)) {
+                dimmed = true
+            }
+        }
+        .onAppearAfter(OnboardingMotion.rowRevealBaseDelay + Double(index) * OnboardingMotion.rowRevealStagger) {
+            withAnimation(theme.motion.slow) { revealed = true }
+        }
+    }
+}
+
+extension View {
+    /// Row `index` of a setup card: a pulsing placeholder that resolves
+    /// into the row, one row after another.
+    func onboardingRowReveal(_ index: Int) -> some View {
+        modifier(OnboardingRowRevealModifier(index: index))
     }
 }
 

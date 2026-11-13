@@ -47,8 +47,8 @@ final class TerminalDisplayView: NSView {
     /// would lose its "this is a terminal" feel.
     static let minCompletedBodyHeight: CGFloat = 60
     static let headerHeight: CGFloat = 30
-    private static let bodyFont: NSFont = .monospacedSystemFont(ofSize: 11, weight: .regular)
-    private static let promptFont: NSFont = .monospacedSystemFont(ofSize: 11, weight: .semibold)
+    private static let bodyFont: NSFont = ThemeManager.shared.chatTheme.nsFont(.code)
+    private static let promptFont: NSFont = ThemeManager.shared.chatTheme.nsFont(.code)
     /// Approximate per-line height for the body font. Used by the
     /// completed-mode adaptive sizer; close enough for a heuristic
     /// that just picks a height bucket between min and max.
@@ -58,6 +58,7 @@ final class TerminalDisplayView: NSView {
     // MARK: Subviews
 
     private let headerStrip = NSView()
+    private static let statusDotSize: CGFloat = 8
     private let statusDot = NSView()
     private let statusLabel = NSTextField(labelWithString: "running")
     private let elapsedLabel = NSTextField(labelWithString: "")
@@ -80,6 +81,7 @@ final class TerminalDisplayView: NSView {
     private var cancellables = Set<AnyCancellable>()
     private var stickyToBottom = true
     private var currentTheme: (any ThemeProtocol)?
+    private var inspectionStyleFingerprint: Int?
     private var elapsedTimer: Timer?
     /// Cached per-instance height for the current binding. Live mode
     /// is always `headerHeight + maxBodyHeight`; completed mode is
@@ -110,16 +112,18 @@ final class TerminalDisplayView: NSView {
 
     private static let defaultBodyAttrs: [NSAttributedString.Key: Any] = [
         .font: TerminalDisplayView.bodyFont,
-        .foregroundColor: NSColor.labelColor,
+        .foregroundColor: NSColor(ThemeManager.shared.chatTheme.text.primary),
     ]
     private static let defaultPromptAttrs: [NSAttributedString.Key: Any] = [
         .font: TerminalDisplayView.promptFont,
-        .foregroundColor: NSColor.secondaryLabelColor,
+        .foregroundColor: NSColor(ThemeManager.shared.chatTheme.text.secondary),
     ]
     private static let defaultMarkerAttrs: [NSAttributedString.Key: Any] = [
         .font: TerminalDisplayView.bodyFont,
-        .foregroundColor: NSColor.secondaryLabelColor,
+        .foregroundColor: NSColor(ThemeManager.shared.chatTheme.text.secondary),
     ]
+
+    private var statusTheme: any ThemeProtocol { currentTheme ?? ThemeManager.shared.chatTheme }
 
     // MARK: Init
 
@@ -147,6 +151,7 @@ final class TerminalDisplayView: NSView {
     /// the same live entry id (cheap re-bind during cell layout
     /// passes); always fully re-renders for a completed snapshot.
     func bind(_ mode: Mode, theme: any ThemeProtocol) {
+        let theme = theme.catalogFamily(39)
         switch mode {
         case .live(let entry):
             bindLive(entry, theme: theme)
@@ -172,7 +177,8 @@ final class TerminalDisplayView: NSView {
         statusLabel.stringValue = "running"
         elapsedLabel.stringValue = "0:00"
         elapsedLabel.isHidden = false
-        currentMeasuredHeight = Self.headerHeight + Self.maxBodyHeight
+        refreshInspectionLabels()
+        currentMeasuredHeight = assignedHeaderHeight + Self.maxBodyHeight
 
         appendPromptLine(for: entry.command)
         startElapsedTimer(startedAt: entry.startedAt)
@@ -230,7 +236,7 @@ final class TerminalDisplayView: NSView {
         elapsedTimer = nil
         liveEntry = nil
         renderer.reset()
-        currentMeasuredHeight = Self.headerHeight + Self.maxBodyHeight
+        currentMeasuredHeight = assignedHeaderHeight + Self.maxBodyHeight
     }
 
     /// Shared reset path for both binding modes. Tears down the
@@ -250,8 +256,18 @@ final class TerminalDisplayView: NSView {
     /// Static maximum height the row should reserve for a live binding.
     /// Live mode locks here so streaming chunks can't jitter the row
     /// height. Completed mode uses `currentMeasuredHeight` after bind.
-    static func liveModeMeasuredHeight() -> CGFloat {
-        headerHeight + maxBodyHeight
+    static func liveModeMeasuredHeight(theme: (any ThemeProtocol)? = nil) -> CGFloat {
+        inspectionHeaderHeight(theme ?? ThemeManager.shared.chatTheme) + maxBodyHeight
+    }
+    static func inspectionHeaderHeight(_ theme: any ThemeProtocol) -> CGFloat {
+        let font = theme.assignedNativeFont(NativeComponentInspectionStyle.key(39, "caption"), fallback: theme.nsFont(.caption))
+        let line = max(ceil(font.ascender - font.descender + font.leading), theme.assignedLineHeight(NativeComponentInspectionStyle.key(39, "caption"), fallback: 16))
+        return max(NativeComponentInspectionStyle.metric(39, "height", headerHeight, theme), line + 2 * NativeComponentInspectionStyle.metric(39, "padding", theme.space.s0, theme))
+    }
+    private var assignedHeaderHeight: CGFloat { Self.inspectionHeaderHeight(statusTheme) }
+    private func refreshInspectionLabels() {
+        NativeComponentInspectionStyle.label(statusLabel, family: 39, property: "caption", theme: statusTheme)
+        NativeComponentInspectionStyle.label(elapsedLabel, family: 39, property: "caption", theme: statusTheme)
     }
 
     // MARK: Append helpers
@@ -276,33 +292,33 @@ final class TerminalDisplayView: NSView {
         // estimate for very wide lines is fine because we cap at
         // maxBodyHeight anyway.
         let lineCount = max(1, body.components(separatedBy: "\n").count)
-        let estimatedBody =
-            CGFloat(lineCount) * Self.approxLineHeight + Self.bodyVerticalPadding
+        let estimatedBody = CGFloat(lineCount) * statusTheme.assignedLineHeight(NativeComponentInspectionStyle.key(39, "code"), fallback: Self.approxLineHeight) + 2 * NativeComponentInspectionStyle.metric(39, "padding", Self.bodyVerticalPadding / 2, statusTheme)
         let bodyHeight = min(
             Self.maxBodyHeight,
             max(Self.minCompletedBodyHeight, estimatedBody)
         )
-        return Self.headerHeight + bodyHeight
+        return assignedHeaderHeight + bodyHeight
     }
 
     // MARK: Status
 
     private func applyLiveStatus(_ status: LiveExecRegistry.LiveExecStatus) {
+        defer { refreshInspectionLabels() }
         switch status {
         case .running:
             statusLabel.stringValue = "running"
-            statusDot.layer?.backgroundColor = NSColor.systemGreen.cgColor
+            statusDot.layer?.backgroundColor = NSColor(statusTheme.status.success.foreground).cgColor
             terminateButton.isHidden = false
         case .exited(let code):
             statusLabel.stringValue = code == 0 ? "exited" : "exited (\(code))"
             statusDot.layer?.backgroundColor =
-                (code == 0 ? NSColor.systemGray : NSColor.systemRed).cgColor
+                NSColor(code == 0 ? statusTheme.text.tertiary : statusTheme.status.error.foreground).cgColor
             terminateButton.isHidden = true
             elapsedTimer?.invalidate()
             elapsedTimer = nil
         case .killed(let reason):
             statusLabel.stringValue = "terminated (\(reason))"
-            statusDot.layer?.backgroundColor = NSColor.systemOrange.cgColor
+            statusDot.layer?.backgroundColor = NSColor(statusTheme.status.warning.foreground).cgColor
             terminateButton.isHidden = true
             elapsedTimer?.invalidate()
             elapsedTimer = nil
@@ -310,15 +326,16 @@ final class TerminalDisplayView: NSView {
     }
 
     private func applyCompletedStatus(exitCode: Int32, killedByUser: Bool) {
+        defer { refreshInspectionLabels() }
         if killedByUser {
             statusLabel.stringValue = "terminated (user)"
-            statusDot.layer?.backgroundColor = NSColor.systemOrange.cgColor
+            statusDot.layer?.backgroundColor = NSColor(statusTheme.status.warning.foreground).cgColor
         } else if exitCode == 0 {
             statusLabel.stringValue = "exited"
-            statusDot.layer?.backgroundColor = NSColor.systemGray.cgColor
+            statusDot.layer?.backgroundColor = NSColor(statusTheme.text.tertiary).cgColor
         } else {
             statusLabel.stringValue = "exited (\(exitCode))"
-            statusDot.layer?.backgroundColor = NSColor.systemRed.cgColor
+            statusDot.layer?.backgroundColor = NSColor(statusTheme.status.error.foreground).cgColor
         }
     }
 
@@ -330,6 +347,7 @@ final class TerminalDisplayView: NSView {
         }
         elapsedLabel.isHidden = false
         elapsedLabel.stringValue = Self.formatElapsed(duration)
+        refreshInspectionLabels()
     }
 
     // MARK: Elapsed timer (live mode)
@@ -343,6 +361,7 @@ final class TerminalDisplayView: NSView {
             MainActor.assumeIsolated {
                 let secs = Date().timeIntervalSince(startedAt)
                 self.elapsedLabel.stringValue = Self.formatElapsed(secs)
+                self.refreshInspectionLabels()
             }
         }
     }
@@ -359,15 +378,15 @@ final class TerminalDisplayView: NSView {
     private func applyTheme(_ theme: any ThemeProtocol) {
         currentTheme = theme
         wantsLayer = true
-        layer?.backgroundColor = NSColor(theme.codeBlockBackground).cgColor
-        layer?.cornerRadius = 6
-        layer?.borderColor = NSColor(theme.cardBorder).cgColor
-        layer?.borderWidth = 0.5
+        layer?.backgroundColor = NSColor(theme.surface.code).cgColor
+        layer?.cornerRadius = theme.radius.small
+        layer?.borderColor = NSColor(theme.border.default).cgColor
+        layer?.borderWidth = theme.hairline(for: self)
 
-        statusLabel.textColor = NSColor(theme.tertiaryText)
-        statusLabel.font = NSFont.systemFont(ofSize: 11, weight: .medium)
-        elapsedLabel.textColor = NSColor(theme.tertiaryText)
-        elapsedLabel.font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        statusLabel.textColor = NSColor(theme.text.tertiary)
+        statusLabel.font = theme.nsFont(.footnote, weight: .medium)
+        elapsedLabel.textColor = NSColor(theme.text.tertiary)
+        elapsedLabel.font = theme.nsFont(.caption, monospacedDigit: true)
 
         textView.textContainerInset = NSSize(width: 10, height: 8)
         textView.backgroundColor = .clear
@@ -376,27 +395,65 @@ final class TerminalDisplayView: NSView {
 
         headerDivider.wantsLayer = true
         headerDivider.layer?.backgroundColor =
-            NSColor(theme.cardBorder).withAlphaComponent(0.5).cgColor
+            NSColor(theme.border.subtle).cgColor
 
         bodyAttrs = [
             .font: Self.bodyFont,
-            .foregroundColor: NSColor(theme.primaryText),
+            .foregroundColor: NSColor(theme.text.primary),
         ]
         promptAttrs = [
             .font: Self.promptFont,
-            .foregroundColor: NSColor(theme.tertiaryText),
+            .foregroundColor: NSColor(theme.text.tertiary),
         ]
         markerAttrs = [
             .font: Self.bodyFont,
-            .foregroundColor: NSColor(theme.tertiaryText),
+            .foregroundColor: NSColor(theme.text.tertiary),
         ]
         // Push body / marker attrs into the renderer so the next chunk
         // appends with the right colors.
         renderer.bodyAttrs = bodyAttrs
         renderer.markerAttrs = markerAttrs
 
-        copyButton.contentTintColor = NSColor(theme.tertiaryText)
+        copyButton.contentTintColor = NSColor(theme.text.tertiary)
         terminateButton.contentTintColor = .systemRed
+        layer?.borderWidth = theme.stroke.default
+        let pad = NativeComponentInspectionStyle.metric(39, "padding", theme.space.s8, theme)
+        let gap = NativeComponentInspectionStyle.metric(39, "gap", theme.space.s8, theme)
+        textView.textContainerInset = NSSize(width: pad, height: pad)
+        textView.selectedTextAttributes = [.backgroundColor: NSColor(theme.selection.background)]
+        headerStrip.constraints.first { $0.firstAttribute == .height }?.constant = assignedHeaderHeight
+        for c in headerStrip.constraints {
+            let view = c.firstItem as? NSView
+            if view === statusDot, c.firstAttribute == .leading { c.constant = pad }
+            if (view === statusLabel || view === elapsedLabel), c.firstAttribute == .leading { c.constant = gap }
+            if view === copyButton, c.firstAttribute == .trailing { c.constant = -pad }
+            if view === terminateButton, c.firstAttribute == .trailing { c.constant = -gap }
+        }
+        headerDivider.constraints.first { $0.firstAttribute == .height }?.constant = theme.stroke.default
+        headerDivider.layer?.backgroundColor = NSColor(theme.border.default).cgColor
+        let styleChanged = inspectionStyleFingerprint != theme.renderFingerprint
+        inspectionStyleFingerprint = theme.renderFingerprint
+        let part = NSAttributedString.Key("inspectorTerminalPart")
+        let font = theme.assignedNativeFont(NativeComponentInspectionStyle.key(39, "code"), fallback: theme.nsFont(.code))
+        let paragraph = theme.paragraphStyle(.code)
+        let tracking = theme.assignedTracking(NativeComponentInspectionStyle.key(39, "code")) ?? 0
+        for name in ["body", "prompt", "marker"] {
+            let attributes: [NSAttributedString.Key: Any] = [.font: font, .paragraphStyle: paragraph, .kern: tracking, .foregroundColor: NSColor(name == "body" ? theme.text.primary : theme.text.secondary), part: name]
+            switch name { case "prompt": promptAttrs = attributes; case "marker": markerAttrs = attributes; default: bodyAttrs = attributes }
+        }
+        renderer.bodyAttrs = bodyAttrs; renderer.markerAttrs = markerAttrs
+        if styleChanged, let storage = textView.textStorage, storage.length > 0 {
+            let range = NSRange(location: 0, length: storage.length)
+            var runs: [(String, NSRange)] = []
+            storage.enumerateAttribute(part, in: range) { value, range, _ in runs.append((value as? String ?? "body", range)) }
+            storage.beginEditing()
+            for (name, range) in runs { storage.addAttributes(name == "prompt" ? promptAttrs : name == "marker" ? markerAttrs : bodyAttrs, range: range) }
+            storage.endEditing()
+        }
+        if styleChanged { textView.font = font }
+        terminateButton.contentTintColor = NSColor(theme.status.error.foreground)
+        refreshInspectionLabels()
+        if let entry = liveEntry { applyLiveStatus(entry.currentStatus()); currentMeasuredHeight = assignedHeaderHeight + Self.maxBodyHeight }
     }
 
     // MARK: Layout
@@ -409,8 +466,8 @@ final class TerminalDisplayView: NSView {
 
         statusDot.translatesAutoresizingMaskIntoConstraints = false
         statusDot.wantsLayer = true
-        statusDot.layer?.backgroundColor = NSColor.systemGreen.cgColor
-        statusDot.layer?.cornerRadius = 4
+        statusDot.layer?.backgroundColor = NSColor(statusTheme.status.success.foreground).cgColor
+        statusDot.layer?.cornerRadius = Self.statusDotSize / 2
         headerStrip.addSubview(statusDot)
 
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -455,7 +512,7 @@ final class TerminalDisplayView: NSView {
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
         textView.autoresizingMask = [.width]
-        textView.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        textView.font = ThemeManager.shared.chatTheme.nsFont(.footnote, family: .code)
         textView.textContainer?.containerSize = NSSize(
             width: initialContent.width,
             height: CGFloat.greatestFiniteMagnitude
@@ -474,12 +531,12 @@ final class TerminalDisplayView: NSView {
             headerStrip.leadingAnchor.constraint(equalTo: leadingAnchor),
             headerStrip.trailingAnchor.constraint(equalTo: trailingAnchor),
             headerStrip.topAnchor.constraint(equalTo: topAnchor),
-            headerStrip.heightAnchor.constraint(equalToConstant: Self.headerHeight),
+            headerStrip.heightAnchor.constraint(equalToConstant: assignedHeaderHeight),
 
             statusDot.leadingAnchor.constraint(equalTo: headerStrip.leadingAnchor, constant: 12),
             statusDot.centerYAnchor.constraint(equalTo: headerStrip.centerYAnchor),
-            statusDot.widthAnchor.constraint(equalToConstant: 8),
-            statusDot.heightAnchor.constraint(equalToConstant: 8),
+            statusDot.widthAnchor.constraint(equalToConstant: Self.statusDotSize),
+            statusDot.heightAnchor.constraint(equalToConstant: Self.statusDotSize),
 
             statusLabel.leadingAnchor.constraint(equalTo: statusDot.trailingAnchor, constant: 6),
             statusLabel.centerYAnchor.constraint(equalTo: headerStrip.centerYAnchor),
@@ -571,6 +628,55 @@ final class TerminalDisplayView: NSView {
         stickyToBottom = (documentMaxY - visibleMaxY) <= 12
     }
 }
+
+#if OSAURUS_DESIGN_INSPECTOR
+import SwiftUI
+
+/// Local publishers exercise original running/elapsed/Terminate chrome.
+/// No command, subprocess, registry entry or runtime request is created.
+private final class InspectorTerminalDisplayState: ObservableObject, @unchecked Sendable {
+    let status = CurrentValueSubject<LiveExecRegistry.LiveExecStatus, Never>(.running)
+    lazy var entry = LiveExecRegistry.Entry(toolCallId: "inspector-local-terminal", pid: "", command: "local display only", startedAt: Date(), outputPublisher: Empty<Data, Never>().eraseToAnyPublisher(), statusPublisher: status.eraseToAnyPublisher(), currentStatus: { [self] in status.value }, seed: { Data("Local terminal display\nNo command was executed.\n".utf8) }, terminate: { [self] _ in status.send(.killed(reason: "user")) })
+}
+
+struct InspectorTerminalLiveVerification: View {
+    @Environment(\.theme) private var theme
+    @StateObject private var state = InspectorTerminalDisplayState()
+    @State private var phase = "Running"
+    var body: some View {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            Text(verbatim: "Chat · command output returned by an agent tool")
+            Picker("Command state", selection: $phase) {
+                ForEach(["Running", "Completed", "Failed", "Stopped"], id: \.self) { Text($0).tag($0) }
+            }.onChange(of: phase) { _, value in
+                switch value {
+                case "Running": state.status.send(.running)
+                case "Stopped": state.status.send(.killed(reason: "user"))
+                case "Failed": state.status.send(.exited(1))
+                default: state.status.send(.exited(0))
+                }
+            }
+            InspectorTerminalLiveHost(state: state)
+            Text(verbatim: "Terminate changes only the local display status. No command or process is running.")
+                .font(SettingsFont.caption)
+        }
+    }
+}
+
+private struct InspectorTerminalLiveHost: NSViewRepresentable {
+    let state: InspectorTerminalDisplayState
+    @Environment(\.theme) private var theme
+    func makeNSView(context: Context) -> TerminalDisplayView { TerminalDisplayView() }
+    func updateNSView(_ view: TerminalDisplayView, context: Context) {
+        defer { view.updateCatalogInspection(context.environment.nativeCatalogInspection, selection: context.environment.nativeCatalogSelection) }
+        view.bind(.live(state.entry), theme: theme)
+        view.catalogAssignmentTarget(["background", "foreground", "secondary", "border", "borderWidth", "radius", "padding", "gap", "height", "code"].map { "component.library.39." + $0 }, name: "Terminal output", theme: theme)
+    }
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: TerminalDisplayView, context: Context) -> CGSize? {
+        CGSize(width: proposal.width ?? 760, height: nsView.currentMeasuredHeight)
+    }
+}
+#endif
 
 // MARK: - Test hooks
 //

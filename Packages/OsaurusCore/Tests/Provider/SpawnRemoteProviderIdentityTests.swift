@@ -180,4 +180,48 @@ struct SpawnRemoteProviderIdentityTests {
             #expect(manager.connectedSpawnModelTarget(forStoredId: target.id) == nil)
         }
     }
+
+    @Test("memoized spawn index rebuilds when discovered models change")
+    func memoizedIndexTracksDiscoveredModels() async throws {
+        try await RemoteProviderTestLock.shared.run {
+            let manager = RemoteProviderManager.shared
+            manager.testIdentityExistsOverride = false
+            let remote = provider(name: "Memo Test")
+            manager._testInstallConnectedProvider(
+                remote,
+                discoveredModels: ["model-a"],
+                installService: true
+            )
+            defer { manager._testRemoveProviders(ids: [remote.id]) }
+
+            // Repeated reads with unchanged inputs return the same snapshot.
+            let first = manager.connectedSpawnModelTargetIndex()
+            let second = manager.connectedSpawnModelTargetIndex()
+            let idA = try #require(
+                first.targetID(forPickerModelId: "memo-test/model-a", providerId: remote.id)
+            )
+            #expect(
+                second.targetID(forPickerModelId: "memo-test/model-a", providerId: remote.id)
+                    == idA
+            )
+            #expect(
+                first.targetID(forPickerModelId: "memo-test/model-b", providerId: remote.id)
+                    == nil
+            )
+
+            // A provider-state change invalidates the memoized index.
+            var refreshed = try #require(manager.providerStates[remote.id])
+            refreshed.discoveredModels = ["model-a", "model-b"]
+            manager._testSetState(refreshed, for: remote.id)
+            let rebuilt = manager.connectedSpawnModelTargetIndex()
+            #expect(
+                rebuilt.targetID(forPickerModelId: "memo-test/model-b", providerId: remote.id)
+                    != nil
+            )
+            #expect(
+                rebuilt.targetID(forPickerModelId: "memo-test/model-a", providerId: remote.id)
+                    == idA
+            )
+        }
+    }
 }

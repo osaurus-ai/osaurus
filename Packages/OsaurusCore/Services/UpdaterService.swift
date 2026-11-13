@@ -74,7 +74,7 @@ final class UpdaterViewModel: NSObject, ObservableObject, SPUUpdaterDelegate {
     }
 
     nonisolated func feedURLString(for updater: SPUUpdater) -> String? {
-        return "https://osaurus-ai.github.io/osaurus/appcast.xml"
+        return "https://osaurus-ai.github.io/osaurus/appcast-next.xml"
     }
 
     // MARK: - Verbose Logging Hooks

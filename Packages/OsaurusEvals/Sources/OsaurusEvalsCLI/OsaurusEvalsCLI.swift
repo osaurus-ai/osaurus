@@ -47,12 +47,10 @@ struct OsaurusEvalsCLI {
         // The sandbox secrets pipeline (sandbox_secret_set → exec env
         // injection → SecretScrubber redaction) is a scored surface
         // (SandboxFrontier secrets-roundtrip), but the Keychain-free gate
-        // above turns every AgentSecretsKeychain call into a no-op — the
-        // model stores a secret, gets `stored:true`… and `$KEY` is empty in
-        // the VM. A process-lifetime in-memory store keeps the pipeline
-        // real (same code path, same scrubbing) without touching the
-        // login Keychain; per-case cleanup purges it.
-        setenv("OSAURUS_AGENT_SECRETS_IN_MEMORY", "1", 1)
+        // above would make every Keys write fail — the model stores a
+        // secret and `$KEY` is empty in the VM. Keeping Keys values in
+        // memory runs the real pipeline without the login Keychain.
+        setenv("OSAURUS_CREDENTIALS_IN_MEMORY", "1", 1)
 
         // Eval isolation: to drive a remote model the harness connects an
         // in-memory provider (`EvalRemoteProviderBootstrap`), which lands in
@@ -61,9 +59,9 @@ struct OsaurusEvalsCLI {
         // run/judge provider and score a truthful model as fabricating. This
         // flag tells the configure READ tool (`osaurus_inspect`)
         // to hide ephemeral providers so the scenario sees
-        // the genuine user state. Safe: the eval binary runs no Bonjour
-        // discovery, so in-process the only ephemeral providers are the
-        // harness's; routing is untouched, so the model still runs.
+        // the genuine user state. Safe: in-process the only ephemeral
+        // providers are the harness's; routing is untouched, so the model
+        // still runs.
         setenv("OSAURUS_EVALS_HIDE_EPHEMERAL_PROVIDERS", "1", 1)
 
         let args = Array(CommandLine.arguments.dropFirst())

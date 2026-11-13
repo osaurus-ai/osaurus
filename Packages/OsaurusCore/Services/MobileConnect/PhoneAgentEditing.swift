@@ -2,11 +2,13 @@
 //  PhoneAgentEditing.swift
 //  osaurus
 //
-//  The agent settings a paired phone can read and change
-//  (docs/MOBILE_PROTOCOL.md §13.2–§13.4, §14.11): name, description and
-//  prompt; the Tools, Memory, Web Search and Autonomous Execution switches;
-//  temperature and max tokens; deleting the agent; and which of its plugin
-//  and MCP tools it may use, with the Tools window's three presets.
+//  The agent settings the user's iPhone can read and change, through Sync
+//  (`SyncManageFeed`, docs/SYNC_MOBILE_CONTRACT.md) and, for one more
+//  release, the paired phone's HTTP routes (docs/MOBILE_PROTOCOL.md
+//  §13.2–§13.4, §14.11): name, description and prompt; the Tools, Memory,
+//  Web Search and Autonomous Execution switches; temperature and max tokens;
+//  deleting the agent; which of its plugin and MCP tools it may use; and the
+//  Tools window's three presets.
 //
 //  Custom agents only. The Orchestrator's settings live in the Mac's
 //  Orchestrator settings, and a built-in agent can't be deleted.
@@ -21,7 +23,7 @@ import Foundation
 // Not main-actor as a whole: its value types are encoded and decoded off it.
 enum PhoneAgentEditing {
 
-    /// What `GET /agents/{id}` carries for the phone to show and change.
+    /// What the iPhone shows and changes for one agent.
     struct Settings: Codable, Equatable {
         let tools_enabled: Bool
         let memory_enabled: Bool
@@ -53,7 +55,7 @@ enum PhoneAgentEditing {
         var reply: (status: Int, code: String, message: String) {
             switch self {
             case .notEditable:
-                return (403, "agent_not_editable", "Only your own agents can be changed from the phone.")
+                return (403, "agent_not_editable", "Only your own agents can be changed from your iPhone.")
             case .badRequest(let message):
                 return (400, "bad_request", message)
             case .sandboxUnavailable:
@@ -287,6 +289,49 @@ enum PhoneAgentEditing {
         var names = Set(current)
         if enabled { names.insert(name) } else { names.remove(name) }
         manager.updateEnabledToolNames(names.sorted(), for: agentId)
+    }
+
+    enum ToolChangeError: Error, Equatable {
+        case toolNotFound
+        /// No field, or a policy that isn't `auto`, `ask` or `deny`.
+        case badRequest
+        case edit(EditError)
+    }
+
+    /// One tool change as the Tools catalog makes it: `enabled` and `policy`
+    /// are Mac-wide, `agentEnabled` is the agent's own choice. The agent's
+    /// change goes first, so a refusal leaves the Mac-wide settings alone.
+    /// Answers with the tool's row.
+    @MainActor
+    static func changeTool(
+        _ name: String,
+        agentId: UUID?,
+        enabled: Bool?,
+        agentEnabled: Bool?,
+        policy rawPolicy: String?
+    ) throws -> HTTPHandler.AgentToolDTO {
+        guard enabled != nil || agentEnabled != nil || rawPolicy != nil else { throw ToolChangeError.badRequest }
+        var policy: ToolPermissionPolicy?
+        if let rawPolicy {
+            guard let parsed = ToolPermissionPolicy(rawValue: rawPolicy) else { throw ToolChangeError.badRequest }
+            policy = parsed
+        }
+        let registry = ToolRegistry.shared
+        guard registry.isRegistered(name) else { throw ToolChangeError.toolNotFound }
+        if let agentEnabled {
+            guard let agentId else { throw ToolChangeError.edit(.notEditable) }
+            do {
+                try setTool(name, enabled: agentEnabled, for: agentId)
+            } catch let error as EditError {
+                throw ToolChangeError.edit(error)
+            }
+        }
+        if let enabled { registry.setEnabled(enabled, for: name) }
+        if let policy { registry.setPolicy(policy, for: name) }
+        guard let entry = registry.listTools().first(where: { $0.name == name }) else {
+            throw ToolChangeError.toolNotFound
+        }
+        return HTTPHandler.agentToolDTO(for: entry, agent: agentId.flatMap { AgentManager.shared.agent(for: $0) })
     }
 
     @MainActor

@@ -319,7 +319,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             modelOptions: modelOptions
         )
 
-        let params = GenerationParameters(
+        var params = GenerationParameters(
             temperature: temperature,
             maxTokens: maxTokens,
             maxTokensExplicit: request.generation.maxOutputTokens != nil,
@@ -356,6 +356,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             collectCompleteToolResponse: inferenceSource == .httpAPI && !request.context.isAgentRequest,
             responsesProviderOptions: request.providerOptions
         )
+        if request.context.runAsRemoteAgent { params.remoteAgentCallerId = request.context.remoteAgentCallerId }
 
         // Mode 2 (remote agent run): route to the *selected agent's provider*,
         // never by the model string. A stale `selectedModel` left over from
@@ -500,12 +501,17 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
         // with a user turn.
         guard !request.context.warmupPrefill else { return }
         guard FeatureTelemetry.isPrimaryUserTurn(request.input) else { return }
+        // Task-locals are read here, at request time; they are not reliable
+        // on the stream's termination path.
         let info = FeatureTelemetry.messageInfo(
             service: service,
             effectiveModel: effectiveModel,
             source: inferenceSource,
             isAgent: request.context.isAgentRequest,
-            stream: stream
+            stream: stream,
+            inWorkflow: ChatExecutionContext.currentWorkflowRunId != nil,
+            isSubagent: activitySource == .agent || ChatExecutionContext.currentSessionSource == .delegation,
+            forSyncedDevice: ChatExecutionContext.syncReviewerScope != nil
         )
         Task { @MainActor in FeatureTelemetry.messageSent(info) }
     }
@@ -903,7 +909,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                 path: logPath ?? "/chat/completions",
                 agentId: attribution.agentId,
                 agentName: attribution.agentName,
-                sessionId: attribution.sessionId
+                sessionId: attribution.sessionId,
+                workflowRunId: attribution.workflowRunId,
+                workflowNodeId: attribution.workflowNodeId,
+                taskId: attribution.taskId
             )
         }
 
@@ -1768,7 +1777,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                     privacy: wireProbe?.privacyOutcome,
                     agentId: attribution.agentId,
                     agentName: attribution.agentName,
-                    sessionId: attribution.sessionId
+                    sessionId: attribution.sessionId,
+                    workflowRunId: attribution.workflowRunId,
+                    workflowNodeId: attribution.workflowNodeId,
+                    taskId: attribution.taskId
                 )
             }
         }
@@ -2006,7 +2018,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                             path: loggedPath,
                             agentId: attribution.agentId,
                             agentName: attribution.agentName,
-                            sessionId: attribution.sessionId
+                            sessionId: attribution.sessionId,
+                            workflowRunId: attribution.workflowRunId,
+                            workflowNodeId: attribution.workflowNodeId,
+                            taskId: attribution.taskId
                         )
                     }
 
@@ -2171,7 +2186,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
                     path: loggedPath,
                     agentId: attribution.agentId,
                     agentName: attribution.agentName,
-                    sessionId: attribution.sessionId
+                    sessionId: attribution.sessionId,
+                    workflowRunId: attribution.workflowRunId,
+                    workflowNodeId: attribution.workflowNodeId,
+                    taskId: attribution.taskId
                 )
             }
 

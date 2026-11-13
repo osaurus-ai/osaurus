@@ -141,7 +141,7 @@ struct ChatWindowStateWorkspaceAgentTests {
         }
     }
 
-    @Test func switchToWorkspaceAgent_focusesExistingBlankTabForSameAgent() async throws {
+    @Test func switchToWorkspaceAgent_afterLeavingItsBlankTab_opensOneFreshTab() async throws {
         try await ChatHistoryTestStorage.run {
             try await withRoster {
                 let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
@@ -155,10 +155,10 @@ struct ChatWindowStateWorkspaceAgentTests {
 
                 window.selectTab(id: localTab)
                 #expect(window.workspaceAgentAddress == nil, "selecting a local tab leaves remote mode")
+                #expect(!window.tabs.contains { $0.id == teamTab }, "the blank team-agent tab closes on leave")
 
                 window.switchToWorkspaceAgent(address: Self.addressA)
-                #expect(window.tabs.count == 2, "the existing blank team-agent tab is focused, not duplicated")
-                #expect(window.activeTabId == teamTab)
+                #expect(window.tabs.count == 2, "one team-agent tab, never a duplicate")
                 #expect(window.workspaceAgentAddress == lowered(Self.addressA))
             }
         }
@@ -192,7 +192,7 @@ struct ChatWindowStateWorkspaceAgentTests {
                 #expect(window.tabs.count == 1)
                 #expect(window.session.workspaceContext == nil)
                 #expect(window.workspaceAgentAddress == nil)
-                #expect(window.selectedDiscoveredAgentProviderId == nil)
+                #expect(window.selectedRemoteAgentProviderId == nil)
                 #expect(window.composerLock == nil)
             }
         }
@@ -225,12 +225,13 @@ struct ChatWindowStateWorkspaceAgentTests {
                     workspaceId: "ws-acme",
                     agentAddress: Self.addressA,
                     callerWallet: "0xcaller",
-                    callerName: "Alice"
+                    callerName: "Alice",
+                    callerHandle: "alice"
                 )
                 #expect(
                     window.composerLock
                         == .teammateConversation(
-                            callerName: "Alice",
+                            callerName: "@alice",
                             agentName: "Research Agent",
                             isWorkspace: true
                         )
@@ -348,7 +349,7 @@ struct ChatWindowStateWorkspaceAgentTests {
                     return
                 }
                 #expect(name == "Research Agent")
-                #expect(window.selectedDiscoveredAgentProviderId == nil)
+                #expect(window.selectedRemoteAgentProviderId == nil)
             }
         }
     }
@@ -552,6 +553,8 @@ struct ChatWindowStateWorkspaceAgentTests {
                     break  // pairing / connection state drives the lock
                 case .teammateConversation:
                     Issue.record("client-side chat, not a host-served row")
+                case .hostOffline:
+                    Issue.record("not a chat another of the user's Macs hosts")
                 }
             }
         }
@@ -636,7 +639,7 @@ struct ChatWindowStateWorkspaceAgentTests {
                 #expect(handshakes == 1)
                 let paired = try #require(RemoteAgentManager.shared.remoteAgent(forAddress: address))
                 #expect(paired.workspaceId == "ws-acme")
-                #expect(window.selectedDiscoveredAgentProviderId == paired.providerId, "bound to the fresh provider")
+                #expect(window.selectedRemoteAgentProviderId == paired.providerId, "bound to the fresh provider")
                 #expect(window.pendingRelayConnect != nil, "the connect runs again against the new key")
 
                 // Second refusal in the same bind: no loop, the failure surfaces.
@@ -679,7 +682,7 @@ struct ChatWindowStateWorkspaceAgentTests {
                 #expect(await window.repairWorkspacePairingAfterRejection() == false)
                 #expect(handshakes == 1)
                 #expect(RemoteAgentManager.shared.remoteAgent(forAddress: address) == nil)
-                #expect(window.selectedDiscoveredAgentProviderId == nil)
+                #expect(window.selectedRemoteAgentProviderId == nil)
             }
         }
     }

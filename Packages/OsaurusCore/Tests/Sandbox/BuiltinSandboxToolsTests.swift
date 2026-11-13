@@ -1,3 +1,4 @@
+import Combine
 import Containerization
 import Foundation
 import Testing
@@ -585,6 +586,8 @@ struct BuiltinSandboxToolsTests {
             Issue.record("expected apk install via execAsRoot")
             return
         }
+        // apk runs in the calling agent's own container, not a shared one.
+        #expect(await runner.rootTargets == [.agent("test-agent")])
         // Refresh the index first so a stale apk db can't poison `add`.
         #expect(command.contains("apk update --quiet"))
         #expect(command.contains("apk add --no-cache"))
@@ -624,8 +627,239 @@ struct BuiltinSandboxToolsTests {
         // the rightmost non-zero exit (mirroring the foreground path) and
         // the wrapper leads its own process group so `kill -- -<pid>` can
         // take down the whole job tree.
-        #expect(command.contains("nohup setsid bash -c 'set -o pipefail; python3 server.py'"))
+        #expect(command.contains("nohup setsid bash -c 'set -o pipefail; {\npython3 server.py\n} 2>&1 | "))
+        #expect(command.contains("head -c \(SandboxExecTool.backgroundLogCapBytes)"))
         #expect(command.contains("echo $!"))
+        #expect(calls.count == 2, "the launch and its owned liveness probe must both finish in this fixture")
+        guard case .agent(let pollAgent, let pollCommand) = try #require(calls.last) else {
+            Issue.record("Expected the fixture's background liveness probe")
+            return
+        }
+        #expect(pollAgent == "test-agent")
+        #expect(pollCommand.contains("kill -0 12345"))
+        #expect(pollCommand.contains("/proc/12345/status"))
+    }
+
+    /// A completed test fixture must not leave a background liveness poll
+    /// using whichever shell runner the next fixture installs. Keep the
+    /// document's no-shell-write assertion intact and exercise the actual
+    /// production poll and host document writer together.
+    @Test(arguments: ["success", "throw", "cancelled"]) @MainActor
+    func backgroundFixtureDoesNotPollTheNextDocumentRunner(completion: String) async throws {
+        try await StoragePathsTestLock.shared.run {
+            let previousRoot = OsaurusPaths.overrideRoot
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("sandbox-background-fixture-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            OsaurusPaths.overrideRoot = root
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                try? FileManager.default.removeItem(at: root)
+            }
+            DocumentAdaptersBootstrap.registerBuiltIns()
+
+            let callId = "fixture-background-\(UUID().uuidString)"
+            let pid = "543210"
+            let backgroundAgent = "fixture-background-agent"
+            let documentAgent = "fixture-document-agent"
+            let unrelatedId = "unrelated-fixture-\(UUID().uuidString)"
+            await LiveExecRegistry.shared.register(
+                .init(
+                    toolCallId: unrelatedId,
+                    pid: "unrelated",
+                    command: "unrelated fixture",
+                    startedAt: Date(),
+                    outputPublisher: Empty<Data, Never>().eraseToAnyPublisher(),
+                    statusPublisher: Empty<LiveExecRegistry.LiveExecStatus, Never>().eraseToAnyPublisher(),
+                    currentStatus: { .running },
+                    seed: { Data() },
+                    terminate: { _ in Issue.record("Fixture cleanup must not terminate an unrelated entry") }
+                )
+            )
+            let backgroundRunner = MockSandboxToolCommandRunner(
+                rootResults: [],
+                agentResults: [],
+                execResults: [.init(stdout: "\(pid)\n", stderr: "", exitCode: 0)]
+            )
+            // Cancel only this owned child in the cancellation row; the
+            // surrounding test and following document fixture stay alive.
+            let fixture = Task { @MainActor in
+                try await ChatExecutionContext.$currentToolCallId.withValue(callId) {
+                    try await withRegisteredSandboxTools(
+                        runner: backgroundRunner,
+                        backgroundEnabled: true,
+                        agentName: backgroundAgent
+                    ) {
+                        let output = try await ToolRegistry.shared.execute(
+                            name: "sandbox_exec",
+                            argumentsJSON: #"{"command":"python3 server.py","background":true}"#
+                        )
+                        #expect(try successPayload(output)["pid"] as? String == pid)
+                        if completion == "cancelled" {
+                            withUnsafeCurrentTask { $0?.cancel() }
+                            throw CancellationError()
+                        }
+                        if completion == "throw" { throw SandboxFixtureBodyError.expected }
+                    }
+                }
+            }
+            do {
+                try await fixture.value
+                #expect(completion == "success")
+            } catch is CancellationError {
+                #expect(completion == "cancelled")
+            } catch SandboxFixtureBodyError.expected {
+                #expect(completion == "throw")
+            }
+            let leftover = await LiveExecRegistry.shared.handle(toolCallId: callId)
+            #expect(leftover == nil, "the background fixture must drain its own live entry before resetting its runner")
+            let backgroundCalls = await backgroundRunner.calls
+            let polledByOwningRunner = backgroundCalls.contains { call in
+                if case .agent(let agent, let command) = call {
+                    return agent == backgroundAgent && command.contains("kill -0 \(pid)")
+                }
+                return false
+            }
+            #expect(polledByOwningRunner, "the real liveness poll must finish through the fixture that started it")
+            let unrelated = await LiveExecRegistry.shared.handle(toolCallId: unrelatedId)
+            #expect(unrelated?.currentStatus() == .running, "fixture cleanup must preserve unrelated registry entries")
+
+            let documentRunner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+            try await withRegisteredSandboxTools(runner: documentRunner, agentName: documentAgent) {
+                let writtenOutput = try await ToolRegistry.shared.execute(
+                    name: "sandbox_write_file",
+                    argumentsJSON: ##"{"path":"report.docx","content":"# Report\n\nQuarterly total: 42."}"##
+                )
+                #expect(try successPayload(writtenOutput)["kind"] as? String == "document_write_result")
+                let file = OsaurusPaths.containerAgentDir(documentAgent).appendingPathComponent("report.docx")
+                #expect(try Data(contentsOf: file).prefix(2) == Data([0x50, 0x4B]))
+
+                // A broken fixture has an owned leftover. Wait for its real
+                // poll to reach this second mock so the baseline reproduces
+                // the CI failure rather than depending on export timing.
+                if leftover != nil {
+                    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+                    while ContinuousClock.now < deadline {
+                        if await documentRunner.calls.contains(where: { call in
+                            if case .agent(_, let command) = call { return command.contains("kill -0 \(pid)") }
+                            return false
+                        }) { break }
+                        try await Task.sleep(nanoseconds: 10_000_000)
+                    }
+                }
+                let calls = await documentRunner.calls
+                let receivedOwnedPoll = calls.contains { call in
+                    if case .agent(let agent, let command) = call {
+                        return agent == backgroundAgent && command.contains("kill -0 \(pid)")
+                    }
+                    return false
+                }
+                if leftover != nil {
+                    #expect(receivedOwnedPoll, "a leftover baseline must actually reproduce the cross-fixture poll")
+                }
+                #expect(calls.isEmpty, "document bytes must not travel through the shell bridge")
+
+                let observed: [String: Any] = [
+                    "pid": ProcessInfo.processInfo.processIdentifier,
+                    "completion": completion,
+                    "owned_tool_call_id": callId,
+                    "mock_background_pid": pid,
+                    "leftover_live_entry": leftover != nil,
+                    "owned_poll_observed_by_own_runner": polledByOwningRunner,
+                    "unrelated_entry_preserved": unrelated?.currentStatus() == .running,
+                    "owned_poll_reached_next_document_runner": receivedOwnedPoll,
+                    "document_runner_calls": calls.map { call -> [String: String] in
+                        switch call {
+                        case .agent(let agent, let command): return ["kind": "agent", "agent": agent, "command": command]
+                        case .root(let command): return ["kind": "root", "command": command]
+                        case .exec(_, let command, _): return ["kind": "exec", "command": command]
+                        }
+                    },
+                    "runtime_flags": ProcessInfo.processInfo.environment.filter { key, _ in
+                        ["OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS", "OSAURUS_TEST_ROOT", "OSU_MODELS_DIR",
+                         "OSAURUS_PREFILL_DEBUG", "OSAURUS_IMAGE_MODELS_DIR"].contains(key)
+                    },
+                ]
+                if let evidenceRoot = ProcessInfo.processInfo.environment["OSAURUS_TEST_ROOT"] {
+                    let receipt = URL(fileURLWithPath: evidenceRoot)
+                        .appendingPathComponent("background-fixture-crossflow-observation-\(completion).json")
+                    try JSONSerialization.data(withJSONObject: observed, options: [.prettyPrinted, .sortedKeys])
+                        .write(to: receipt, options: .atomic)
+                }
+
+                // Only this test's fake job is touched, even on a failing
+                // baseline. No terminateAll/clearAll and no process signals.
+                leftover?.onDrop?()
+                await LiveExecRegistry.shared.unregister(toolCallId: callId)
+                await SandboxBackgroundJobs.shared.unregister(agentName: backgroundAgent, pid: pid)
+                await LiveExecRegistry.shared.unregister(toolCallId: unrelatedId)
+            }
+        }
+    }
+
+    @Test
+    func backgroundCommand_capsTheLogWithoutStoppingTheJob() async throws {
+        let command = SandboxExecTool.backgroundCommand(
+            "for i in $(seq 1 3); do echo it'\''s $i; done # trailing comment", cwd: "/tmp", logFile: "/tmp/bg-test.log")
+        // The cap filter drains everything past the limit instead of exiting,
+        // so the job never sees SIGPIPE; a trailing comment can't swallow the
+        // closing brace.
+        #expect(command.contains("cat > /dev/null"))
+        #expect(command.contains("# trailing comment\n} 2>&1"))
+        #expect(command.hasSuffix("> /tmp/bg-test.log 2>&1 & echo $!"))
+    }
+
+    @Test
+    func sandboxExec_usesTheRequestAgentsKeysNotTheRegisteringAgents() async throws {
+        try await SandboxTestLock.runWithStoragePaths {
+            try await CredentialStore.$taskLocalStore.withValue(CredentialStore.makeIsolated()) {
+                let manager = AgentManager.shared
+                let registering = Agent(
+                    name: "Exec Registering", agentAddress: "test-exec-registering",
+                    autonomousExec: AutonomousExecConfig(enabled: true))
+                let requesting = Agent(
+                    name: "Exec Requesting", agentAddress: "test-exec-requesting",
+                    autonomousExec: AutonomousExecConfig(enabled: true))
+                manager.add(registering)
+                manager.add(requesting)
+                let store = CredentialStore.current
+                store.save("TOKEN", scope: .agent(registering.id), value: "registering-secret", origin: .user)
+                store.save("TOKEN", scope: .agent(requesting.id), value: "requesting-secret", origin: .user)
+
+                let runner = MockSandboxToolCommandRunner(
+                    rootResults: [], agentResults: [],
+                    execResults: [.init(stdout: "requesting-secret\n", stderr: "", exitCode: 0)])
+                await SandboxToolCommandRunnerRegistry.shared.setRunner(runner)
+                ToolRegistry.shared.unregisterAllSandboxTools()
+                BuiltinSandboxTools.register(
+                    agentId: registering.id.uuidString,
+                    agentName: SandboxAgentProvisioner.linuxName(for: registering.id.uuidString),
+                    config: AutonomousExecConfig(enabled: true))
+
+                let output = try? await ChatExecutionContext.$currentAgentId.withValue(requesting.id) {
+                    try await withSandboxToolScope {
+                        try await ToolRegistry.shared.execute(
+                            name: "sandbox_exec", argumentsJSON: #"{"command":"echo $TOKEN"}"#)
+                    }
+                }
+                let calls = await runner.calls
+                let logScrub = await runner.logScrubSecrets
+                ToolRegistry.shared.unregisterAllSandboxTools()
+                await SandboxToolCommandRunnerRegistry.shared.reset()
+                _ = await manager.delete(id: registering.id)
+                _ = await manager.delete(id: requesting.id)
+
+                let text = try #require(output)
+                guard case .exec(let user, _, let env) = try #require(calls.first) else {
+                    Issue.record("Expected exec call")
+                    return
+                }
+                #expect(env["TOKEN"] == "requesting-secret")
+                #expect(logScrub.first?["TOKEN"] == "requesting-secret", "the live log redacts it too")
+                #expect(user == "agent-\(SandboxAgentProvisioner.linuxName(for: requesting.id.uuidString))")
+                #expect(!text.contains("requesting-secret"), "the request agent's value is scrubbed")
+            }
+        }
     }
 
     @Test @MainActor
@@ -2068,6 +2302,10 @@ private actor MockSandboxToolCommandRunner: SandboxToolCommandRunning {
     }
 
     private(set) var calls: [Call] = []
+    /// Container each `execAsRoot` targeted, in call order.
+    private(set) var rootTargets: [SandboxExecTarget] = []
+    /// What the live sandbox log would redact for each `exec`.
+    private(set) var logScrubSecrets: [[String: String]] = []
     private var execResults: [ContainerExecResult]
     private var rootResults: [ContainerExecResult]
     private var agentResults: [ContainerExecResult]
@@ -2108,11 +2346,13 @@ private actor MockSandboxToolCommandRunner: SandboxToolCommandRunning {
         // the unit tests.
         let recorded = cwd.map { "cd \($0) && \(command)" } ?? command
         calls.append(.exec(user, recorded, env))
+        logScrubSecrets.append(SandboxLogScrubbing.secrets)
         return execResults.isEmpty ? .init(stdout: "", stderr: "", exitCode: 0) : execResults.removeFirst()
     }
 
     func execAsRoot(
         command: String,
+        target: SandboxExecTarget,
         timeout _: TimeInterval?,
         streamToLogs _: Bool,
         logSource _: String?,
@@ -2120,6 +2360,7 @@ private actor MockSandboxToolCommandRunner: SandboxToolCommandRunning {
         stderrTee _: (any Writer)?
     ) async throws -> ContainerExecResult {
         calls.append(.root(command))
+        rootTargets.append(target)
         return rootResults.isEmpty ? .init(stdout: "", stderr: "", exitCode: 0) : rootResults.removeFirst()
     }
 
@@ -2176,17 +2417,84 @@ private func withRegisteredSandboxTools<T: Sendable>(
             config: config
         )
 
-        do {
-            let result = try await body()
+        // The background fixture launches one mock job. Give it an owned
+        // tool-call id so teardown can drain that job without clearing the
+        // shared registry or touching another test's entry.
+        let backgroundCallId = backgroundEnabled
+            ? (ChatExecutionContext.currentToolCallId ?? "sandbox-test-\(UUID().uuidString)")
+            : nil
+
+        @MainActor func finishFixture() async {
+            if let backgroundCallId {
+                // An unstructured cleanup task stays uncancelled when the
+                // fixture body throws CancellationError or cancels itself.
+                await Task { @MainActor in
+                    await drainBackgroundFixture(toolCallId: backgroundCallId, agentName: resolvedAgentName)
+                }.value
+            }
             ToolRegistry.shared.unregisterAllSandboxTools()
             await SandboxToolCommandRunnerRegistry.shared.reset()
+        }
+
+        do {
+            let result: T
+            if let backgroundCallId {
+                result = try await ChatExecutionContext.$currentToolCallId.withValue(backgroundCallId) {
+                    try await withSandboxToolScope { try await body() }
+                }
+            } else {
+                result = try await withSandboxToolScope { try await body() }
+            }
+            await finishFixture()
             return result
         } catch {
-            ToolRegistry.shared.unregisterAllSandboxTools()
-            await SandboxToolCommandRunnerRegistry.shared.reset()
+            await finishFixture()
             throw error
         }
     }
+}
+
+@MainActor
+private func drainBackgroundFixture(toolCallId: String, agentName: String) async {
+    guard let entry = await LiveExecRegistry.shared.handle(toolCallId: toolCallId) else { return }
+    let deadline = ContinuousClock.now.advanced(by: .seconds(8))
+    while ContinuousClock.now < deadline {
+        if await LiveExecRegistry.shared.handle(toolCallId: toolCallId) == nil { break }
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    let remaining = await LiveExecRegistry.shared.handle(toolCallId: toolCallId)
+    #expect(remaining == nil, "the fixture's mock background job must finish and leave its normal grace tail")
+    #expect(entry.currentStatus() == .exited(0), "the real poll must report the mock process exited")
+    if remaining != nil {
+        // A failed teardown must not leak another poll into later tests.
+        // Preserve the failed assertions; cancel only this owned resource.
+        entry.onDrop?()
+        await LiveExecRegistry.shared.unregister(toolCallId: toolCallId)
+    }
+    await SandboxBackgroundJobs.shared.unregister(agentName: agentName, pid: entry.pid)
+}
+
+private enum SandboxFixtureBodyError: Error {
+    case expected
+}
+
+/// The sandbox adapters run by name only inside a request scope, as they do
+/// behind a chat or agent request.
+func withSandboxToolScope<T: Sendable>(
+    isolation: isolated (any Actor)? = #isolation,
+    _ body: () async throws -> T
+) async rethrows -> T {
+    let names = await MainActor.run {
+        ToolRegistry.sandboxBackendAdapterToolNames
+            .union(ToolRegistry.sandboxControlPlaneToolNames)
+            .union(ToolRegistry.shared.builtInSandboxToolNamesSnapshot)
+    }
+    let scope = ToolExecutionScope(
+        exposed: names.sorted().map {
+            Tool(type: "function", function: ToolFunction(name: $0, description: nil, parameters: nil))
+        }
+    )
+    return try await ChatExecutionContext.$toolExecutionScope.withValue(scope) { try await body() }
 }
 
 private func parseJSON(_ string: String) throws -> [String: Any]? {

@@ -11,18 +11,42 @@ import UniformTypeIdentifiers
 
 // MARK: - Server Tab
 
-enum ServerTab: String, CaseIterable, AnimatedTabItem {
+/// Drill-in pages of Developer Tools → Server. Raw values are stable ids;
+/// `overview` is the page itself.
+enum ServerTab: String, CaseIterable, SettingsDrillInItem {
     case overview = "Overview"
     case models = "Models"
     case settings = "Settings"
     case apiReference = "API Reference"
 
+    var id: String { rawValue }
+
+    static let drillInItems: [ServerTab] = [.settings, .models, .apiReference]
+
     var title: String {
         switch self {
         case .overview: return L("Overview")
-        case .models: return L("Models")
-        case .settings: return L("Settings")
+        case .models: return L("Exposed Models")
+        case .settings: return L("Server Settings")
         case .apiReference: return L("API Reference")
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .overview: return "server.rack"
+        case .models: return "cube.box"
+        case .settings: return "slider.horizontal.3"
+        case .apiReference: return "book.closed"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .overview: return ""
+        case .models: return L("Which models the HTTP API lists and serves.")
+        case .settings: return L("Connection, sampling defaults, cache, concurrency, memory safety and more.")
+        case .apiReference: return L("Every endpoint, with copyable examples.")
         }
     }
 }
@@ -50,64 +74,60 @@ struct ServerView: View {
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
-    @State private var selectedTab: ServerTab = .overview
+    @State private var selection: ServerTab?
     @State private var searchText: String = ""
-    @State private var hasAppeared = false
 
-    /// A settings-search result targeting a Server section opens the Settings
-    /// tab (the inner section scroll + glow is handled by the content view).
-    private func focusSettingsTabIfRequested() {
+    /// A settings-search result targeting a Server section opens Server
+    /// Settings (the inner section scroll + glow is handled by the content).
+    private func focusSettingsIfRequested() {
         if managementState.serverSectionRequest != nil {
-            selectedTab = .settings
+            selection = .settings
         }
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            headerView
-                .managerHeaderEntrance(hasAppeared: hasAppeared)
-
-            Group {
-                switch selectedTab {
-                case .overview:
-                    OverviewTabContent()
-                case .models:
-                    ServerModelsTabContent(searchText: searchText)
-                case .settings:
-                    ServerSettingsTabContent()
-                case .apiReference:
-                    APIReferenceTabContent(searchText: searchText)
-                }
+        SettingsDrillInHost(rootTitle: L("Server"), selection: $selection) {
+            SettingsPage {
+                SettingsPageHeader(title: "Server", subtitle: "Local API server, exposed models and API reference")
+            } content: {
+                OverviewTabContent(onSelect: { selection = $0 })
             }
-            .opacity(hasAppeared ? 1 : 0)
+        } detail: { item in
+            detail(item)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
+        .background(theme.surface.canvas)
         .environment(\.theme, themeManager.currentTheme)
-        .onAppear {
-            focusSettingsTabIfRequested()
-            withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
-                hasAppeared = true
-            }
-        }
+        .onAppear(perform: focusSettingsIfRequested)
         .onChange(of: managementState.serverSectionRequest) { _, _ in
-            focusSettingsTabIfRequested()
+            focusSettingsIfRequested()
         }
+        .onChange(of: selection) { _, _ in searchText = "" }
     }
 
-    private var headerView: some View {
-        ManagerHeaderWithTabs(
-            title: L("Server"),
-            subtitle: L("Developer tools and API reference")
-        ) {
-            EmptyView()
-        } tabsRow: {
-            HeaderTabsRow(
-                selection: $selectedTab,
-                searchText: $searchText,
-                searchPlaceholder: selectedTab == .models ? "Search models" : "Search endpoints",
-                showSearch: selectedTab == .apiReference || selectedTab == .models
+    @ViewBuilder
+    private func detail(_ item: ServerTab) -> some View {
+        VStack(spacing: theme.space.s0) {
+            SettingsPageHeader(
+                title: item.title,
+                subtitle: item.subtitle,
+                toolbar: {
+                    if item == .models || item == .apiReference {
+                        SettingsHeaderToolbar(
+                            searchText: $searchText,
+                            searchPlaceholder: item == .models ? "Search models" : "Search endpoints"
+                        )
+                    }
+                }
             )
+            switch item {
+            case .overview, .settings:
+                ServerSettingsTabContent()
+            case .models:
+                ServerModelsTabContent(searchText: searchText)
+            case .apiReference:
+                APIReferenceTabContent(searchText: searchText)
+            }
         }
     }
 }
@@ -115,68 +135,53 @@ struct ServerView: View {
 // MARK: - Overview Tab Content
 
 private struct OverviewTabContent: View {
+    let onSelect: (ServerTab) -> Void
+
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 24) {
-                ServerStatusCard()
-                AccessKeysSection()
-                CommandLineToolSection()
-                CodexCLISetupSection()
-                PeerInferenceSharingSection()
-                RelaysSectionView()
+        ServerStatusCard()
+        SettingsDrillInList(items: ServerTab.drillInItems, onSelect: onSelect)
+        AccessKeysSection()
+        LocalRouterSpendSection()
+        CommandLineToolSection()
+        CodexCLISetupSection()
+        SettingsSection(title: "Remote Access") {
+            SettingsLinkRow(
+                title: "Remote Access and Model Sharing",
+                description: "Public addresses for your agents, guests, and whether peers may use your models are in Sharing → Access.",
+                actionTitle: "Open Access"
+            ) {
+                ManagementStateManager.shared.selectedTab = .access
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 24)
-            .frame(maxWidth: .infinity)
         }
+        #if DEBUG
+            SettingsKitGallerySection()
+        #endif
     }
 }
 
-// MARK: - Peer Inference Sharing
+// MARK: - Key-less local Router spend
 
-/// Owner-level switch for whether agents paired with mine (workspace
-/// teammates, local-network peers, invite-link shares) may list my models
-/// and run plain inference here. Default off; see `PeerInferenceSharing`.
-/// Takes effect on the next peer request — no server restart.
-private struct PeerInferenceSharingSection: View {
+/// Opt-in for key-less loopback Router spend. Off by default so a local
+/// process can't spend credits through the unauthenticated loopback API;
+/// callers with a valid access key are always allowed regardless.
+private struct LocalRouterSpendSection: View {
     @Environment(\.theme) private var theme
-    @State private var isEnabled = PeerInferenceSharing.isEnabled()
+    @State private var isEnabled = OsaurusRouter.allowsUnkeyedLoopbackSpend
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Label {
-                Text("Shared Inference", bundle: .module)
-            } icon: {
-                Image(systemName: "person.2.wave.2")
-            }
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundColor(theme.primaryText)
-
-            Text(
-                "Agents paired with yours can always chat with the agents you share. Choose whether they may also use your models directly.",
-                bundle: .module
-            )
-            .font(.system(size: 12))
-            .foregroundColor(theme.secondaryText)
-            .fixedSize(horizontal: false, vertical: true)
-
+        SettingsSection(title: "Osaurus Router") {
             SettingsToggle(
-                title: "Share my models for inference",
+                title: "Allow local API access without a key",
                 description:
-                    "Teammates, local-network peers, and invite-link connections can list the models you expose in Server → Models and run inference through your Osaurus. Off: they see no models and inference requests are refused; shared-agent chat is unaffected.",
+                    "Lets local processes route requests through the Osaurus Router (spending credits) via the HTTP API without an access key. Keep this off unless you trust every process on this Mac.",
+                anchorId: "server.localRouterSpend",
                 isOn: $isEnabled
             )
-            .settingsLandingAnchor("server.peerInference")
-            .onChange(of: isEnabled) { _, newValue in
-                PeerInferenceSharing.setEnabled(newValue)
-            }
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.secondaryBackground)
-        )
-        .onAppear { isEnabled = PeerInferenceSharing.isEnabled() }
+        .onChange(of: isEnabled) { _, newValue in
+            OsaurusRouter.setAllowsUnkeyedLoopbackSpend(newValue)
+        }
+        .onAppear { isEnabled = OsaurusRouter.allowsUnkeyedLoopbackSpend }
     }
 }
 
@@ -191,90 +196,20 @@ private struct ServerStatusCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Label {
-                Text("Status", bundle: .module)
-            } icon: {
-                Image(systemName: "antenna.radiowaves.left.and.right")
-            }
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundColor(theme.primaryText)
-
-            HStack(spacing: 16) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Server URL", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-
-                    HStack(spacing: 10) {
-                        Text(serverURL)
-                            .font(.system(size: 14, weight: .medium, design: .monospaced))
-                            .foregroundColor(theme.primaryText)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(theme.inputBackground)
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .stroke(theme.inputBorder, lineWidth: 1)
-                                    )
-                            )
-
-                        Button(action: {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(serverURL, forType: .string)
-                        }) {
-                            Image(systemName: "doc.on.doc")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(theme.secondaryText)
-                                .padding(8)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .fill(theme.tertiaryBackground)
-                                )
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        .localizedHelp("Copy URL")
-                    }
-                }
-
-                Spacer()
-
-                VStack(alignment: .trailing, spacing: 8) {
-                    Text("Status", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-
-                    ServerStatusBadge(health: server.serverHealth)
-                }
-            }
-
+        SettingsStatusHero(
+            title: "Status",
+            icon: "antenna.radiowaves.left.and.right",
+            valueLabel: "Server URL",
+            value: serverURL
+        ) {
+            ServerStatusBadge(health: server.serverHealth)
+        } actions: {
             if !server.isRunning && server.serverHealth == .stopped {
-                Button(action: { Task { await server.startServer() } }) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "play.fill")
-                            .font(.system(size: 11, weight: .semibold))
-                        Text("Start Server", bundle: .module)
-                            .font(.system(size: 13, weight: .semibold))
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 10)
-                    .frame(maxWidth: .infinity)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.accentColor)
-                    )
+                SettingsButton(.primary, "Start Server", icon: "play.fill") {
+                    Task { await server.startServer() }
                 }
-                .buttonStyle(PlainButtonStyle())
             }
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.secondaryBackground)
-        )
     }
 }
 
@@ -300,109 +235,38 @@ private struct AccessKeysSection: View {
     @State private var didLoadAccessKeys = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Label {
-                    Text("Access Keys", bundle: .module)
-                } icon: {
-                    Image(systemName: "key.horizontal")
-                }
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-
-                Spacer()
-
-                Button(action: { Task { await reloadAccessKeys(readKeychain: true) } }) {
-                    Text("Refresh", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(theme.primaryBorder.opacity(0.6), lineWidth: 1)
-                        )
-                }
-                .buttonStyle(PlainButtonStyle())
-
-                Button(action: { showingKeyGenerator = true }) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 10, weight: .semibold))
-                        Text("Generate Key", bundle: .module)
-                            .font(.system(size: 12, weight: .semibold))
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(theme.accentColor)
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
+        SettingsSection(title: "Access Keys", subtitle: accessKeySummaryKey, layout: .plain) {
+            SettingsIconButton("arrow.clockwise", help: "Refresh", size: .compact) {
+                Task { await reloadAccessKeys(readKeychain: true) }
             }
-
-            Text(verbatim: accessKeySummaryText)
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-
+            SettingsButton(.primary, "Generate Key", icon: "plus", size: .compact) {
+                showingKeyGenerator = true
+            }
+        } content: {
             if let generatedKey {
                 generatedKeyBanner(key: generatedKey)
             }
 
             if let accessKeyError {
-                Text(accessKeyError)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.errorColor)
+                InlineBanner(kind: .error, title: accessKeyError)
             }
 
             if accessKeys.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "lock.shield.fill")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(theme.warningColor)
-                        Text("Server is locked", bundle: .module)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(theme.warningColor)
-                    }
-                    Text(
-                        verbatim:
-                            didLoadAccessKeys
-                            ? emptyAccessKeyMessage
-                            : L(
-                                "Access key metadata is loaded on demand so startup never reads Keychain. Refresh to inspect existing keys."
-                            )
-                    )
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(theme.warningColor.opacity(0.06))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(theme.warningColor.opacity(0.15), lineWidth: 1)
-                        )
+                SettingsEmptyState(
+                    inline: "lock.shield.fill",
+                    title: "Server is locked",
+                    hint: didLoadAccessKeys
+                        ? emptyAccessKeyMessageKey
+                        : "Access key metadata is loaded on demand so startup never reads Keychain. Refresh to inspect existing keys."
                 )
             } else {
-                VStack(spacing: 2) {
+                SettingsGroup {
                     ForEach(accessKeys) { key in
                         accessKeyRow(key)
                     }
                 }
             }
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.secondaryBackground)
-        )
         .sheet(isPresented: $showingKeyGenerator) {
             AccessKeyGeneratorSheet(
                 theme: theme,
@@ -421,198 +285,82 @@ private struct AccessKeysSection: View {
     }
 
     private func generatedKeyBanner(key: String) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 6) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.warningColor)
-                Text("Copy this key now. It won't be shown again.", bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.warningColor)
-            }
-
-            HStack(spacing: 8) {
-                Text(key)
-                    .font(.system(size: 12, weight: .medium, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
-                    .textSelection(.enabled)
-                    .lineLimit(1)
-
-                Spacer()
-
-                Button(action: {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(key, forType: .string)
-                }) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "doc.on.doc")
-                            .font(.system(size: 10, weight: .medium))
-                        Text("Copy", bundle: .module)
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(theme.accentColor)
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
-
-                Button(action: {
-                    withAnimation { generatedKey = nil }
-                }) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(theme.secondaryText)
-                        .padding(5)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(theme.tertiaryBackground)
-                        )
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-            .padding(10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.tertiaryBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(theme.warningColor.opacity(0.3), lineWidth: 1)
-                    )
-            )
+        SettingsCallout(
+            icon: "exclamationmark.triangle.fill",
+            title: "Copy this key now. It won't be shown again.",
+            message: "Anyone with this key can call the API.",
+            tone: .warning
+        ) {
+            SettingsCodeBlock(code: key, wraps: false)
+            SettingsButton(.secondary, "Dismiss", size: .compact) { withAnimation { generatedKey = nil } }
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.warningColor.opacity(0.06))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.warningColor.opacity(0.15), lineWidth: 1)
-                )
-        )
     }
 
-    private var accessKeySummaryText: String {
-        if server.configuration.exposeToNetwork {
-            return L(
-                "Network and relay callers must present an access key. Local loopback bypass is disabled while network exposure is on."
-            )
-        }
-        return L(
-            "Localhost clients can call the API without a real key. Create access keys for LAN, relay, or clients that require a Bearer value."
-        )
+    private var accessKeySummaryKey: String {
+        server.configuration.exposeToNetwork
+            ? "Network and relay callers must present an access key. Local loopback bypass is disabled while network exposure is on."
+            : "Localhost clients can call the API without a real key. Create access keys for LAN, relay, or clients that require a Bearer value."
     }
 
-    private var emptyAccessKeyMessage: String {
-        if server.configuration.exposeToNetwork {
-            return L("Network and relay callers are restricted until you create an access key.")
-        }
-        return L("No keys are stored. Localhost still works without a real token while network exposure is off.")
+    private var emptyAccessKeyMessageKey: String {
+        server.configuration.exposeToNetwork
+            ? "Network and relay callers are restricted until you create an access key."
+            : "No keys are stored. Localhost still works without a real token while network exposure is off."
     }
 
     private func accessKeyRow(_ key: AccessKeyInfo) -> some View {
-        let inactive = !key.isActive
         let isLegacy = legacyKeyIds.contains(key.id)
-        return HStack(spacing: 12) {
-            Image(systemName: "key.fill")
-                .font(.system(size: 11))
-                .foregroundColor(inactive ? theme.tertiaryText : theme.accentColor)
-                .frame(width: 20)
-
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
-                    Text(key.label)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(inactive ? theme.tertiaryText : theme.primaryText)
-
-                    if key.revoked {
-                        keyBadge("Revoked", color: theme.errorColor)
-                    } else if key.isExpired {
-                        keyBadge("Expired", color: theme.warningColor)
-                    } else {
-                        keyBadge("Active", color: theme.successColor)
-                    }
-
-                    if TemporaryPairedKeyStore.shared.isTemporary(id: key.id) {
-                        keyBadge("Temporary", color: theme.warningColor)
-                    }
-
-                    if isLegacy {
-                        keyBadge("Legacy", color: theme.warningColor)
-                    } else if key.aud == key.iss {
-                        keyBadge("All Agents", color: theme.accentColor)
-                    }
+        return LibraryRow(
+            title: key.label,
+            subtitle: accessKeySubtitle(key, isLegacy: isLegacy),
+            leading: {
+                SettingsIconTile(icon: "key.fill", tint: key.isActive ? nil : theme.text.tertiary)
+            },
+            badges: {
+                if key.revoked {
+                    keyBadge("Revoked", color: theme.status.error.foreground)
+                } else if key.isExpired {
+                    keyBadge("Expired", color: theme.status.warning.foreground)
+                } else {
+                    keyBadge("Active", color: theme.status.success.foreground)
                 }
-
-                HStack(spacing: 8) {
-                    Text(key.prefix + "...")
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
-
-                    Text("Created \(sharedMediumDateFormatter.string(from: key.createdAt))", bundle: .module)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText)
-
-                    if let expiresAt = key.expiresAt {
-                        Text(
-                            key.isExpired
-                                ? "Expired \(sharedMediumDateFormatter.string(from: expiresAt))"
-                                : "Expires \(sharedMediumDateFormatter.string(from: expiresAt))"
-                        )
-                        .font(.system(size: 10))
-                        .foregroundColor(key.isExpired ? theme.warningColor : theme.tertiaryText)
-                    }
-                }
-
                 if isLegacy {
-                    Text(
-                        "Pre-upgrade pairing — grants access to all agents and never expires. Revoke and re-pair to scope it to a single agent.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.warningColor)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 2)
+                    keyBadge("Legacy", color: theme.status.warning.foreground)
+                } else if key.aud == key.iss {
+                    keyBadge("All Agents", color: theme.action.primary.default.background)
+                }
+            },
+            trailing: {
+                if !key.revoked {
+                    SettingsButton(.destructive, "Revoke", size: .compact) {
+                        revokeAccessKey(key.id)
+                    }
                 }
             }
-
-            Spacer()
-
-            if !key.revoked {
-                Button(action: {
-                    revokeAccessKey(key.id)
-                }) {
-                    Text("Revoke", bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.errorColor)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(theme.errorColor.opacity(0.1))
-                        )
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(inactive ? theme.tertiaryBackground.opacity(0.25) : theme.tertiaryBackground.opacity(0.5))
         )
     }
 
+    private func accessKeySubtitle(_ key: AccessKeyInfo, isLegacy: Bool) -> String {
+        var parts = [
+            key.prefix + "...",
+            String(format: L("Created %@"), sharedMediumDateFormatter.string(from: key.createdAt)),
+        ]
+        if let expiresAt = key.expiresAt {
+            let date = sharedMediumDateFormatter.string(from: expiresAt)
+            parts.append(String(format: key.isExpired ? L("Expired %@") : L("Expires %@"), date))
+        }
+        if isLegacy {
+            parts.append(
+                L(
+                    "Pre-upgrade pairing — grants access to all agents and never expires. Revoke and re-pair to scope it to a single agent."
+                )
+            )
+        }
+        return parts.joined(separator: " · ")
+    }
+
     private func keyBadge(_ text: String, color: Color) -> some View {
-        Text(text)
-            .font(.system(size: 9, weight: .bold))
-            .foregroundColor(color)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Capsule().fill(color.opacity(0.12)))
+        StatusChip(text, tint: color)
     }
 
     private func reloadAccessKeys(readKeychain: Bool = false) async {
@@ -709,7 +457,6 @@ private struct CodexCLISetupSection: View {
     /// `model_context_window` from the profile.
     @State private var contextWindow: Int?
     @State private var writeStatus: WriteStatus?
-    @State private var didCopy = false
 
     private enum WriteStatus: Equatable {
         case success(configPath: String, profilePath: String, replaced: Bool)
@@ -729,97 +476,47 @@ private struct CodexCLISetupSection: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Label {
-                Text("Use with Codex CLI", bundle: .module)
-            } icon: {
-                Image(systemName: "terminal")
-            }
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundColor(theme.primaryText)
-
-            Text(
+        SettingsSection(
+            title: "Use with Codex CLI",
+            subtitle:
                 "Run OpenAI's Codex CLI against your local models. Osaurus registers itself as a Codex model provider and adds an `osaurus` profile; nothing else in your Codex config is touched.",
-                bundle: .module
+            anchorId: "server.codexCLI",
+            layout: .plain
+        ) {
+            SettingsButton(
+                .primary,
+                String(format: L("Add to %@"), CodexCLIConfiguration.displayPath(codexHome)),
+                icon: "square.and.arrow.down",
+                size: .compact,
+                verbatim: true,
+                help: "Write config.toml and osaurus.config.toml",
+                action: writeConfig
             )
-            .font(.system(size: 12))
-            .foregroundColor(theme.secondaryText)
-            .fixedSize(horizontal: false, vertical: true)
+            .disabled(selectedModelId.isEmpty)
+        } content: {
+            SettingsGroup { modelRow }
 
-            modelRow
-
-            snippetView
-
-            HStack(spacing: 10) {
-                Button(action: copySnippet) {
-                    HStack(spacing: 6) {
-                        Image(systemName: didCopy ? "checkmark" : "doc.on.doc")
-                            .font(.system(size: 10, weight: .semibold))
-                        Text(verbatim: didCopy ? L("Copied") : L("Copy"))
-                            .font(.system(size: 12, weight: .semibold))
-                    }
-                    .foregroundColor(theme.primaryText)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(theme.primaryBorder.opacity(0.6), lineWidth: 1)
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
-                .localizedHelp("Copy both files and the command")
-
-                Button(action: writeConfig) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "square.and.arrow.down")
-                            .font(.system(size: 10, weight: .semibold))
-                        Text(verbatim: String(format: L("Add to %@"), CodexCLIConfiguration.displayPath(codexHome)))
-                            .font(.system(size: 12, weight: .semibold))
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(selectedModelId.isEmpty ? theme.accentColor.opacity(0.4) : theme.accentColor)
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
-                .disabled(selectedModelId.isEmpty)
-                .localizedHelp("Write config.toml and osaurus.config.toml")
-
-                Spacer()
-            }
+            SettingsCodeBlock(code: snippet)
+                .accessibilityIdentifier("server.codexCLI.snippet")
 
             if let writeStatus {
                 statusView(writeStatus)
             }
 
             if server.configuration.exposeToNetwork {
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "key.fill")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(theme.warningColor)
-                    Text(
-                        verbatim: String(
-                            format: L(
-                                "Network exposure is on, so Codex must send an access key even from this Mac. Create one under Access Keys and export %@ in the shell that runs codex."
-                            ),
-                            CodexCLIConfiguration.accessKeyEnvironmentVariable
-                        )
-                    )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                }
+                SettingsCallout(
+                    icon: "key.fill",
+                    title: "Access key required",
+                    message: String(
+                        format: L(
+                            "Network exposure is on, so Codex must send an access key even from this Mac. Create one under Access Keys and export %@ in the shell that runs codex."
+                        ),
+                        CodexCLIConfiguration.accessKeyEnvironmentVariable
+                    ),
+                    tone: .warning
+                )
             }
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.secondaryBackground)
-        )
-        .settingsLandingAnchor("server.codexCLI")
         .task { await loadModels() }
         .onChange(of: selectedModelId) { _, newValue in
             writeStatus = nil
@@ -830,107 +527,53 @@ private struct CodexCLISetupSection: View {
     }
 
     private var modelRow: some View {
-        HStack(spacing: 12) {
-            Text("Model", bundle: .module)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-
+        SettingsRow(title: "Model", description: contextWindowDescription, verbatimDescription: true) {
             if !hasLoadedModels {
-                ProgressView()
-                    .controlSize(.small)
+                SettingsSpinner()
             } else if modelIds.isEmpty {
                 Text("No local models installed. Download one from the Models manager first.", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.caption)
+                    .foregroundColor(theme.text.tertiary)
             } else {
-                Picker("", selection: $selectedModelId) {
+                SettingsMenuPicker(selection: $selectedModelId) {
                     ForEach(modelIds, id: \.self) { id in
                         Text(id).tag(id)
                     }
                 }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                .frame(maxWidth: 360, alignment: .leading)
                 .accessibilityIdentifier("server.codexCLI.model")
             }
-
-            Spacer()
-
-            if let contextWindow {
-                Text(verbatim: String(format: L("%@ context"), Self.tokenFormatter.string(from: NSNumber(value: contextWindow)) ?? "\(contextWindow)"))
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-            }
         }
     }
 
-    private var snippetView: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            Text(snippet)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(theme.primaryText)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: true, vertical: true)
-                .padding(12)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.inputBorder, lineWidth: 1)
-                )
+    private var contextWindowDescription: String {
+        guard let contextWindow else { return "" }
+        return String(
+            format: L("%@ context"),
+            Self.tokenFormatter.string(from: NSNumber(value: contextWindow)) ?? "\(contextWindow)"
         )
-        .accessibilityIdentifier("server.codexCLI.snippet")
     }
 
+    @ViewBuilder
     private func statusView(_ status: WriteStatus) -> some View {
-        let isSuccess: Bool
-        let icon: String
-        let color: Color
-        let message: String
         switch status {
         case .success(let configPath, let profilePath, let replaced):
-            isSuccess = true
-            icon = "checkmark.circle.fill"
-            color = theme.successColor
-            message = String(
-                format: replaced
-                    ? L("Updated %@ and wrote %@. Run `%@`.")
-                    : L("Added the provider to %@ and wrote %@. Run `%@`."),
-                configPath, profilePath, CodexCLIConfiguration.usageCommand
+            InlineBanner(
+                kind: .success,
+                title: String(
+                    format: replaced
+                        ? L("Updated %@ and wrote %@. Run `%@`.")
+                        : L("Added the provider to %@ and wrote %@. Run `%@`."),
+                    configPath, profilePath, CodexCLIConfiguration.usageCommand
+                )
             )
+            .accessibilityIdentifier("server.codexCLI.status")
         case .failure(let detail):
-            isSuccess = false
-            icon = "exclamationmark.triangle.fill"
-            color = theme.errorColor
-            message = detail
+            InlineBanner(kind: .error, title: detail)
+                .accessibilityIdentifier("server.codexCLI.status")
         }
-        return HStack(alignment: .top, spacing: 6) {
-            Image(systemName: icon)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(color)
-            Text(verbatim: message)
-                .font(.system(size: 11, weight: isSuccess ? .regular : .medium))
-                .foregroundColor(isSuccess ? theme.secondaryText : theme.errorColor)
-                .fixedSize(horizontal: false, vertical: true)
-                .textSelection(.enabled)
-        }
-        .accessibilityIdentifier("server.codexCLI.status")
     }
 
     // MARK: Actions
-
-    private func copySnippet() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(snippet, forType: .string)
-        didCopy = true
-        Task {
-            try? await Task.sleep(for: .seconds(1.5))
-            didCopy = false
-        }
-    }
 
     private func writeConfig() {
         guard !selectedModelId.isEmpty else { return }
@@ -1023,226 +666,6 @@ private enum ContextSizeResolverBridge {
     }
 }
 
-// MARK: - Relays Section
-
-private struct RelaysSectionView: View {
-    @Environment(\.theme) private var theme
-    @ObservedObject private var relayManager = RelayTunnelManager.shared
-    @ObservedObject private var agentManager = AgentManager.shared
-
-    @State private var showRelayConfirmation = false
-    @State private var pendingRelayAgentId: UUID?
-    @State private var copiedRelayURL: UUID?
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Label {
-                Text("Relays", bundle: .module)
-            } icon: {
-                Image(systemName: "globe")
-            }
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundColor(theme.primaryText)
-
-            Text("Expose agents to the public internet via relay tunnels.", bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-
-            let agents = agentManager.agents.filter { !$0.isBuiltIn }
-
-            if agents.isEmpty {
-                HStack(spacing: 8) {
-                    Image(systemName: "person.crop.circle.badge.questionmark")
-                        .font(.system(size: 14))
-                        .foregroundColor(theme.tertiaryText)
-                    Text("No agents configured. Create an agent first.", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(theme.tertiaryBackground.opacity(0.5))
-                )
-            } else {
-                VStack(spacing: 2) {
-                    ForEach(agents) { agent in
-                        relayAgentRow(agent)
-                    }
-                }
-            }
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.secondaryBackground)
-        )
-        .alert(Text("Expose Agent to Internet?", bundle: .module), isPresented: $showRelayConfirmation) {
-            Button(role: .destructive) {
-                if let id = pendingRelayAgentId {
-                    relayManager.setTunnelEnabled(true, for: id)
-                }
-                pendingRelayAgentId = nil
-            } label: {
-                Text("Enable Tunnel", bundle: .module)
-            }
-            Button(role: .cancel) {
-                pendingRelayAgentId = nil
-            } label: {
-                Text("Cancel", bundle: .module)
-            }
-        } message: {
-            Text(
-                "This will create a public URL for this agent via agent.osaurus.ai. Anyone with the URL can send requests to your local server. Your access keys still protect the API endpoints.",
-                bundle: .module
-            )
-        }
-        .task {
-            for agent in agentManager.agents where !agent.isBuiltIn && agent.agentAddress == nil {
-                agentManager.assignAddressInBackground(to: agent)
-            }
-        }
-    }
-
-    private func relayAgentRow(_ agent: Agent) -> some View {
-        let hasIdentity = agent.agentAddress != nil && agent.agentIndex != nil
-        let status = relayManager.agentStatuses[agent.id] ?? .disconnected
-        let isEnabled = relayManager.isTunnelEnabled(for: agent.id)
-
-        return HStack(spacing: 12) {
-            relayStatusDot(status)
-                .frame(width: 20)
-
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(agent.name)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-
-                    if agent.isBuiltIn {
-                        Text("Built-in", bundle: .module)
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundColor(theme.tertiaryText)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Capsule().fill(theme.tertiaryText.opacity(0.12)))
-                    }
-                }
-
-                if let address = agent.agentAddress {
-                    let truncated = String(address.prefix(8)) + "..." + String(address.suffix(4))
-                    Text(truncated)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
-                } else {
-                    Text("No identity set up", bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.warningColor)
-                }
-
-                if case .connected(let url) = status {
-                    HStack(spacing: 4) {
-                        Text(url)
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundColor(theme.accentColor)
-                            .lineLimit(1)
-
-                        Button(action: {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(url, forType: .string)
-                            copiedRelayURL = agent.id
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-                                if copiedRelayURL == agent.id { copiedRelayURL = nil }
-                            }
-                        }) {
-                            Image(systemName: copiedRelayURL == agent.id ? "checkmark" : "doc.on.doc")
-                                .font(.system(size: 9, weight: .medium))
-                                .foregroundColor(copiedRelayURL == agent.id ? theme.successColor : theme.tertiaryText)
-                        }
-                        .buttonStyle(PlainButtonStyle())
-                        .localizedHelp("Copy relay URL")
-                    }
-                }
-
-                if case .error(let msg) = status {
-                    Text(msg)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.errorColor)
-                }
-            }
-
-            Spacer()
-
-            if hasIdentity {
-                Toggle(
-                    "",
-                    isOn: Binding(
-                        get: { isEnabled },
-                        set: { newValue in
-                            if newValue {
-                                pendingRelayAgentId = agent.id
-                                showRelayConfirmation = true
-                            } else {
-                                relayManager.setTunnelEnabled(false, for: agent.id)
-                            }
-                        }
-                    )
-                )
-                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                .labelsHidden()
-            } else {
-                Button(action: {
-                    AppDelegate.shared?.showManagementWindow(initialTab: .identity)
-                }) {
-                    Text("Identity →", bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.accentColor)
-                }
-                .buttonStyle(PlainButtonStyle())
-                .localizedHelp("Set up this agent's identity in the Identity tab")
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.tertiaryBackground.opacity(0.5))
-        )
-    }
-
-    @ViewBuilder
-    private func relayStatusDot(_ status: AgentRelayStatus) -> some View {
-        switch status {
-        case .disconnected:
-            Circle()
-                .fill(theme.tertiaryText.opacity(0.4))
-                .frame(width: 8, height: 8)
-        case .connecting:
-            Circle()
-                .fill(theme.warningColor)
-                .frame(width: 8, height: 8)
-                .overlay(
-                    Circle()
-                        .fill(theme.warningColor.opacity(0.3))
-                        .frame(width: 16, height: 16)
-                )
-        case .connected:
-            Circle()
-                .fill(theme.successColor)
-                .frame(width: 8, height: 8)
-        case .error:
-            Circle()
-                .fill(theme.errorColor)
-                .frame(width: 8, height: 8)
-        case .servedElsewhere:
-            Circle()
-                .fill(theme.warningColor.opacity(0.6))
-                .frame(width: 8, height: 8)
-        }
-    }
-}
-
 // MARK: - API Reference Tab Content
 
 private struct APIReferenceTabContent: View {
@@ -1290,15 +713,15 @@ private struct APIReferenceTabContent: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 24) {
+            LazyVStack(alignment: .leading, spacing: theme.space.s24) {
                 if !server.isRunning {
                     serverStoppedBanner
                 }
                 endpointsCard
                 documentationSection
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 24)
+            .padding(.horizontal, theme.space.s24)
+            .padding(.vertical, theme.space.s24)
             .frame(maxWidth: .infinity)
         }
     }
@@ -1306,88 +729,77 @@ private struct APIReferenceTabContent: View {
     // MARK: - Sections
 
     private var serverStoppedBanner: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.warningColor)
-            VStack(alignment: .leading, spacing: 2) {
+                .glyphSize(.label, weight: .semibold)
+                .foregroundColor(theme.status.warning.foreground)
+            SettingsRowText(compact: true) {
                 Text("Server is not running", bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.warningColor)
+                    .foregroundColor(theme.status.warning.foreground)
+            } description: {
                 Text("Start the server from the Overview tab to test endpoints.", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
+                    .foregroundColor(theme.text.secondary)
             }
             Spacer()
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.warningColor.opacity(0.06))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.warningColor.opacity(0.15), lineWidth: 1)
-                )
-        )
+        .padding(theme.space.s12)
+        .settingsChrome(.status(.warning))
     }
 
     private var endpointsCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: theme.space.s16) {
             Label {
                 Text("API Endpoints", bundle: .module)
             } icon: {
                 Image(systemName: "arrow.left.arrow.right")
             }
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundColor(theme.primaryText)
+            .textStyle(.label, weight: 600)
+            .foregroundColor(theme.text.primary)
 
             Text("Available endpoints on your Osaurus server. Expand to test directly.", bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.caption)
+                .foregroundColor(theme.text.secondary)
 
             let groups = filteredGroups
 
             if groups.isEmpty {
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     Image(systemName: "magnifyingglass")
-                        .font(.system(size: 14))
-                        .foregroundColor(theme.tertiaryText)
+                        .glyphSize(.body)
+                        .foregroundColor(theme.text.tertiary)
                     Text("No endpoints match \"\(searchText)\"", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.caption)
+                        .foregroundColor(theme.text.tertiary)
                 }
-                .padding(12)
+                .padding(theme.space.s12)
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                VStack(spacing: 16) {
+                VStack(spacing: theme.space.s16) {
                     ForEach(groups, id: \.category.rawValue) { group in
                         endpointCategoryGroup(group)
                     }
                 }
             }
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.secondaryBackground)
-        )
+        .padding(theme.space.s16)
+        .settingsChrome(.inset)
     }
 
     private func endpointCategoryGroup(
         _ group: (category: APIEndpoint.EndpointCategory, endpoints: [APIEndpoint])
     ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: group.category.icon)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(group.category.color)
+                    .glyphSize(.micro, weight: .semibold)
+                    .foregroundColor(theme.dataInk(group.category.ink))
                 Text(group.category.rawValue)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.smallLabel)
+                    .foregroundColor(theme.text.secondary)
             }
-            .padding(.leading, 4)
+            .padding(.leading, theme.space.s4)
 
-            VStack(spacing: 2) {
+            VStack(spacing: theme.space.s2) {
                 ForEach(group.endpoints, id: \.id) { endpoint in
                     if endpoint.isAudioEndpoint {
                         TranscriptionTestRow(
@@ -1430,51 +842,39 @@ private struct APIReferenceTabContent: View {
     }
 
     private var documentationSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             Label {
                 Text("Documentation", bundle: .module)
             } icon: {
                 Image(systemName: "book")
             }
-            .font(.system(size: 14, weight: .semibold))
-            .foregroundColor(theme.primaryText)
+            .textStyle(.label, weight: 600)
+            .foregroundColor(theme.text.primary)
 
             Text("Learn how to integrate Osaurus into your applications.", bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.caption)
+                .foregroundColor(theme.text.secondary)
 
             Button(action: {
                 if let url = URL(string: "https://docs.osaurus.ai/") {
                     NSWorkspace.shared.open(url)
                 }
             }) {
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     Image(systemName: "arrow.up.right.square")
-                        .font(.system(size: 12, weight: .medium))
                     Text("Open Documentation", bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
                 }
-                .foregroundColor(.white)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.accentColor)
-                )
             }
-            .buttonStyle(PlainButtonStyle())
+            .assignedSettingsButtonStyle(.primary)
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.secondaryBackground)
-        )
+        .padding(theme.space.s16)
+        .settingsChrome(.inset)
     }
 
     // MARK: - Actions
 
     private func toggleEndpoint(_ path: String) {
-        withAnimation(.easeInOut(duration: 0.2)) {
+        withAnimation(theme.motion.quick) {
             expandedEndpoint = expandedEndpoint == path ? nil : path
         }
     }
@@ -1514,7 +914,7 @@ private struct APIReferenceTabContent: View {
     private func runEndpointTest(_ endpoint: APIEndpoint) {
         guard server.isRunning, !endpoint.hasPathParameters else { return }
 
-        withAnimation(.easeInOut(duration: 0.2)) {
+        withAnimation(theme.motion.quick) {
             expandedEndpoint = endpoint.id
             loadingEndpoints.insert(endpoint.id)
         }
@@ -1558,7 +958,7 @@ private struct APIReferenceTabContent: View {
 
         let modelId = SpeechModelManager.shared.selectedModel?.id ?? "parakeet-v3"
 
-        withAnimation(.easeInOut(duration: 0.2)) {
+        withAnimation(theme.motion.quick) {
             expandedEndpoint = endpoint.path
             loadingEndpoints.insert(endpoint.path)
         }
@@ -1648,7 +1048,7 @@ struct APIEndpoint {
             }
         }
 
-        var color: Color {
+        var ink: DataInk {
             switch self {
             case .core: return .blue
             case .chat: return .green
@@ -1962,50 +1362,15 @@ private struct ServerStatusBadge: View {
     let health: ServerHealth
 
     var body: some View {
-        HStack(spacing: 6) {
-            Circle()
-                .fill(statusColor)
-                .frame(width: 8, height: 8)
-                .overlay(
-                    Circle()
-                        .fill(statusColor.opacity(0.3))
-                        .frame(width: 16, height: 16)
-                        .opacity(isAnimating ? 1 : 0)
-                        .animation(
-                            isAnimating ? .easeInOut(duration: 1).repeatForever(autoreverses: true) : .default,
-                            value: isAnimating
-                        )
-                )
-
-            Text(health.statusDescription)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(statusColor)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(statusColor.opacity(0.1))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(statusColor.opacity(0.3), lineWidth: 1)
-                )
-        )
+        StatusChip(health.statusDescription, tint: statusColor, showsDot: true)
     }
 
     private var statusColor: Color {
         switch health {
-        case .running: return theme.successColor
-        case .stopped: return theme.tertiaryText
-        case .starting, .restarting, .stopping: return theme.warningColor
-        case .error: return theme.errorColor
-        }
-    }
-
-    private var isAnimating: Bool {
-        switch health {
-        case .starting, .restarting, .stopping: return true
-        default: return false
+        case .running: return theme.status.success.foreground
+        case .stopped: return theme.text.tertiary
+        case .starting, .restarting, .stopping: return theme.status.warning.foreground
+        case .error: return theme.status.error.foreground
         }
     }
 }
@@ -2028,92 +1393,82 @@ private struct EndpointRowHeader: View {
         Button(action: {
             if isServerRunning { onToggleExpand() }
         }) {
-            HStack(spacing: 12) {
+            HStack(spacing: theme.space.s12) {
                 Text(endpoint.method)
-                    .font(.system(size: 10, weight: .bold, design: .monospaced))
+                    .font(SettingsFont.monoSmall)
                     .foregroundColor(methodColor)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
+                    .padding(.horizontal, theme.space.s8)
+                    .padding(.vertical, theme.space.s4)
                     .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(methodColor.opacity(0.15))
+                        RoundedRectangle(cornerRadius: theme.radius.small)
+                            .fill(DataInk.httpMethod(endpoint.method).map(theme.dataWash) ?? theme.surface.hover)
                     )
                     .frame(width: 58)
 
                 Text(endpoint.path)
-                    .font(.system(size: 13, weight: .medium, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.mono)
+                    .foregroundColor(theme.text.primary)
 
                 if let compat = endpoint.compatibility {
                     Text(compat)
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(SettingsFont.chip)
                         .foregroundColor(compatColor(compat))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
+                        .padding(.horizontal, theme.space.s6)
+                        .padding(.vertical, theme.space.s2)
                         .background(
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(compatColor(compat).opacity(0.1))
+                            RoundedRectangle(cornerRadius: theme.radius.small)
+                                .fill(compatWash(compat))
                         )
                 }
 
                 Spacer()
 
                 Text(endpoint.description)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
                     .lineLimit(1)
 
                 if isLoading {
-                    ProgressView()
-                        .scaleEffect(0.6)
-                        .frame(width: 20, height: 20)
+                    SettingsSpinner()
                 } else if let resp = response {
-                    Text("\(resp.statusCode)", bundle: .module)
-                        .font(.system(size: 10, weight: .bold, design: .monospaced))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(resp.isSuccess ? Color.green : Color.red)
-                        )
+                    StatusChip("\(resp.statusCode)", tone: resp.isSuccess ? .success : .error)
                 }
 
                 Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
+                    .glyphSize(.micro, weight: .semibold)
+                    .foregroundColor(theme.text.tertiary)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .padding(.horizontal, theme.space.s12)
+            .padding(.vertical, theme.space.s8)
             .contentShape(Rectangle())
         }
         .buttonStyle(PlainButtonStyle())
         .disabled(!isServerRunning)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(isHovering || isExpanded ? theme.tertiaryBackground.opacity(0.5) : Color.clear)
-        )
+        .settingsChrome(isHovering || isExpanded ? .hover : nil)
         .onHover { hovering in
-            withAnimation(.easeOut(duration: 0.15)) { isHovering = hovering }
+            withAnimation(theme.motion.quick) { isHovering = hovering }
         }
     }
 
     private var methodColor: Color {
-        switch endpoint.method {
-        case "GET": return .green
-        case "POST": return .blue
-        case "PUT": return .orange
-        case "DELETE": return .red
-        default: return theme.tertiaryText
-        }
+        DataInk.httpMethod(endpoint.method).map(theme.dataInk) ?? theme.text.tertiary
     }
 
     private func compatColor(_ compat: String) -> Color {
         switch compat {
-        case "OpenAI": return .green
-        case "Ollama": return .orange
-        case "MCP": return .purple
-        default: return theme.accentColor
+        case "OpenAI": return theme.dataInk(.green)
+        case "Ollama": return theme.dataInk(.orange)
+        case "MCP": return theme.dataInk(.purple)
+        default: return theme.action.primary.default.background
+        }
+    }
+
+    private func compatWash(_ compat: String) -> Color {
+        switch compat {
+        case "OpenAI": return theme.dataWash(.green)
+        case "Ollama": return theme.dataWash(.orange)
+        case "MCP": return theme.dataWash(.purple)
+        default: return theme.surface.hover
         }
     }
 }
@@ -2129,89 +1484,69 @@ private struct ResponsePanel: View {
     let onClearResponse: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             HStack {
                 Label {
                     Text("Response", bundle: .module)
                 } icon: {
                     Image(systemName: "arrow.down.circle.fill")
                 }
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
+                .textStyle(.footnote, weight: 600)
+                .foregroundColor(theme.text.secondary)
 
                 Spacer()
 
                 if let resp = response {
                     Text(String(format: "%.0fms", resp.duration * 1000))
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.tertiary)
 
                     Button(action: {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(resp.formattedBody, forType: .string)
                     }) {
                         Image(systemName: "doc.on.doc")
-                            .font(.system(size: 10))
-                            .foregroundColor(theme.tertiaryText)
+                            .glyphSize(.micro)
+                            .foregroundColor(theme.text.tertiary)
                     }
                     .buttonStyle(PlainButtonStyle())
                     .localizedHelp("Copy response")
 
-                    Button(action: onClearResponse) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 10))
-                            .foregroundColor(theme.tertiaryText)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .localizedHelp("Clear response")
+                    SettingsIconButton("xmark", help: "Clear response", size: .compact, action: onClearResponse)
                 }
             }
 
             if isLoading {
                 VStack {
-                    ProgressView().scaleEffect(0.8)
+                    SettingsSpinner(size: .large)
                     Text("Waiting for response...", bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.tertiary)
                 }
                 .frame(maxWidth: .infinity, minHeight: 120)
-                .background(
-                    RoundedRectangle(cornerRadius: 6).fill(theme.codeBlockBackground)
-                )
+                .settingsChrome(.inset)
             } else if let resp = response {
                 ScrollView {
                     Text(resp.formattedBody)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(resp.isSuccess ? theme.primaryText : theme.errorColor)
+                        .font(SettingsFont.monoSmall)
+                        .foregroundColor(resp.isSuccess ? theme.text.primary : theme.status.error.foreground)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(8)
+                        .padding(theme.space.s8)
                 }
                 .frame(minHeight: 120, maxHeight: 200)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(theme.codeBlockBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(
-                                    resp.isSuccess ? Color.green.opacity(0.3) : Color.red.opacity(0.3),
-                                    lineWidth: 1
-                                )
-                        )
-                )
+                .settingsChrome(.subtle)
             } else {
-                VStack(spacing: 8) {
+                VStack(spacing: theme.space.s8) {
                     Image(systemName: "arrow.left.circle")
-                        .font(.system(size: 24))
-                        .foregroundColor(theme.tertiaryText.opacity(0.5))
+                        .glyphSize(.xxlarge)
+                        .foregroundColor(theme.text.tertiary)
                     Text(emptyMessage)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.tertiary)
                 }
                 .frame(maxWidth: .infinity, minHeight: 120)
-                .background(
-                    RoundedRectangle(cornerRadius: 6).fill(theme.codeBlockBackground)
-                )
+                .settingsChrome(.inset)
             }
         }
         .frame(maxWidth: .infinity)
@@ -2235,7 +1570,7 @@ private struct EndpointRow: View {
     let onClearResponse: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             EndpointRowHeader(
                 endpoint: endpoint,
                 isServerRunning: isServerRunning,
@@ -2246,12 +1581,12 @@ private struct EndpointRow: View {
             )
 
             if isExpanded {
-                VStack(spacing: 0) {
-                    Divider().background(theme.primaryBorder.opacity(0.3))
+                VStack(spacing: theme.space.s0) {
+                    Divider().background(theme.border.subtle)
 
-                    HStack(alignment: .top, spacing: 16) {
+                    HStack(alignment: .top, spacing: theme.space.s16) {
                         requestPanel
-                        Rectangle().fill(theme.primaryBorder.opacity(0.3)).frame(width: 1)
+                        ThemeHairlineDivider(axis: .vertical)
                         ResponsePanel(
                             isLoading: isLoading,
                             response: response,
@@ -2261,122 +1596,92 @@ private struct EndpointRow: View {
                             onClearResponse: onClearResponse
                         )
                     }
-                    .padding(16)
+                    .padding(theme.space.s16)
                 }
-                .background(theme.tertiaryBackground.opacity(0.3))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .background(theme.surface.hover)
+                .clipShape(RoundedRectangle(cornerRadius: theme.radius.medium))
                 .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
             }
         }
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(isExpanded ? theme.secondaryBackground : Color.clear)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(isExpanded ? theme.primaryBorder.opacity(0.5) : Color.clear, lineWidth: 1)
-                )
-        )
-        .animation(.easeInOut(duration: 0.2), value: isExpanded)
+        .settingsChrome(isExpanded ? .surface : nil)
+        .animation(theme.motion.quick, value: isExpanded)
     }
 
     private var requestPanel: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             HStack {
                 Label {
                     Text("Request", bundle: .module)
                 } icon: {
                     Image(systemName: "arrow.up.circle.fill")
                 }
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
+                .textStyle(.footnote, weight: 600)
+                .foregroundColor(theme.text.secondary)
                 Spacer()
                 if endpoint.examplePayload != nil, !endpoint.hasPathParameters {
                     Button(action: { editablePayload = endpoint.examplePayload ?? "{}" }) {
                         Text("Reset", bundle: .module)
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(theme.tertiaryText)
+                            .font(SettingsFont.chip)
+                            .foregroundColor(theme.text.tertiary)
                     }
                     .buttonStyle(PlainButtonStyle())
                 }
             }
 
             if endpoint.hasPathParameters {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: theme.space.s6) {
                     Text("\(endpoint.method) \(serverURL)\(endpoint.path)", bundle: .module)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.primary)
                         .textSelection(.enabled)
 
                     if let payload = endpoint.examplePayload {
                         Text(payload)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(theme.secondaryText)
+                            .font(SettingsFont.monoSmall)
+                            .foregroundColor(theme.text.secondary)
                             .textSelection(.enabled)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
-                .background(
-                    RoundedRectangle(cornerRadius: 6).fill(theme.codeBlockBackground)
-                )
+                .padding(theme.space.s12)
+                .settingsChrome(.inset)
 
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     Image(systemName: "info.circle")
-                        .font(.system(size: 10))
+                        .glyphSize(.micro)
                     Text(
                         "Replace path parameters with real values. Test via curl or your HTTP client.",
                         bundle: .module
                     )
-                    .font(.system(size: 10))
+                    .font(SettingsFont.footnote)
                 }
-                .foregroundColor(theme.tertiaryText)
+                .foregroundColor(theme.text.tertiary)
             } else if endpoint.examplePayload != nil {
-                TextEditor(text: $editablePayload)
-                    .font(.system(size: 11, design: .monospaced))
-                    .frame(minHeight: 120, maxHeight: 200)
-                    .scrollContentBackground(.hidden)
-                    .padding(8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(theme.inputBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .stroke(theme.inputBorder, lineWidth: 1)
-                            )
-                    )
-                    .foregroundColor(theme.primaryText)
+                SettingsTextEditor(text: $editablePayload, minHeight: 120, maxHeight: 200, monospaced: true)
             } else {
                 Text("\(endpoint.method) \(serverURL)\(endpoint.path)", bundle: .module)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.primary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6).fill(theme.codeBlockBackground)
-                    )
+                    .padding(theme.space.s12)
+                    .settingsChrome(.inset)
             }
 
             if !endpoint.hasPathParameters {
                 Button(action: onTest) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         if isLoading {
-                            ProgressView().scaleEffect(0.7)
+                            SettingsSpinner()
                         } else {
-                            Image(systemName: "paperplane.fill").font(.system(size: 10))
+                            Image(systemName: "paperplane.fill").glyphSize(.micro)
                         }
                         Text(LocalizedStringKey(isLoading ? "Sending..." : "Send Request"), bundle: .module)
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(SettingsFont.smallLabel)
                     }
-                    .foregroundColor(.white)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(isLoading ? theme.tertiaryText : theme.accentColor)
-                    )
                 }
-                .buttonStyle(PlainButtonStyle())
+                .assignedSettingsButtonStyle(.primary)
                 .disabled(isLoading)
             }
         }
@@ -2406,7 +1711,7 @@ private struct TranscriptionTestRow: View {
     @State private var fileError: String?
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             EndpointRowHeader(
                 endpoint: endpoint,
                 isServerRunning: isServerRunning,
@@ -2417,12 +1722,12 @@ private struct TranscriptionTestRow: View {
             )
 
             if isExpanded {
-                VStack(spacing: 0) {
-                    Divider().background(theme.primaryBorder.opacity(0.3))
+                VStack(spacing: theme.space.s0) {
+                    Divider().background(theme.border.subtle)
 
-                    HStack(alignment: .top, spacing: 16) {
+                    HStack(alignment: .top, spacing: theme.space.s16) {
                         requestPanel
-                        Rectangle().fill(theme.primaryBorder.opacity(0.3)).frame(width: 1)
+                        ThemeHairlineDivider(axis: .vertical)
                         ResponsePanel(
                             isLoading: isLoading,
                             response: response,
@@ -2430,104 +1735,82 @@ private struct TranscriptionTestRow: View {
                             onClearResponse: onClearResponse
                         )
                     }
-                    .padding(16)
+                    .padding(theme.space.s16)
                 }
-                .background(theme.tertiaryBackground.opacity(0.3))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .background(theme.surface.hover)
+                .clipShape(RoundedRectangle(cornerRadius: theme.radius.medium))
                 .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
             }
         }
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(isExpanded ? theme.secondaryBackground : Color.clear)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(isExpanded ? theme.primaryBorder.opacity(0.5) : Color.clear, lineWidth: 1)
-                )
-        )
-        .animation(.easeInOut(duration: 0.2), value: isExpanded)
+        .settingsChrome(isExpanded ? .surface : nil)
+        .animation(theme.motion.quick, value: isExpanded)
     }
 
     private var requestPanel: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             Label {
                 Text("Request", bundle: .module)
             } icon: {
                 Image(systemName: "arrow.up.circle.fill")
             }
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundColor(theme.secondaryText)
+            .textStyle(.footnote, weight: 600)
+            .foregroundColor(theme.text.secondary)
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 Text("Model", bundle: .module)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.chip)
+                    .foregroundColor(theme.text.tertiary)
 
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     Image(systemName: "waveform")
-                        .font(.system(size: 12))
-                        .foregroundColor(.orange)
+                        .glyphSize(.caption)
+                        .foregroundColor(theme.status.warning.foreground)
 
                     if let model = speechModelManager.selectedModel {
                         Text(model.name)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.primaryText)
+                            .font(SettingsFont.compactLabel)
+                            .foregroundColor(theme.text.primary)
                     } else {
                         Text("No model selected", bundle: .module)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.tertiaryText)
+                            .font(SettingsFont.compactLabel)
+                            .foregroundColor(theme.text.tertiary)
                             .italic()
                     }
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
+                .padding(.horizontal, theme.space.s12)
+                .padding(.vertical, theme.space.s8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(theme.inputBorder, lineWidth: 1)
-                        )
-                )
+                .settingsChrome(.control)
             }
 
             audioFileField
 
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 Button(action: selectFile) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "folder").font(.system(size: 10))
-                        Text("Choose File", bundle: .module).font(.system(size: 11, weight: .medium))
+                    HStack(spacing: theme.space.s6) {
+                        Image(systemName: "folder").glyphSize(.micro)
+                        Text("Choose File", bundle: .module).font(SettingsFont.smallLabel)
                     }
-                    .foregroundColor(theme.secondaryText)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6).fill(theme.tertiaryBackground)
-                    )
+                    .foregroundColor(theme.text.secondary)
+                    .padding(.horizontal, theme.space.s12)
+                    .padding(.vertical, theme.space.s8)
+                    .settingsChrome(.inset)
                 }
                 .buttonStyle(PlainButtonStyle())
 
                 Button(action: { if let data = audioData { onTest(data) } }) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         if isLoading {
-                            ProgressView().scaleEffect(0.7).frame(width: 12, height: 12)
+                            SettingsSpinner(size: .mini)
                         } else {
-                            Image(systemName: "paperplane.fill").font(.system(size: 10))
+                            Image(systemName: "paperplane.fill").glyphSize(.micro)
                         }
                         Text(LocalizedStringKey(isLoading ? "Sending..." : "Send Request"), bundle: .module)
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(SettingsFont.smallLabel)
                     }
-                    .foregroundColor(.white)
                     .frame(maxWidth: .infinity, minHeight: 18)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(audioData != nil && !isLoading ? theme.accentColor : theme.tertiaryText)
-                    )
                 }
-                .buttonStyle(PlainButtonStyle())
+                .assignedSettingsButtonStyle(.primary)
                 .disabled(audioData == nil || isLoading)
             }
         }
@@ -2536,71 +1819,57 @@ private struct TranscriptionTestRow: View {
 
     @ViewBuilder
     private var audioFileField: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             Text("Audio File", bundle: .module)
-                .font(.system(size: 10, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.chip)
+                .foregroundColor(theme.text.tertiary)
 
             if let fileName = selectedFileName {
-                HStack(spacing: 10) {
+                HStack(spacing: theme.space.s10) {
                     Image(systemName: "waveform")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.accentColor)
+                        .glyphSize(.caption)
+                        .foregroundColor(theme.text.link)
                     Text(fileName)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.primary)
                         .lineLimit(1)
                     if let data = audioData {
                         Text("(\(sharedByteCountFormatter.string(fromByteCount: Int64(data.count))))", bundle: .module)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
+                            .font(SettingsFont.rowDescription)
+                            .foregroundColor(theme.text.tertiary)
                     }
                     Spacer()
-                    Button(action: clearFile) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(theme.tertiaryText)
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .localizedHelp("Remove file")
+                    SettingsIconButton("xmark", help: "Remove file", size: .compact, action: clearFile)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(theme.inputBackground)
-                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(theme.inputBorder, lineWidth: 1))
-                )
+                .padding(.horizontal, theme.space.s12)
+                .padding(.vertical, theme.space.s8)
+                .settingsChrome(.control)
             } else {
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     Image(systemName: "doc.badge.plus")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
+                        .glyphSize(.caption)
+                        .foregroundColor(theme.text.tertiary)
                     Text("No file selected", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.caption)
+                        .foregroundColor(theme.text.tertiary)
                         .italic()
                     Spacer()
                     Text("WAV, MP3, M4A", bundle: .module)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText.opacity(0.7))
+                        .font(SettingsFont.footnote)
+                        .foregroundColor(theme.text.tertiary)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(theme.inputBackground)
-                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(theme.inputBorder, lineWidth: 1))
-                )
+                .padding(.horizontal, theme.space.s12)
+                .padding(.vertical, theme.space.s8)
+                .settingsChrome(.control)
             }
 
             if let error = fileError {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill").font(.system(size: 10))
-                    Text(error).font(.system(size: 11))
+                HStack(spacing: theme.space.s6) {
+                    Image(systemName: "exclamationmark.triangle.fill").glyphSize(.micro)
+                    Text(error).font(SettingsFont.rowDescription)
                 }
-                .foregroundColor(theme.errorColor)
-                .padding(.top, 4)
+                .foregroundColor(theme.status.error.foreground)
+                .padding(.top, theme.space.s4)
             }
         }
     }

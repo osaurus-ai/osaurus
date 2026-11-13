@@ -10,6 +10,18 @@
 import AppKit
 import SwiftUI
 
+private struct WorkflowThreadFullWidthKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// The creation panel already supplies its own 16pt outer padding.
+    var workflowThreadFullWidth: Bool {
+        get { self[WorkflowThreadFullWidthKey.self] }
+        set { self[WorkflowThreadFullWidthKey.self] = newValue }
+    }
+}
+
 struct MessageThreadView: View {
     let blocks: [ContentBlock]
     /// Optional precomputed group header map; falls back to local computation when nil.
@@ -151,17 +163,17 @@ struct ScrollToBottomButton: View {
         if !isPinnedToBottom && hasTurns {
             Button(action: onTap) {
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
+                    .glyphSize(.caption, weight: .semibold)
+                    .foregroundColor(theme.text.secondary)
                     .frame(width: 32, height: 32)
                     .background(
                         Circle()
-                            .fill(theme.secondaryBackground)
-                            .shadow(color: theme.shadowColor.opacity(0.2), radius: 8, x: 0, y: 2)
+                            .fill(theme.surface.subtle)
+                            .themeElevation(theme.elevation.raised)
                     )
             }
             .buttonStyle(.plain)
-            .padding(20)
+            .padding(.bottom, theme.space.s12)
             .transition(.scale.combined(with: .opacity))
         }
     }

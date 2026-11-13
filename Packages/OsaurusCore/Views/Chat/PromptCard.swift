@@ -3,8 +3,8 @@
 //  osaurus
 //
 //  Shared chrome for in-chat prompt overlays (secrets, clarify, …).
-//  Owns the header pill, markdown description, optional footnote, glass
-//  background, gradient border, layered drop shadow + accent halo, and
+//  Owns the header pill, markdown description, optional footnote, opaque
+//  surface, border, elevation, and
 //  the spring entry/exit animation. Concrete cards (`SecretPromptCard`,
 //  `ClarifyPromptCard`) plug a body and an input row into the slots.
 //
@@ -22,7 +22,7 @@ import SwiftUI
 extension View {
     /// Set the macOS cursor to a pointing hand while hovered, restore
     /// the default on exit. Matches the existing pattern used in
-    /// `ModelRowView` and `PopoverHoverTracking`. No-op on platforms
+    /// `PopoverHoverTracking`. No-op on platforms
     /// without `NSCursor` (none today, but keeps the call site clean).
     func pointingHandCursor() -> some View {
         modifier(PointingHandCursorModifier())
@@ -76,6 +76,8 @@ struct PromptCardFootnote {
 /// `PromptCard.descriptionRegion` stays a single ternary-style branch
 /// instead of a forked view-builder.
 private struct DescriptionTreatment: ViewModifier {
+    @Environment(\.theme) private var environmentTheme
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(36) }
     let boxed: Bool
     let background: Color
     let border: Color
@@ -84,21 +86,20 @@ private struct DescriptionTreatment: ViewModifier {
     func body(content: Content) -> some View {
         if boxed {
             content
-                .padding(.horizontal, 12)
-                .padding(.vertical, 14)
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.36.elements.layout.descriptionTreatment.body.padding.horizontal", inheriting: PromptInspectionStyle.metric("padding", theme.space.s16, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.36.elements.layout.descriptionTreatment.body.padding.vertical", inheriting: PromptInspectionStyle.metric("padding", theme.space.s16, theme))).catalogLayoutTarget("component.library.36.elements.layout.descriptionTreatment.body.padding.horizontal").catalogLayoutTarget("component.library.36.elements.layout.descriptionTreatment.body.padding.vertical")
                 .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous)
                         .fill(background)
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .strokeBorder(border, lineWidth: 1)
+                    RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous)
+                        .strokeBorder(border, lineWidth: theme.stroke.default)
                 )
         } else {
             content
-                .padding(.horizontal, 4)
-                .padding(.top, 2)
-                .padding(.bottom, 4)
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.36.elements.layout.descriptionTreatment.body.paddingX", inheriting: PromptInspectionStyle.metric("padding", theme.space.s4, theme))).catalogLayoutTarget("component.library.36.elements.layout.descriptionTreatment.body.paddingX")
+                .padding(.top, theme.space.s2)
+                .padding(.bottom, theme.space.s4)
         }
     }
 }
@@ -110,7 +111,7 @@ private struct DescriptionTreatment: ViewModifier {
 /// in one place.
 struct PromptCard<BodyContent: View, InputRow: View>: View {
     let pillIcon: String
-    let pillLabel: LocalizedStringKey
+    let pillLabel: String.LocalizationValue
     let title: String?
     let descriptionMarkdown: String?
     let footnote: PromptCardFootnote?
@@ -121,74 +122,73 @@ struct PromptCard<BodyContent: View, InputRow: View>: View {
     @ViewBuilder let bodyContent: () -> BodyContent
     @ViewBuilder let inputRow: () -> InputRow
 
-    @Environment(\.theme) private var theme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var haloOpacity: Double = 0
+    @Environment(\.theme) private var environmentTheme
+    @Environment(\.isEnabled) private var componentEnabled
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(36, enabled: componentEnabled) }
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.promptCard.body.verticalGap", inheriting: PromptInspectionStyle.metric("gap", theme.space.s16, theme))) {
             header
+            // The header and actions stay put; only the middle scrolls, and
+            // only once the card is taller than the space the host offers.
+            // Both branches build the body slot, so its state must live
+            // outside it or it resets when the window resizes across the fit.
+            ViewThatFits(in: .vertical) {
+                middle
+                scrollingMiddle
+            }
+            inputRow()
+        }.catalogLayoutTarget("component.library.36.elements.layout.promptCard.body.verticalGap")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.36.elements.layout.promptCard.body.paddingX", inheriting: PromptInspectionStyle.metric("padding", theme.space.s24, theme))).catalogLayoutTarget("component.library.36.elements.layout.promptCard.body.paddingX")
+        .padding(.top, theme.catalogLayoutMetric("component.library.36.elements.layout.promptCard.body.paddingY", inheriting: PromptInspectionStyle.metric("padding", theme.space.s16, theme))).catalogLayoutTarget("component.library.36.elements.layout.promptCard.body.paddingY")
+        .padding(.bottom, theme.catalogLayoutMetric("component.library.36.elements.layout.promptCard.body.paddingY2", inheriting: PromptInspectionStyle.metric("padding", theme.space.s24, theme))).catalogLayoutTarget("component.library.36.elements.layout.promptCard.body.paddingY2")
+        .frame(minHeight: PromptInspectionStyle.metric("height", 0, theme))
+        .background(overlayBackground)
+        .clipShape(RoundedRectangle(cornerRadius: theme.radius.xlarge, style: .continuous))
+        .overlay(borderOverlay)
+        .themeElevation(theme.elevation.overlay)
+        .environment(\.theme, theme)
+    }
+
+    private var middle: some View {
+        VStack(spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.promptCard.middle.verticalGap", inheriting: PromptInspectionStyle.metric("gap", theme.space.s16, theme))) {
             descriptionRegion
             bodyContent()
-            inputRow()
+        }.catalogLayoutTarget("component.library.36.elements.layout.promptCard.middle.verticalGap")
+    }
+
+    /// The scroll view clips at its bounds, so the content is inset by a
+    /// focus ring's outset to keep rings and borders whole.
+    private var scrollingMiddle: some View {
+        let room = SettingsFocusRingGeometry(theme: theme, controlRadius: 0).outset + 1
+        return ScrollView {
+            middle
+                .padding(room)
         }
-        .padding(16)
-        .background(overlayBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(borderOverlay)
-        .shadow(color: theme.shadowColor.opacity(0.20), radius: 28, x: 0, y: 14)
-        // Soft accent halo around the card. Filled with `.clear` so the
-        // shape contributes geometry for the shadow but doesn't paint
-        // any pixels itself — the rendered effect is purely the glow.
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.clear)
-                .shadow(color: theme.accentColor.opacity(haloOpacity), radius: 22, x: 0, y: 0)
-                .allowsHitTesting(false)
-        )
-        .onAppear {
-            // Halo animates from transparent → 0.18 → settles at 0.10 so
-            // the card "lands" with a soft accent glow then stays calmly
-            // outlined while it's active.
-            if reduceMotion {
-                haloOpacity = 0.10
-            } else {
-                withAnimation(.easeOut(duration: 0.25)) { haloOpacity = 0.18 }
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-                    withAnimation(.easeInOut(duration: 0.5)) { haloOpacity = 0.10 }
-                }
-            }
-        }
+        .scrollBounceBehavior(.basedOnSize)
+        .padding(.horizontal, -room)
     }
 
     // MARK: - Header
 
     private var header: some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.promptCard.header.horizontalGap", inheriting: PromptInspectionStyle.metric("gap", theme.space.s12, theme))) {
             pill
             Spacer()
             cancelButton
-        }
+        }.catalogLayoutTarget("component.library.36.elements.layout.promptCard.header.horizontalGap")
     }
 
     private var pill: some View {
-        HStack(spacing: 6) {
-            Image(systemName: pillIcon)
-                .font(.system(size: 12, weight: .semibold))
-            Text(pillLabel, bundle: .module)
-                .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
-        }
-        .foregroundColor(theme.accentColor)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 5)
-        .background(Capsule().fill(theme.accentColor.opacity(theme.isDark ? 0.15 : 0.1)))
+        StatusChip(L(pillLabel), icon: pillIcon)
+            .environment(\.theme, PromptInspectionStyle.badgeTheme(environmentTheme))
     }
 
     private var cancelButton: some View {
         Button(action: onCancel) {
             Text("Cancel", bundle: .module)
-                .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .medium))
-                .foregroundColor(theme.tertiaryText)
+                .promptText(.label, fallback: .footnote, weight: 500, theme: theme)
+                .foregroundColor(theme.text.tertiary)
         }
         .buttonStyle(.plain)
         .keyboardShortcut(.cancelAction)
@@ -216,42 +216,47 @@ struct PromptCard<BodyContent: View, InputRow: View>: View {
                 .modifier(
                     DescriptionTreatment(
                         boxed: needsBox,
-                        background: theme.inputBackground,
-                        border: theme.inputBorder
+                        background: theme.surface.raised,
+                        border: theme.border.default
                     )
                 )
         }
     }
 
     private var descriptionStack: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.promptCard.descriptionStack.verticalGap", inheriting: PromptInspectionStyle.metric("gap", theme.space.s12, theme))) {
             if let title {
                 Text(title)
-                    .font(theme.font(size: CGFloat(theme.bodySize), weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .promptText(.heading, fallback: .body, weight: 500, theme: theme)
+                    .foregroundColor(theme.text.primary)
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
             }
 
             if let descriptionMarkdown {
                 Text(parsedMarkdown(descriptionMarkdown))
-                    .font(theme.font(size: CGFloat(theme.bodySize), weight: .regular))
-                    .foregroundColor(theme.secondaryText)
-                    .tint(theme.accentColor)
+                    .promptText(.body, fallback: .body, theme: theme)
+                    .foregroundColor(theme.text.secondary)
+                    .tint(theme.text.link)
                     .fixedSize(horizontal: false, vertical: true)
                     .textSelection(.enabled)
             }
 
             if let footnote {
-                HStack(spacing: 4) {
-                    Image(systemName: footnote.icon)
-                        .font(.system(size: 10))
-                    Text(footnote.text, bundle: .module)
-                        .font(theme.font(size: CGFloat(theme.captionSize) - 1, weight: .regular))
-                }
-                .foregroundColor(theme.tertiaryText.opacity(0.7))
+                VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.promptCard.descriptionStack.verticalGap2", inheriting: PromptInspectionStyle.metric("gap", theme.space.s8, theme))) {
+                    if title != nil || descriptionMarkdown != nil {
+                        ThemeHairlineDivider()
+                    }
+                    HStack(spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.promptCard.descriptionStack.horizontalGap", inheriting: PromptInspectionStyle.metric("gap", theme.space.s4, theme))) {
+                        Image(systemName: footnote.icon)
+                            .glyphSize(.micro)
+                        Text(footnote.text, bundle: .module)
+                            .promptText(.caption, fallback: .footnote, theme: theme)
+                    }.catalogLayoutTarget("component.library.36.elements.layout.promptCard.descriptionStack.horizontalGap")
+                    .foregroundColor(theme.text.tertiary)
+                }.catalogLayoutTarget("component.library.36.elements.layout.promptCard.descriptionStack.verticalGap2")
             }
-        }
+        }.catalogLayoutTarget("component.library.36.elements.layout.promptCard.descriptionStack.verticalGap")
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
@@ -268,7 +273,7 @@ struct PromptCard<BodyContent: View, InputRow: View>: View {
             interpretedSyntax: .inlineOnlyPreservingWhitespace
         )
         if var attributed = try? AttributedString(markdown: raw, options: options) {
-            attributed.foregroundColor = theme.secondaryText
+            attributed.foregroundColor = theme.text.secondary
             return attributed
         }
         return AttributedString(raw)
@@ -277,37 +282,15 @@ struct PromptCard<BodyContent: View, InputRow: View>: View {
     // MARK: - Background & Border
 
     private var overlayBackground: some View {
-        ZStack {
-            if theme.glassEnabled {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(.ultraThinMaterial)
-            }
-
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(theme.cardBackground.opacity(theme.isDark ? 0.85 : 0.92))
-
-            LinearGradient(
-                colors: [theme.accentColor.opacity(theme.isDark ? 0.08 : 0.05), Color.clear],
-                startPoint: .top,
-                endPoint: .center
-            )
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        }
+        RoundedRectangle(cornerRadius: theme.radius.xlarge, style: .continuous)
+            // The modal shell is not a selectable control. Keep its surface
+            // while descendants handle their own translucent hover highlights.
+            .fill(theme.assignedColor(PromptInspectionStyle.key + "background", fallback: theme.surface.overlay))
     }
 
     private var borderOverlay: some View {
-        RoundedRectangle(cornerRadius: 16, style: .continuous)
-            .strokeBorder(
-                LinearGradient(
-                    colors: [
-                        theme.glassEdgeLight.opacity(0.2),
-                        theme.cardBorder,
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                ),
-                lineWidth: 1
-            )
+        RoundedRectangle(cornerRadius: theme.radius.xlarge, style: .continuous)
+            .strokeBorder(theme.border.default, lineWidth: theme.stroke.default)
     }
 }
 
@@ -324,31 +307,29 @@ struct PromptOverlayHost<Card: View>: View {
     let onCancelDismiss: () -> Void
     @ViewBuilder let card: () -> Card
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var environmentTheme
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(36) }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isAppearing = false
 
     var body: some View {
-        VStack {
-            Spacer()
+        VStack(spacing: theme.space.s0) {
+            Spacer(minLength: ChatView.headerHeight(theme) + theme.space.s12)
 
             card()
-                .frame(maxWidth: 720)
                 .opacity(isAppearing ? 1 : 0)
                 .offset(y: isAppearing ? 0 : (reduceMotion ? 0 : 30))
                 .scaleEffect(isAppearing ? 1.0 : (reduceMotion ? 1.0 : 0.985))
-                .padding(.horizontal, 20)
-                .padding(.bottom, 20)
+                .padding(.bottom, ChatShellLayout.columnInset)
+                // Same column as the thread and the composer card it
+                // stands in for, centered in the chat column.
+                .readableColumnRow()
         }
-        // Center the capped-width card horizontally so it sits in the
-        // middle of wide chat windows instead of pinning to the leading
-        // edge with a huge empty trailing margin.
-        .frame(maxWidth: .infinity, alignment: .center)
         .onAppear {
             if reduceMotion {
                 isAppearing = true
             } else {
-                withAnimation(theme.springAnimation()) {
+                withAnimation(theme.motion.springAnimation) {
                     isAppearing = true
                 }
             }

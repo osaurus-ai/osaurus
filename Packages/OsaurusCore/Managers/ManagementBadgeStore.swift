@@ -29,8 +29,16 @@ public final class ManagementBadgeStore: ObservableObject {
 
     @Published public private(set) var snapshot = Snapshot()
 
+    /// The sidebar badge for `tab`, for its page header's `count:` so the two
+    /// never disagree. Nil when the badge is hidden.
+    public func headerCount(for tab: ManagementTab) -> Int? {
+        guard let count = snapshot.counts[tab], count > 0 else { return nil }
+        return count
+    }
+
     private var cancellables: Set<AnyCancellable> = []
     private var observers: [NSObjectProtocol] = []
+    private var taskBusToken: TaskBus.Token?
     private var refreshTask: Task<Void, Never>?
     private var periodicTask: Task<Void, Never>?
 
@@ -73,6 +81,18 @@ public final class ManagementBadgeStore: ObservableObject {
         recompute()
     }
 
+    /// "Missing keys" count, pushed by `CredentialRegistry` so this store
+    /// never probes the Keychain itself.
+    private var missingKeysCount = 0
+
+    func setMissingKeysCount(_ count: Int) {
+        guard count != missingKeysCount else { return }
+        missingKeysCount = count
+        var next = snapshot
+        next.counts[.keys] = count
+        snapshot = next
+    }
+
     // MARK: - Sources
 
     private func wireSources() {
@@ -90,6 +110,8 @@ public final class ManagementBadgeStore: ObservableObject {
             SpeechModelManager.shared.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
             ThemeManager.shared.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
             WorkspacesService.shared.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
+            // Approvals: raised and settled attention items.
+            AttentionCenter.shared.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
         ]
         Publishers.MergeMany(publishers)
             .throttle(for: .milliseconds(150), scheduler: DispatchQueue.main, latest: true)
@@ -97,13 +119,11 @@ public final class ManagementBadgeStore: ObservableObject {
             .store(in: &cancellables)
 
         // NotificationCenter sources for managers we don't observe via
-        // Combine (ScheduleManager / WatcherManager are plain classes
-        // that post notifications) plus the toolsListChanged signal that
+        // Combine (EventManager posts a notification on every change) plus the toolsListChanged signal that
         // affects the Tools badge.
         for name in [
             Notification.Name.toolsListChanged,
-            Notification.Name("schedulesChanged"),
-            Notification.Name("watchersChanged"),
+            Notification.Name.eventsChanged,
             Notification.Name.knowledgeCollectionsChanged,
             Notification.Name.knowledgeCurationChanged,
             // Image / video bundles (the Media badge) are announced here
@@ -120,6 +140,11 @@ public final class ManagementBadgeStore: ObservableObject {
                 }
             }
             observers.append(observer)
+        }
+
+        // Tasks: the live count and the waiting highlight.
+        taskBusToken = TaskStore.shared.bus.observe { [weak self] event in
+            if case .taskChanged = event { self?.scheduleRefresh() }
         }
     }
 
@@ -167,17 +192,13 @@ public final class ManagementBadgeStore: ObservableObject {
                         && providerManager.exposesModelsForInference($0)
                 }.count
             }(),
-            sandboxPlugins: SandboxPluginLibrary.shared.plugins.count,
             tools: ToolRegistry.shared.toolCount,
             skills: SkillManager.shared.skills.count,
             customCommands: SlashCommandRegistry.shared.customCommands.count,
             customAgents: AgentManager.shared.agents.filter { !$0.isBuiltIn }.count,
             remoteAgents: RemoteAgentManager.shared.remoteAgents.count,
-            schedules: ScheduleManager.shared.schedules.count,
-            watchers: WatcherManager.shared.watchers.count,
+            events: EventManager.shared.events.filter { $0.sourceKind != .channelMessage }.count,
             knowledgeCollections: KnowledgeManager.shared.collections.count,
-            downloadedSpeechModels: SpeechModelManager.shared.downloadedModelsCount,
-            installedThemes: ThemeManager.shared.installedThemes.count,
             workspaces: WorkspacesService.shared.workspaces.count,
             observedChannelCount: observedCount(for: .agentChannels)
         )
@@ -196,7 +217,19 @@ public final class ManagementBadgeStore: ObservableObject {
             }
         }
 
+        let liveTasks = TaskStore.shared.live.values
+        counts[.tasks] = liveTasks.count
+        counts[.keys] = missingKeysCount
+        let waitingApprovals = ApprovalPresentation.waiting(in: AttentionCenter.shared)
+        counts[.approvals] = waitingApprovals.count
+
         var highlights: Set<ManagementTab> = []
+        if liveTasks.contains(where: { $0.state == .waitingUser }) {
+            highlights.insert(.tasks)
+        }
+        if !waitingApprovals.isEmpty {
+            highlights.insert(.approvals)
+        }
         if workspacesActionPending {
             highlights.insert(.workspaces)
         }
@@ -214,15 +247,12 @@ public final class ManagementBadgeStore: ObservableObject {
         // Background metrics. SQLite must not run on the main thread from a
         // SwiftUI body, so we hoist it here. The models count is also
         // resolved here: `isDownloaded` walks the model directory on a cache
-        // miss, so doing it inline would block the main thread; the image /
-        // video bundle scan for the Media badge is a directory walk too. Do
-        // not probe identity/Keychain from this path; startup badge
+        // miss, so doing it inline would block the main thread. Do not probe identity/Keychain from this path; startup badge
         // freshness is less important than avoiding password prompts while
         // local chat boots.
         let inventoryCandidates = ModelManager.shared.deduplicatedModels()
         Task.detached(priority: .utility) { [weak self] in
             let downloadedModels = Self.modelsBadgeCount(inventoryCandidates: inventoryCandidates)
-            let imageModels = (try? await ImageGenerationService.shared.availableModels().count) ?? 0
             let pinned = (try? MemoryDatabase.shared.pinnedFactStats()) ?? 0
             // Pending knowledge proposals drive the "review needed"
             // highlight. Only counted when the knowledge database is
@@ -233,7 +263,6 @@ public final class ManagementBadgeStore: ObservableObject {
                 : 0
             await self?.applyBackgroundBadges(
                 downloadedModels: downloadedModels,
-                imageModels: imageModels,
                 pinnedFacts: pinned,
                 pendingKnowledgeProposals: pendingProposals
             )
@@ -242,7 +271,7 @@ public final class ManagementBadgeStore: ObservableObject {
 
     /// Tabs whose count is resolved in the detached background task and
     /// therefore carried over between recomputes rather than recalculated.
-    nonisolated static let backgroundResolvedTabs: [ManagementTab] = [.models, .imageGeneration, .memory]
+    nonisolated static let backgroundResolvedTabs: [ManagementTab] = [.models, .memory]
 
     /// The Local Models badge: the installed inventory, the same
     /// `ModelManager.installedModels(among:)` the Models page header and On
@@ -261,36 +290,29 @@ public final class ManagementBadgeStore: ObservableObject {
     /// function of the inputs so the "what does each badge count" contract
     /// is unit-testable without seeding a dozen singletons. Every count
     /// mirrors the matching page header: Agents = custom + paired remote,
-    /// Themes = every installed theme (built-ins included), Workspaces =
-    /// workspaces the user belongs to.
+    /// Workspaces = workspaces the user belongs to. Only pages that list the
+    /// user's own items get a badge; status pages (Voice, Images & Video,
+    /// Sandbox) do not.
     nonisolated static func mainActorCounts(
         connectedInferenceProviders: Int,
-        sandboxPlugins: Int,
         tools: Int,
         skills: Int,
         customCommands: Int,
         customAgents: Int,
         remoteAgents: Int,
-        schedules: Int,
-        watchers: Int,
+        events: Int,
         knowledgeCollections: Int,
-        downloadedSpeechModels: Int,
-        installedThemes: Int,
         workspaces: Int,
         observedChannelCount: Int?
     ) -> [ManagementTab: Int] {
         var counts: [ManagementTab: Int] = [:]
         counts[.providers] = connectedInferenceProviders
-        counts[.sandbox] = sandboxPlugins
         counts[.tools] = tools
         counts[.skills] = skills
         counts[.commands] = customCommands
         counts[.agents] = customAgents + remoteAgents
-        counts[.schedules] = schedules
-        counts[.watchers] = watchers
+        counts[.automations] = events
         counts[.knowledge] = knowledgeCollections
-        counts[.voice] = downloadedSpeechModels
-        counts[.themes] = installedThemes
         counts[.workspaces] = workspaces
         if let observedChannelCount {
             counts[.agentChannels] = observedChannelCount
@@ -347,13 +369,11 @@ public final class ManagementBadgeStore: ObservableObject {
 
     private func applyBackgroundBadges(
         downloadedModels: Int,
-        imageModels: Int,
         pinnedFacts: Int,
         pendingKnowledgeProposals: Int
     ) {
         var counts = snapshot.counts
         counts[.models] = downloadedModels
-        counts[.imageGeneration] = imageModels
         counts[.memory] = pinnedFacts
 
         var highlights = snapshot.highlights

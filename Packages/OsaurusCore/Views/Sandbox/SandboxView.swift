@@ -23,6 +23,7 @@ struct SandboxView: View {
     @State private var pendingConfig: SandboxConfiguration
     @State private var provisionError: String?
     @State private var actionError: String?
+    @State private var copiedErrorDetails = false
     @State private var showResetConfirm = false
     @State private var showRemoveConfirm = false
     @State private var diagResults: [SandboxManager.DiagnosticResult]?
@@ -32,7 +33,11 @@ struct SandboxView: View {
     @State private var copiedProvisioningReport = false
     @State private var refreshTask: Task<Void, Never>?
 
-    @State private var showProvisionSheet = false
+    /// No completed setup yet: starts show the full-page journey. Read
+    /// from disk on appear and on each status change, like the banner flag.
+    @State private var isFirstRunSetup = false
+    /// Set briefly to open (and scroll to) Troubleshooting.
+    @State private var troubleshootingRequested = false
 
     /// Gated mount for the heaviest subviews (currently
     /// `SandboxLogConsoleCard`). Stays `false` until just after first
@@ -58,22 +63,23 @@ struct SandboxView: View {
         let loaded = SandboxConfigurationStore.load()
         _config = State(initialValue: loaded)
         _pendingConfig = State(initialValue: loaded)
+        _isFirstRunSetup = State(initialValue: !loaded.setupComplete)
     }
 
     private var configIsDirty: Bool { pendingConfig != config }
 
     /// Seatbelt (`sandbox-exec`) backend on pre-Tahoe hosts: no VM, so the
     /// container-specific chrome (CPU/memory resources, boot timings,
-    /// per-agent environments, "container" wording) is hidden or reworded.
+    /// agents kept warm, "container" wording) is hidden or reworded.
     private var isSeatbelt: Bool { SandboxBackend.current == .seatbelt }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             headerBar
             containerTabContent
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
+        .background(theme.surface.canvas)
         .environment(\.theme, theme)
         .onAppear {
             // Previously this tab faded itself in over ~300 ms on every
@@ -84,20 +90,19 @@ struct SandboxView: View {
             // The header + content now appear immediately on first frame.
             hasAppeared = true
             needsBridgeMigrationRestart = SandboxBridgeMigrationFlag.needsRestart
+            isFirstRunSetup = !SandboxConfigurationStore.load().setupComplete
             runProvisioningPreflight()
+            // Status starts as `.notProvisioned` until something asks the
+            // manager; with no sandbox agent at launch nothing has, so a
+            // set-up sandbox would show the first-run page.
+            refreshInfo()
         }
         .onChange(of: sandboxState.status) { _, _ in
             needsBridgeMigrationRestart = SandboxBridgeMigrationFlag.needsRestart
+            isFirstRunSetup = !SandboxConfigurationStore.load().setupComplete
             runProvisioningPreflight()
         }
         .onDisappear { stopRefreshLoop() }
-        .sheet(isPresented: $showProvisionSheet) {
-            SandboxProvisionSheet(
-                pendingConfig: $pendingConfig,
-                onConfirm: performProvision
-            )
-            .environment(\.theme, theme)
-        }
     }
 }
 
@@ -105,9 +110,11 @@ struct SandboxView: View {
 
 private extension SandboxView {
 
+    static let sandboxDocsURL = URL(string: "https://docs.osaurus.ai/sandbox")!
+
     var headerBar: some View {
-        ManagerHeader(
-            title: L("Sandbox"),
+        SettingsPageHeader(
+            title: "Sandbox",
             subtitle: sandboxSubtitle
         )
     }
@@ -121,7 +128,7 @@ private extension SandboxView {
         case .stopped: return L("Sandbox stopped")
         case .starting: return L("Sandbox starting...")
         case .notProvisioned: return L("Not provisioned")
-        case .error(let msg): return L("Error: \(msg)")
+        case .error: return L("Sandbox stopped with an error")
         }
     }
 }
@@ -134,33 +141,28 @@ private extension SandboxView {
     var containerTabContent: some View {
         if !sandboxState.availability.isAvailable {
             unavailableEmptyState
+        } else if showsFullPageJourney {
+            provisioningProgressView
         } else if sandboxState.status == .notProvisioned {
             provisionEmptyState
-        } else if sandboxState.isProvisioning || sandboxState.status == .starting {
-            provisioningProgressView
         } else {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    if needsBridgeMigrationRestart {
-                        bridgeMigrationBanner
-                    }
-                    provisioningPreflightCard
-                    statusDashboard
-                    // Surfaced only while the post-start verifyPlugins
-                    // step is active. Self-hides when verify finishes,
-                    // so the layout reclaims the space cleanly.
-                    PostStartTasksCard()
-                    if sandboxState.status == .running {
-                        if hasRenderedHeavyCards {
-                            SandboxLogConsoleCard()
-                        }
-                        diagnosticsCard
-                    }
-                    workspaceCard
-                    resourceConfigCard
-                    dangerZoneCard
+            scrollingPage {
+                // Only a running guest has the old shim; the next start
+                // installs the new one anyway.
+                if needsBridgeMigrationRestart, sandboxState.status.isRunning {
+                    bridgeMigrationBanner
                 }
-                .padding(24)
+                overviewSection
+                // Surfaced only while the post-start verifyPlugins
+                // step is active. Self-hides when verify finishes,
+                // so the layout reclaims the space cleanly.
+                PostStartTasksCard()
+                settingsSection
+                if !isSeatbelt {
+                    SandboxEnvironmentsSection()
+                }
+                troubleshootingSection
+                dangerZoneCard
             }
             .onAppear {
                 refreshInfo()
@@ -175,56 +177,55 @@ private extension SandboxView {
         }
     }
 
+    /// First-time setup (and its failure) takes the whole page; a warm boot
+    /// shows inline in Overview.
+    var showsFullPageJourney: Bool {
+        if provisionError != nil { return true }
+        return isFirstRunSetup && (sandboxState.isProvisioning || sandboxState.status == .starting)
+    }
+
+    var isStarting: Bool {
+        sandboxState.isProvisioning || sandboxState.status == .starting
+    }
+
+    func scrollingPage<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        let page = content()
+        return ScrollViewReader { proxy in
+            ScrollView {
+                SettingsPageContent {
+                    page
+                }
+            }
+            .settingsLandingScroll(proxy)
+            .onChange(of: troubleshootingRequested) { _, requested in
+                guard requested else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    withAnimation(theme.motion.standard) {
+                        proxy.scrollTo(Self.troubleshootingAnchor, anchor: .top)
+                    }
+                }
+            }
+        }
+    }
+
     /// Non-blocking notice shown until the user restarts the sandbox so the
     /// post-#950 bridge security fix takes effect inside the running guest.
     @ViewBuilder
     var bridgeMigrationBanner: some View {
-        HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "lock.shield.fill")
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundColor(theme.accentColor)
-                .padding(.top, 2)
-
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Security update is ready", bundle: .module)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Text(
-                    "Restart the sandbox to apply per-agent bridge tokens. Plugin calls will return 401 until the running container picks up the new shim.",
-                    bundle: .module
-                )
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 12)
-
-            Button(action: performReset) {
-                Text("Restart sandbox", bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 12)
-                    .frame(height: 28)
-                    .background(Capsule().fill(theme.accentColor))
-            }
-            .buttonStyle(.plain)
+        SettingsCallout(
+            icon: "lock.shield.fill",
+            title: "Security update is ready",
+            message: "Restart the sandbox to apply per-agent bridge tokens. Plugin calls will return 401 until the running container picks up the new shim.",
+            tone: .info
+        ) {
+            SettingsButton(.primary, "Restart sandbox", size: .compact, action: performRestart)
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.accentColor.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .strokeBorder(theme.accentColor.opacity(0.25), lineWidth: 1)
-                )
-        )
     }
 
     var unavailableEmptyState: some View {
         SettingsEmptyState(
             icon: "shippingbox",
-            title: L("Sandbox Unavailable"),
+            title: "Sandbox Unavailable",
             subtitle: sandboxState.availability.reason ?? L("Sandboxed execution is unavailable on this device."),
             examples: [
                 .init(
@@ -246,66 +247,64 @@ private extension SandboxView {
             primaryAction: .init(
                 title: L("Learn More"),
                 icon: "questionmark.circle",
-                handler: {}
+                handler: { NSWorkspace.shared.open(Self.sandboxDocsURL) }
             ),
             hasAppeared: hasAppeared
         )
     }
 
-    @ViewBuilder
+    /// Setting up ahead of time is optional: the sandbox sets itself up
+    /// the first time an agent runs a command.
     var provisionEmptyState: some View {
-        if sandboxState.isProvisioning {
-            provisioningProgressView
-        } else {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    SettingsEmptyState(
-                        icon: "shippingbox",
-                        title: L("Set Up Sandbox"),
-                        subtitle: isSeatbelt
-                            ? L("Run agent commands confined to a sandbox workspace on this Mac. (macOS 26 or later adds full VM isolation.)")
-                            : L("Run isolated Linux containers for agent plugins and autonomous execution."),
-                        examples: [
-                            .init(
-                                icon: "puzzlepiece.extension",
-                                title: L("Sandbox Plugins"),
-                                description: isSeatbelt
-                                    ? L("Install tools that run in the sandbox")
-                                    : L("Install tools that run inside the VM")
-                            ),
-                            .init(
-                                icon: "terminal",
-                                title: L("Autonomous Exec"),
-                                description: L("Agents run shell commands safely")
-                            ),
-                            .init(
-                                icon: "lock.shield",
-                                title: isSeatbelt ? L("Confined Writes") : L("Full Isolation"),
-                                description: isSeatbelt
-                                    ? L("Writes limited to the sandbox workspace")
-                                    : L("Separate filesystem per agent")
-                            ),
-                        ],
-                        primaryAction: .init(
-                            title: L("Set Up Sandbox"),
-                            icon: "shippingbox",
-                            handler: { showProvisionSheet = true }
-                        ),
-                        hasAppeared: hasAppeared
-                    )
-                    .frame(minHeight: 430)
+        scrollingPage {
+            SettingsEmptyState(
+                icon: "shippingbox",
+                title: "Set Up Sandbox",
+                subtitle: isSeatbelt
+                    ? "Run agent commands confined to a sandbox workspace on this Mac. It sets itself up the first time an agent runs a command; set it up now to have it ready. (macOS 26 or later adds full VM isolation.)"
+                    : "Run each agent in its own Linux container. It downloads in the background and starts the first time an agent runs a command; set it up now to have it running.",
+                examples: [
+                    .init(
+                        icon: "puzzlepiece.extension",
+                        title: L("Sandbox Plugins"),
+                        description: isSeatbelt
+                            ? L("Install tools that run in the sandbox")
+                            : L("Install tools that run inside the VM")
+                    ),
+                    .init(
+                        icon: "terminal",
+                        title: L("Autonomous Exec"),
+                        description: L("Agents run shell commands safely")
+                    ),
+                    .init(
+                        icon: "lock.shield",
+                        title: isSeatbelt ? L("Confined Writes") : L("Full Isolation"),
+                        description: isSeatbelt
+                            ? L("Writes limited to the sandbox workspace")
+                            : L("Separate filesystem per agent")
+                    ),
+                ],
+                primaryAction: .init(
+                    title: L("Set Up Sandbox"),
+                    icon: "shippingbox",
+                    handler: performProvision
+                ),
+                hasAppeared: hasAppeared
+            )
+            .frame(minHeight: 430)
 
-                    provisioningPreflightCard
-                }
-                .padding(24)
-            }
+            troubleshootingSection
         }
     }
 
     var provisioningProgressView: some View {
-        ProvisioningJourneyView(
+        let cancel: (() -> Void)? = isStarting ? { performCancel() } : nil
+        return ProvisioningJourneyView(
             provisionError: provisionError,
-            onRetry: performProvision
+            onRetry: performProvision,
+            onCancel: cancel,
+            onCopyDetails: { copyErrorDetails(provisionError ?? "") },
+            onOpenTroubleshooting: openTroubleshooting
         )
     }
 }
@@ -314,106 +313,66 @@ private extension SandboxView {
 
 private extension SandboxView {
 
-    var provisioningPreflightCard: some View {
-        sectionCard(title: "Provisioning Preflight", icon: "checklist") {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .center, spacing: 10) {
-                    if let report = provisioningReport {
-                        readinessPill(report.overallReadiness)
-                        Text(preflightSummary(report))
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.secondaryText)
-                            .lineLimit(2)
-                    } else {
-                        readinessPill(.unproven)
-                        Text(
-                            "Run preflight to inspect host paths, permissions, and repair suggestions.",
-                            bundle: .module
-                        )
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
-                        .lineLimit(2)
-                    }
-
-                    Spacer(minLength: 12)
-
-                    Button(action: runProvisioningPreflight) {
-                        HStack(spacing: 6) {
-                            if isRunningProvisioningPreflight {
-                                ProgressView()
-                                    .controlSize(.small)
-                                    .scaleEffect(0.7)
-                                    .frame(width: 12, height: 12)
-                            } else {
-                                Image(systemName: "arrow.clockwise")
-                                    .font(.system(size: 11, weight: .semibold))
-                            }
-                            Text(isRunningProvisioningPreflight ? "Checking" : "Run", bundle: .module)
-                                .font(.system(size: 11, weight: .semibold))
-                        }
-                        .foregroundColor(theme.primaryText)
-                        .padding(.horizontal, 10)
-                        .frame(height: 28)
-                        .background(
-                            RoundedRectangle(cornerRadius: 7)
-                                .fill(theme.inputBackground)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 7)
-                                        .stroke(theme.inputBorder, lineWidth: 1)
-                                )
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(isRunningProvisioningPreflight)
-
-                    Button(action: copyProvisioningReportJSON) {
-                        Label {
-                            Text(copiedProvisioningReport ? "Copied" : "Copy JSON", bundle: .module)
-                        } icon: {
-                            Image(systemName: "doc.on.doc")
-                        }
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                        .padding(.horizontal, 10)
-                        .frame(height: 28)
-                        .background(
-                            RoundedRectangle(cornerRadius: 7)
-                                .fill(theme.inputBackground)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 7)
-                                        .stroke(theme.inputBorder, lineWidth: 1)
-                                )
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(provisioningReport == nil)
-                    .localizedHelp("Copy support JSON report")
-                }
-
+    var preflightBlock: some View {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            troubleshootingHeading("Provisioning Preflight")
+            HStack(alignment: .center, spacing: theme.space.s10) {
                 if let report = provisioningReport {
-                    preflightPathList(report)
-                    preflightFindingsList(report)
+                    readinessPill(report.overallReadiness)
+                    Text(preflightSummary(report))
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.secondary)
+                        .lineLimit(2)
+                } else {
+                    readinessPill(.unproven)
+                    Text(
+                        "Run preflight to inspect host paths, permissions, and repair suggestions.",
+                        bundle: .module
+                    )
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.secondary)
+                    .lineLimit(2)
                 }
+
+                Spacer(minLength: 12)
+
+                SettingsButton(
+                    .secondary,
+                    isRunningProvisioningPreflight ? "Checking" : "Run",
+                    icon: "arrow.clockwise",
+                    isLoading: isRunningProvisioningPreflight,
+                    size: .compact,
+                    action: runProvisioningPreflight
+                )
+                .disabled(isRunningProvisioningPreflight)
+
+                SettingsButton(
+                    .secondary,
+                    copiedProvisioningReport ? "Copied" : "Copy JSON",
+                    icon: "doc.on.doc",
+                    size: .compact,
+                    help: "Copy support JSON report",
+                    action: copyProvisioningReportJSON
+                )
+                .disabled(provisioningReport == nil)
+            }
+
+            if let report = provisioningReport {
+                preflightPathList(report)
+                preflightFindingsList(report)
             }
         }
+        .settingsLandingAnchor("sandbox.preflight")
+    }
+
+    func troubleshootingHeading(_ title: String) -> some View {
+        Text(LocalizedStringKey(title), bundle: .module)
+            .font(SettingsFont.compactLabel)
+            .foregroundColor(theme.text.secondary)
     }
 
     func readinessPill(_ readiness: SandboxProvisioningReadiness) -> some View {
-        HStack(spacing: 6) {
-            Circle()
-                .fill(preflightColor(readiness))
-                .frame(width: 7, height: 7)
-            Text(readiness.label)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(preflightColor(readiness))
-        }
-        .padding(.horizontal, 9)
-        .frame(height: 24)
-        .background(
-            Capsule()
-                .fill(preflightColor(readiness).opacity(0.10))
-                .overlay(Capsule().stroke(preflightColor(readiness).opacity(0.30), lineWidth: 1))
-        )
+        StatusChip(readiness.label, tint: preflightColor(readiness), showsDot: true)
     }
 
     func preflightPathList(_ report: SandboxProvisioningReport) -> some View {
@@ -425,40 +384,33 @@ private extension SandboxView {
         ]
         let rows = ids.compactMap { id in report.locations.first { $0.id == id } }
 
-        return VStack(spacing: 0) {
+        return VStack(spacing: theme.space.s0) {
             ForEach(rows) { location in
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: theme.space.s8) {
                     Image(systemName: preflightLocationIcon(location.status))
-                        .font(.system(size: 10, weight: .semibold))
+                        .glyphSize(.micro, weight: .semibold)
                         .foregroundColor(preflightLocationColor(location.status))
                         .frame(width: 14)
                     Text(location.title)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.chip)
+                        .foregroundColor(theme.text.tertiary)
                         .frame(width: 130, alignment: .leading)
                     Text(location.path)
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .textSelection(.enabled)
                     Spacer(minLength: 8)
                     Text(location.status.rawValue)
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
+                        .font(SettingsFont.monoSmall)
                         .foregroundColor(preflightLocationColor(location.status))
                 }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
+                .padding(.horizontal, theme.space.s8)
+                .padding(.vertical, theme.space.s6)
             }
         }
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.inputBorder, lineWidth: 1)
-                )
-        )
+        .settingsChrome(.control)
     }
 
     func preflightFindingsList(_ report: SandboxProvisioningReport) -> some View {
@@ -467,15 +419,15 @@ private extension SandboxView {
         let visible = Array(actionable.prefix(4))
         let hiddenCount = max(0, actionable.count - visible.count)
 
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: theme.space.s8) {
             if visible.isEmpty {
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.successColor)
+                        .glyphSize(.footnote, weight: .semibold)
+                        .foregroundColor(theme.status.success.foreground)
                     Text("No blocking host storage issues found.", bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.secondary)
                 }
             } else {
                 ForEach(visible) { finding in
@@ -487,50 +439,30 @@ private extension SandboxView {
                             ? L("+1 more finding in copied report")
                             : L("+\(hiddenCount) more findings in copied report")
                     )
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText)
+                    .textStyle(.micro)
+                    .foregroundColor(theme.text.tertiary)
                 }
             }
         }
     }
 
     func preflightFindingRow(_ finding: SandboxProvisioningFinding) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: preflightFindingIcon(finding))
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(preflightFindingColor(finding))
-                .frame(width: 14)
-
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(finding.title)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                    Text(finding.code.rawValue)
-                        .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
-                        .lineLimit(1)
-                }
-                Text(finding.detail)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(finding.repairSuggestion)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(preflightFindingColor(finding))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .textSelection(.enabled)
-            }
-        }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(preflightFindingColor(finding).opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(preflightFindingColor(finding).opacity(0.18), lineWidth: 1)
-                )
+        SettingsFindingRow(
+            severity: findingSeverity(finding),
+            title: finding.title,
+            code: finding.code.rawValue,
+            detail: finding.detail,
+            fix: finding.repairSuggestion
         )
+    }
+
+    func findingSeverity(_ finding: SandboxProvisioningFinding) -> SettingsFindingRow.Severity {
+        switch finding.severity {
+        case .ok: .ok
+        case .info: .info
+        case .warning: .warning
+        case .blocked: .blocked
+        }
     }
 
     func preflightSummary(_ report: SandboxProvisioningReport) -> String {
@@ -554,18 +486,18 @@ private extension SandboxView {
 
     func preflightColor(_ readiness: SandboxProvisioningReadiness) -> Color {
         switch readiness {
-        case .ready: theme.successColor
-        case .needsSetup: theme.warningColor
-        case .blocked: theme.errorColor
-        case .unproven: theme.infoColor
+        case .ready: theme.status.success.foreground
+        case .needsSetup: theme.status.warning.foreground
+        case .blocked: theme.status.error.foreground
+        case .unproven: theme.status.info.foreground
         }
     }
 
     func preflightLocationColor(_ status: SandboxProvisioningLocationStatus) -> Color {
         switch status {
-        case .ready: theme.successColor
-        case .missing, .unproven: theme.warningColor
-        case .wrongType, .notWritable, .notReadable, .emptyFile: theme.errorColor
+        case .ready: theme.status.success.foreground
+        case .missing, .unproven: theme.status.warning.foreground
+        case .wrongType, .notWritable, .notReadable, .emptyFile: theme.status.error.foreground
         }
     }
 
@@ -577,90 +509,87 @@ private extension SandboxView {
         }
     }
 
-    func preflightFindingColor(_ finding: SandboxProvisioningFinding) -> Color {
-        switch finding.severity {
-        case .ok: theme.successColor
-        case .info: theme.infoColor
-        case .warning: theme.warningColor
-        case .blocked: theme.errorColor
-        }
-    }
-
-    func preflightFindingIcon(_ finding: SandboxProvisioningFinding) -> String {
-        switch finding.severity {
-        case .ok: "checkmark.circle.fill"
-        case .info: "info.circle.fill"
-        case .warning: "exclamationmark.triangle.fill"
-        case .blocked: "xmark.octagon.fill"
-        }
-    }
 }
 
 // MARK: - Status Dashboard
 
 private extension SandboxView {
 
-    var statusDashboard: some View {
-        sectionCard(title: "Status", icon: "circle.fill") {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(statusColor)
-                        .frame(width: 8, height: 8)
-                    Text(sandboxState.status.label)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-                    Spacer()
-                    statusActionButton
+    var overviewSection: some View {
+        SettingsSection(title: "Overview", anchorId: "sandbox.status") {
+            VStack(alignment: .leading, spacing: theme.space.s14) {
+                SettingsStatusHero(
+                    valueLabel: "Runs on",
+                    value: backendSummary,
+                    copyable: false,
+                    status: { StatusChip(statusTitle, tone: statusTone, showsDot: true) },
+                    actions: { statusActions }
+                )
+
+                if isStarting {
+                    HStack(spacing: theme.space.s8) {
+                        SettingsSpinner(size: .mini)
+                        Text(verbatim: startingDetail)
+                            .font(SettingsFont.rowDescription)
+                            .foregroundColor(theme.text.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                if case .error(let message) = sandboxState.status {
+                    Text(message)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.secondary)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                // A background start (launch, agent switch) that lost the VM
+                // lease leaves the status at Stopped; say why. The lease
+                // watcher starts the sandbox here once the owner lets go.
+                if !sandboxState.status.isRunning, !isStarting,
+                    let owner = sandboxState.activeAgentUnavailability?.leaseOwner
+                {
+                    Text(SandboxLeaseConflictResolver.explanation(for: owner))
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.status.warning.foreground)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 if let info = sandboxState.containerInfo {
-                    LazyVGrid(
-                        columns: [
-                            GridItem(.flexible(), spacing: 10),
-                            GridItem(.flexible(), spacing: 10),
-                            GridItem(.flexible(), spacing: 10),
-                        ],
-                        spacing: 10
-                    ) {
-                        if let uptime = info.uptime {
-                            metricTile(icon: "clock", label: L("Uptime"), value: formatUptime(uptime))
-                        }
-                        if let cpu = info.cpuLoad {
-                            metricTile(icon: "cpu", label: L("CPU Load"), value: cpu)
-                        }
-                        if let mem = info.memoryUsage {
-                            metricTile(icon: "memorychip", label: L("Memory"), value: mem)
-                        }
-                        if let disk = info.diskUsage {
-                            metricTile(icon: "internaldrive", label: L("Disk"), value: disk)
-                        }
-                        if let procs = info.processCount {
-                            metricTile(icon: "list.number", label: L("Processes"), value: "\(procs)")
-                        }
-                        if !info.agentUsers.isEmpty {
-                            metricTile(icon: "person.2", label: L("Agents"), value: "\(info.agentUsers.count)")
-                        }
-                    }
+                    SettingsStatStrip(stats: metricStats(info), style: .tiles(columns: 3))
                 }
 
                 // Boot-phase timings are a VM concept; the Seatbelt
                 // backend "starts" instantly and records no samples.
                 if !isSeatbelt, let boot = SandboxStartupMetricsStore.load().last {
                     Text(lastBootSummary(boot))
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.tertiary)
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
                 if let error = actionError {
                     Text(error)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.warningColor)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.status.warning.foreground)
+                        .textSelection(.enabled)
                 }
             }
         }
+    }
+
+    var backendSummary: String {
+        if isSeatbelt { return L("This Mac, confined by a sandbox profile") }
+        return L("Linux VM · \(config.cpus) CPUs · \(config.memoryGB) GB memory")
+    }
+
+    var startingDetail: String {
+        if let activity = sandboxState.currentActivity, !activity.isEmpty { return activity }
+        if let phase = sandboxState.provisioningPhase, !phase.isEmpty { return phase }
+        return L("Starting the sandbox…")
     }
 
     /// One-line digest of the most recent boot's phase timings (local
@@ -676,33 +605,27 @@ private extension SandboxView {
             + "total \(fmt(boot.totalToRunning))"
     }
 
-    func metricTile(icon: String, label: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 4) {
-                Image(systemName: icon)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(theme.accentColor)
-                Text(label)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
-                    .textCase(.uppercase)
-                    .tracking(0.3)
-            }
-            Text(value)
-                .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                .foregroundColor(theme.primaryText)
-                .lineLimit(1)
+    func metricStats(_ info: SandboxManager.ContainerInfo) -> [SettingsStat] {
+        var stats: [SettingsStat] = []
+        if let uptime = info.uptime {
+            stats.append(SettingsStat(label: "Uptime", value: formatUptime(uptime), icon: "clock"))
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.inputBorder, lineWidth: 1)
-                )
-        )
+        if let cpu = info.cpuLoad {
+            stats.append(SettingsStat(label: "CPU Load", value: cpu, icon: "cpu"))
+        }
+        if let mem = info.memoryUsage {
+            stats.append(SettingsStat(label: "Memory", value: mem, icon: "memorychip"))
+        }
+        if let disk = info.diskUsage {
+            stats.append(SettingsStat(label: "Workspace", value: disk, icon: "internaldrive"))
+        }
+        if let procs = info.processCount {
+            stats.append(SettingsStat(label: "Processes", value: "\(procs)", icon: "list.number"))
+        }
+        if !info.agentUsers.isEmpty {
+            stats.append(SettingsStat(label: "Agents", value: "\(info.agentUsers.count)", icon: "person.2"))
+        }
+        return stats
     }
 
     func formatUptime(_ raw: String) -> String {
@@ -717,28 +640,40 @@ private extension SandboxView {
         return "\(minutes)m \(seconds % 60)s"
     }
 
-    var statusColor: Color {
+    var statusTone: StatusChip.Tone {
         switch sandboxState.status {
-        case .running: .green
-        case .stopped: .yellow
-        case .notProvisioned: .gray
-        case .starting: .orange
-        case .error: .red
+        case .running: .success
+        case .starting: .warning
+        case .error: .error
+        case .stopped, .notProvisioned: .neutral
         }
     }
 
+    var statusTitle: String {
+        if case .error = sandboxState.status { return L("Couldn't start") }
+        return sandboxState.status.label
+    }
+
     @ViewBuilder
-    var statusActionButton: some View {
+    var statusActions: some View {
         switch sandboxState.status {
         case .running:
-            destructiveButton("Stop", action: performStop)
+            SettingsButton(.secondary, "Restart", icon: "arrow.clockwise", size: .compact, action: performRestart)
+            SettingsButton(.destructive, "Stop", size: .compact, action: performStop)
         case .stopped:
-            accentButton("Start", action: performStart)
+            SettingsButton(.primary, "Start", size: .compact, action: performStart)
         case .starting:
-            ProgressView()
-                .controlSize(.small)
-                .tint(theme.accentColor)
-        default:
+            SettingsButton(.secondary, "Cancel", size: .compact, action: performCancel)
+        case .error(let message):
+            SettingsButton(.primary, "Try Again", size: .compact, action: performStart)
+            SettingsButton(
+                .secondary,
+                copiedErrorDetails ? "Copied" : "Copy Details",
+                icon: "doc.on.doc",
+                size: .compact
+            ) { copyErrorDetails(message) }
+            SettingsButton(.tertiary, "Open Troubleshooting", size: .compact, action: openTroubleshooting)
+        case .notProvisioned:
             EmptyView()
         }
     }
@@ -777,85 +712,47 @@ private struct SandboxLogConsoleCard: View {
     private static let refreshThrottle: Duration = .milliseconds(200)
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: "terminal")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-                Text("Logs", bundle: .module)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-            }
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            Text("Logs", bundle: .module)
+                .font(SettingsFont.compactLabel)
+                .foregroundColor(theme.text.secondary)
 
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
-                    Button(action: { logLevelFilter = nil }) {
-                        Text("ALL", bundle: .module)
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(logLevelFilter == nil ? .white : theme.secondaryText)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .fill(logLevelFilter == nil ? theme.accentColor : theme.inputBackground)
-                            )
-                    }
-                    .buttonStyle(.plain)
+            VStack(alignment: .leading, spacing: theme.space.s10) {
+                HStack(spacing: theme.space.s8) {
+                    FilterChip(L("All"), isSelected: logLevelFilter == nil) { logLevelFilter = nil }
 
                     ForEach(SandboxLogBuffer.Entry.Level.allCases, id: \.self) { level in
-                        Button(action: { logLevelFilter = level }) {
-                            Text(level.rawValue.uppercased())
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundColor(logLevelFilter == level ? .white : theme.secondaryText)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 4)
-                                        .fill(logLevelFilter == level ? theme.accentColor : theme.inputBackground)
-                                )
-                        }
-                        .buttonStyle(.plain)
+                        FilterChip(
+                            LCached(level.rawValue.capitalized),
+                            isSelected: logLevelFilter == level
+                        ) { logLevelFilter = level }
                     }
 
                     Spacer()
 
-                    Button(action: { showFullHistory.toggle() }) {
-                        Text(showFullHistory ? "Tail" : "Full", bundle: .module)
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(theme.secondaryText)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .fill(theme.inputBackground)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .help(
-                        showFullHistory
-                            ? "Showing full ring buffer. Click to tail the most recent \(Self.defaultVisibleLimit) lines."
-                            : "Tailing the most recent \(Self.defaultVisibleLimit) lines. Click to show the full ring buffer."
-                    )
+                    SettingsButton(
+                        .tertiary,
+                        showFullHistory ? "Tail" : "Full",
+                        size: .compact,
+                        help: showFullHistory
+                            ? L("Showing full ring buffer. Click to tail the most recent \(Self.defaultVisibleLimit) lines.")
+                            : L("Tailing the most recent \(Self.defaultVisibleLimit) lines. Click to show the full ring buffer.")
+                    ) { showFullHistory.toggle() }
 
-                    Button(action: { logBuffer.clear() }) {
-                        Image(systemName: "trash")
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                    }
-                    .buttonStyle(.plain)
+                    SettingsIconButton("trash", help: "Clear Logs") { logBuffer.clear() }
                 }
 
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 0) {
+                        LazyVStack(alignment: .leading, spacing: theme.space.s0) {
                             if visibleEntries.isEmpty {
                                 Text(
                                     "No log entries yet. Command output and sandbox activity will stream here in real time.",
                                     bundle: .module
                                 )
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.tertiaryText)
-                                .padding(.vertical, 16)
+                                .font(SettingsFont.rowDescription)
+                                .foregroundColor(theme.text.tertiary)
+                                .padding(.vertical, theme.space.s16)
                                 .frame(maxWidth: .infinity)
                             } else {
                                 ForEach(visibleEntries) { entry in
@@ -865,14 +762,7 @@ private struct SandboxLogConsoleCard: View {
                         }
                     }
                     .frame(height: 320)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.codeBlockBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(theme.inputBorder, lineWidth: 1)
-                            )
-                    )
+                    .settingsChrome(.subtle)
                     .onChange(of: visibleEntries.last?.id) { _, _ in
                         pendingScrollTask?.cancel()
                         pendingScrollTask = Task {
@@ -886,16 +776,7 @@ private struct SandboxLogConsoleCard: View {
                 }
             }
         }
-        .padding(16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
         .onAppear { refreshVisibleEntries() }
         .onDisappear {
             visibleRefreshTask?.cancel()
@@ -936,40 +817,40 @@ private struct SandboxLogConsoleCard: View {
     }
 
     private func logEntryRow(_ entry: SandboxLogBuffer.Entry) -> some View {
-        HStack(alignment: .top, spacing: 6) {
+        HStack(alignment: .top, spacing: theme.space.s6) {
             Text(Self.logTimestampFormatter.string(from: entry.timestamp))
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.monoSmall)
+                .foregroundColor(theme.text.tertiary)
                 .frame(width: 65, alignment: .leading)
 
-            Text(entry.level.rawValue.uppercased())
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
+            Text(verbatim: entry.level.rawValue)
+                .font(SettingsFont.monoSmall)
                 .foregroundColor(logLevelColor(entry.level))
                 .frame(width: 50, alignment: .leading)
 
             Text(entry.source)
-                .font(.system(size: 10, design: .monospaced))
-                .foregroundColor(theme.accentColor.opacity(0.8))
+                .font(SettingsFont.monoSmall)
+                .foregroundColor(theme.text.link)
                 .frame(width: 100, alignment: .leading)
                 .lineLimit(1)
                 .truncationMode(.tail)
 
             Text(entry.message)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.monoSmall)
+                .foregroundColor(theme.text.primary)
                 .lineLimit(2)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
+        .padding(.horizontal, theme.space.s8)
+        .padding(.vertical, theme.space.s4)
     }
 
     private func logLevelColor(_ level: SandboxLogBuffer.Entry.Level) -> Color {
         switch level {
-        case .debug: theme.tertiaryText
-        case .info: theme.accentColor
-        case .stdout: theme.primaryText
-        case .warn: theme.warningColor
-        case .error: theme.errorColor
+        case .debug: theme.text.tertiary
+        case .info: theme.action.primary.default.background
+        case .stdout: theme.text.primary
+        case .warn: theme.status.warning.foreground
+        case .error: theme.status.error.foreground
         }
     }
 
@@ -980,216 +861,246 @@ private struct SandboxLogConsoleCard: View {
     }()
 }
 
-// MARK: - Diagnostics Card
+// MARK: - Troubleshooting
 
 private extension SandboxView {
 
-    var diagnosticsCard: some View {
-        sectionCard(title: "Diagnostics", icon: "stethoscope") {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 12) {
-                    Button(action: performDiagnostics) {
-                        HStack(spacing: 6) {
-                            if isRunningDiag {
-                                ProgressView()
-                                    .controlSize(.small)
-                                    .scaleEffect(0.7)
-                                    .frame(width: 12, height: 12)
-                            } else {
-                                Image(systemName: "stethoscope")
-                                    .font(.system(size: 12))
-                            }
-                            Text(isRunningDiag ? L("Running...") : L("Run Diagnostics"))
-                                .font(.system(size: 12, weight: .medium))
-                        }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(theme.accentColor))
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .disabled(isRunningDiag)
+    static let troubleshootingAnchor = "sandbox.troubleshooting"
 
-                    Text(
-                        isSeatbelt
-                            ? "Tests exec, workspace writes, write confinement, and network policy"
-                            : "Tests exec, NAT networking, agent users, apk, and vsock bridge",
-                        bundle: .module
-                    )
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                        .lineLimit(2)
+    var troubleshootingSection: some View {
+        SettingsAdvancedDisclosure(
+            title: "Troubleshooting",
+            anchorIds: [Self.troubleshootingAnchor, "sandbox.preflight", "sandbox.diagnostics", "sandbox.logs"]
+        ) {
+            VStack(alignment: .leading, spacing: theme.space.s20) {
+                lastFailureBlock
+                preflightBlock
+                if sandboxState.status == .running {
+                    diagnosticsBlock
                 }
+                if hasRenderedHeavyCards || sandboxState.status == .notProvisioned {
+                    SandboxLogConsoleCard()
+                        .settingsLandingAnchor("sandbox.logs")
+                }
+            }
+            .padding(.horizontal, theme.space.s16)
+            .padding(.bottom, theme.space.s16)
+        }
+        .transformEnvironment(\.settingsLandingPending) { pending in
+            if troubleshootingRequested { pending = Self.troubleshootingAnchor }
+        }
+        .settingsLandingAnchor(Self.troubleshootingAnchor)
+    }
 
-                // Most recent startup/provisioning failure from the local
-                // ring buffer (`startup-failures.json`). Same closed tokens
-                // the consent-gated telemetry event carries, so a user can
-                // paste this line into a bug report and it matches what we
-                // see in aggregate. Shown for both backends.
-                if let failure = SandboxStartupMetricsStore.loadFailures().last {
-                    Text(SandboxStartupMetricsStore.failureSummary(failure))
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .textSelection(.enabled)
-                        .help(L("From ~/.osaurus/container/startup-failures.json"))
-                }
-
-                if let results = diagResults {
-                    diagnosticResultsList(results)
-                }
+    /// Most recent startup/provisioning failure from the local ring buffer
+    /// (`startup-failures.json`), in the same closed tokens the
+    /// consent-gated telemetry event carries, so a pasted line matches
+    /// what shows up in aggregate.
+    @ViewBuilder
+    var lastFailureBlock: some View {
+        if let failure = SandboxStartupMetricsStore.loadFailures().last {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
+                troubleshootingHeading("Last Failure")
+                Text(SandboxStartupMetricsStore.failureSummary(failure))
+                    .font(SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.tertiary)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+                    .help(L("From ~/.osaurus/container/startup-failures.json"))
             }
         }
     }
 
-    func diagnosticResultsList(_ results: [SandboxManager.DiagnosticResult]) -> some View {
-        VStack(spacing: 0) {
-            ForEach(Array(results.enumerated()), id: \.offset) { _, result in
-                // Top-align so the status icon and check name stay anchored to
-                // the first line when a failed row's detail wraps to several.
-                HStack(alignment: .top, spacing: 8) {
-                    Image(systemName: result.passed ? "checkmark.circle.fill" : "xmark.circle.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(result.passed ? theme.successColor : theme.warningColor)
-                    Text(result.name)
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundColor(theme.primaryText)
-                        .frame(width: 100, alignment: .leading)
-                    // Passing rows stay on a single truncated line; failures
-                    // show the full, selectable detail (with a hover tooltip)
-                    // so the actionable hint is never clipped.
-                    Text(result.detail)
-                        .font(.system(size: 11))
-                        .foregroundColor(result.passed ? theme.secondaryText : theme.primaryText)
-                        .lineLimit(result.passed ? 1 : nil)
-                        .truncationMode(.tail)
-                        .fixedSize(horizontal: false, vertical: !result.passed)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                        .help(result.detail)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-            }
-        }
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(theme.inputBorder, lineWidth: 1)
+    var diagnosticsBlock: some View {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            troubleshootingHeading("Diagnostics")
+            HStack(spacing: theme.space.s12) {
+                SettingsButton(
+                    .primary,
+                    isRunningDiag ? "Running…" : "Run Diagnostics",
+                    icon: "stethoscope",
+                    isLoading: isRunningDiag,
+                    size: .compact,
+                    action: performDiagnostics
                 )
-        )
-    }
-}
+                .disabled(isRunningDiag)
 
-// MARK: - Workspace Card
-
-private extension SandboxView {
-
-    /// Top-level shortcut into the container's `/workspace` directory,
-    /// which is a host bind mount at `~/.osaurus/container/workspace/`.
-    /// Lets users browse and edit sandbox files in Finder without
-    /// running anything inside the guest.
-    var workspaceCard: some View {
-        sectionCard(title: "Workspace", icon: "folder") {
-            VStack(alignment: .leading, spacing: 12) {
                 Text(
                     isSeatbelt
-                        ? "Sandboxed commands see ~/.osaurus/container/workspace/ as /workspace — the only directory they can write to. Open it in Finder to browse or edit files directly."
-                        : "The container's /workspace directory is bind-mounted from ~/.osaurus/container/workspace/. Open it in Finder to browse or edit files directly on the host.",
+                        ? "Tests exec, workspace writes, write confinement, and network policy"
+                        : "Tests exec, networking, agent users, apk, and the vsock bridge",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .textStyle(.footnote)
+                .foregroundColor(theme.text.tertiary)
+                .lineLimit(2)
+            }
 
-                HStack {
-                    Spacer()
-                    accentButton("Open in Finder", icon: "folder") {
-                        OsaurusPaths.revealInFinder(OsaurusPaths.containerWorkspace())
+            if let results = diagResults {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
+                    ForEach(Array(results.enumerated()), id: \.offset) { _, result in
+                        SettingsFindingRow(
+                            severity: result.passed ? .ok : .warning,
+                            title: result.name,
+                            detail: result.detail
+                        )
                     }
                 }
             }
         }
+        .settingsLandingAnchor("sandbox.diagnostics")
+    }
+
+    /// Expands Troubleshooting and scrolls to it. From the journey it also
+    /// leaves the failed setup screen.
+    func openTroubleshooting() {
+        provisionError = nil
+        troubleshootingRequested = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(600))
+            troubleshootingRequested = false
+        }
     }
 }
 
-// MARK: - Resource Config Card
+// MARK: - Settings
 
 private extension SandboxView {
 
-    var resourceConfigCard: some View {
-        sectionCard(title: isSeatbelt ? "Configuration" : "Resources", icon: "cpu") {
-            VStack(alignment: .leading, spacing: 12) {
+    var settingsSection: some View {
+        SettingsSection(title: "Settings") {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 // CPU/memory budgets and per-agent CoW rootfs clones are
                 // VM constructs — the Seatbelt backend runs host processes
                 // with no resource caps to configure.
                 if !isSeatbelt {
-                    cpuStepper
-                    memoryStepper
+                    SettingsStepperRow(
+                        label: "CPUs",
+                        help: "Cores the sandbox VM can use.",
+                        value: $pendingConfig.cpus,
+                        range: 1 ... 8,
+                        anchorId: "sandbox.cpus"
+                    )
+                    if let warning = SandboxHostResourceWarning.cpu(cpus: pendingConfig.cpus, hostCores: ProcessInfo.processInfo.activeProcessorCount) {
+                        hostWarning(warning)
+                    }
+                    SettingsStepperRow(
+                        label: "Memory",
+                        help: "Memory the sandbox VM can use, shared by every agent's container.",
+                        value: $pendingConfig.memoryGB,
+                        range: 1 ... 8,
+                        unit: "GB",
+                        anchorId: "sandbox.memory"
+                    )
+                    if let warning = SandboxHostResourceWarning.memory(vmGB: pendingConfig.memoryGB, hostBytes: ProcessInfo.processInfo.physicalMemory) {
+                        hostWarning(warning)
+                    }
+                    SettingsStepperRow(
+                        label: "Agents Kept Warm",
+                        help: "Agents and workflows that each keep their own container running in the sandbox.",
+                        value: $pendingConfig.maxAgentEnvironments,
+                        range: 1 ... 8,
+                        anchorId: "sandbox.agentsKeptWarm"
+                    )
+                    SettingsStepperRow(
+                        label: "Environments Kept on Disk",
+                        help: "Agent and workflow environments, with their installed packages, kept between runs. Never fewer than Agents Kept Warm.",
+                        value: $pendingConfig.maxRetainedEnvironments,
+                        range: SandboxConfiguration.retainedEnvironmentsRange,
+                        anchorId: "sandbox.environmentsKeptOnDisk"
+                    )
+                    SettingsStepperRow(
+                        label: "Stop When Idle",
+                        help: "Stop the sandbox after this many minutes with nothing running, to free its memory. A connected sandboxed MCP server counts as running. 0 keeps it running.",
+                        value: $pendingConfig.idleShutdownMinutes,
+                        range: 0 ... 240,
+                        unit: "min",
+                        anchorId: "sandbox.stopWhenIdle"
+                    )
                 }
 
-                toggleRow(
-                    title: L("Network Access"),
-                    description: networkToggleDescription,
-                    isOn: Binding(
-                        get: { pendingConfig.network != "none" },
-                        set: { on in
-                            // Re-enabling restores proxy mode when a domain
-                            // allowlist is still configured; a bare toggle
-                            // must not silently widen "proxy" to "outbound".
-                            if on {
-                                let domains = pendingConfig.allowedDomains ?? []
-                                pendingConfig.network = domains.isEmpty ? "outbound" : "proxy"
-                            } else {
-                                pendingConfig.network = "none"
-                            }
-                        }
-                    )
-                )
+                networkRow
 
-                if !isSeatbelt {
-                    toggleRow(
-                        title: L("Per-Agent Environments"),
-                        description: L(
-                            "Experimental: boot from each agent's own copy-on-write clone of the base image so system packages persist per agent"
-                        ),
-                        isOn: $pendingConfig.perAgentEnvironments
-                    )
-                }
-
-                toggleRow(
-                    title: L("Auto-Start"),
-                    description: L("Start the sandbox when Osaurus launches"),
+                SettingsToggle(
+                    title: "Auto-Start",
+                    description: "Start the sandbox when Osaurus launches. When off, it starts the first time an agent runs a command.",
+                    anchorId: "sandbox.autoStart",
                     isOn: $pendingConfig.autoStart
                 )
                 .onChange(of: pendingConfig.autoStart) { _, _ in
                     saveConfigIfClean()
                 }
 
+                SettingsRow(
+                    title: "Workspace",
+                    description: isSeatbelt
+                        ? "Sandboxed commands see ~/.osaurus/container/workspace/ as /workspace, the only folder they can write to."
+                        : "Every agent's home folder and the shared folder, on this Mac at ~/.osaurus/container/workspace/. Agents see it as /workspace.",
+                    anchorId: "sandbox.workspace"
+                ) {
+                    SettingsButton(.secondary, "Open in Finder", icon: "folder", size: .compact) {
+                        OsaurusPaths.revealInFinder(OsaurusPaths.containerWorkspace())
+                    }
+                }
+
                 if configIsDirty {
                     HStack {
                         Spacer()
-                        accentButton("Restart to Apply", icon: "arrow.clockwise", action: applyResourceChanges)
+                        SettingsButton(
+                            .primary,
+                            sandboxState.status.isRunning ? "Restart to Apply" : "Save",
+                            icon: sandboxState.status.isRunning ? "arrow.clockwise" : nil,
+                            size: .compact,
+                            action: applyResourceChanges
+                        )
                     }
                 }
             }
         }
     }
 
-    /// Network toggle caption. On Seatbelt a configured domain allowlist
-    /// ("proxy" mode) cannot be enforced and fails CLOSED to no network —
-    /// say so instead of promising domain filtering.
-    var networkToggleDescription: String {
-        if pendingConfig.network == "proxy" {
-            return isSeatbelt
-                ? L("A domain allowlist is configured, which this sandbox can't enforce — network stays fully blocked. Clear agents' Allowed Domains to restore outbound access.")
-                : L("Outbound limited to the provisioning agent's allowed domains")
+    func hostWarning(_ text: String) -> some View {
+        Label {
+            Text(verbatim: text)
+        } icon: {
+            Image(systemName: "exclamationmark.triangle.fill")
         }
-        return isSeatbelt
-            ? L("Allow outbound network from sandboxed commands")
-            : L("Allow outbound network from container")
+        .font(SettingsFont.rowDescription)
+        .foregroundColor(theme.status.warning.foreground)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+
+    /// Read-only: network is each agent's own setting (Agent → Sandbox).
+    var networkRow: some View {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
+            SettingsValueRow(title: "Network", value: networkValue, anchorId: "sandbox.network")
+            Text(networkCaption)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    var networkValue: String {
+        if isSeatbelt { return L("Per agent") }
+        switch sandboxState.podNetwork {
+        case .nat?: return L("Open")
+        case .filtered?: return L("Filtered per agent")
+        case .some(.none): return L("Off")
+        case nil: return L("Per agent")
+        }
+    }
+
+    var networkCaption: String {
+        if isSeatbelt {
+            return L("Each agent's Sandbox Network setting applies to its own commands. Domain allowlists need the VM sandbox, so an agent with one has no network here.")
+        }
+        if sandboxState.podNetwork == .filtered {
+            return L("Agents in the sandbox have different network settings, so each one's web traffic goes through a filter that applies its own setting. Other connections, such as SSH, are blocked.")
+        }
+        return L("Set per agent in the agent's Sandbox settings. When agents with different settings share the sandbox, it filters each one's web traffic separately and blocks other connections.")
     }
 }
 
@@ -1197,63 +1108,62 @@ private extension SandboxView {
 
 private extension SandboxView {
 
+    var resetDescription: String {
+        isSeatbelt
+            ? L("Clears sandbox plugin state and sets the sandbox up again. Kept: every agent's files in the workspace. Workflows with dependencies will ask to install them again.")
+            : L("Deletes the Linux system and every agent's environment, including apk packages, then downloads the runtime and sets the sandbox up again. Kept: every agent's home folder (its files, SOUL.md, and pip and npm packages) and the shared folder. Workflows with dependencies will ask to install them again.")
+    }
+
+    var removeDescription: String {
+        isSeatbelt
+            ? L("Stops the sandbox and clears its state. Kept: every agent's files in the workspace. Agents can't run commands until you set it up again here.")
+            : L("Stops the sandbox and deletes the Linux system, every agent's environment, and the downloaded runtime to free disk space. Kept: every agent's home folder and the shared folder. Agents can't run commands until you set it up again here.")
+    }
+
     var dangerZoneCard: some View {
-        sectionCard(title: "DANGER ZONE", icon: "exclamationmark.triangle") {
-            VStack(alignment: .leading, spacing: 12) {
-                Text(
-                    isSeatbelt
-                        ? "Resetting clears sandbox plugin state. Agent workspace files on the host persist."
-                        : "Resetting destroys all installed sandbox packages. Agent workspace files on the host persist.",
-                    bundle: .module
-                )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-
-                HStack(spacing: 12) {
-                    destructiveButton(isSeatbelt ? "Reset Sandbox" : "Reset Container", icon: "arrow.counterclockwise") {
-                        showResetConfirm = true
-                    }
-                    .alert(Text(isSeatbelt ? "Reset Sandbox?" : "Reset Container?", bundle: .module), isPresented: $showResetConfirm) {
-                        Button(role: .cancel) {
-                        } label: {
-                            Text("Cancel", bundle: .module)
-                        }
-                        Button(role: .destructive) {
-                            performReset()
-                        } label: {
-                            Text("Reset", bundle: .module)
-                        }
-                    } message: {
-                        Text(
-                            isSeatbelt
-                                ? "This will reset the sandbox and re-provision from scratch. Sandbox plugin state will be lost."
-                                : "This will destroy the container and re-provision from scratch. Installed packages and sandbox plugin state will be lost.",
-                            bundle: .module
-                        )
-                    }
-
-                    destructiveButton(isSeatbelt ? "Remove Sandbox" : "Remove Container", icon: "trash") {
-                        showRemoveConfirm = true
-                    }
-                    .alert(Text(isSeatbelt ? "Remove Sandbox?" : "Remove Container?", bundle: .module), isPresented: $showRemoveConfirm) {
-                        Button(role: .cancel) {
-                        } label: {
-                            Text("Cancel", bundle: .module)
-                        }
-                        Button(role: .destructive) {
-                            performRemove()
-                        } label: {
-                            Text("Remove", bundle: .module)
-                        }
-                    } message: {
-                        Text(
-                            isSeatbelt
-                                ? "This will stop and remove the sandbox entirely. You can set it up again later."
-                                : "This will stop and remove the container entirely. You can set it up again later.",
-                            bundle: .module
-                        )
-                    }
+        SettingsDestructiveZone {
+            SettingsDestructiveRow(
+                title: "Reset Sandbox",
+                description: resetDescription,
+                actionTitle: "Reset…",
+                anchorId: "sandbox.reset"
+            ) {
+                showResetConfirm = true
+            }
+            .alert(Text("Reset Sandbox?", bundle: .module), isPresented: $showResetConfirm) {
+                Button(role: .cancel) {
+                } label: {
+                    Text("Cancel", bundle: .module)
                 }
+                Button(role: .destructive) {
+                    performReset()
+                } label: {
+                    Text("Reset", bundle: .module)
+                }
+            } message: {
+                Text(verbatim: resetDescription)
+            }
+
+            SettingsDestructiveRow(
+                title: "Remove Sandbox",
+                description: removeDescription,
+                actionTitle: "Remove…",
+                anchorId: "sandbox.remove"
+            ) {
+                showRemoveConfirm = true
+            }
+            .alert(Text("Remove Sandbox?", bundle: .module), isPresented: $showRemoveConfirm) {
+                Button(role: .cancel) {
+                } label: {
+                    Text("Cancel", bundle: .module)
+                }
+                Button(role: .destructive) {
+                    performRemove()
+                } label: {
+                    Text("Remove", bundle: .module)
+                }
+            } message: {
+                Text(verbatim: removeDescription)
             }
         }
     }
@@ -1284,11 +1194,21 @@ private extension SandboxView {
                 try await SandboxManager.shared.provision()
                 refreshInfo()
                 runProvisioningPreflight()
+            } catch is CancellationError {
+                runProvisioningPreflight()
             } catch {
+                if case SandboxError.ownershipConflict = error {
+                    handleActionError(error, retry: performProvision)
+                    return
+                }
                 provisionError = error.localizedDescription
                 runProvisioningPreflight()
             }
         }
+    }
+
+    func performCancel() {
+        Task { await SandboxManager.shared.cancelStart() }
     }
 
     func performStart() {
@@ -1299,10 +1219,21 @@ private extension SandboxView {
                 refreshInfo()
                 runProvisioningPreflight()
             } catch {
-                actionError = error.localizedDescription
-                runProvisioningPreflight()
+                handleActionError(error, retry: performStart)
             }
         }
+    }
+
+    /// A lease conflict opens the fix-it dialog; any other failure shows
+    /// under Status.
+    func handleActionError(_ error: Error, retry: @escaping () -> Void) {
+        runProvisioningPreflight()
+        if error is CancellationError { return }
+        if case SandboxError.ownershipConflict = error {
+            SandboxLeaseConflictResolver.present(SandboxLeaseConflictResolver.currentOwner()) { retry() }
+            return
+        }
+        actionError = error.localizedDescription
     }
 
     func performStop() {
@@ -1321,6 +1252,40 @@ private extension SandboxView {
         }
     }
 
+    func performRestart() {
+        actionError = nil
+        Task {
+            do {
+                try await SandboxManager.shared.restartContainer()
+                refreshInfo()
+                runProvisioningPreflight()
+            } catch {
+                handleActionError(error, retry: performRestart)
+            }
+        }
+    }
+
+    /// Error, app version, last boot and preflight in one paste for a bug report.
+    func copyErrorDetails(_ message: String) {
+        var lines = [
+            "Sandbox error: \(message)",
+            "Osaurus \(SandboxBridgeMigrationFlag.currentAppVersion), backend \(SandboxBackend.current)",
+        ]
+        if !isSeatbelt, let boot = SandboxStartupMetricsStore.load().last {
+            lines.append(lastBootSummary(boot))
+        }
+        if let report = provisioningReport {
+            lines.append(report.plainTextReport)
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)
+        copiedErrorDetails = true
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2))
+            copiedErrorDetails = false
+        }
+    }
+
     func performReset() {
         actionError = nil
         Task {
@@ -1329,8 +1294,7 @@ private extension SandboxView {
                 refreshInfo()
                 runProvisioningPreflight()
             } catch {
-                actionError = error.localizedDescription
-                runProvisioningPreflight()
+                handleActionError(error, retry: performReset)
             }
         }
     }
@@ -1344,8 +1308,7 @@ private extension SandboxView {
                 // metrics, so no manual reset needed here.
                 runProvisioningPreflight()
             } catch {
-                actionError = error.localizedDescription
-                runProvisioningPreflight()
+                handleActionError(error, retry: performRemove)
             }
         }
     }
@@ -1354,6 +1317,7 @@ private extension SandboxView {
         SandboxConfigurationStore.save(pendingConfig)
         config = pendingConfig
         actionError = nil
+        guard sandboxState.status.isRunning else { return }
         Task {
             do {
                 try await SandboxManager.shared.restartContainer()
@@ -1395,13 +1359,13 @@ private extension SandboxView {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(reportText, forType: .string)
 
-        withAnimation(.easeInOut(duration: 0.2)) {
+        withAnimation(theme.motion.quick) {
             copiedProvisioningReport = true
         }
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(2))
             if !Task.isCancelled {
-                withAnimation(.easeInOut(duration: 0.2)) {
+                withAnimation(theme.motion.quick) {
                     copiedProvisioningReport = false
                 }
             }
@@ -1455,257 +1419,21 @@ private extension SandboxView {
     }
 }
 
-// MARK: - Shared Components
-
-private extension SandboxView {
-
-    func sectionCard<Content: View>(
-        title: String,
-        icon: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-                Text(LocalizedStringKey(title), bundle: .module)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-            }
-            content()
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
+/// Steppers warn when the sandbox could crowd out the rest of the Mac.
+/// Warnings only; the chosen value is kept.
+enum SandboxHostResourceWarning {
+    /// More than half the Mac's memory.
+    static func memory(vmGB: Int, hostBytes: UInt64) -> String? {
+        let hostGB = Int((Double(hostBytes) / 1_073_741_824).rounded())
+        guard hostGB > 0, vmGB * 2 > hostGB else { return nil }
+        return L(
+            "This Mac has \(hostGB) GB of memory. While the sandbox is busy, \(vmGB) GB can leave too little for apps and local models."
         )
     }
 
-    func toggleRow(title: String, description: String, isOn: Binding<Bool>) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(LocalizedStringKey(title), bundle: .module)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                Text(LocalizedStringKey(description), bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            Spacer()
-            Toggle("", isOn: isOn)
-                .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                .labelsHidden()
-        }
-    }
-
-    var cpuStepper: some View {
-        HStack {
-            Text("CPUs", bundle: .module)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-            Spacer()
-            Stepper(
-                "\(pendingConfig.cpus)",
-                value: $pendingConfig.cpus,
-                in: 1 ... 8
-            )
-            .font(.system(size: 12))
-        }
-    }
-
-    var memoryStepper: some View {
-        HStack {
-            Text("Memory", bundle: .module)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-            Spacer()
-            Stepper(
-                "\(pendingConfig.memoryGB) GB",
-                value: $pendingConfig.memoryGB,
-                in: 1 ... 8
-            )
-            .font(.system(size: 12))
-        }
-    }
-
-    func accentButton(_ title: String, icon: String? = nil, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                if let icon {
-                    Image(systemName: icon)
-                        .font(.system(size: 11))
-                }
-                Text(LocalizedStringKey(title), bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .foregroundColor(.white)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(RoundedRectangle(cornerRadius: 8).fill(theme.accentColor))
-        }
-        .buttonStyle(PlainButtonStyle())
-    }
-
-    func destructiveButton(_ title: String, icon: String? = nil, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                if let icon {
-                    Image(systemName: icon)
-                        .font(.system(size: 11))
-                }
-                Text(LocalizedStringKey(title), bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-            }
-            .foregroundColor(theme.errorColor)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.errorColor.opacity(0.1))
-            )
-        }
-        .buttonStyle(PlainButtonStyle())
-    }
-}
-
-// MARK: - Provisioning Sheet
-
-private struct SandboxProvisionSheet: View {
-    @Environment(\.theme) private var theme
-    @Environment(\.dismiss) private var dismiss
-
-    @Binding var pendingConfig: SandboxConfiguration
-    let onConfirm: () -> Void
-
-    private var isSeatbelt: Bool { SandboxBackend.current == .seatbelt }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                Text("Set Up Sandbox", bundle: .module)
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundColor(theme.primaryText)
-                Spacer()
-                Button(action: { dismiss() }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 18))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(20)
-
-            Divider().foregroundColor(theme.cardBorder)
-
-            VStack(alignment: .leading, spacing: 20) {
-                Text(
-                    isSeatbelt
-                        ? "Commands will run on this Mac, confined to the sandbox workspace by a system sandbox profile. No download or extra resources are needed."
-                        : "Configure resources for the Linux container. These can be changed later.",
-                    bundle: .module
-                )
-                .font(.system(size: 13))
-                .foregroundColor(theme.secondaryText)
-
-                if !isSeatbelt {
-                    resourcesSection
-                }
-            }
-            .padding(20)
-
-            Spacer()
-
-            Divider().foregroundColor(theme.cardBorder)
-
-            HStack {
-                Button {
-                    dismiss()
-                } label: {
-                    Text("Cancel", bundle: .module)
-                }
-                .buttonStyle(.plain)
-                .foregroundColor(theme.secondaryText)
-                .font(.system(size: 13, weight: .medium))
-                .keyboardShortcut(.escape, modifiers: [])
-
-                Spacer()
-
-                Button(action: {
-                    dismiss()
-                    onConfirm()
-                }) {
-                    Label {
-                        Text("Set Up Sandbox", bundle: .module)
-                    } icon: {
-                        Image(systemName: "shippingbox")
-                    }
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 10)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.accentColor)
-                    )
-                }
-                .buttonStyle(.plain)
-                .keyboardShortcut(.return, modifiers: .command)
-            }
-            .padding(20)
-        }
-        .frame(width: 480, height: isSeatbelt ? 260 : 360)
-        .background(theme.primaryBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
-    }
-
-    private var resourcesSection: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("RESOURCES", bundle: .module)
-                .font(.system(size: 11, weight: .bold))
-                .foregroundColor(theme.secondaryText)
-                .tracking(0.5)
-
-            HStack {
-                Text("CPUs", bundle: .module)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                Spacer()
-                Stepper(
-                    "\(pendingConfig.cpus)",
-                    value: $pendingConfig.cpus,
-                    in: 1 ... 8
-                )
-                .font(.system(size: 12))
-            }
-
-            HStack {
-                Text("Memory", bundle: .module)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                Spacer()
-                Stepper(
-                    "\(pendingConfig.memoryGB) GB",
-                    value: $pendingConfig.memoryGB,
-                    in: 1 ... 8
-                )
-                .font(.system(size: 12))
-            }
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
+    static func cpu(cpus: Int, hostCores: Int) -> String? {
+        guard hostCores > 0, cpus >= hostCores else { return nil }
+        return L("This Mac has \(hostCores) cores; the sandbox can keep all of them busy.")
     }
 }
 

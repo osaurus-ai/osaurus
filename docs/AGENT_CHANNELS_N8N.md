@@ -80,11 +80,6 @@ Insights request log; the HTTP shim only logs a redacted header twin.
     "secretName": "webhook",
     "remoteTransportPolicy": "plaintext_allowed",
     "callerLocation": "lan",
-    "inboundDispatch": {
-      "enabled": true,
-      "target": { "kind": "local", "id": "<agent-uuid>" },
-      "autoReplyEnabled": false
-    },
     "outbound": { "webhookURL": null, "signBodies": true }
   }
 }
@@ -100,7 +95,14 @@ Notes:
   by **approve-on-first-contact** (see *Inbound Response Shapes*,
   `pending_approval`); they can still be edited by hand under *Prove it →
   Advanced*.
-- `requireMention` is forced `false`; n8n has no mention concept.
+- The connection does not name who answers. That is a `channel_message`
+  event with `source.kind: n8n` and this `connectionId` (see
+  `docs/AUTOMATIONS.md`); *Who answers?* lists those automations and adds one. Any
+  number of events can listen (room- and alias-scoped events win over
+  any-room ones), each running an agent or a workflow. A legacy
+  `n8n.inboundDispatch` block is migrated to events on first launch and
+  dropped on the next save.
+- Mentions do not apply; n8n has no mention concept.
 - `remoteTransportPolicy` defaults to `secure_channel_required`. Loopback
   callers and Secure Channel (`/secure/call`) callers are always accepted.
   The sheet only offers `plaintext_allowed` when `callerLocation` is `lan`.
@@ -147,7 +149,8 @@ Rules (`AgentChannelN8nEnvelope.parse`):
 | Status | Body | Meaning |
 | --- | --- | --- |
 | `202` | `{"status":"accepted","event_id","dispatch":"dispatched","task_id","session_id","poll_url"}` | Stored and dispatched. `task_id == session_id` (deterministic from the session partition). |
-| `202` | `{"status":"accepted","dispatch":"suppressed:<reason>", ...}` | Stored but not dispatched (inbound dispatch disabled, no target, etc.). Polling returns `404` until a dispatch exists. |
+| `202` | `{"status":"accepted","event_id","dispatch":"fired"}` | Only workflow events claimed the envelope. There is no chat task to poll; the runs are on the event's **Runs** list, and the output is pushed to `outbound.webhookURL` when the event replies. |
+| `202` | `{"status":"accepted","dispatch":"suppressed:<reason>", ...}` | Stored but not dispatched (no enabled event for this connection — `no_event_configured` — or the event refused the fire). Polling returns `404` until a dispatch exists. |
 | `202` | `{"status":"rejected","event_id","reason":"pending_approval"}` | Secret verified and envelope parsed, but `conversation_id` / `sender.id` are not allowlisted yet. The identity is recorded in `AgentChannelN8nPendingContactCenter` (session-scoped, max 20 per connection) and shown under *Prove it → Who may speak* as **Allow / Deny**. Allow appends both ids to the allowlists via `approveN8nContact`; the workflow is then re-run. Nothing dispatches before approval. An identity denied this session falls back to the bare reason below. |
 | `202` | `{"status":"rejected","event_id","reason":"sender_not_allowlisted"}` | Authorization denied; audit row written, no dispatch. Also `room_not_allowlisted` (both only after a session-scoped Deny), `space_not_allowlisted`, `bot_message_denied`. |
 | `200` | `{"status":"duplicate","event_id","task_id","session_id","poll_url"}` | Replayed `event_id`; no new task or store row. |
@@ -253,7 +256,8 @@ osrs-n8n-1.<base64url(compact JSON, sorted keys)>
   `needsExposeToNetwork` / `needsPlaintextOrAgent` (LAN) — and the Pair card
   shows the blocker with a jump to the step that clears it. `make` returns
   `nil` when there is no URL for the location.
-- `addr` is the address of the local agent chosen in *Who answers?*. When
+- `addr` is the address of the first local agent an event for this
+  connection runs (*Who answers?*). When
   present the node speaks **Secure Channel** to every candidate: it pins
   `addr` in the `/secure/session` handshake and wraps ping, inbound and poll
   in `/secure/call`. That satisfies `secure_channel_required` from anywhere —
@@ -329,8 +333,9 @@ computed over the exact body bytes with the same connection secret. Verify it
 in n8n with `crypto.createHmac('sha256', secret).update(rawBody).digest('hex')`.
 
 The relay reply handler pushes the agent's reply automatically only when
-`outbound.webhookURL` is set **and** `inboundDispatch.autoReplyEnabled` is on;
-otherwise replies stay poll-only.
+`outbound.webhookURL` is set **and** the answering event has *Send the
+agent's reply without asking* on (workflow events: *Send the workflow's
+output back to the conversation*); otherwise replies stay poll-only.
 
 **C2 note:** the custom runner's blocked-host policy applies unchanged and the
 push path is **HTTPS-only** (the preset never opts into `allowInsecureHTTP`,
@@ -407,7 +412,7 @@ in the node repo.
   reason).
 - **Verify incoming event** waits for the next terminal activity event for
   the connection, identical to the Telegram/Slack flow.
-- **Activity / Audit workbench** — stages `received → stored → dispatched`
+- **Diagnostics / Automations History** — stages `received → stored → dispatched`
   (then `agent_replied` when auto-reply is off) or `rejected` /
   `dispatch_suppressed` / `failed`, keyed by `event_id`.
 - `agent_channel_diagnostics` includes the ingress health snapshot under

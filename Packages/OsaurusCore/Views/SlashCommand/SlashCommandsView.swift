@@ -14,65 +14,44 @@ struct SlashCommandsView: View {
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
-    @State private var isCreating = false
+    /// The open create sheet, carrying its starting values.
+    @State private var newCommandDraft: SlashCommand? = nil
     @State private var editingCommand: SlashCommand? = nil
-    @State private var hasAppeared = false
 
     var body: some View {
-        VStack(spacing: 0) {
+        SettingsPage {
             headerView
-                .managerHeaderEntrance(hasAppeared: hasAppeared)
-
-            Spacer().frame(height: 2)
-
-            ZStack {
-                if registry.customCommands.isEmpty {
-                    SettingsEmptyState(
-                        icon: "command",
-                        title: L("Create Your First Command"),
-                        subtitle: L(
-                            "Slash commands let you insert reusable prompts from the chat input by typing /name."
-                        ),
-                        examples: [
-                            .init(
-                                icon: "globe",
-                                title: L("/translate"),
-                                description: L("Please translate the following to Spanish:")
-                            ),
-                            .init(
-                                icon: "doc.text",
-                                title: L("/summarize"),
-                                description: L("Summarize the following in 3 bullet points:")
-                            ),
-                            .init(
-                                icon: "magnifyingglass",
-                                title: L("/review"),
-                                description: L("Review this code for bugs and improvements:")
-                            ),
-                        ],
-                        primaryAction: .init(
-                            title: L("New Command"),
-                            icon: "plus",
-                            handler: { isCreating = true }
-                        ),
-                        hasAppeared: hasAppeared
+        } content: {
+            if registry.customCommands.isEmpty {
+                SettingsEmptyState(
+                    icon: "command",
+                    title: "Create Your First Command",
+                    subtitle: L(
+                        "Slash commands let you insert reusable prompts from the chat input by typing /name."
+                    ),
+                    examples: [
+                        exampleCommand("globe", L("/translate"), L("Please translate the following to Spanish:")),
+                        exampleCommand("doc.text", L("/summarize"), L("Summarize the following in 3 bullet points:")),
+                        exampleCommand(
+                            "magnifyingglass", L("/review"), L("Review this code for bugs and improvements:")),
+                    ],
+                    primaryAction: .init(
+                        title: L("New Command"),
+                        icon: "plus",
+                        handler: { newCommandDraft = SlashCommand(name: "") }
                     )
-                } else {
-                    commandList
+                )
+            } else {
+                SettingsGroup {
+                    ForEach(registry.customCommands) { cmd in
+                        commandRow(cmd)
+                    }
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
-        .onAppear {
-            withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
-                hasAppeared = true
-            }
-        }
-        .sheet(isPresented: $isCreating) {
-            SlashCommandEditorSheet(command: nil) { cmd in
+        .sheet(item: $newCommandDraft) { draft in
+            SlashCommandEditorSheet(command: nil, draft: draft) { cmd in
                 registry.create(
                     name: cmd.name,
                     description: cmd.description,
@@ -91,99 +70,42 @@ struct SlashCommandsView: View {
     // MARK: - Header
 
     private var headerView: some View {
-        ManagerHeaderWithActions(
-            title: L("Commands"),
-            subtitle: L("Reusable prompt shortcuts invoked by typing / in the chat input"),
-            count: registry.customCommands.isEmpty ? nil : registry.customCommands.count
-        ) {
-            HeaderPrimaryButton("New Command", icon: "plus") {
-                isCreating = true
+        SettingsPageHeader(
+            title: "Commands",
+            subtitle: "Reusable prompt shortcuts invoked by typing / in the chat input",
+            count: registry.customCommands.count,
+            primary: {
+                SettingsButton(.primary, "New Command", icon: "plus") {
+                    newCommandDraft = SlashCommand(name: "")
+                }
             }
-        }
+        )
     }
 
     // MARK: - Command List
 
-    private var commandList: some View {
-        ScrollView {
-            LazyVStack(spacing: 8) {
-                ForEach(registry.customCommands) { cmd in
-                    commandRow(cmd)
-                }
-            }
-            .padding(20)
+    /// An example that opens the editor filled in with it.
+    private func exampleCommand(_ icon: String, _ title: String, _ template: String) -> SettingsEmptyState.Example {
+        .init(icon: icon, title: title, description: template) {
+            newCommandDraft = SlashCommand(
+                name: String(title.drop(while: { $0 == "/" })),
+                icon: icon,
+                template: template
+            )
         }
     }
 
     private func commandRow(_ cmd: SlashCommand) -> some View {
-        GlassListRow {
-            HStack(spacing: 12) {
-                // Icon badge
-                ZStack {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(theme.accentColor.opacity(0.12))
-                        .frame(width: 36, height: 36)
-                    Image(systemName: cmd.icon)
-                        .font(.system(size: 15, weight: .medium))
-                        .foregroundColor(theme.accentColor)
-                }
-
-                // Name + description + template
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text("/\(cmd.name)")
-                            .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                            .foregroundColor(theme.primaryText)
-                    }
-                    if !cmd.description.isEmpty {
-                        Text(cmd.description)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.secondaryText)
-                    }
-                    if let template = cmd.template, !template.isEmpty {
-                        Text(template)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(theme.tertiaryText)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                    }
-                }
-
-                Spacer()
-
-                // Action buttons
-                HStack(spacing: 4) {
-                    Button {
-                        editingCommand = cmd
-                    } label: {
-                        Image(systemName: "pencil")
-                            .font(.system(size: 13))
-                            .foregroundColor(theme.secondaryText)
-                            .frame(width: 30, height: 30)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(theme.tertiaryBackground)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .localizedHelp("Edit command")
-
-                    Button {
-                        registry.delete(id: cmd.id)
-                    } label: {
-                        Image(systemName: "trash")
-                            .font(.system(size: 13))
-                            .foregroundColor(theme.errorColor)
-                            .frame(width: 30, height: 30)
-                            .background(
-                                RoundedRectangle(cornerRadius: 6)
-                                    .fill(theme.errorColor.opacity(0.08))
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .localizedHelp("Delete command")
-                }
-            }
+        LibraryRow(
+            title: "/\(cmd.name)",
+            subtitle: [cmd.description, cmd.template ?? ""].filter { !$0.isEmpty }.joined(separator: "\n"),
+            action: { editingCommand = cmd }
+        ) {
+            SettingsIconTile(icon: cmd.icon, size: 32)
+        } menu: {
+            Button(L("Edit command")) { editingCommand = cmd }
+            Divider()
+            Button(L("Delete command"), role: .destructive) { registry.delete(id: cmd.id) }
         }
     }
 }

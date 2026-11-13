@@ -6,23 +6,22 @@ import Testing
 @MainActor
 struct ChatExportTimingAvailabilityTests {
     @Test func metadataHydratesPersistedMetrics() async throws {
-        let db = ChatHistoryDatabase()
-        try db.openInMemory()
-        defer { db.close() }
-        let full = ChatSessionData(
-            title: "Restored chat",
-            turns: [ChatTurnData(role: .assistant, content: "Answer", generationTokensPerSecond: 42)]
-        )
-        try db.saveSession(full)
-        let metadata = try #require(db.loadMetadata(ids: [full.id]).first)
-        #expect(metadata.turns.isEmpty)
-        var requested: UUID?
-        let available = await ChatSessionExportCoordinator.hasTimingData(metadataSession: metadata) { id in
-            requested = id
-            return db.loadSession(id: id)
+        try await ChatHistoryTestStorage.run {
+            let full = ChatSessionData(
+                title: "Restored chat",
+                turns: [ChatTurnData(role: .assistant, content: "Answer", generationTokensPerSecond: 42)]
+            )
+            ChatSessionStore.save(full)
+            let metadata = try #require(ChatSessionStore.loadMetadata(ids: [full.id]).first)
+            #expect(metadata.turns.isEmpty)
+            var requested: UUID?
+            let available = await ChatSessionExportCoordinator.hasTimingData(metadataSession: metadata) { id in
+                requested = id
+                return ChatSessionStore.load(id: id)
+            }
+            #expect(requested == metadata.id)
+            #expect(available)
         }
-        #expect(requested == metadata.id)
-        #expect(available)
     }
 
     @Test func loadedMetricsDoNotNeedAnotherRead() async {

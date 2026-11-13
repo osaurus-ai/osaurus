@@ -15,14 +15,14 @@ The mental model is a redaction gate sitting between the chat surface and any re
 
 ## Getting Started
 
-1. Open the Management window (`⌘ Shift M`) → **Privacy**. The four sub-tabs (**Overview** / **Rules** / **Providers** / **Model**) are available immediately — no download required.
-2. Flip **Enable Privacy Filter** on in Overview. The deterministic regex layer (built-ins + any presets/custom rules you enable) is now active with zero model download.
-3. *(Optional)* To also catch names, addresses, and free-form secrets, install the AI model: go to the **Model** tab, click **Install** — the ~2.8 GB bundle streams from Hugging Face and is SHA-256 verified file-by-file — then turn **AI detection** on in Overview. The toggle stays disabled (with an inline install prompt) until the bundle is verified.
+1. Open Settings… (`⌘,`) → **Privacy & Security** → **Privacy Filter**. The filter and its **Detection Rules** page are available immediately — no download required.
+2. Turn on **Scrub Personal Data Before Sending to Cloud Providers**. The deterministic regex layer (built-ins + any presets/custom rules you enable) is now active with zero model download.
+3. *(Optional)* To also catch names, addresses, and free-form secrets, install the AI model in **Local Models → Privacy Detection** — the ~2.8 GB bundle streams from Hugging Face and is SHA-256 verified file-by-file — then turn **AI Detection (On-Device Model)** on in Privacy Filter. The toggle stays disabled (with an inline install prompt) until the bundle is verified.
 4. Send a chat message that contains PII — a review sheet appears showing each detected entity, the surrounding context, and a side-by-side scrubbed preview with hover-to-reveal originals. Approve → message scrubs and sends → reply streams back with placeholders unscrubbed inline.
 
 Both toggles are sticky: they persist synchronously to `~/.osaurus/config/privacy-filter.json` so Cmd-Q immediately after toggling can't lose the state.
 
-> Want to see exactly what your rules catch before sending anything real? The **Rules** tab has a built-in **dry-run tester** — paste sample text and it shows every entity the live rule set (plus the AI model when it's on and loaded) would redact, with the placeholder each one gets.
+> Want to see exactly what your rules catch before sending anything real? The **Detection Rules** page has a built-in tester (**Test Your Rules**) — paste sample text and it shows every entity the live rule set (plus the AI model when it's on and loaded) would redact, with the placeholder each one gets.
 
 ---
 
@@ -146,7 +146,7 @@ Both modes share two extras:
 - **Case sensitivity** (`caseSensitive`, default `true`) — uncheck to match case-insensitively (compiles with `.caseInsensitive`). Defaults to `true` to preserve the historical behavior.
 - **Custom placeholder label** (`placeholderLabel`, optional) — mint `[CUSTOMER_1]` instead of the category default `[SECRET_1]`. Sanitized to uppercase ASCII letters so the inbound `StreamingUnscrubber` (which only recognizes `[A-Z]+_<digits>` tokens) can still restore it.
 
-A live test panel in the editor shows the generated pattern and what it matches against sample text as you type. The **Rules** tab also has an all-rules dry-run tester (see Getting Started) that runs the entire effective rule set at once.
+A live test panel in the editor shows the generated pattern and what it matches against sample text as you type. The **Detection Rules** page also has an all-rules tester (**Test Your Rules**) (see Getting Started) that runs the entire effective rule set at once.
 
 ### 4. On-device classifier (opt-in)
 
@@ -190,7 +190,7 @@ The pipeline throws — never silently sends — on six distinct failure modes. 
 | Error case                | When it fires                                                                                          | What the user sees                                                  |
 | ------------------------- | ------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------- |
 | `.reviewCanceled`         | User dismissed the review sheet or the awaiting task was cancelled                                     | "Privacy Filter: review canceled."                                  |
-| `.engineUnavailable(d)`   | **AI detection on** but model bundle is missing / failed to load (regex-only sends never hit this — they don't load the model) | Points at **Settings → Privacy** to re-download or turn AI detection off |
+| `.engineUnavailable(d)`   | **AI detection on** but model bundle is missing / failed to load (regex-only sends never hit this — they don't load the model) | Points at **Settings → Privacy & Security** to re-download (Local Models → Privacy Detection) or turn AI detection off |
 | `.scrubNoOp(count)`       | User approved N entities but the substitution produced zero changes (`entity.original` doesn't match the wire text — almost always a bug) | "N approved redaction(s) didn't apply. Please report."              |
 | `.scrubLeaked(counts)`    | Post-scrub re-scan of the outbound payload found PII the substitution missed. Send is blocked         | Per-category counts of what leaked, no raw values                   |
 | `.reviewRequiresInteractive(count)` | A non-interactive request (HTTP API, plugin, P2P) hit fresh detections with `requireReviewForNonInteractive` on. The review sheet is never presented for non-UI origins — even when a chat window is open — so the send fails closed instead of hanging the client | A 422 (`privacy_filter_review_required`) telling the client to approve in the app chat, flip the setting, or disable the filter for the provider |
@@ -240,40 +240,37 @@ A paired phone starting a voice call on a cloud model the filter runs for asks t
 ## Settings Surface
 
 ```
-Privacy (Management → Privacy)  ← tabs always render; no model required
-└── ManagerHeaderWithTabs
-    │
-    ├── Overview
-    │   ├── Enable Privacy Filter (master toggle — regex layer, no download)
-    │   ├── AI detection
-    │   │   ├── (model ready)   toggle for aiDetectionEnabled
-    │   │   └── (no model)      disabled + inline "Install" link → Model tab
-    │   ├── (no-detector note)  shown when enabled but nothing can detect
-    │   │                       (AI off + all built-ins off + no presets/customs)
-    │   ├── Skip Code Blocks (fenced + inline)
-    │   ├── Always Approve by Default (skip the sheet per-session)
-    │   └── Conversation Privacy
-    │       └── Forget Redactions in Every Conversation
-    │
-    ├── Rules
-    │   ├── Detection Patterns (4 built-in toggles)
-    │   ├── Preset Rules (collapsible, 5 patterns, all opt-in)
-    │   ├── Custom Rules (Simple builder / Regex editor sheet)
-    │   └── Dry-run tester (paste text → see every rule's hits + placeholder)
-    │
-    ├── Providers
-    │   ├── per-provider override toggles (RemoteProvider.id keyed)
-    │   └── empty state when no providers — points at Remote Providers tab
-    │
-    └── Model
-        ├── (not installed) PrivacyInstallHero
-        │   88pt accent-glow circle + state-driven icon
-        │   "Install the on-device detection model"
-        │   3 benefit cards + Install/Cancel/Retry CTA + progress
-        └── (installed) Status card with bundle version + Re-verify + Remove
+Settings → Privacy & Security  ← drill-in pages always render; no model required
+├── Data Collection (Share Anonymous Usage Data, Send Crash Reports)
+│
+├── Privacy Filter  (PrivacyTab.overview)
+│   ├── Filter
+│   │   ├── Scrub Personal Data Before Sending to Cloud Providers (master toggle — regex layer, no download)
+│   │   ├── AI Detection (On-Device Model)
+│   │   │   ├── (model ready)   toggle for aiDetectionEnabled
+│   │   │   └── (no model)      disabled + link → Local Models → Privacy Detection
+│   │   ├── (no-detector note)  shown when enabled but nothing can detect
+│   │   │                       (AI off + all built-ins off + no presets/customs)
+│   │   ├── Skip Code Blocks (fenced + inline)
+│   │   └── Always Approve by Default (skip the sheet per-session)
+│   ├── Per-Provider (override toggles keyed by RemoteProvider.id)
+│   ├── Conversation Privacy → Forget Redactions in Every Conversation
+│   ├── Advanced → Require Review for Background Requests
+│   └── Activity Log (Keep Activity History, Store Prompts and Responses, Review Activity in Insights)
+│
+├── Detection Rules  (PrivacyTab.rules)
+│   ├── Detection Patterns (built-in toggles)
+│   ├── My Regions
+│   ├── Preset Rules (all opt-in)
+│   ├── Custom Rules (Simple builder / Regex editor sheet)
+│   └── Test Your Rules (paste text → see every rule's hits + placeholder)
+│
+└── Data & Storage  (PrivacyTab.storage — encryption, backup, file history; see STORAGE.md)
+
+Local Models → Privacy Detection  ← install, re-verify, remove the detection model
 ```
 
-The tabbed surface renders immediately — the deterministic regex layer needs no model, so gating the whole UI behind a 2.8 GB download would hide a fully working feature. The install hero now lives inside the **Model** tab as its empty state (matching `SettingsEmptyState` visual weight — Schedules, Watchers, Skills — so the onboarding language is consistent across the app). The **AI detection** toggle in Overview is the only control that requires the bundle: it's disabled with an inline install link until the model verifies, and removing the model flips `aiDetectionEnabled` back off so the UI can't claim AI detection while the bundle is gone.
+The pages render immediately — the deterministic regex layer needs no model, so gating the whole UI behind a 2.8 GB download would hide a fully working feature. The detection model is installed and managed in **Local Models → Privacy Detection** (older links to the `model` sub-tab forward there), and the model in use is chosen in **Models → Model Defaults → Privacy Detection**. The **AI Detection** toggle is the only control that requires the bundle: it's disabled with a link to install until the model verifies, and removing the model flips `aiDetectionEnabled` back off so the UI can't claim AI detection while the bundle is gone.
 
 ---
 
@@ -414,7 +411,7 @@ the limitation stays documented above and in the master-toggle copy.
 
 **Review sheet appears but the send goes unscrubbed.** The sheet's Send button used to be wired through the `.approved` array but didn't always re-run the scrub when the user toggled individual entities off and then back on. Confirm by checking **Insights → Server Request** for placeholders. If you see raw PII in the wire body, file an issue with the request log — the `WireTransportProbe` capture is the smoking-gun evidence.
 
-**"Privacy Filter is enabled but the on-device model isn't available."** You have **AI detection** on but the bundle isn't installed or failed to verify. Two fixes: (a) turn **AI detection** off in **Privacy → Overview** to fall back to the regex-only layer (no model needed), or (b) open **Privacy → Model** and click **Re-verify**. If the verifier reports mismatches, the easiest path is to delete `~/.osaurus/aux-models/openai-privacy-filter-bf16-v1/` and re-install from the **Model** tab.
+**"Privacy Filter is enabled but the on-device model isn't available."** You have **AI detection** on but the bundle isn't installed or failed to verify. Two fixes: (a) turn **AI Detection (On-Device Model)** off in **Privacy & Security → Privacy Filter** to fall back to the regex-only layer (no model needed), or (b) open **Local Models → Privacy Detection** and re-verify the model. If the verifier reports mismatches, the easiest path is to delete `~/.osaurus/aux-models/openai-privacy-filter-bf16-v1/` and re-install it from **Local Models → Privacy Detection**.
 
 **Per-category leak block is too aggressive.** The post-scrub invariant re-scans for the same categories as detection, so if you've enabled `awsKey` as a preset and your prompt legitimately contains a string that matches the AWS-key heuristic but ISN'T a key, the send blocks. Disable the preset or refine its pattern via a custom rule with a tighter regex.
 

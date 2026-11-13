@@ -12,9 +12,30 @@ struct CreditsView: View {
     private static let activityPageSize = 10
     private static let ledgerMatchLimit = 500
 
-    private var theme: ThemeProtocol { themeManager.currentTheme }
+    private var theme: any ThemeProtocol {
+        if let inspectionTheme { return inspectionTheme }
+        return themeManager.currentTheme
+    }
 
-    @State private var hasAppeared = false
+    private var inspectionTheme: (any ThemeProtocol)?
+    var inspectionBalance: InspectorWalletBalance?
+    private var displayedFrozen: Bool {
+        if let value = inspectionBalance { return value.frozen }
+        return accountService.isFrozen
+    }
+    private var displayedBalance: String {
+        if let value = inspectionBalance { return value.value }
+        return accountService.formattedBalanceValue
+    }
+    private var displayedLoading: Bool {
+        if let value = inspectionBalance { return value.loading }
+        return accountService.isLoadingBalance
+    }
+    private var displayedError: String? {
+        if let value = inspectionBalance { return value.error }
+        return accountService.lastError
+    }
+
     @State private var timelinePageIndex = 0
     @State private var ledgerEntries: [RouterBillingEntry] = []
     @State private var ledgerTotalCount = 0
@@ -24,7 +45,6 @@ struct CreditsView: View {
     @State private var showTopUpSheet = false
     @State private var showDisableRouterConfirm = false
     @State private var showRouterUsageCenter = false
-    @State private var allowUnkeyedLoopbackSpend = OsaurusRouter.allowsUnkeyedLoopbackSpend
 
     /// User master switch state. When off, the Credits screen hides the
     /// balance/activity cards (the router is no longer polled) and shows the
@@ -40,37 +60,30 @@ struct CreditsView: View {
     private var canAddCredits: Bool { routerEnabled && OsaurusIdentity.existsCached() }
 
     var body: some View {
-        VStack(spacing: 0) {
-            headerView
-                .managerHeaderEntrance(hasAppeared: hasAppeared)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    if routerEnabled {
-                        if !OsaurusIdentity.existsCached() {
-                            identityRequiredCard
-                        }
-                        balanceCard
-                        CreditsRedeemCodeCard(isEnabled: canAddCredits)
-                        webSearchCard
-                        activityCard
-                    } else {
-                        routerOffCard
-                    }
-                    routerToggleFooter
-                    if routerEnabled {
-                        localAPISpendFooter
-                    }
-                }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 24)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-            }
-            .opacity(hasAppeared ? 1 : 0)
+        if showRouterUsageCenter {
+            RouterAccountUsageCenterView()
+                .settingsBackDestination(L("Wallet & Credits"), verbatim: true) { showRouterUsageCenter = false }
+        } else {
+            creditsPage
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
-        .environment(\.theme, themeManager.currentTheme)
+    }
+
+    private var creditsPage: some View {
+        SettingsPage {
+            headerView
+        } content: {
+            routerSection
+            if routerEnabled {
+                if !OsaurusIdentity.existsCached() {
+                    identityRequiredCard
+                }
+                balanceCard
+                CreditsRedeemCodeCard(isEnabled: canAddCredits)
+                webSearchCard
+                activityCard
+            }
+        }
+        .environment(\.theme, theme)
         .task {
             await refreshCredits(resetPages: true)
         }
@@ -89,19 +102,9 @@ struct CreditsView: View {
                 Task { await refreshCredits(resetPages: true) }
             }
         }
-        .onAppear {
-            withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
-                hasAppeared = true
-            }
-        }
         .sheet(isPresented: $showTopUpSheet) {
             CreditsTopUpSheet()
-                .environment(\.theme, themeManager.currentTheme)
-        }
-        .sheet(isPresented: $showRouterUsageCenter) {
-            RouterAccountUsageCenterView()
-                .environment(\.theme, themeManager.currentTheme)
-                .fittedSheetFrame(width: 980, height: 760)
+                .environment(\.theme, theme)
         }
         .confirmationDialog(
             Text("Turn off Osaurus Router?", bundle: .module),
@@ -126,140 +129,62 @@ struct CreditsView: View {
     }
 
     private var headerView: some View {
-        ManagerHeaderWithActions(
-            title: L("Credits"),
-            subtitle: L("Your wallet for Osaurus-routed services - add credits and track every request and top-up.")
-        ) {
-            HeaderIconButton(
-                "arrow.clockwise",
-                isLoading: accountService.isLoadingBalance || accountService.isLoadingUsage || isLoadingLedger,
-                help: "Refresh"
-            ) {
-                Task { await refreshCredits(resetPages: true) }
+        SettingsPageHeader(
+            title: "Wallet & Credits",
+            subtitle: "Osaurus Router, balance, top-ups and search credits.",
+            onRefresh: routerEnabled ? { Task { await refreshCredits(resetPages: true) } } : nil,
+            isRefreshing: accountService.isLoadingBalance || accountService.isLoadingUsage || isLoadingLedger,
+            utilities: {
+                SettingsIconButton("chart.bar.xaxis", help: "Account details") {
+                    withAnimation(theme.motion.quick) { showRouterUsageCenter = true }
+                }
+                .disabled(!routerEnabled)
+            },
+            primary: {
+                SettingsButton(.primary, "Add Credits", icon: "creditcard.fill") {
+                    showTopUpSheet = true
+                }
+                .disabled(!canAddCredits)
             }
-            .disabled(!routerEnabled)
-            .opacity(routerEnabled ? 1 : 0.55)
-            HeaderIconButton(
-                "chart.bar.xaxis",
-                help: "Account details"
-            ) {
-                showRouterUsageCenter = true
-            }
-            .disabled(!routerEnabled)
-            .opacity(routerEnabled ? 1 : 0.55)
-            HeaderPrimaryButton("Add credits", icon: "creditcard.fill") {
-                showTopUpSheet = true
-            }
-            .disabled(!canAddCredits)
-            .opacity(canAddCredits ? 1 : 0.55)
-        }
+        )
     }
 
     private var identityRequiredCard: some View {
-        card {
-            HStack(alignment: .top, spacing: 14) {
-                Image(systemName: "person.badge.key.fill")
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundColor(theme.warningColor)
-                    .frame(width: 28)
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Set up your Osaurus Identity", bundle: .module)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                    Text(
-                        "The router uses your identity master key as your billing account. Create or restore an identity before adding credits or calling Osaurus models.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                    Button {
-                        ManagementStateManager.shared.selectedTab = .identity
-                    } label: {
-                        Text("Open Identity", bundle: .module)
-                            .font(.system(size: 12, weight: .semibold))
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-                Spacer()
+        SettingsCallout(
+            icon: "person.badge.key.fill",
+            title: "Set up your Osaurus Identity",
+            message:
+                "The router uses your identity master key as your billing account. Create or restore an identity before adding credits or calling Osaurus models.",
+            tone: .warning
+        ) {
+            SettingsButton(.secondary, "Open Identity", size: .compact) {
+                ManagementStateManager.shared.selectedTab = .identity
             }
         }
     }
 
     // MARK: - Router master switch
 
-    /// Quiet, bottom-anchored footer that always renders. Deliberately
-    /// understated (no card chrome) so it stays discoverable without inviting a
-    /// casual opt-out: turning the router off routes through a confirmation,
-    /// turning it back on is a single tap.
-    private var routerToggleFooter: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Osaurus Router", bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                Text(
+    /// Always renders, below everything else: turning the router off routes
+    /// through a confirmation, turning it back on is a single tap.
+    /// The master switch for everything on this page. While it is off the
+    /// wallet cards are hidden and the callout explains what that means.
+    private var routerSection: some View {
+        SettingsSection(title: "Osaurus Router") {
+            SettingsToggle(
+                title: "Use Osaurus Router",
+                description:
                     "Lets Osaurus transact on your behalf - cloud models, provider load-balancing, and future routed services; requests spend credits. Keeping it on helps support Osaurus development - thank you.",
-                    bundle: .module
-                )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 12)
-
-            Toggle("", isOn: routerToggleBinding)
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .tint(theme.accentColor)
-        }
-        .padding(.top, 8)
-    }
-
-    /// Opt-in for key-less loopback Router spend. Off by default so a local
-    /// process can't spend credits through the unauthenticated loopback API;
-    /// callers with a valid access key are always allowed regardless.
-    private var localAPISpendFooter: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Allow local API access without a key", bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                Text(
-                    "Lets local processes route requests through the Osaurus Router (spending credits) via the HTTP API without an access key. Keep this off unless you trust every process on this Mac.",
-                    bundle: .module
-                )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Spacer(minLength: 12)
-
-            Toggle(
-                "",
-                isOn: Binding(
-                    get: { allowUnkeyedLoopbackSpend },
-                    set: { newValue in
-                        allowUnkeyedLoopbackSpend = newValue
-                        OsaurusRouter.setAllowsUnkeyedLoopbackSpend(newValue)
-                    }
-                )
+                anchorId: "credits.router",
+                isOn: routerToggleBinding
             )
-            .labelsHidden()
-            .toggleStyle(.switch)
-            .controlSize(.small)
-            .tint(theme.accentColor)
+            if !routerEnabled {
+                routerOffCard
+            }
         }
-        .padding(.top, 4)
     }
 
-    /// Drives the footer switch. Enabling is immediate; disabling defers to the
+    /// Drives the router switch. Enabling is immediate; disabling defers to the
     /// confirmation dialog and leaves the published value (and the switch) on
     /// until the user confirms, so an accidental flip is recoverable.
     private var routerToggleBinding: Binding<Bool> {
@@ -277,308 +202,172 @@ struct CreditsView: View {
 
     /// Shown in place of the balance/activity cards while the router is off.
     private var routerOffCard: some View {
-        card {
-            HStack(alignment: .top, spacing: 14) {
-                Image(systemName: "bolt.slash.fill")
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                    .frame(width: 28)
-
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Osaurus Router is off", bundle: .module)
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                    Text(
-                        "Osaurus is running fully local and free. Cloud models routed through Osaurus are hidden, and no requests are sent to Osaurus servers. Turn it back on below whenever you like.",
-                        bundle: .module
-                    )
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                }
-                Spacer()
-            }
-        }
+        SettingsCallout(
+            icon: "bolt.slash.fill",
+            title: "Osaurus Router is off",
+            message:
+                "Osaurus is running fully local and free. Cloud models routed through Osaurus are hidden, and no requests are sent to Osaurus servers. Turn it back on whenever you like."
+        )
     }
 
-    /// The wallet card: same visual language as the composer wallet panel
-    /// (uppercase eyebrow, monospaced hero balance, "Available balance"
-    /// microcopy, soft accent wash) scaled up for the management page.
+    /// Same language as the composer wallet panel (monospaced hero balance,
+    /// "Available balance" microcopy) scaled up for the page.
     private var balanceCard: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "creditcard.fill")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundColor(theme.accentColor.opacity(0.85))
-                        Text("Wallet", bundle: .module)
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(theme.secondaryText)
-                            .textCase(.uppercase)
-                            .kerning(0.8)
+        SettingsSection(title: "Wallet") {
+            if displayedFrozen {
+                StatusChip(L("Paused"), tone: .warning, icon: "pause.circle.fill")
+            } else if OsaurusIdentity.existsCached() {
+                StatusChip(L("Active"), tone: .success, icon: "checkmark.circle.fill")
+            }
+        } content: {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
+                HStack(alignment: .firstTextBaseline, spacing: theme.space.s8) {
+                    HStack(alignment: .firstTextBaseline, spacing: theme.space.s6) {
+                        Text(verbatim: displayedBalance)
+                            .catalogTypography(.heading, theme: theme, fallback: SettingsFont.detailTitle.monospacedDigit())
+                            .foregroundColor(
+                                displayedFrozen ? theme.status.warning.foreground : theme.text.primary
+                            )
+                            .contentTransition(.numericText())
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("credits", bundle: .module)
+                            .catalogTypography(.caption, theme: theme, fallback: SettingsFont.rowTitle)
+                            .foregroundColor(theme.text.secondary)
                     }
-                    .padding(.bottom, 6)
-
-                    HStack(alignment: .firstTextBaseline, spacing: 10) {
-                        // Hero figure only; "credits" rides along as a caption
-                        // so large balances don't blow out the 32pt monospaced
-                        // string.
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
-                            Text(verbatim: accountService.formattedBalanceValue)
-                                .font(.system(size: 32, weight: .semibold, design: .monospaced))
-                                .foregroundColor(
-                                    accountService.isFrozen ? theme.warningColor : theme.primaryText
-                                )
-                                .contentTransition(.numericText())
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.6)
-                            Text("credits", bundle: .module)
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundColor(theme.secondaryText)
-                        }
-                        if accountService.isLoadingBalance {
-                            ProgressView()
-                                .scaleEffect(0.7)
-                        }
+                    if displayedLoading {
+                        SettingsSpinner()
                     }
-
-                    if accountService.isFrozen {
+                }
+                Group {
+                    if displayedFrozen {
                         Text("Account paused - add credits to resume.", bundle: .module)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
                     } else {
                         Text("Available balance", bundle: .module)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
                     }
                 }
-
-                Spacer()
-
-                if accountService.isFrozen {
-                    statusPill(L("Paused"), icon: "pause.circle.fill", color: theme.warningColor)
-                } else {
-                    statusPill(L("Active"), icon: "checkmark.circle.fill", color: theme.successColor)
-                }
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
+                Text(
+                    "Credits let Osaurus transact on your behalf - cloud model access today, with more routed services to come.",
+                    bundle: .module
+                )
+                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                .foregroundColor(theme.text.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, theme.space.s6)
             }
 
-            Text(
-                "Credits let Osaurus transact on your behalf - cloud model access today, with more routed services to come.",
-                bundle: .module
-            )
-            .font(.system(size: 12))
-            .foregroundColor(theme.secondaryText)
-            .fixedSize(horizontal: false, vertical: true)
-
-            Divider()
-
-            HStack(spacing: 12) {
-                Label(localized: "Minimum top-up is $5.00", systemImage: "info.circle")
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
-
-                Spacer()
-
-                if accountService.isCreatingCheckout {
-                    ProgressView()
-                        .scaleEffect(0.7)
-                }
-                Button {
+            SettingsRow(title: "Minimum top-up is $5.00", description: "") {
+                SettingsButton(
+                    .primary,
+                    "Add Credits",
+                    icon: "creditcard.fill",
+                    isLoading: accountService.isCreatingCheckout,
+                    size: .compact
+                ) {
                     showTopUpSheet = true
-                } label: {
-                    Label(localized: "Add credits", systemImage: "creditcard.fill")
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
                 .disabled(!OsaurusIdentity.existsCached() || accountService.isCreatingCheckout)
             }
 
-            if let error = accountService.lastError, !error.isEmpty {
+            if let error = displayedError, !error.isEmpty {
                 Text(error)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.errorColor)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                    .foregroundColor(theme.status.error.foreground)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(walletCardBackground)
-    }
-
-    /// Card chrome with the wallet panel's accent wash fading from the top.
-    private var walletCardBackground: some View {
-        RoundedRectangle(cornerRadius: 12)
-            .fill(theme.cardBackground)
-            .overlay(
-                LinearGradient(
-                    colors: [theme.accentColor.opacity(0.08), theme.accentColor.opacity(0.01)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 12))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(theme.cardBorder, lineWidth: 1)
-            )
     }
 
     // MARK: - Web search
 
-    /// Dedicated premium web search section: the premium on/off preference,
-    /// search credit balances, the auto-pay switch, and the graceful
-    /// fallback state when credits ran out.
+    /// Premium web search billing: search credit balances, the auto-pay
+    /// switch, and the graceful fallback state when credits ran out. The
+    /// Premium Search on/off switch itself lives only on Web Search.
     private var webSearchCard: some View {
-        card {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .top, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 8) {
-                            Text("Web search", bundle: .module)
-                                .font(.system(size: 15, weight: .semibold))
-                                .foregroundColor(theme.primaryText)
-                            if accountService.webSearchNeedsTopUp {
-                                statusPill(
-                                    L("Using built-in sources"),
-                                    icon: "exclamationmark.circle.fill",
-                                    color: theme.warningColor
-                                )
-                            } else if searchManager.hostedSearchEnabled {
-                                statusPill(
-                                    L("Premium"),
-                                    icon: "magnifyingglass.circle.fill",
-                                    color: theme.accentColor
-                                )
-                            }
-                        }
-                        Text(
-                            "Premium search runs the `web_search` tool through Osaurus - better results with zero setup. Search credits cover requests first; after that, requests bill this wallet. If credits run out, search continues on the built-in sources automatically.",
-                            bundle: .module
-                        )
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                    }
+        SettingsSection(
+            title: "Web Search",
+            subtitle:
+                "Premium search runs the `web_search` tool through Osaurus - better results with zero setup. Search credits cover requests first; after that, requests bill this wallet. If credits run out, search continues on the built-in sources automatically."
+        ) {
+            if accountService.webSearchNeedsTopUp {
+                StatusChip(L("Using built-in sources"), tone: .warning, icon: "exclamationmark.circle.fill")
+            } else if searchManager.hostedSearchEnabled {
+                StatusChip(L("Premium"), tone: .accent, icon: "magnifyingglass.circle.fill")
+            }
+        } content: {
+            SettingsLinkRow(
+                title: "Premium Search",
+                description: searchManager.hostedSearchEnabled
+                    ? "On. Searches go through Osaurus first."
+                    : "Off. Searches use your own providers and the built-in sources.",
+                icon: "arrow.right",
+                actionTitle: "Manage in Web Search"
+            ) {
+                SettingsHighlightCoordinator.shared.request("search.premium")
+                ManagementStateManager.shared.selectedTab = .search
+            }
 
-                    Spacer()
-
-                    Toggle(
-                        "",
-                        isOn: Binding(
-                            get: { searchManager.hostedSearchEnabled },
-                            set: { searchManager.setHostedSearchEnabled($0) }
-                        )
-                    )
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                    .tint(theme.accentColor)
-                }
-
-                if searchManager.hasActiveUserProviderSetup, !searchManager.hostedSearchEnabled {
+            if searchManager.hostedSearchEnabled {
+                if accountService.webSearchNeedsTopUp {
                     Label {
                         Text(
-                            "You have your own search providers configured - they keep handling searches while premium is off.",
+                            "Premium search ran out of credits and is quietly using the built-in sources. Add credits to resume - nothing else to reset.",
                             bundle: .module
                         )
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                     } icon: {
-                        Image(systemName: "curlybraces")
-                            .font(.system(size: 10))
-                            .foregroundColor(theme.tertiaryText)
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .glyphSize(.micro)
+                            .foregroundColor(theme.status.warning.foreground)
                     }
                 }
 
-                if searchManager.hostedSearchEnabled {
-                    if accountService.webSearchNeedsTopUp {
-                        Label {
+                if let grants = accountService.webSettings?.grants {
+                    HStack(spacing: theme.space.s8) {
+                        if let search = grants.search, search.includedTotal > 0 {
+                            grantMeter(
+                                title: L("Search credits"),
+                                allowance: search,
+                                icon: "magnifyingglass"
+                            )
+                        }
+                        if let contents = grants.contents, contents.includedTotal > 0 {
+                            grantMeter(
+                                title: L("Extract credits"),
+                                allowance: contents,
+                                icon: "doc.text.magnifyingglass"
+                            )
+                        }
+                        if (grants.search?.includedTotal ?? 0) == 0
+                            && (grants.contents?.includedTotal ?? 0) == 0
+                        {
                             Text(
-                                "Premium search ran out of credits and is quietly using the built-in sources. Add credits to resume - nothing else to reset.",
+                                "Searches bill your balance at cost.",
                                 bundle: .module
                             )
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.secondaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                        } icon: {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .font(.system(size: 10))
-                                .foregroundColor(theme.warningColor)
+                            .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                            .foregroundColor(theme.text.tertiary)
                         }
+                        Spacer()
                     }
+                }
 
-                    if let grants = accountService.webSettings?.grants {
-                        HStack(spacing: 10) {
-                            if let search = grants.search, search.includedTotal > 0 {
-                                grantMeter(
-                                    title: L("Search credits"),
-                                    allowance: search,
-                                    icon: "magnifyingglass"
-                                )
+                if let settings = accountService.webSettings {
+                    SettingsToggle(
+                        title: "Use Osaurus Balance When Search Credits Run Out",
+                        description:
+                            "Off means premium search stops at your remaining credits; everything else uses the built-in sources.",
+                        isOn: Binding(
+                            get: { settings.autoPayEnabled },
+                            set: { newValue in
+                                Task { await accountService.setWebAutoPay(newValue) }
                             }
-                            if let contents = grants.contents, contents.includedTotal > 0 {
-                                grantMeter(
-                                    title: L("Extract credits"),
-                                    allowance: contents,
-                                    icon: "doc.text.magnifyingglass"
-                                )
-                            }
-                            if (grants.search?.includedTotal ?? 0) == 0
-                                && (grants.contents?.includedTotal ?? 0) == 0
-                            {
-                                Text(
-                                    "Searches bill your balance at cost.",
-                                    bundle: .module
-                                )
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.tertiaryText)
-                            }
-                            Spacer()
-                        }
-                    }
-
-                    if let settings = accountService.webSettings {
-                        Divider()
-                        HStack(alignment: .center, spacing: 12) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(
-                                    "Use Osaurus balance when search credits run out",
-                                    bundle: .module
-                                )
-                                .font(.system(size: 12, weight: .semibold))
-                                .foregroundColor(theme.secondaryText)
-                                Text(
-                                    "Off means premium search stops at your remaining credits; everything else uses the built-in sources.",
-                                    bundle: .module
-                                )
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.tertiaryText)
-                                .fixedSize(horizontal: false, vertical: true)
-                            }
-
-                            Spacer(minLength: 12)
-
-                            if accountService.isUpdatingWebSettings {
-                                ProgressView().scaleEffect(0.6)
-                            }
-                            Toggle(
-                                "",
-                                isOn: Binding(
-                                    get: { settings.autoPayEnabled },
-                                    set: { newValue in
-                                        Task { await accountService.setWebAutoPay(newValue) }
-                                    }
-                                )
-                            )
-                            .labelsHidden()
-                            .toggleStyle(.switch)
-                            .controlSize(.small)
-                            .tint(theme.accentColor)
-                            .disabled(accountService.isUpdatingWebSettings)
-                        }
-                    }
+                        )
+                    )
+                    .disabled(accountService.isUpdatingWebSettings)
                 }
             }
         }
@@ -594,24 +383,24 @@ struct CreditsView: View {
         icon: String
     ) -> some View {
         let exhausted = allowance.remainingTotal <= 0
-        return HStack(spacing: 8) {
+        return HStack(spacing: theme.space.s8) {
             Image(systemName: icon)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(exhausted ? theme.tertiaryText : theme.accentColor)
-            VStack(alignment: .leading, spacing: 1) {
+                .glyphSize(.footnote, weight: .semibold)
+                .foregroundColor(exhausted ? theme.text.tertiary : theme.text.link)
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(verbatim: title)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.smallLabel)
+                    .foregroundColor(theme.text.secondary)
                 Text(verbatim: "\(allowance.remainingTotal)")
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundColor(exhausted ? theme.tertiaryText : theme.primaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                    .foregroundColor(exhausted ? theme.text.tertiary : theme.text.primary)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.horizontal, theme.space.s8)
+        .padding(.vertical, theme.space.s6)
         .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill((exhausted ? theme.tertiaryText : theme.accentColor).opacity(0.08))
+            RoundedRectangle(cornerRadius: theme.radius.medium)
+                .fill(exhausted ? theme.surface.hover : theme.status.info.background)
         )
     }
 
@@ -624,57 +413,46 @@ struct CreditsView: View {
         let timeline = mergedTimeline
         let timelineCount = timeline.count
         let entries = Self.page(of: timeline, pageIndex: timelinePageIndex)
-        return card {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .top, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Recent activity", bundle: .module)
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-                        Text(
-                            "Model requests and balance changes, newest first. Open the chat or Insights when this Mac has the matching copy.",
-                            bundle: .module
-                        )
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                    }
+        return SettingsSection(
+            title: "Recent Activity",
+            subtitle:
+                "Model requests and balance changes, newest first. Open the chat or Insights when this Mac has the matching copy."
+        ) {
+            SettingsButton(
+                .secondary,
+                "Export diagnostics",
+                icon: "square.and.arrow.up",
+                isLoading: isExportingDiagnostics,
+                size: .compact
+            ) {
+                exportDiagnostics()
+            }
+            .disabled(isExportingDiagnostics || ledgerTotalCount == 0)
+        } content: {
+            if entries.isEmpty {
+                SettingsEmptyState(
+                    inline: "clock.arrow.circlepath",
+                    title: "No activity yet",
+                    hint:
+                        "When you add credits or use an Osaurus Router model, it shows up here with its amount. If this Mac made a request, you can jump to the chat or Insights.",
+                    isLoading: isLoadingCurrentActivity
+                )
+            } else {
+                activityList(entries)
+                activityPaginationControls(timelineCount: timelineCount, pageCount: entries.count)
+            }
 
-                    Spacer()
-
-                    Button {
-                        exportDiagnostics()
-                    } label: {
-                        if isExportingDiagnostics {
-                            ProgressView().scaleEffect(0.7)
-                        } else {
-                            Label(localized: "Export diagnostics", systemImage: "square.and.arrow.up")
-                        }
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .disabled(isExportingDiagnostics || ledgerTotalCount == 0)
-                }
-
-                if entries.isEmpty {
-                    emptyActivityState
-                } else {
-                    activityList(entries)
-                    activityPaginationControls(timelineCount: timelineCount, pageCount: entries.count)
-                }
-
-                if let diagnosticsMessage {
-                    Text(diagnosticsMessage)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+            if let diagnosticsMessage {
+                Text(diagnosticsMessage)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                    .foregroundColor(theme.text.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
 
     private func activityList(_ entries: [CreditsTimelineEntry]) -> some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s4) {
             ForEach(entries) { entry in
                 Group {
                     switch entry {
@@ -686,74 +464,33 @@ struct CreditsView: View {
                         webUsageRow(row)
                     }
                 }
-                if entry.id != entries.last?.id {
-                    Divider()
-                }
+                .background(theme.surface.raised, in: RoundedRectangle(cornerRadius: theme.radius.medium))
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(theme.cardBorder, lineWidth: 1)
-        )
-    }
-
-    private var emptyActivityState: some View {
-        VStack(spacing: 10) {
-            if isLoadingCurrentActivity {
-                ProgressView()
-                    .scaleEffect(0.8)
-            } else {
-                Image(systemName: "clock.arrow.circlepath")
-                    .font(.system(size: 24))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            Text("No activity yet", bundle: .module)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-            Text(
-                "When you add credits or use an Osaurus Router model, it shows up here with its amount. If this Mac made a request, you can jump to the chat or Insights.",
-                bundle: .module
-            )
-            .font(.system(size: 12))
-            .foregroundColor(theme.secondaryText)
-            .multilineTextAlignment(.center)
-            .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 36)
     }
 
     private func activityPaginationControls(timelineCount: Int, pageCount: Int) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s8) {
             Text(verbatim: timelineRangeLabel(timelineCount: timelineCount, pageCount: pageCount))
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                .foregroundColor(theme.text.secondary)
 
             Spacer()
 
-            Button {
+            SettingsButton(.secondary, "Previous", icon: "chevron.left", size: .compact) {
                 goToPreviousActivityPage()
-            } label: {
-                Label(localized: "Previous", systemImage: "chevron.left")
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
             .disabled(!canGoToPreviousActivityPage || isLoadingCurrentActivity)
 
-            Button {
+            SettingsButton(
+                .secondary,
+                canLoadMoreFromServer(timelineCount: timelineCount) ? "Load more" : "Next",
+                icon: canLoadMoreFromServer(timelineCount: timelineCount) ? "arrow.down.circle" : "chevron.right",
+                isLoading: isLoadingCurrentActivity,
+                size: .compact
+            ) {
                 goToNextTimelinePage()
-            } label: {
-                if isLoadingCurrentActivity {
-                    ProgressView().scaleEffect(0.7)
-                } else if canLoadMoreFromServer(timelineCount: timelineCount) {
-                    Label(localized: "Load more", systemImage: "arrow.down.circle")
-                } else {
-                    Label(localized: "Next", systemImage: "chevron.right")
-                }
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
             .disabled(!canGoToNextActivityPage(timelineCount: timelineCount) || isLoadingCurrentActivity)
         }
     }
@@ -831,109 +568,101 @@ struct CreditsView: View {
     }
 
     private func activityRow(_ row: CreditsActivityRow) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: theme.space.s12) {
             timelineBadge(
                 icon: "sparkles",
                 tint: requestBadgeTint(row.stateKind)
             )
 
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
+                HStack(spacing: theme.space.s8) {
                     modelName(for: row)
                     outcomeBadge(for: row)
                 }
 
                 if !row.metadataLine.isEmpty {
                     Text(verbatim: row.metadataLine)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.secondary)
                         .lineLimit(1)
                 }
 
-                HStack(spacing: 14) {
+                HStack(spacing: theme.space.s12) {
                     Text(verbatim: row.tokensLine)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.tertiary)
                     referenceLinks(for: row)
                 }
             }
 
-            Spacer(minLength: 12)
+            Spacer(minLength: 0)
 
             Text(verbatim: signedCostLabel(row.costMicro))
-                .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                .foregroundColor(theme.secondaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.mono.monospacedDigit())
+                .fixedSize(horizontal: true, vertical: false)
+                .foregroundColor(theme.text.secondary)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(theme.cardBackground)
+        .padding(.horizontal, theme.space.s12)
+        .padding(.vertical, theme.space.s8)
     }
 
     /// A balance-changing ledger transaction (top-up, grant, refund — later
     /// agent purchases): the wallet panel's row vocabulary at timeline scale.
     private func transactionRow(_ row: WalletActivityRow) -> some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: theme.space.s12) {
             timelineBadge(
                 icon: row.isCredit ? "arrow.down.left" : "arrow.up.right",
-                tint: row.isCredit ? theme.successColor : theme.secondaryText
+                tint: row.isCredit ? theme.status.success.foreground : theme.text.secondary
             )
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
                 Text(LocalizedStringKey(row.title), bundle: .module)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.sectionTitle)
+                    .foregroundColor(theme.text.primary)
                 if let date = row.date {
                     Text(verbatim: date.formatted(date: .abbreviated, time: .shortened))
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.secondary)
                 }
             }
 
-            Spacer(minLength: 12)
+            Spacer(minLength: 0)
 
             Text(verbatim: row.amountLabel)
-                .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                .foregroundColor(row.isCredit ? theme.successColor : theme.secondaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.mono.monospacedDigit())
+                .fixedSize(horizontal: true, vertical: false)
+                .foregroundColor(row.isCredit ? theme.status.success.foreground : theme.text.secondary)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(theme.cardBackground)
+        .padding(.horizontal, theme.space.s12)
+        .padding(.vertical, theme.space.s8)
     }
 
     /// A billed hosted web search/contents request. The premium (accent)
     /// family distinguishes it from model spend — full strength when the
     /// request used a search credit, softened when it billed the balance.
     private func webUsageRow(_ row: WalletActivityRow) -> some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: theme.space.s12) {
             timelineBadge(
                 icon: "magnifyingglass",
                 tint: webUsageTint(row)
             )
 
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
+                HStack(spacing: theme.space.s8) {
                     Text(LocalizedStringKey(row.title), bundle: .module)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                    Text(
-                        row.isIncludedWebRequest ? "Credit" : "Premium",
-                        bundle: .module
-                    )
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(webUsageTint(row))
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(webUsageTint(row).opacity(0.12)))
-                    .fixedSize()
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.sectionTitle)
+                        .foregroundColor(theme.text.primary)
+                    StatusChip(row.isIncludedWebRequest ? L("Credit") : L("Premium"), tint: webUsageTint(row))
+                        .fixedSize()
                 }
                 if let date = row.date {
                     Text(verbatim: date.formatted(date: .abbreviated, time: .shortened))
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.secondary)
                 }
             }
 
-            Spacer(minLength: 12)
+            Spacer(minLength: 0)
 
             Group {
                 if row.isIncludedWebRequest {
@@ -942,20 +671,20 @@ struct CreditsView: View {
                     Text(verbatim: row.amountLabel)
                 }
             }
-            .font(.system(size: 13, weight: .semibold, design: .monospaced))
-            .foregroundColor(theme.secondaryText)
+            .catalogTypography(.body, theme: theme, fallback: SettingsFont.mono.monospacedDigit())
+                .fixedSize(horizontal: true, vertical: false)
+            .foregroundColor(theme.text.secondary)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(theme.cardBackground)
+        .padding(.horizontal, theme.space.s12)
+        .padding(.vertical, theme.space.s8)
     }
 
     private func webUsageTint(_ row: WalletActivityRow) -> Color {
         switch row.stateKind {
-        case .warning: return theme.warningColor
-        case .error: return theme.errorColor
+        case .warning: return theme.status.warning.foreground
+        case .error: return theme.status.error.foreground
         case .success, .secondary:
-            return row.isIncludedWebRequest ? theme.accentColor : theme.accentColor.opacity(0.7)
+            return row.isIncludedWebRequest ? theme.status.info.foreground : theme.status.info.foreground
         }
     }
 
@@ -964,9 +693,9 @@ struct CreditsView: View {
     private func timelineBadge(icon: String, tint: Color) -> some View {
         ZStack {
             Circle()
-                .fill(tint.opacity(0.13))
+                .fill(theme.wash(behind: tint))
             Image(systemName: icon)
-                .font(.system(size: 10, weight: .semibold))
+                .glyphSize(.micro, weight: .semibold)
                 .foregroundColor(tint)
         }
         .frame(width: 26, height: 26)
@@ -976,9 +705,9 @@ struct CreditsView: View {
     /// attention states color the badge, mirroring the wallet panel.
     private func requestBadgeTint(_ kind: CreditsActivityStateKind) -> Color {
         switch kind {
-        case .warning: return theme.warningColor
-        case .error: return theme.errorColor
-        case .success, .secondary: return theme.secondaryText
+        case .warning: return theme.status.warning.foreground
+        case .error: return theme.status.error.foreground
+        case .success, .secondary: return theme.text.secondary
         }
     }
 
@@ -996,37 +725,30 @@ struct CreditsView: View {
     private func modelName(for row: CreditsActivityRow) -> some View {
         if let name = row.modelDisplay {
             Text(verbatim: name)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+                .catalogTypography(.label, theme: theme, fallback: SettingsFont.sectionTitle)
+                .foregroundColor(theme.text.primary)
                 .lineLimit(1)
                 .truncationMode(.middle)
         } else {
             Text("Unknown model", bundle: .module)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
+                .catalogTypography(.label, theme: theme, fallback: SettingsFont.sectionTitle)
+                .foregroundColor(theme.text.secondary)
                 .lineLimit(1)
         }
     }
 
     private func outcomeBadge(for row: CreditsActivityRow) -> some View {
-        HStack(spacing: 4) {
-            Text(LocalizedStringKey(row.stateLabel), bundle: .module)
-            if let detail = row.stateDetail, !detail.isEmpty {
-                Text(verbatim: "·")
-                Text(LocalizedStringKey(detail), bundle: .module)
-            }
-        }
-        .font(.system(size: 10, weight: .medium))
-        .foregroundColor(stateColor(row.stateKind))
-        .padding(.horizontal, 7)
-        .padding(.vertical, 2)
-        .background(Capsule().fill(stateColor(row.stateKind).opacity(0.12)))
-        .fixedSize()
+        StatusChip(
+            [row.stateLabel, row.stateDetail].compactMap { $0 }.filter { !$0.isEmpty }.map { LCached($0) }
+                .joined(separator: " · "),
+            tint: stateColor(row.stateKind)
+        )
+            .fixedSize()
     }
 
     @ViewBuilder
     private func referenceLinks(for row: CreditsActivityRow) -> some View {
-        HStack(spacing: 14) {
+        HStack(spacing: theme.space.s12) {
             if let reference = row.localReference {
                 Button {
                     openLocalReference(reference)
@@ -1035,8 +757,8 @@ struct CreditsView: View {
                         .labelStyle(.titleAndIcon)
                 }
                 .buttonStyle(.plain)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.accentColor)
+                .componentInspectionText(51, role: .caption, fallback: .footnote, weight: 500, theme: theme)
+                .foregroundColor(theme.text.link)
                 .help(reference.chatHelpText)
             }
 
@@ -1048,8 +770,8 @@ struct CreditsView: View {
                         .labelStyle(.titleAndIcon)
                 }
                 .buttonStyle(.plain)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.accentColor)
+                .componentInspectionText(51, role: .caption, fallback: .footnote, weight: 500, theme: theme)
+                .foregroundColor(theme.text.link)
                 .help(reference.insightsHelpText)
             }
         }
@@ -1058,13 +780,13 @@ struct CreditsView: View {
     private func stateColor(_ kind: CreditsActivityStateKind) -> Color {
         switch kind {
         case .success:
-            return theme.successColor
+            return theme.status.success.foreground
         case .warning:
-            return theme.warningColor
+            return theme.status.warning.foreground
         case .error:
-            return theme.errorColor
+            return theme.status.error.foreground
         case .secondary:
-            return theme.secondaryText
+            return theme.text.secondary
         }
     }
 
@@ -1131,29 +853,6 @@ struct CreditsView: View {
     }
 
     // MARK: - Shared view helpers
-
-    private func statusPill(_ title: String, icon: String, color: Color) -> some View {
-        Label(title, systemImage: icon)
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundColor(color)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(Capsule().fill(color.opacity(0.12)))
-    }
-
-    private func card<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        content()
-            .padding(16)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(theme.cardBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(theme.cardBorder, lineWidth: 1)
-                    )
-            )
-    }
 
     // MARK: - Data loading
 
@@ -1261,4 +960,40 @@ private enum CreditsTimelineEntry: Identifiable {
         case .webUsage(let row): return row.date
         }
     }
+}
+
+extension CreditsView {
+    static func inspectionBalances(_ state: String, theme: any ThemeProtocol) -> some View {
+        var view = CreditsView()
+        view.inspectionTheme = theme
+        view.inspectionBalance = InspectorWalletBalance(value: "12,345.67", frozen: state == "Frozen", loading: state == "Loading", error: state == "Error" ? "Local account error display." : nil)
+        return VStack(alignment: .leading, spacing: theme.space.s12) {
+            view.balanceCard
+            HStack {
+                view.grantMeter(title: "Search credits", allowance: OsaurusRouterWebAllowance(includedTotal: 100, usedTotal: 23, remainingTotal: 77), icon: "magnifyingglass")
+                view.grantMeter(title: "Extract credits", allowance: OsaurusRouterWebAllowance(includedTotal: 100, usedTotal: 100, remainingTotal: 0), icon: "doc.text.magnifyingglass")
+            }
+        }.environment(\.theme, view.theme).allowsHitTesting(false)
+    }
+    /// Original populated activity-row renderer without mounting the account page's tasks.
+    static func inspectionActivityRows(theme: any ThemeProtocol) -> some View {
+        var view = CreditsView()
+        view.inspectionTheme = theme
+        let rows = ["completed", "failed", "pending"].enumerated().map { index, status in
+            CreditsActivityRow(usage: OsaurusRouterUsageItem(id: "inspector-\(index)", requestId: nil,
+                model: "Local display model", provider: "Local sample", inputTokens: 1234, outputTokens: 56,
+                costMicro: "1234", status: status, tokenSource: "provider", createdAt: "2026-10-22T12:00:00Z"),
+                match: nil, insightsReference: nil)
+        }
+        return view.activityList(rows.map { .request($0, date: nil) })
+            .environment(\.theme, view.theme)
+            .allowsHitTesting(false)
+    }
+}
+
+struct InspectorWalletBalance {
+    var value: String
+    var frozen: Bool
+    var loading: Bool
+    var error: String?
 }

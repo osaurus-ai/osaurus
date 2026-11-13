@@ -1,0 +1,35 @@
+{
+  "id": "orchestrator.team-files-write-notes",
+  "domain": "orchestrator",
+  "label": "orchestrator • writing into the working folder goes to the Files worker",
+  "query": "Write these notes to a file in the working folder: buy milk, call Sam",
+  "notes": "Routing on, with the day-one team (Planner, Courier, Keeper, Scout) created from the bundled templates in a scratch folder. The Orchestrator reads the roster and calls `run_workflow` with \"Files\". Keeper owns Downloads and Notes; the Files worker owns writing and editing in the working folder.",
+  "fixtures": {
+    "seedTeammates": [
+      "planner",
+      "courier",
+      "keeper",
+      "scout"
+    ]
+  },
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "run_workflow"
+      ],
+      "mustNotCallTools": [
+        "architect_handoff",
+        "configurator_handoff"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "run_workflow",
+          "args": {
+            "workflow": "Files"
+          }
+        }
+      ],
+      "maxIterations": 6
+    }
+  }
+}

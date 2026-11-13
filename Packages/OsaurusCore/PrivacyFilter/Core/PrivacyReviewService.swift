@@ -145,7 +145,7 @@ final class PrivacyReviewService {
         // The owner's paired phone is a real pair of eyes, just not this
         // window: hand it the review instead of failing closed (§19).
         if !allowInteractive, allowRemote {
-            print("[PrivacyReview] handing \(detections.count) item(s) to the paired phone for session \(sessionId)")
+            print("[PrivacyReview] handing \(detections.count) item(s) to the owner's remote client for session \(sessionId)")
             return await reviewRemotely(detections: detections, sessionId: sessionId)
         }
 
@@ -269,32 +269,87 @@ final class PrivacyReviewService {
     /// unticking a row in the Mac's sheet does. Returns false when the id is
     /// unknown — already answered, or the run ended.
     @discardableResult
-    func resolveRemotely(id: UUID, redactedIds: Set<UUID>) -> Bool {
+    func resolveRemotely(id: UUID, redactedIds: Set<UUID>, attention: AttentionResolution? = nil) -> Bool {
         guard let state = remoteStates[id] else {
             print("[PrivacyReview] phone answered review \(id), but it is no longer pending")
             return false
         }
-        print("[PrivacyReview] phone answered review \(id): redact \(redactedIds.intersection(Set(state.entities.map(\.id))).count) of \(state.entities.count)")
+        // Detections the attention item couldn't list are never sent as-is.
+        let unseen = Set(state.entities.map(\.id)).subtracting(listed[id] ?? Set(state.entities.map(\.id)))
+        let redacted = redactedIds.union(unseen)
+        print("[PrivacyReview] phone answered review \(id): redact \(redacted.intersection(Set(state.entities.map(\.id))).count) of \(state.entities.count)")
         remoteStates.removeValue(forKey: id)
+        listed.removeValue(forKey: id)
         for entity in state.entities {
-            state.setApproval(entity, to: redactedIds.contains(entity.id))
+            state.setApproval(entity, to: redacted.contains(entity.id))
         }
+        AttentionCenter.shared.resolve(id: id, with: attention ?? Self.phoneAnswer(.approved))
+        AttentionProducers.endWaiting(itemId: id)
         state.confirm()
         return true
+    }
+
+    private static func phoneAnswer(_ outcome: AttentionResolution.Outcome) -> AttentionResolution {
+        AttentionResolution(outcome: outcome, surface: .phone, decidedBy: .ownerDevice(L("Your iPhone")))
     }
 
     /// Cancels a review from a paired phone: the send is aborted, nothing
     /// reaches the provider.
     @discardableResult
-    func cancelRemotely(id: UUID) -> Bool {
+    func cancelRemotely(id: UUID, attention: AttentionResolution? = nil) -> Bool {
         guard let state = remoteStates[id] else {
             print("[PrivacyReview] phone cancelled review \(id), but it is no longer pending")
             return false
         }
         print("[PrivacyReview] phone cancelled review \(id)")
         remoteStates.removeValue(forKey: id)
+        listed.removeValue(forKey: id)
+        AttentionCenter.shared.resolve(id: id, with: attention ?? Self.phoneAnswer(.denied))
+        AttentionProducers.endWaiting(itemId: id)
         state.cancel()
         return true
+    }
+
+    /// Detections each remote review's attention item lists, by review id.
+    private var listed: [UUID: Set<UUID>] = [:]
+
+    /// Puts a remote review in the attention feed, where the device the run
+    /// is for answers it: approve with the detections to redact (all when
+    /// it doesn't say), or deny to stop the send.
+    private func raiseAttention(for state: RedactionReviewState) {
+        let id = state.id
+        let rows: [[String: Any]] = state.entities.map { entity in
+            [
+                "id": entity.id.uuidString,
+                "category": entity.category.rawValue,
+                "original": entity.original,
+                "placeholder": entity.placeholder.token,
+            ]
+        }
+        let detail = AttentionDetail.encode(["items": rows], listKey: "items")
+        let shown = (detail.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["items"]
+            as? [[String: Any]] ?? [])
+            .compactMap { ($0["id"] as? String).flatMap(UUID.init(uuidString:)) }
+        listed[id] = Set(shown)
+        var item = AttentionProducers.item(
+            id: id,
+            kind: .privacyReview,
+            title: L("Review what's sent to the model?"),
+            body: state.entities.count == 1
+                ? L("The Privacy Filter found 1 item.") : L("The Privacy Filter found \(state.entities.count) items.")
+        )
+        item.detail = detail
+        AttentionProducers.beginWaiting(itemId: id, step: L("Waiting for privacy review"))
+        AttentionCenter.shared.raise(item) { resolution in
+            let service = PrivacyReviewService.shared
+            guard resolution.isGrant else {
+                service.cancelRemotely(id: id, attention: resolution)
+                return
+            }
+            let all = Set(state.entities.map(\.id))
+            let chosen = resolution.redact.map { Set($0.compactMap(UUID.init(uuidString:))) } ?? all
+            service.resolveRemotely(id: id, redactedIds: chosen, attention: resolution)
+        }
     }
 
     /// Suspends until the paired phone answers, the way the chat window's
@@ -308,6 +363,7 @@ final class PrivacyReviewService {
         let state = RedactionReviewState(detections: detections, sessionId: sessionId)
         let stateId = state.id
         remoteStates[stateId] = state
+        raiseAttention(for: state)
         print("[PrivacyReview] remote review \(stateId) parked for session \(sessionId): \(detections.count) item(s), waiting on the phone")
         return await withTaskCancellationHandler {
             await withCheckedContinuation { (cont: CheckedContinuation<PrivacyReviewOutcome, Never>) in
@@ -329,11 +385,16 @@ final class PrivacyReviewService {
         if remoteStates[id] != nil {
             print("[PrivacyReview] remote review \(id) cancelled: its run was cancelled (client hung up or the run was stopped)")
         }
+        AttentionCenter.shared.resolve(id: id, with: AttentionProducers.abandoned)
+        AttentionProducers.endWaiting(itemId: id)
         remoteStates[id]?.cancel()
     }
 
     private func clearRemoteState(id: UUID) {
         remoteStates.removeValue(forKey: id)
+        listed.removeValue(forKey: id)
+        AttentionCenter.shared.retract(id: id)
+        AttentionProducers.endWaiting(itemId: id)
     }
 
     /// Resolve a still-open review state as `.canceled`. Invoked from

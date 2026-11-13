@@ -8,10 +8,10 @@
 //    section. Pulls title + icon from `ServerSettingsSection` and only
 //    surfaces a status chip for `needsBridge` / `future` controls.
 //  • `ServerSettingsPlannedBanner` — inline "Planned" callout used
-//    inside `SettingsSubsection`s to flag fields vmlx persists today
-//    but Osaurus doesn't yet bridge.
+//    inside sections to flag fields vmlx persists today but Osaurus
+//    doesn't yet bridge.
 //  • `OptionalIntField` / `OptionalDoubleField` / `OptionalStringField`
-//    — boilerplate-killing wrappers around `StyledSettingsTextField`
+//    — boilerplate-killing wrappers around `SettingsTextField`
 //    for the (very common) "text input mirrors an `Optional<T>` binding"
 //    pattern.
 //
@@ -50,29 +50,22 @@ struct ServerSettingsCard<Content: View>: View {
             header
             content()
         }
-        .padding(20)
+        .padding(theme.space.s16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
+        .settingsChrome(.card)
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
+            HStack(spacing: theme.space.s10) {
                 Image(systemName: section.icon)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
+                    .glyphSize(.body, weight: .semibold)
+                    .foregroundColor(theme.text.link)
                     .frame(width: 20)
 
                 Text(LocalizedStringKey(section.title), bundle: .module)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.cardTitle)
+                    .foregroundColor(theme.text.primary)
 
                 if shouldShowChip {
                     ServerSettingsStatusBadge(status: status)
@@ -83,16 +76,16 @@ struct ServerSettingsCard<Content: View>: View {
 
             if !blurb.isEmpty {
                 Text(LocalizedStringKey(blurb), bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.caption)
+                    .foregroundColor(theme.text.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.leading, 30)
+                    .padding(.leading, theme.space.s32)
             }
         }
     }
 }
 
-/// Inline "Planned" callout used inside `SettingsSubsection`s to flag
+/// Inline "Planned" callout used inside sections to flag
 /// fields that vmlx persists today but Osaurus does not yet bridge.
 struct ServerSettingsPlannedBanner: View {
     let blurb: String
@@ -100,18 +93,18 @@ struct ServerSettingsPlannedBanner: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             ServerSettingsStatusBadge(status: .needsBridge)
             Text(LocalizedStringKey(blurb), bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
         }
     }
 }
 
 // MARK: - Optional value text fields
 
-/// `StyledSettingsTextField` wrapper that mirrors a `Binding<Int?>`.
+/// `SettingsTextField` wrapper that mirrors a `Binding<Int?>`.
 /// Empty input clears the binding; non-numeric input is ignored.
 /// `clamp` (optional) caps parsed values to the supplied range.
 struct OptionalIntField: View {
@@ -126,7 +119,7 @@ struct OptionalIntField: View {
     @State private var initialized: Bool = false
 
     var body: some View {
-        StyledSettingsTextField(
+        SettingsTextFieldRow(
             label: label,
             text: $text,
             placeholder: placeholder,
@@ -183,7 +176,7 @@ struct OptionalDoubleField: View {
     @State private var initialized = false
 
     var body: some View {
-        StyledSettingsTextField(
+        SettingsTextFieldRow(
             label: label,
             text: Binding(
                 get: { editor.text },
@@ -325,7 +318,7 @@ extension EnvironmentValues {
     }
 }
 
-/// `StyledSettingsTextField` wrapper that mirrors a `Binding<String?>`.
+/// `SettingsTextField` wrapper that mirrors a `Binding<String?>`.
 /// Empty input clears the binding.
 struct OptionalStringField: View {
     let label: String
@@ -337,7 +330,7 @@ struct OptionalStringField: View {
     @State private var initialized: Bool = false
 
     var body: some View {
-        StyledSettingsTextField(
+        SettingsTextFieldRow(
             label: label,
             text: $text,
             placeholder: placeholder,
@@ -373,5 +366,44 @@ enum OptionalIntFieldEditing {
             if resolved == value { return text }
         }
         return value.map(String.init) ?? ""
+    }
+}
+
+// MARK: - Status Badge
+
+/// Whether a Server control is engine-ready, awaiting a runtime bridge, or
+/// host-owned future work.
+struct ServerSettingsStatusBadge: View {
+    enum Status {
+        case engineReady
+        case partial
+        case needsBridge
+        case future
+        case hostOwned
+
+        var label: String {
+            switch self {
+            case .engineReady: return L("Live")
+            case .partial: return L("Partial")
+            case .needsBridge: return L("Planned")
+            case .future: return L("Future")
+            case .hostOwned: return L("Host")
+            }
+        }
+
+        var tone: StatusChip.Tone {
+            switch self {
+            case .engineReady: return .success
+            case .partial, .needsBridge: return .warning
+            case .future: return .neutral
+            case .hostOwned: return .accent
+            }
+        }
+    }
+
+    let status: Status
+
+    var body: some View {
+        StatusChip(status.label, tone: status.tone)
     }
 }

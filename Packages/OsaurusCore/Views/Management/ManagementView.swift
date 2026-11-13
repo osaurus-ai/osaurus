@@ -31,6 +31,8 @@ struct ManagementView: View {
     /// Observed so the pending landing anchor reaches every tab via the
     /// environment, re-rendering their glow targets when a result lands.
     @ObservedObject private var highlightCoordinator = SettingsHighlightCoordinator.shared
+    /// The New Agent creator takes the whole content pane while it shows.
+    @ObservedObject private var agentCreator = AgentCreatorController.shared
 
     @EnvironmentObject private var updater: UpdaterViewModel
 
@@ -45,46 +47,17 @@ struct ManagementView: View {
 
     // MARK: Properties
 
-    let deeplinkModelId: String?
-    let deeplinkFile: String?
-    let deeplinkAgentId: UUID?
+    /// The chat window column the sidebar sits in.
+    let column: SidebarNavigationColumn
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
-
-    // MARK: Initialization
-
-    init(
-        initialTab: ManagementTab? = nil,
-        deeplinkModelId: String? = nil,
-        deeplinkFile: String? = nil,
-        deeplinkAgentId: UUID? = nil
-    ) {
-        // Use provided initialTab if any, otherwise fall back to the last selected tab in this session.
-        if let tab = initialTab {
-            ManagementStateManager.shared.selectedTab = tab
-        }
-        self.deeplinkModelId = deeplinkModelId
-        self.deeplinkFile = deeplinkFile
-        self.deeplinkAgentId = deeplinkAgentId
-    }
 
     // MARK: Body
 
     var body: some View {
         sidebarNavigation
-            // The floor is clamped to the window's screen by `WindowManager`
-            // so a small display can still show the whole window (#2761).
-            .frame(
-                minWidth: stateManager.minimumContentSize.width,
-                maxWidth: .infinity,
-                minHeight: stateManager.minimumContentSize.height,
-                maxHeight: .infinity
-            )
-            .background(theme.primaryBackground)
             .environment(\.theme, themeManager.currentTheme)
-            .tint(theme.accentColor)
-            .themedAlertScope(.management)
-            .overlay(ThemedAlertHost(scope: .management))
+            .tint(theme.action.primary.default.background)
             .onAppear(perform: handleAppear)
             .onChange(of: stateManager.selectedTab) { handleTabChange(to: $1) }
             // The pairing deeplink router publishes an invite here when an
@@ -92,7 +65,7 @@ struct ManagementView: View {
             // a local @State (`presentingInvite`) gives the sheet a stable
             // identity to bind to even after the coordinator nils out, and
             // lets us route the user to the Agents tab on success.
-            .onChange(of: pairCoordinator.pendingInvite) { _, newValue in
+            .onChange(of: pairCoordinator.pendingInvite, initial: true) { _, newValue in
                 if let invite = newValue {
                     presentingInvite = invite
                 }
@@ -133,20 +106,34 @@ private extension ManagementView {
         SidebarNavigation(
             selection: selectedTabBinding,
             searchText: $searchText,
-            sections: sidebarSections
-        ) { tabId in
+            sections: sidebarSections,
+            focusCollapsed: stateManager.selectedTab == .agents && agentCreator.isShowing,
+            column: column
+        ) { _ in
             Group {
                 // A live query takes over the content pane with cross-tab
                 // results; selecting one navigates to its tab (and clears
-                // the query). Otherwise show the selected tab as usual.
+                // the query). Otherwise show the selected tab — a child tab
+                // under a back bar to its category.
                 if isSearching {
-                    SettingsSearchResultsView(query: searchText) { entry in
-                        handleResultSelected(entry)
-                    }
+                    SettingsSearchResultsView(
+                        query: searchText,
+                        onSelect: { handleResultSelected($0) },
+                        onOpenEntity: { entity in
+                            searchText = ""
+                            SettingsEntitySearch.open(entity)
+                        }
+                    )
                 } else {
-                    contentView(for: tabId)
+                    let tab = stateManager.selectedTab
+                    ManagementChildContainer(tab: tab) {
+                        contentView(for: tab)
+                    }
+                    .id(tab)
+                    .transition(.opacity)
                 }
             }
+            .animation(theme.motion.quick, value: stateManager.selectedTab)
             .opacity(hasAppeared ? 1 : 0)
             // Propagate the pending landing anchor to every tab so the matched
             // control glows wherever it lives.
@@ -164,10 +151,11 @@ private extension ManagementView {
         )
     }
 
-    /// Binding that converts between ManagementTab and String for SidebarNavigation.
+    /// Binding that converts between ManagementTab and String for
+    /// SidebarNavigation. A child tab highlights its parent category.
     var selectedTabBinding: Binding<String> {
         Binding(
-            get: { stateManager.selectedTab.rawValue },
+            get: { stateManager.selectedTab.sidebarTab.rawValue },
             set: { newValue in
                 if let tab = ManagementTab.resolved(from: newValue),
                     ManagementTab.visibleCases.contains(tab)
@@ -179,26 +167,28 @@ private extension ManagementView {
     }
 
     @ViewBuilder
-    func contentView(for tabId: String) -> some View {
-        let tab = ManagementTab.resolved(from: tabId)
+    func contentView(for tab: ManagementTab) -> some View {
         switch tab {
+        case .modelDefaults:
+            ModelDefaultsView()
         case .credits:
             CreditsView()
         case .workspaces:
             WorkspacesView()
+        case .access:
+            AccessView()
+        case .devices:
+            DevicesView()
         case .connect:
             OsaurusConnectView()
         case .models:
-            ModelDownloadView(
-                deeplinkModelId: deeplinkModelId,
-                deeplinkFile: deeplinkFile
-            )
+            LocalModelsView()
         case .imageGeneration:
             ImageGenerationView()
         case .providers:
             RemoteProvidersView()
         case .agents:
-            AgentsView(deeplinkAgentId: deeplinkAgentId)
+            AgentsView()
         case .agentChannels:
             AgentChannelConnectionCenterView()
         case .agentRuntimes:
@@ -215,16 +205,21 @@ private extension ManagementView {
             SlashCommandsView()
         case .memory:
             MemoryView()
+        case .projects:
+            ProjectsView()
         case .knowledge:
             KnowledgeView()
-        case .schedules:
-            SchedulesView()
-        case .watchers:
-            WatchersView()
+        case .workflows:
+            // Workflows lives in the main window; `handleTabChange` sends it there.
+            EmptyView()
+        case .automations:
+            EventsView()
+        case .approvals:
+            ApprovalsView()
+        case .tasks:
+            TasksView()
         case .voice:
             VoiceView()
-        case .themes:
-            ThemesView()
         case .insights:
             InsightsView()
         case .server:
@@ -243,10 +238,16 @@ private extension ManagementView {
             ChatSettingsView()
         case .orchestrator:
             OrchestratorSettingsView()
+        case .architect:
+            ArchitectSettingsView()
+        case .configurator:
+            ConfiguratorSettingsView()
+        case .delegation:
+            DelegationSettingsView()
         case .settings:
             ConfigurationView()
-        case .none:
-            Text("Unknown tab", bundle: .module)
+        case .keys:
+            KeysView()
         }
     }
 }
@@ -268,7 +269,11 @@ private extension ManagementView {
                 },
                 // Developer Tools hides its tabs behind the header toggle so
                 // the everyday sidebar stays lean.
-                isCollapsible: section == .developers
+                isCollapsible: section == .developers,
+                // The pinned block (Agents, Automations, Approvals) is where
+                // people spend their time; it reads as a distinct, larger
+                // block above the settings groups.
+                isProminent: section == .home
             )
         }
     }
@@ -278,8 +283,11 @@ private extension ManagementView {
         return count > 0 ? count : nil
     }
 
+    /// A category glows when it or any of its child pages needs attention
+    /// (e.g. a missing provider key under Vault).
     func badgeHighlight(for tab: ManagementTab) -> Bool {
-        badgeStore.snapshot.highlights.contains(tab)
+        let highlights = badgeStore.snapshot.highlights
+        return highlights.contains(tab) || tab.children.contains { highlights.contains($0) }
     }
 }
 
@@ -289,20 +297,25 @@ private extension ManagementView {
 
     func handleAppear() {
         if !ManagementTab.visibleCases.contains(stateManager.selectedTab) {
-            stateManager.selectedTab = ManagementTab.visibleCases.first ?? .settings
+            stateManager.selectedTab = ManagementTab.defaultTab
         }
 
         // Delay fade-in to prevent initial layout jank
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-            withAnimation(.easeOut(duration: 0.2)) {
+            withAnimation(theme.motion.quick) {
                 hasAppeared = true
             }
         }
     }
 
     func handleTabChange(to newTab: ManagementTab) {
+        if newTab == .workflows {
+            stateManager.selectedTab = ManagementTab.defaultTab
+            ChatWindowManager.shared.showWorkflowsSurface()
+            return
+        }
         guard ManagementTab.visibleCases.contains(newTab) else {
-            stateManager.selectedTab = ManagementTab.visibleCases.first ?? .settings
+            stateManager.selectedTab = ManagementTab.defaultTab
             return
         }
 
@@ -313,10 +326,8 @@ private extension ManagementView {
             message: "management.tab \(newTab.rawValue)"
         )
 
-        // Settings-engagement signal for tab switches while the window is
-        // open; window opens themselves are counted in
-        // `AppDelegate.showManagementWindow`. The hidden launch prewarm
-        // realizes the view but never changes tabs, so it can't reach this.
+        // Settings-engagement signal for tab switches while Settings is up;
+        // opening Settings is counted in `ChatWindowState.showMainSurface`.
         FeatureTelemetry.settingsOpened(tab: newTab)
 
         // Changing tabs exits search so the chosen tab shows in full (the
@@ -333,28 +344,8 @@ private extension ManagementView {
         searchText = ""
         // Route inner navigation before the tab appears, so the destination
         // opens directly on the right section.
-        if let subTab = entry.subTab {
-            switch entry.tab {
-            case .voice: stateManager.voiceSubTabRequest = subTab
-            case .server: stateManager.serverSectionRequest = subTab
-            case .imageGeneration: stateManager.imageGenerationSubTabRequest = subTab
-            case .memory: stateManager.memorySubTabRequest = subTab
-            case .privacy: stateManager.privacySubTabRequest = subTab
-            case .tools: stateManager.pendingToolsSubTab = subTab
-            case .agents:
-                // Agent detail tabs (`capabilities` for the Apple app groups)
-                // are routed by `AgentsView.routeSettingsLanding` from the
-                // landing id itself, because the destination also has to pick
-                // an agent; the catalog's `subTab` documents the tab raw value
-                // (`AgentDetailTabRoute`) for help/find consumers.
-                break
-            default: break
-            }
-        }
-        // Arm the landing glow for the specific control; the destination tab
-        // scrolls to its anchor and the control breathes once on arrival.
-        SettingsHighlightCoordinator.shared.request(entry.id)
-        withAnimation(.easeOut(duration: 0.2)) {
+        guard !SettingsLanding.prepare(entry, stateManager: stateManager) else { return }
+        withAnimation(theme.motion.quick) {
             stateManager.selectedTab = entry.tab
         }
     }
@@ -364,6 +355,7 @@ private extension ManagementView {
 
 #if DEBUG && canImport(PreviewsMacros)
     #Preview {
-        ManagementView()
+        ManagementView(column: SidebarNavigationColumn(topInset: 44, expandedWidth: 260, isCollapsed: false))
+            .frame(minWidth: 1000, minHeight: 640)
     }
 #endif

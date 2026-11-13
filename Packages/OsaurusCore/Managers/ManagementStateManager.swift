@@ -9,17 +9,36 @@ import Foundation
 import Combine
 
 /// Prefill for the MCP provider add sheet, carried when another flow (the
-/// API provider form detecting an MCP URL) hands the user off to
-/// Tools > Connections.
+/// API provider form detecting an MCP URL, a workflow template's server
+/// hint) hands the user off to Tools > Connections.
 public struct MCPProviderDraft: Equatable, Sendable {
     public let name: String
     public let url: String
     public let bearerToken: String?
+    public var transport: MCPProviderTransport = .http
+    public var authType: MCPProviderAuthType = .bearerToken
+    public var command: String = ""
+    public var args: [String] = []
+    public var workingDirectory: String = ""
+    /// Names only; the user fills in the values.
+    public var envKeys: [String] = []
+    public var headerKeys: [String] = []
 
     public init(name: String, url: String, bearerToken: String?) {
         self.name = name
         self.url = url
         self.bearerToken = bearerToken
+    }
+
+    public init(hint: MCPServerHint) {
+        self.init(name: hint.name, url: hint.url ?? "", bearerToken: nil)
+        transport = hint.transport
+        authType = hint.auth ?? (hint.transport == .http ? .bearerToken : .none)
+        command = hint.command ?? ""
+        args = hint.args
+        workingDirectory = hint.workingDirectory ?? ""
+        envKeys = hint.envKeys
+        headerKeys = hint.headerKeys
     }
 }
 
@@ -40,10 +59,12 @@ public struct PendingKnowledgeCreateRequest: Equatable, Sendable {
 /// A parked setup wizard, by what it sets up.
 enum PendingSetupSubject {
     case agent(AgentSetupSubject)
+    case workflow(WorkflowSetupSubject)
 
     var tab: ManagementTab {
         switch self {
         case .agent: return .agents
+        case .workflow: return .workflows
         }
     }
 }
@@ -53,43 +74,28 @@ enum PendingSetupSubject {
 public final class ManagementStateManager: ObservableObject {
     public static let shared = ManagementStateManager()
 
-    /// Persists the last selected tab within the current app session.
-    @Published public var selectedTab: ManagementTab = .settings
+    static let selectedTabDefaultsKey = "managementSelectedTab"
 
-    // MARK: - Minimum Window Size
+    /// The tab on screen. Persisted so Settings reopens where the user
+    /// left it, across launches; first open lands on Agents.
+    @Published public var selectedTab: ManagementTab =
+        UserDefaults.standard.string(forKey: ManagementStateManager.selectedTabDefaultsKey)
+        .flatMap(ManagementTab.resolved(from:)) ?? ManagementTab.defaultTab
+    {
+        didSet {
+            guard selectedTab != oldValue else { return }
+            UserDefaults.standard.set(selectedTab.rawValue, forKey: Self.selectedTabDefaultsKey)
+        }
+    }
 
-    /// The size below which the settings layout stops working: the sidebar
-    /// plus a content pane wide enough for the two-column panels, and
-    /// enough height that the tallest tabs don't scroll immediately.
-    /// Windows on screens that can show this much use it verbatim; see
-    /// `minimumContentSize`.
-    public static let designMinimumContentSize = CGSize(width: 940, height: 640)
+    /// One-shot request to show a model kind on Local Models (Image, Speech,
+    /// …). `LocalModelsView` applies it and resets it to nil.
+    @Published var pendingLocalModelsKind: LocalModelKind?
 
-    /// The effective minimum content size for the settings window: the
-    /// design minimum, clamped to what its screen can actually show.
-    /// `ManagementView` applies it as `.frame(minWidth:minHeight:)`, which
-    /// the hosting controller mirrors into the window's `contentMinSize`.
-    /// Without the clamp, a screen whose visible area is smaller than the
-    /// design minimum (e.g. a 13" MacBook Air at "Larger Text", 1024x666)
-    /// gets a window AppKit cannot shrink to fit, so its title bar hides
-    /// under the menu bar and the bottom of the sidebar is cut off (#2761).
-    /// Pushed by `WindowManager` on creation and whenever the window
-    /// changes screen. Same scheme as `ChatWindowState.minimumContentSize`.
-    @Published public private(set) var minimumContentSize: CGSize =
-        ManagementStateManager.designMinimumContentSize
-
-    /// Clamp the design minimum to `availableContentSize`, the largest
-    /// content area the window's screen can show (visible frame minus the
-    /// window's own titlebar chrome). An axis at or below zero means "no
-    /// screen known" and keeps the design value, so a transient
-    /// measurement can't collapse the floor.
-    public func updateMinimumContentSize(availableContentSize available: CGSize) {
-        let design = Self.designMinimumContentSize
-        var next = design
-        if available.width > 0 { next.width = min(design.width, floor(available.width)) }
-        if available.height > 0 { next.height = min(design.height, floor(available.height)) }
-        guard next != minimumContentSize else { return }
-        minimumContentSize = next
+    /// Opens Local Models filtered to `kind`.
+    func openLocalModels(kind: LocalModelKind) {
+        pendingLocalModelsKind = kind
+        selectedTab = .models
     }
 
     /// One-shot request to focus a specific sub-tab inside `VoiceView`.
@@ -101,10 +107,25 @@ public final class ManagementStateManager: ObservableObject {
     /// this and resets it to nil after applying.
     @Published public var memorySubTabRequest: String?
 
+    /// One-shot request to focus a sub-tab inside the Automations tab
+    /// ("automations" or "history"). `EventsView` resets it after applying.
+    @Published public var automationsSubTabRequest: String?
+
     /// One-shot request to focus a specific sub-tab inside `PrivacyView`
     /// (raw value of `PrivacyTab`, e.g. "storage"). `PrivacyView` observes
     /// this and resets it to nil after applying.
     @Published public var privacySubTabRequest: String?
+
+    /// Opens the drill-in a legacy tab id now lives on (`"storage"` →
+    /// Privacy & Security → Data & Storage). No-op for every other id.
+    func requestLegacySubTab(for rawValue: String) {
+        guard let subTab = ManagementTab.legacySubTab(from: rawValue) else { return }
+        privacySubTabRequest = subTab
+    }
+
+    /// One-shot request to focus a tab inside `KeysView` (raw value of
+    /// `KeysTab`, e.g. "appKeys"). `KeysView` resets it after applying.
+    @Published public var keysSubTabRequest: String?
 
     /// One-shot request to focus a specific sub-tab inside `ImageGenerationView`
     /// (raw value of `ImageGenerationTab`, e.g. "Models"). `ImageGenerationView`
@@ -126,19 +147,19 @@ public final class ManagementStateManager: ObservableObject {
     /// `PluginsView` observes this and resets it to nil after applying.
     @Published public var pendingPluginDetailId: String?
 
-    /// One-shot request to open the detail sheet for a specific model repo id
-    /// on the Models tab — e.g. from a What's New announcement CTA.
-    /// `ModelDownloadView` observes this and resets it to nil after applying.
+    /// One-shot request to open the inspector for a specific model repo id
+    /// on the Models tab, from outside Settings.
+    /// `LocalModelsCatalogPage` observes this and resets it to nil after applying.
     @Published public var pendingModelDetailId: String?
 
     /// A Hugging Face model link to apply on the Models tab: prefill the
-    /// search with the repo, make sure it is in the catalog, and pin the
-    /// Catalog list so the card is visible. Delivered through shared state
-    /// rather than by rebuilding the management window's hosting controller:
-    /// that rebuild orphans any SwiftUI sheet that is up (the linked model's
-    /// own detail sheet, after the previous link) and traps inside SwiftUI
-    /// on the next window resize (Sentry APPLE-MACOS-EF, reproduced live
-    /// with two consecutive links). `ModelDownloadView` consumes and clears.
+    /// search with the repo, make sure it is in the catalog, and select its
+    /// row. Delivered through shared state rather than by rebuilding the
+    /// view: a rebuild orphans any SwiftUI sheet that is up (the linked
+    /// model's own import sheet, after the previous link) and traps inside
+    /// SwiftUI on the next window resize (Sentry APPLE-MACOS-EF, reproduced
+    /// live with two consecutive links). `LocalModelsCatalogPage` consumes
+    /// and clears.
     public struct ModelDeepLinkRequest: Equatable, Sendable {
         public let modelId: String
         public let file: String?
@@ -155,12 +176,12 @@ public final class ManagementStateManager: ObservableObject {
 
     /// One-shot request to pop the Hugging Face token sheet on the Models
     /// tab. Set by the deep-link handler when the Hub answered 401/403 for
-    /// the linked repo. `HuggingFaceTokenCard` observes this and resets it.
+    /// the linked repo. `LocalModelsCatalogPage` observes this and resets it.
     @Published public var pendingHuggingFaceTokenPrompt: Bool = false
 
     /// Repo id to re-resolve once a token has been saved from that prompt,
     /// so the user lands on the model they clicked instead of an empty
-    /// search. Cleared by `HuggingFaceTokenCard` after the retry.
+    /// search. Cleared by `LocalModelsCatalogPage` after the retry.
     @Published public var pendingDeepLinkRetryModelId: String?
 
     /// One-shot request to pop the "Add Collection" sheet on the Knowledge
@@ -179,10 +200,17 @@ public final class ManagementStateManager: ObservableObject {
     /// `AgentsView` observes this and resets it to nil after applying.
     @Published public var pendingRemoteAgentDetailId: UUID?
 
-    /// One-shot request to open the Create Agent sheet — e.g. from the chat
-    /// sidebar's New Agent button. `AgentsView` observes this and resets it
-    /// to false after presenting.
-    @Published public var pendingCreateAgent: Bool = false
+    /// One-shot request to open a local agent's detail page, e.g. from an
+    /// entity result in Management search. `AgentsView` applies and clears it.
+    @Published public var pendingAgentDetailId: UUID?
+
+    /// One-shot request to open an installed workflow's detail page.
+    /// `WorkflowsView` applies and clears it.
+    @Published public var pendingWorkflowDetailId: UUID?
+
+    /// One-shot request to open a project's page, e.g. from the gear on its
+    /// chat sidebar group. `ProjectsView` applies and clears it.
+    @Published public var pendingProjectDetailId: UUID?
 
     /// One-shot request to open the Set Up Agent wizard for a local agent,
     /// e.g. from the first-open checklist alert in chat. `AgentsView`
@@ -192,7 +220,8 @@ public final class ManagementStateManager: ObservableObject {
     /// A setup wizard that stepped aside so the user could visit another
     /// tab (downloading a model, say). Carries the unsaved draft or
     /// bindings with it, so nothing the user has filled in is lost.
-    /// `AgentsView` reopens the wizard from this and resets it to nil.
+    /// `AgentsView` (agents) or `WorkflowsView` (workflows) reopens the
+    /// wizard from this and resets it to nil.
     @Published var pendingSetupSubject: PendingSetupSubject?
 
     /// One-shot request to reveal a project's shared memory — the namespace
@@ -201,11 +230,28 @@ public final class ManagementStateManager: ObservableObject {
     /// nil. Set from a project page's memory section "Open in Memory" button.
     @Published public var pendingMemoryProjectPreview: String?
 
-    /// One-shot request to open the schedule editor for a specific schedule id.
-    /// `SchedulesView` observes this and resets it to nil after applying. Used
-    /// by the Claude plugin import summary to deep-link to schedules that
-    /// landed disabled because no cron expression was found.
-    @Published public var pendingScheduleEditId: UUID?
+    /// One-shot request to open the editor for a specific event id.
+    /// `EventsView` observes this and resets it to nil after applying. Used
+    /// by the Claude plugin import summary to deep-link to schedule events
+    /// that landed disabled because no cron expression was found.
+    @Published public var pendingEventEditId: UUID?
+
+    /// One-shot request to open an automation's detail sheet (Tasks → a
+    /// task's Open Automation). `EventsView` resets it after presenting.
+    @Published public var pendingEventDetailId: UUID?
+
+    /// One-shot request to open a task's detail sheet on the Tasks tab
+    /// (Insights → a task row's Open Task). `TasksView` resets it.
+    @Published public var pendingTaskDetailId: UUID?
+
+    /// One-shot request to open Tasks → History with a filter (Automations
+    /// → History, an agent's or workflow's See All). `TasksView` resets it.
+    @Published var pendingTaskHistory: TaskHistoryFilter?
+
+    /// One-shot request to open a channel's settings sheet by connection id
+    /// (Automations → History → a message row's Open). The Channels page
+    /// resets it to nil after presenting.
+    @Published var pendingChannelConnectionId: String?
 
     /// One-shot request to focus a specific sub-tab inside `ToolsManagerView`
     /// (`All`, `Connections`, or `Custom`; legacy `Available`/`Remote`/
@@ -228,10 +274,22 @@ public final class ManagementStateManager: ObservableObject {
     /// it reaches the Keychain when the user saves the provider.
     @Published public var pendingMCPProviderDraft: MCPProviderDraft?
 
-    /// One-shot request to install a theme by content hash from a deeplink
-    /// (`osaurus://themes-install?hash=<sha256>`). `ThemesView` observes
-    /// this and resets it to nil after presenting the import sheet.
-    @Published public var pendingThemeInstallHash: String?
+    /// One-shot request to open the template import sheet on a file that
+    /// arrived from Finder or a `templates-import` link. `WorkflowsView`
+    /// (workflow kind) or `AgentsView` (agent kind) resets it to nil.
+    @Published public var pendingTemplateImport: PendingTemplateImport?
 
+    /// One-shot request to open Share for a workflow template the Architect
+    /// just saved (the Saved card's Share button). `WorkflowsView` resets it
+    /// to nil once the sheet is up.
+    @Published public var pendingWorkflowShare: UUID?
+    /// Set with `pendingWorkflowShare` to open Share straight on the publish
+    /// step: Resubmit for Review after changes were requested.
+    public var pendingWorkflowShareResubmits = false
+
+    /// One-shot request to open Share for an agent template just saved (Save
+    /// as Template's Share button). `AgentsView` switches to Templates and
+    /// `AgentTemplatesView` resets it to nil once the sheet is up.
+    @Published public var pendingTemplateShare: UUID?
     private init() {}
 }

@@ -24,7 +24,7 @@ Osaurus is committed to providing an accessible experience for all users. This d
 
 ## Color Palette Compliance
 
-### Light Theme
+### Light Appearance
 
 | Element           | Hex Code  | Contrast Ratio | Status        |
 | ----------------- | --------- | -------------- | ------------- |
@@ -42,7 +42,7 @@ Osaurus is committed to providing an accessible experience for all users. This d
 | Primary Border    | `#d0d0cc` | ~2.2:1         | ✅ Decorative |
 | Focus Border      | `#4a4a46` | ~8:1           | ✅ AAA        |
 
-### Dark Theme
+### Dark Appearance
 
 | Element           | Hex Code  | Contrast Ratio | Status        |
 | ----------------- | --------- | -------------- | ------------- |
@@ -62,40 +62,9 @@ Osaurus is committed to providing an accessible experience for all users. This d
 
 ---
 
-## Theme Presets Compliance
+## Color Change Guidelines
 
-### Neon Theme (Dark)
-
-| Element          | Hex Code  | Contrast Ratio | Status |
-| ---------------- | --------- | -------------- | ------ |
-| Primary Text     | `#f0f0f0` | ~18:1          | ✅ AAA |
-| Secondary Text   | `#b0b0b0` | ~9:1           | ✅ AAA |
-| Tertiary Text    | `#909090` | ~5.5:1         | ✅ AA  |
-| Accent (Magenta) | `#ff00ff` | ~6:1           | ✅ AA  |
-
-### Nord Theme (Dark)
-
-| Element        | Hex Code  | Contrast Ratio | Status |
-| -------------- | --------- | -------------- | ------ |
-| Primary Text   | `#eceff4` | ~10:1          | ✅ AAA |
-| Secondary Text | `#d8dee9` | ~7:1           | ✅ AA  |
-| Tertiary Text  | `#b8c4d4` | ~5:1           | ✅ AA  |
-| Accent (Frost) | `#88c0d0` | ~7:1           | ✅ AA  |
-
-### Paper Theme (Light)
-
-| Element        | Hex Code  | Contrast Ratio | Status |
-| -------------- | --------- | -------------- | ------ |
-| Primary Text   | `#3d3d3d` | ~9:1           | ✅ AAA |
-| Secondary Text | `#555555` | ~7:1           | ✅ AA  |
-| Tertiary Text  | `#737373` | ~5:1           | ✅ AA  |
-| Accent (Gold)  | `#9a7b30` | ~4.5:1         | ✅ AA  |
-
----
-
-## Custom Theme Guidelines
-
-When creating custom themes, users should ensure:
+When changing the light or dark palette, ensure:
 
 1. **Primary text** maintains at least **7:1** contrast for optimal readability
 2. **Secondary text** maintains at least **4.5:1** contrast
@@ -136,7 +105,7 @@ Luminance = 0.2126 × R + 0.7152 × G + 0.0722 × B
 
 ### Typography
 
-- Configurable font sizes via theme settings
+- Text Size (Settings → General → Appearance, or View → Zoom In / Zoom Out) scales text everywhere from 70% to 160%
 - System font support for optimal rendering
 - Minimum text size of 12pt for body content
 
@@ -167,16 +136,15 @@ Our accessibility testing includes:
 
 1. **Decorative Borders**: Some decorative borders (e.g., card borders, subtle dividers) may not meet the 3:1 contrast requirement, as they are purely decorative and do not convey information.
 
-2. **Custom Themes**: User-created custom themes may not meet accessibility standards. The theme editor does not currently enforce minimum contrast ratios.
+Osaurus has no custom themes. Appearance is System, Light or Dark, so the two palettes above are the only ones the app renders.
 
 ---
 
 ## Future Improvements
 
-- [ ] Add contrast ratio warnings in the theme editor
 - [ ] Provide accessibility presets for users with specific needs
-- [ ] Implement automatic contrast adjustment suggestions
-- [ ] Add colorblind-friendly theme presets
+- [ ] Honor the macOS Increase Contrast setting with a higher-contrast palette
+- [ ] Verify the Light and Dark palettes under color vision deficiency simulations
 
 ---
 
@@ -185,7 +153,7 @@ Our accessibility testing includes:
 If you encounter accessibility issues with Osaurus, please report them:
 
 1. Open an issue on GitHub with the `accessibility` label
-2. Include the theme you're using
+2. Include your Appearance (System, Light or Dark) and Text Size
 3. Describe the specific accessibility barrier
 4. If possible, include a screenshot
 

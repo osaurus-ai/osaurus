@@ -120,66 +120,83 @@ struct ModelManagerSuggestedTests {
         await withIsolatedModelSizeCache {
             let suggested = ModelManager().suggestedModels
             #expect(!suggested.contains { $0.id.lowercased().contains("ling-2.6") })
-            // `suggestedModels` is RAM-tiered (the Top Pick can be filtered on a small
-            // runner); the unfiltered curated id list must still carry Raptor 0.6.
-            #expect(ModelManager.curatedSuggestedIds.contains("osaurusai/raptor-0.6-4b-jang_6m"))
+            #expect(ModelManager.curatedSuggestedIds.contains("osaurusai/raptor-0.7-4b-jang_6m"))
         }
     }
 
-    @Test @MainActor func raptor06Entry_isOnboardingDefaultTopPick() async {
+    @Test @MainActor func raptor07Entry_isOnboardingModelAndTopPick() async {
         await withIsolatedModelSizeCache {
             let suggested = ModelManager().suggestedModels
             let raptor = suggested.first {
-                $0.id == "OsaurusAI/Raptor-0.6-4B-JANG_6M"
+                $0.id == "OsaurusAI/Raptor-0.7-4B-JANG_6M"
             }
 
             #expect(raptor != nil)
+            #expect(raptor?.id == ConfigureAIState.preferredOnboardingModelId)
             #expect(raptor?.modelType == "spark2_5")
             #expect(raptor?.isTopSuggestion == true)
             #expect(raptor?.useCase == .general)
-            #expect(raptor?.downloadSizeBytes == 3_677_829_017)
+            #expect(raptor?.downloadSizeBytes == 3_677_782_859)
             #expect(raptor?.releasedAt != nil)
         }
     }
 
-    /// Raptor v0.5 8B-A1B is superseded by 0.6 and retired: it is neither
-    /// curated nor allowed back in through the OsaurusAI org auto-fetch.
-    @Test @MainActor func raptorV05Entry_isRetired() async {
-        let v05 = "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M"
-        #expect(!ModelManager.curatedSuggestedIds.contains(v05.lowercased()))
-        #expect(ModelManager.retiredOsaurusOrgIds.contains(v05.lowercased()))
+    /// Onboarding offers exactly one local model on every Mac. Its measured
+    /// size must keep it comfortable on the smallest supported Mac (8 GB).
+    @Test @MainActor func onboardingModel_isRaptor07AndFitsComfortablyAt8GB() async {
+        await withIsolatedModelSizeCache {
+            let pick = ConfigureAIState.onboardingLocalModel(from: ModelManager().suggestedModels)
+            #expect(pick?.id == "OsaurusAI/Raptor-0.7-4B-JANG_6M")
+            #expect(pick?.compatibility(totalMemoryGB: 8) == .compatible)
+        }
+    }
+
+    /// Superseded Raptor builds are retired: neither curated nor allowed back
+    /// in through the OsaurusAI org auto-fetch.
+    @Test @MainActor func supersededRaptorEntries_areRetired() async {
+        let retired = [
+            "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M",
+            "OsaurusAI/Raptor-0.6-4B-JANG_6M",
+            "OsaurusAI/Raptor-0.6-4B-JANG_4M",
+        ]
+        for id in retired {
+            #expect(!ModelManager.curatedSuggestedIds.contains(id.lowercased()))
+            #expect(ModelManager.retiredOsaurusOrgIds.contains(id.lowercased()))
+        }
 
         await withIsolatedModelSizeCache {
             let manager = ModelManager()
-            #expect(!manager.suggestedModels.contains { $0.id == v05 })
-
-            let resurfaced = MLXModel(
-                id: v05,
-                name: "Raptor v0.5",
-                description: "From OsaurusAI on Hugging Face.",
-                downloadURL: "https://huggingface.co/\(v05)"
-            )
-            manager.applyOsaurusOrgFetch(autoFetched: [resurfaced])
-            #expect(!manager.suggestedModels.contains { $0.id == v05 })
+            let resurfaced = retired.map {
+                MLXModel(
+                    id: $0,
+                    name: "Raptor",
+                    description: "From OsaurusAI on Hugging Face.",
+                    downloadURL: "https://huggingface.co/\($0)"
+                )
+            }
+            manager.applyOsaurusOrgFetch(autoFetched: resurfaced)
+            for id in retired {
+                #expect(!manager.suggestedModels.contains { $0.id == id })
+            }
         }
     }
 
     @Test @MainActor func raptorEntries_doNotShareFamilyKey() async {
         #expect(
+            ModelMetadataParser.familyKey(from: "OsaurusAI/Raptor-0.7-4B-JANG_6M")
+                == "osaurusai/raptor-0.7-4b"
+        )
+        #expect(
             ModelMetadataParser.familyKey(from: "OsaurusAI/Raptor-0.6-4B-JANG_6M")
                 == "osaurusai/raptor-0.6-4b"
         )
         #expect(
-            ModelMetadataParser.familyKey(from: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M")
-                == "osaurusai/raptor-v0.5-8b-a1b"
-        )
-        #expect(
-            ModelMetadataParser.familyKey(from: "OsaurusAI/Raptor-0.6-4B-JANG_6M")
-                != ModelMetadataParser.familyKey(from: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M")
+            ModelMetadataParser.familyKey(from: "OsaurusAI/Raptor-0.7-4B-JANG_6M")
+                != ModelMetadataParser.familyKey(from: "OsaurusAI/Raptor-0.6-4B-JANG_6M")
         )
     }
 
-    @Test @MainActor func nanbeige42Entry_isJang6mTopPick() async {
+    @Test @MainActor func nanbeige42Entry_isCatalogOnlyJang6m() async {
         await withIsolatedModelSizeCache {
             let suggested = ModelManager().suggestedModels
             let jang6 = suggested.first { $0.id == "OsaurusAI/Nanbeige4.2-3B-JANG_6M" }
@@ -187,10 +204,10 @@ struct ModelManagerSuggestedTests {
 
             #expect(jang6 != nil)
             #expect(jang6?.modelType == "nanbeige")
-            #expect(jang6?.isTopSuggestion == true)
+            #expect(jang6?.isTopSuggestion == false)
             #expect(jang6?.useCase == .general)
             // Bootstrap Hub size so 8 GB machines don't see a 1.5 GB
-            // name-heuristic and auto-default this over Gemma E2B.
+            // name-heuristic fit label.
             #expect(jang6?.downloadSizeBytes == 3_921_000_000)
             #expect(jang6?.releasedAt != nil)
             // MXFP8 is format coverage, not the recommendation.
@@ -351,39 +368,32 @@ struct ModelManagerSuggestedTests {
         }
     }
 
-    // MARK: - Top-pick reorg (precision-first)
+    // MARK: - Models tab Top Picks
 
-    @Test @MainActor func topPicks_recommendRaptorLargeOrnithAndOfficialGemma() async {
+    @Test @MainActor func topPicks_areRaptorAndTheNewestOsaurusFamilies() async {
         await withIsolatedModelSizeCache {
             let suggested = ModelManager().suggestedModels
             let topIds = Set(suggested.filter(\.isTopSuggestion).map { $0.id })
-            // Recommendation spine: Raptor 0.6 4B for 8 GB through mainstream
-            // RAM (v0.5 is retired), Ornith 1.5 35B-A3B MXFP8 for the larger
-            // tiers, official OsaurusAI Gemma 4 for the VL tiers, and
-            // Nanbeige 4.2 3B JANG_6M as the text-quality exception (JANG_6M
-            // beats that family's MXFP8). These are the ONLY Top Picks.
             let expectedTopPicks: Set<String> = [
-                "OsaurusAI/Raptor-0.6-4B-JANG_6M",
-                "OsaurusAI/Ornith-1.5-35B-A3B-MXFP8",
-                "OsaurusAI/Nanbeige4.2-3B-JANG_6M",
+                "OsaurusAI/Raptor-0.7-4B-JANG_6M",
+                "OsaurusAI/LFM3-VL-2B-JANG_6M",
+                "OsaurusAI/Diplodocus-preview-JANG_6M",
+                "OsaurusAI/Qwen3.8-27B-JANG_4D",
+                "OsaurusAI/MiniCPM-V-4.7-35B-A3B-JANG_4M",
+                "OsaurusAI/Flint-40B-A2.5B-JANG_4M",
+                "OsaurusAI/Flint-40B-A2.5B-JANG_6M",
+            ]
+            #expect(topIds == expectedTopPicks, "unexpected Top Picks: \(topIds.sorted())")
+            for id in [
                 "OsaurusAI/gemma-4-12B-it-MXFP8",
                 "OsaurusAI/gemma-4-E4B-it-8bit",
                 "OsaurusAI/gemma-4-E2B-it-8bit",
-            ]
-            #expect(
-                topIds == expectedTopPicks,
-                "Top Picks should be exactly Raptor 0.6 + large Ornith 1.5 MXFP8 + Nanbeige JANG_6M + official Gemma; got \(topIds.sorted())"
-            )
-            // Gemma QAT/MXFP4, plus Qwen 3.6 / Nemotron-3 / Bonsai, are
-            // catalog-only — installable and selectable, just not part of the
-            // auto-default recommendation spine.
-            for id in [
+                "OsaurusAI/Ornith-1.5-35B-A3B-MXFP8",
+                "OsaurusAI/Nanbeige4.2-3B-JANG_6M",
                 "OsaurusAI/gemma-4-E2B-it-qat-MXFP4",
                 "OsaurusAI/gemma-4-12B-it-qat-MXFP4",
                 "OsaurusAI/gemma-4-31B-it-qat-MXFP4",
                 "OsaurusAI/gemma-4-26B-A4B-it-qat-MXFP4",
-                "OsaurusAI/Qwen3.6-27B-MXFP4",
-                "OsaurusAI/Qwen3.6-27B-MXFP8-MTP",
                 "OsaurusAI/Qwen3.6-35B-A3B-MXFP8-MTP",
                 "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4",
                 "OsaurusAI/Bonsai-27b-Ternary-JANG",
@@ -397,6 +407,27 @@ struct ModelManagerSuggestedTests {
                     "expected \(id) to remain in the catalog")
             }
         }
+    }
+
+    /// JANG ids have no name-derived size, so a Top Pick without a bootstrap
+    /// size shows a blank fit label until the Hub size fetch returns.
+    @Test @MainActor func topPicks_carryBootstrapDownloadSizes() async {
+        await withIsolatedModelSizeCache {
+            let topPicks = ModelManager().suggestedModels.filter(\.isTopSuggestion)
+            #expect(!topPicks.isEmpty)
+            for model in topPicks {
+                #expect((model.downloadSizeBytes ?? 0) > 0, "missing bootstrap size for \(model.id)")
+                #expect(model.modelType != nil, "missing modelType hint for \(model.id)")
+                #expect(model.useCase != nil, "missing useCase for \(model.id)")
+            }
+        }
+    }
+
+    @Test func flintTopPicks_shareOneFamilyRow() {
+        #expect(
+            ModelMetadataParser.familyKey(from: "OsaurusAI/Flint-40B-A2.5B-JANG_4M")
+                == ModelMetadataParser.familyKey(from: "OsaurusAI/Flint-40B-A2.5B-JANG_6M")
+        )
     }
 
     @Test @MainActor func lowerPrecisionSiblings_demotedFromTopPicks() async {
@@ -437,8 +468,28 @@ struct ModelManagerSuggestedTests {
         let ids = ModelManager.curatedSuggestedIds
         #expect(ids.contains("osaurusai/laguna-xs.2-jangtq"))
         #expect(!ids.contains("osaurusai/laguna-xs.2-jangtq2"))
-        #expect(ids.contains("osaurusai/mistral-medium-3.5-128b-jangtq"))
-        #expect(!ids.contains("osaurusai/mistral-medium-3.5-128b-jangtq2"))
+    }
+
+    /// These Hub repos return 404 or went private, so their Download buttons
+    /// were dead.
+    @Test func unreachableHubRepos_absentFromCuratedCatalog() {
+        let ids = ModelManager.curatedSuggestedIds
+        for gone in [
+            "osaurusai/qwen3.6-27b-mxfp4",
+            "osaurusai/qwen3.6-27b-mxfp8-mtp",
+            "osaurusai/zaya1-8b-jangtq4",
+            "osaurusai/mistral-medium-3.5-128b-mxfp4",
+            "osaurusai/mistral-medium-3.5-128b-jangtq",
+            "osaurusai/deepseek-v4-flash-jangtq2",
+            "osaurusai/deepseek-v4-flash-jangtq-k",
+            "osaurusai/kimi-k2.6-jangtq_k",
+            "osaurusai/hy3-preview-jangtq_k",
+            "osaurusai/nvidia-nemotron-3-ultra-550b-a55b-jangtq_1l",
+            "osaurusai/nemotron-3-nano-omni-30b-a3b-jangtq4",
+            "osaurusai/nemotron-3-nano-omni-30b-a3b-jangtq2",
+        ] {
+            #expect(!ids.contains(gone), "expected \(gone) to be removed")
+        }
     }
 
     @Test @MainActor func retiredOrgRepos_droppedFromAutoFetchMerge() async {
@@ -523,115 +574,6 @@ struct ModelManagerSuggestedTests {
             )
             manager.applyOsaurusOrgFetch(autoFetched: [rampart])
             #expect(!manager.suggestedModels.contains { $0.id == rampart.id })
-        }
-    }
-
-    // MARK: - Onboarding default scenario matrix (Phase 4c)
-
-    @Test @MainActor func onboardingDefault_picksLargestComfortableVerifiedTopPick() async {
-        await withIsolatedModelSizeCache {
-            // Fetch candidates under the isolated (empty) size cache so estimates
-            // come from the deterministic param heuristic, not a machine's cached
-            // on-disk sizes.
-            let candidates = ModelManager().suggestedModels.filter(\.isTopSuggestion)
-            for gb in stride(from: 8.0, through: 128.0, by: 2.0) {
-                guard
-                    let pick = ConfigureAIState.recommendedLocalPick(
-                        from: candidates, totalMemoryGB: gb)
-                else { continue }
-                // Never a dropped Gemma QAT / plain-MXFP4 build.
-                let lower = pick.id.lowercased()
-                let droppedGemma =
-                    lower.contains("gemma-4")
-                    && (lower.contains("qat") || lower.hasSuffix("mxfp4"))
-                #expect(
-                    !droppedGemma,
-                    "auto-default \(pick.id) at \(gb)GB must not be a Gemma QAT/MXFP4 build")
-
-                // The pick is the largest-base-parameter Top Pick that
-                // comfortably fits, except Raptor 0.6 wins when it fits and
-                // no 12B+ upgrade (Gemma 12B / Ornith 35B) is comfortable.
-                // Equal-size variants prefer the larger, higher-quality
-                // footprint. (When nothing is comfortable, the fallback
-                // smallest candidate is allowed.)
-                let comfortable = candidates.filter {
-                    $0.compatibility(totalMemoryGB: gb) == .compatible
-                }
-                if !comfortable.isEmpty {
-                    let preferred = comfortable.first {
-                        $0.id == ConfigureAIState.preferredOnboardingModelId
-                    }
-                    let hasLargerRAMTier = comfortable.contains {
-                        ($0.parameterCountBillions ?? 0)
-                            >= ConfigureAIState.largeRAMOnboardingParameterFloor
-                    }
-                    if let preferred, !hasLargerRAMTier {
-                        #expect(
-                            pick.id == preferred.id,
-                            "auto-default at \(gb)GB should be preferred Raptor 0.6"
-                        )
-                    } else {
-                        let maxParameters =
-                            comfortable.compactMap(\.parameterCountBillions).max() ?? 0
-                        #expect(
-                            (pick.parameterCountBillions ?? -1) == maxParameters,
-                            "auto-default at \(gb)GB should have the largest comfortable base model"
-                        )
-                        let strongestFamily = comfortable.filter {
-                            ($0.parameterCountBillions ?? 0) == maxParameters
-                        }
-                        let maxMem = strongestFamily.compactMap(\.estimatedMemoryGB).max() ?? 0
-                        #expect(
-                            (pick.estimatedMemoryGB ?? -1) == maxMem,
-                            "auto-default at \(gb)GB should prefer the highest-quality fitting variant"
-                        )
-                    }
-                }
-            }
-        }
-    }
-
-    @Test @MainActor func onboardingDefault_neverPicksDenseBonsai() async {
-        await withIsolatedModelSizeCache {
-            let candidates = ModelManager().suggestedModels.filter(\.isTopSuggestion)
-            // The dense Bonsai 27B must never be the auto-default again (user
-            // feedback: decode too slow); every RAM tier lands elsewhere.
-            for gb in stride(from: 8.0, through: 128.0, by: 2.0) {
-                let pick = ConfigureAIState.recommendedLocalPick(
-                    from: candidates, totalMemoryGB: gb)
-                #expect(
-                    pick?.id.lowercased().contains("bonsai") != true,
-                    "auto-default at \(gb)GB must not be dense Bonsai; got \(pick?.id ?? "nil")"
-                )
-            }
-        }
-    }
-
-    @Test @MainActor func onboardingDefault_selectsRaptor06Through24GB() async {
-        await withIsolatedModelSizeCache {
-            let candidates = ModelManager().suggestedModels.filter(\.isTopSuggestion)
-            let eightGB = ConfigureAIState.recommendedLocalPick(
-                from: candidates,
-                totalMemoryGB: 8
-            )
-            let sixteenGB = ConfigureAIState.recommendedLocalPick(
-                from: candidates,
-                totalMemoryGB: 16
-            )
-            let eighteenGB = ConfigureAIState.recommendedLocalPick(
-                from: candidates,
-                totalMemoryGB: 18
-            )
-            let twentyFourGB = ConfigureAIState.recommendedLocalPick(
-                from: candidates,
-                totalMemoryGB: 24
-            )
-
-            let raptorId = ConfigureAIState.preferredOnboardingModelId
-            #expect(eightGB?.id == raptorId)
-            #expect(sixteenGB?.id == raptorId)
-            #expect(eighteenGB?.id == raptorId)
-            #expect(twentyFourGB?.id == raptorId)
         }
     }
 

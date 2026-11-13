@@ -264,11 +264,13 @@ public final class ClaudePluginInstaller {
             // installed so re-running install on the same repo never piles
             // up duplicate schedules / commands / MCP providers (skills
             // dedupe by `(pluginId, name)` further down).
+            // Schedules are replaced per name below, so a schedule the user
+            // configured for an agent that no longer declares one stays.
             if replaceExisting {
-                ScheduleManager.shared.deleteByPluginId(pluginId)
                 SlashCommandRegistry.shared.deleteByPluginId(pluginId)
                 MCPProviderManager.shared.deleteByPluginId(pluginId)
             }
+            var keptPluginAgentIds = Set<UUID>()
 
             // ── Phase 1: fetch every file we need for this plugin in
             // parallel.  Managers are all `@MainActor`, so we cannot apply
@@ -399,23 +401,22 @@ public final class ClaudePluginInstaller {
                     let scheduleName = "\(manifest.name):\(fetchedAgent.entry.displayName)"
                     let description = frontmatter["description"]?
                         .trimmingCharacters(in: .whitespacesAndNewlines)
-                    let inferredCron = inferCron(from: frontmatter)
-
-                    let frequency: ScheduleFrequency
-                    let isEnabled: Bool
-                    let needsCronReview: Bool
-                    if let cron = inferredCron {
-                        frequency = .cron(expression: cron)
-                        isEnabled = true
-                        needsCronReview = false
-                    } else {
-                        // Default placeholder: weekly Monday 9 AM. Created
-                        // disabled so we never silently run something the
-                        // user didn't review.
-                        frequency = .cron(expression: "0 9 * * 1")
-                        isEnabled = false
-                        needsCronReview = true
+                    // An agent file without a schedule is a persona, not a
+                    // job: it becomes a custom agent the user can chat with.
+                    guard let cron = inferCron(from: frontmatter) else {
+                        if let agent = upsertPluginAgent(
+                            pluginId: pluginId, name: fetchedAgent.entry.displayName,
+                            frontmatter: frontmatter, body: body)
+                        {
+                            keptPluginAgentIds.insert(agent.id)
+                            summary.importedAgentCount += 1
+                        }
+                        continue
                     }
+                    if replaceExisting { EventManager.shared.deleteByPluginId(pluginId, named: scheduleName) }
+                    let frequency: ScheduleFrequency = .cron(expression: cron)
+                    let isEnabled = true
+                    let needsCronReview = false
 
                     let instructions: String = {
                         var pieces: [String] = []
@@ -429,15 +430,17 @@ public final class ClaudePluginInstaller {
                         return pieces.joined(separator: "\n\n")
                     }()
 
-                    let created = ScheduleManager.shared.create(
-                        name: scheduleName,
-                        instructions: instructions,
-                        parameters: [
-                            ScheduleManager.pluginIdParameterKey: pluginId,
-                            "claudePluginName": manifest.name,
-                        ],
-                        frequency: frequency,
-                        isEnabled: isEnabled
+                    let created = EventManager.shared.create(
+                        OsaurusEvent(
+                            name: scheduleName,
+                            isEnabled: isEnabled,
+                            source: .schedule(ScheduleSourceConfig(frequency: frequency)),
+                            action: .agent(AgentEventAction(instructions: instructions)),
+                            parameters: [
+                                OsaurusEvent.pluginIdParameterKey: pluginId,
+                                "claudePluginName": manifest.name,
+                            ]
+                        )
                     )
 
                     if needsCronReview {
@@ -450,6 +453,13 @@ public final class ClaudePluginInstaller {
                     }
 
                     summary.importedAgentCount += 1
+                }
+            }
+
+            if replaceExisting {
+                for agent in AgentManager.shared.agents
+                where agent.pluginId == pluginId && !keptPluginAgentIds.contains(agent.id) {
+                    _ = await AgentManager.shared.delete(id: agent.id)
                 }
             }
 
@@ -508,8 +518,7 @@ public final class ClaudePluginInstaller {
                     // off the macOS-version probe N times.
                     let sandboxAvailable: Bool
                     #if os(macOS)
-                        sandboxAvailable = await SandboxManager.shared
-                            .checkAvailability().isAvailable
+                        sandboxAvailable = await SandboxManager.shared.supportsSandboxedStdio()
                     #else
                         sandboxAvailable = false
                     #endif
@@ -572,11 +581,8 @@ public final class ClaudePluginInstaller {
                             )
                             MCPProviderManager.shared.addProvider(provider, token: nil)
                             for (key, value) in classifiedEnv.realSecrets {
-                                _ = MCPProviderKeychain.saveEnvSecret(
-                                    value,
-                                    key: key,
-                                    for: provider.id
-                                )
+                                MCPCredentials.saveEnv(
+                                    value, provider: provider, name: key, separateOnConflict: true)
                             }
                             if !classifiedEnv.placeholderSecrets.isEmpty {
                                 summary.stdioProvidersNeedingConfiguration.append(
@@ -624,11 +630,8 @@ public final class ClaudePluginInstaller {
                             )
                             MCPProviderManager.shared.addProvider(provider, token: nil)
                             for (key, value) in classified.realSecrets {
-                                _ = MCPProviderKeychain.saveHeaderSecret(
-                                    value,
-                                    key: key,
-                                    for: provider.id
-                                )
+                                MCPCredentials.saveHeader(
+                                    value, provider: provider, header: key, separateOnConflict: true)
                             }
                             summary.oauthProvidersNeedingSignIn.append(
                                 .init(id: provider.id, name: server.name)
@@ -677,11 +680,8 @@ public final class ClaudePluginInstaller {
                                 token: hasRealToken ? server.token : nil
                             )
                             for (key, value) in classified.realSecrets {
-                                _ = MCPProviderKeychain.saveHeaderSecret(
-                                    value,
-                                    key: key,
-                                    for: provider.id
-                                )
+                                MCPCredentials.saveHeader(
+                                    value, provider: provider, header: key, separateOnConflict: true)
                             }
                             if server.tokenIsPlaceholder || !classified.placeholderSecrets.isEmpty {
                                 var missing = classified.placeholderSecrets
@@ -1499,7 +1499,10 @@ public final class ClaudePluginInstaller {
         await SkillManager.shared.unregisterPluginSkills(pluginId: pluginId)
         summary.importedSkillCount = skillCount
 
-        summary.importedAgentCount = ScheduleManager.shared.deleteByPluginId(pluginId)
+        summary.importedAgentCount = EventManager.shared.deleteByPluginId(pluginId)
+        for agent in AgentManager.shared.agents where agent.pluginId == pluginId {
+            if await AgentManager.shared.delete(id: agent.id).deleted { summary.importedAgentCount += 1 }
+        }
         summary.importedCommandCount = SlashCommandRegistry.shared.deleteByPluginId(pluginId)
         summary.importedMCPProviderCount = MCPProviderManager.shared.deleteByPluginId(pluginId)
 
@@ -1511,6 +1514,48 @@ public final class ClaudePluginInstaller {
         ClaudePluginManifestStore.delete(pluginId: pluginId)
 
         return summary
+    }
+
+    /// Creates or updates the custom agent for one `agents/*.md` file. The
+    /// body is the system prompt; frontmatter `model` is kept only when that
+    /// model is available, and denied shell or web tools turn the agent's
+    /// sandbox or its network off.
+    func upsertPluginAgent(
+        pluginId: String, name fallbackName: String, frontmatter: [String: String], body: String
+    ) -> Agent? {
+        let prompt = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prompt.isEmpty else { return nil }
+        let name =
+            frontmatter["name"].flatMap { $0.isEmpty ? nil : ChatImportFastPaths.displayName(fromSlug: $0) }
+            ?? fallbackName
+        let description = frontmatter["description"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let denies = ChatImportAgentPermissions.denies(frontmatter: frontmatter)
+        let exec: AutonomousExecConfig? =
+            denies.shell || denies.network
+            ? AutonomousExecConfig(enabled: false, sandboxNetworkEnabled: !denies.network) : nil
+        var model: String?
+        if let raw = frontmatter["model"],
+            case .resolved(let id) = ConfigModelReference.resolve(raw, catalog: ConfigModelReference.liveCatalog()),
+            !id.isEmpty
+        {
+            model = id
+        }
+        if var existing = AgentManager.shared.agents.first(where: {
+            $0.pluginId == pluginId && ($0.name == name || $0.name.hasPrefix(name + " "))
+        }) {
+            existing.description = description
+            existing.systemPrompt = prompt
+            existing.autonomousExec = exec ?? existing.autonomousExec
+            existing.defaultModel = model ?? existing.defaultModel
+            existing.updatedAt = Date()
+            AgentManager.shared.update(existing)
+            return existing
+        }
+        let agent = Agent(
+            name: ChatImportApplier.uniqueName(name, kind: .agent), description: description, systemPrompt: prompt,
+            defaultModel: model, autonomousExec: exec, pluginId: pluginId)
+        AgentManager.shared.add(agent, telemetryOrigin: "plugin")
+        return agent
     }
 
     // MARK: - Plugin Identity

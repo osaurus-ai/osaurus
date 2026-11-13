@@ -27,7 +27,8 @@ import Foundation
 /// hop) and `Sendable`, so it can be handed to the `@MainActor` emitter via a
 /// fire-and-forget `Task` without blocking dispatch.
 struct MessageTelemetryInfo: Sendable {
-    /// Originating surface: `chat_ui` | `http_api` | `plugin`.
+    /// Originating surface: a `sourceToken` value, or `workflow` /
+    /// `subagent` / `synced_device` (see `messageSourceToken`).
     let source: String
     /// Inference backend category: `foundation` | `local` | `remote`.
     let modelSource: String
@@ -82,6 +83,15 @@ struct MessageTelemetryInfo: Sendable {
         self.brainSource = brainSource
         self.capability = capability
     }
+}
+
+/// Context that flows from where an action starts to where it lands, so the
+/// landing event can say why it happened.
+enum TelemetryContext {
+    /// The `agent_created` origin for agents created inside this task. The
+    /// outermost binding wins: a team seed that applies through
+    /// `ConfigApplier` stays `team_seed`.
+    @TaskLocal static var agentCreationOrigin: String?
 }
 
 @MainActor
@@ -278,6 +288,47 @@ enum FeatureTelemetry {
     /// plugin dispatch). No agent id or name is attached.
     static func agentRun(source: String, service: TelemetryService = .shared) {
         service.track("agent_run", ["source": source])
+    }
+
+    /// An item that needed a person settled. Closed tokens only: the
+    /// `AttentionKind`, the outcome, the surface that answered, and a wait
+    /// bucket. Never the requester, agent, tool, or any text.
+    static func attentionResolved(
+        kind: AttentionKind,
+        outcome: String,
+        surface: AttentionSurface,
+        wait: TimeInterval?,
+        service: TelemetryService = .shared
+    ) {
+        service.track(
+            "attention_resolved",
+            [
+                "kind": kind.rawValue,
+                "outcome": outcome,
+                "surface": surface.rawValue,
+                "wait_bucket": waitBucket(wait),
+            ]
+        )
+    }
+
+    /// An item was delivered to one notification channel.
+    static func notificationDelivered(
+        kind: AttentionKind,
+        channel: NotificationChannelID,
+        service: TelemetryService = .shared
+    ) {
+        service.track("notification_delivered", ["kind": kind.rawValue, "channel": channel.rawValue])
+    }
+
+    nonisolated static func waitBucket(_ wait: TimeInterval?) -> String {
+        guard let wait else { return "none" }
+        switch wait {
+        case ..<10: return "lt_10s"
+        case ..<60: return "10_60s"
+        case ..<300: return "1_5m"
+        case ..<1800: return "5_30m"
+        default: return "gte_30m"
+        }
     }
 
     /// The model invoked `computer_use`. Fired at the registry permission
@@ -518,12 +569,14 @@ enum FeatureTelemetry {
     /// A sandbox VM boot reached `.running`. `kind` is the closed
     /// `SandboxBootSample.BootKind` token (`cold` | `warm` |
     /// `warmFallback`); `durationBucket` is a coarse
-    /// `SandboxStartupMetricsStore.latencyBucket` value. Raw durations,
-    /// image digests, and agent identity are never attached — full
-    /// fidelity stays in the local startup-metrics file.
+    /// `SandboxStartupMetricsStore.latencyBucket` value; `dominantPhase` is
+    /// one of `SandboxBootSample.dominantPhases`. Raw durations, image
+    /// digests, and agent identity are never attached — full fidelity stays
+    /// in the local startup-metrics file.
     static func sandboxBoot(
         kind: String,
         durationBucket: String,
+        dominantPhase: String,
         service: TelemetryService = .shared
     ) {
         service.track(
@@ -531,6 +584,26 @@ enum FeatureTelemetry {
             [
                 "kind": kind,
                 "duration_bucket": durationBucket,
+                "dominant_phase": dominantPhase,
+            ]
+        )
+    }
+
+    /// The sandbox VM restarted so another agent could join the pod (pod
+    /// membership is fixed at boot). `waitBucket` is a
+    /// `SandboxStartupMetricsStore.latencyBucket` value for how long the
+    /// restart waited on other agents' work; `interruptedWork` is whether
+    /// that work was still running when the wait gave up.
+    static func sandboxMembershipRestart(
+        waitBucket: String,
+        interruptedWork: Bool,
+        service: TelemetryService = .shared
+    ) {
+        service.track(
+            "sandbox_membership_restart",
+            [
+                "wait_bucket": waitBucket,
+                "interrupted_work": interruptedWork,
             ]
         )
     }
@@ -542,6 +615,8 @@ enum FeatureTelemetry {
     /// - `errorClass`: one of `SandboxToolRegistrar.failureErrorClasses`.
     /// - `trigger`: `SandboxToolRegistrar.RegistrationTrigger` raw value.
     /// - `coldStart`: whether the attempt was a first-run cold provision.
+    /// - `ownerState`: `vmnet_in_use` only, `SandboxVMOwnershipLease.OwnerState`.
+    /// - `bootstrapStep`: failed script step, `SandboxProvisionStepError.BootstrapStep`.
     static func sandboxProvisionFailure(
         category: String,
         backend: String,
@@ -549,19 +624,21 @@ enum FeatureTelemetry {
         errorClass: String,
         trigger: String,
         coldStart: Bool,
+        ownerState: String? = nil,
+        bootstrapStep: String? = nil,
         service: TelemetryService = .shared
     ) {
-        service.track(
-            "sandbox_provision_failure",
-            [
-                "category": category,
-                "backend": backend,
-                "phase": phase,
-                "error_class": errorClass,
-                "trigger": trigger,
-                "cold_start": coldStart,
-            ]
-        )
+        var props: [String: Value] = [
+            "category": category,
+            "backend": backend,
+            "phase": phase,
+            "error_class": errorClass,
+            "trigger": trigger,
+            "cold_start": coldStart,
+        ]
+        if let ownerState { props["owner_state"] = ownerState }
+        if let bootstrapStep { props["bootstrap_step"] = bootstrapStep }
+        service.track("sandbox_provision_failure", props)
     }
 
     // MARK: - Feature adoption / scope
@@ -600,10 +677,56 @@ enum FeatureTelemetry {
 
     /// A user-created agent was added. `numberOfAgents` is the total number
     /// of agents on the install after this one was added (built-in included),
-    /// so the dashboard can derive how many agents users typically keep. No
+    /// so the dashboard can derive how many agents users typically keep.
+    /// `origin` is `user` (New Agent, setup wizard), `team_seed` (the day-one
+    /// team or a discovery), `template_install`, `import`, `config` (the
+    /// Configurator, admin API, or a phone-approved apply), or `plugin`. No
     /// name, prompt, or configuration.
-    static func agentCreated(numberOfAgents: Int, service: TelemetryService = .shared) {
-        service.track("agent_created", ["number_of_agents": numberOfAgents])
+    static func agentCreated(numberOfAgents: Int, origin: String = "user", service: TelemetryService = .shared) {
+        service.track("agent_created", ["number_of_agents": numberOfAgents, "origin": origin])
+    }
+
+    /// The `agent_created` origin for a `ConfigApplier` apply.
+    nonisolated static func agentCreationOrigin(for caller: ConfigChangeCaller?) -> String {
+        switch caller {
+        case .templateInstall: return "template_install"
+        case .fileImport: return "import"
+        default: return "config"
+        }
+    }
+
+    /// A New Agent chat opened. `source` is a closed token (`agents_page`,
+    /// `discovery`, `deeplink`).
+    static func agentCreationStarted(source: String, service: TelemetryService = .shared) {
+        service.track("agent_creation_started", ["source": source])
+    }
+
+    /// Create in a New Agent chat saved the agent. Counts only: how many
+    /// messages the user sent the Configurator, how many fields they edited
+    /// in the panel, and whether setup needed the wizard first.
+    static func agentCreationFinished(
+        userMessages: Int, editedFields: Int, neededSetup: Bool, service: TelemetryService = .shared
+    ) {
+        service.track(
+            "agent_creation_finished",
+            ["user_messages": userMessages, "edited_fields": editedFields, "needed_setup": neededSetup])
+    }
+
+    /// The Configurator's first change to a New Agent draft.
+    static func agentCreationDrafted(service: TelemetryService = .shared) {
+        service.track("agent_creation_drafted", [:])
+    }
+
+    /// The first hand edit of one panel field in a draft. `field` is the
+    /// field's fixed id (name, model, tools, ...), never its value.
+    static func agentCreationEdited(field: String, service: TelemetryService = .shared) {
+        service.track("agent_creation_edited", ["field": field])
+    }
+
+    /// A New Agent chat closed before Create. The draft stays resumable;
+    /// counts only.
+    static func agentCreationAbandoned(touchedFields: Int, service: TelemetryService = .shared) {
+        service.track("agent_creation_abandoned", ["touched_fields": touchedFields])
     }
 
     // MARK: - Settings engagement
@@ -638,8 +761,10 @@ enum FeatureTelemetry {
         case .settings: return "general"
         case .chat: return "chat"
         case .voice: return "voice"
-        case .themes: return "themes"
         case .orchestrator: return "orchestrator"
+        case .architect: return "architect"
+        case .configurator: return "configurator"
+        case .delegation: return "delegation"
         case .models: return "models"
         case .providers: return "providers"
         case .imageGeneration: return "image_generation"
@@ -647,13 +772,16 @@ enum FeatureTelemetry {
         case .agentChannels: return "agent_channels"
         case .agentRuntimes: return "agent_runtimes"
         case .memory: return "memory"
+        case .projects: return "projects"
         case .knowledge: return "knowledge"
         case .tools: return "tools"
         case .search: return "search"
         case .skills: return "skills"
         case .commands: return "commands"
-        case .schedules: return "schedules"
-        case .watchers: return "watchers"
+        case .workflows: return "workflows"
+        case .automations: return "automations"
+        case .approvals: return "approvals"
+        case .tasks: return "tasks"
         case .sandbox: return "sandbox"
         case .computerUse: return "computer_use"
         case .browser: return "browser"
@@ -663,8 +791,12 @@ enum FeatureTelemetry {
         case .identity: return "identity"
         case .credits: return "credits"
         case .workspaces: return "workspaces"
+        case .access: return "access"
+        case .devices: return "devices"
         case .connect: return "connect"
         case .insights: return "insights"
+        case .modelDefaults: return "model_defaults"
+        case .keys: return "keys"
         }
     }
 
@@ -716,7 +848,8 @@ enum FeatureTelemetry {
     }
 
     /// A chat-history import saved at least one conversation. `source` is a
-    /// closed two-value entry-point token: `sidebar` or `onboarding_prompt`.
+    /// closed entry-point token: `sidebar`, `onboarding_prompt`, or
+    /// `discovery`.
     /// Counts only — never file names, provider formats, or content.
     static func chatHistoryImported(
         source: String,
@@ -736,6 +869,209 @@ enum FeatureTelemetry {
                 "failed_files": failedFiles,
             ]
         )
+    }
+
+    // MARK: - Discovery
+
+    /// The discovery setting changed. Boolean only.
+    /// `source` is `settings`, `greeting` (Skip setup under a new chat's
+    /// greeting), or `undo` (its toast's Undo).
+    static func discoveryToggled(enabled: Bool, source: String = "settings", service: TelemetryService = .shared) {
+        service.track("discovery_toggled", ["enabled": enabled, "source": source])
+    }
+
+    /// Set Up Osaurus was opened. `source` is `menu` or `settings`;
+    /// `remaining` is how many items it listed.
+    static func setUpOsaurusOpened(source: String, remaining: Int, service: TelemetryService = .shared) {
+        service.track("set_up_osaurus_opened", ["source": source, "remaining": remaining])
+    }
+
+    /// The day-one team was created. `source` is `fresh_install` (end of
+    /// onboarding) or `starter_agents` (Settings' Create Starter Agents).
+    /// Counts and a bool only; no teammate names or workflow ids.
+    static func teamSeeded(
+        source: String,
+        teammates: Int,
+        workflows: Int,
+        developerMac: Bool,
+        service: TelemetryService = .shared
+    ) {
+        service.track(
+            "team_seeded",
+            ["source": source, "teammates": teammates, "workflows": workflows, "developer_mac": developerMac])
+    }
+
+    // MARK: - Workflows
+
+    /// A workflow run began. `caller` is the `WorkflowCaller.Kind` token
+    /// (`agent`, `orchestrator`, `user`, `test`, `workflow`, `event`).
+    static func workflowRunStarted(caller: String, resumed: Bool, service: TelemetryService = .shared) {
+        service.track("workflow_run_started", ["caller": caller, "resumed": resumed])
+    }
+
+    /// A workflow run's task ended. `status` is the `WorkflowRunStatus`
+    /// token; `duration_bucket` uses the `waitBucket` buckets.
+    static func workflowRunFinished(
+        caller: String,
+        status: String,
+        duration: TimeInterval?,
+        service: TelemetryService = .shared
+    ) {
+        service.track(
+            "workflow_run_finished",
+            ["caller": caller, "status": status, "duration_bucket": waitBucket(duration)])
+    }
+
+    /// A workflow draft was created. `origin` is `blank` (new in the
+    /// Architect), `edit` (a saved workflow opened in the Architect), or
+    /// `inline` (a chat handed a task to the Architect).
+    static func workflowDraftStarted(origin: String, service: TelemetryService = .shared) {
+        service.track("workflow_draft_started", ["origin": origin])
+    }
+
+    /// The Workflows surface came on screen. `page` is `home`, `workflow`,
+    /// `run`, or `new`.
+    static func workflowsOpened(page: String, service: TelemetryService = .shared) {
+        service.track("workflows_opened", ["page": page])
+    }
+
+    // MARK: - Automations
+
+    /// An automation was created. `trigger` is the `EventSourceKind` token;
+    /// `origin` is `user` (Settings or the editor) or `config`
+    /// (`osaurus_config`, including onboarding's Turn On).
+    static func automationCreated(trigger: String, origin: String, service: TelemetryService = .shared) {
+        service.track("automation_created", ["trigger": trigger, "origin": origin])
+    }
+
+    /// An automation run settled. `status` is the `EventRunStatus` token;
+    /// filtered and duplicate deliveries never reach this.
+    static func automationRunFinished(trigger: String, status: String, service: TelemetryService = .shared) {
+        service.track("automation_run_finished", ["trigger": trigger, "status": status])
+    }
+
+    // MARK: - Phone
+
+    /// A phone finished pairing with this Mac. No device name or id.
+    static func phonePaired(service: TelemetryService = .shared) {
+        service.track("phone_paired")
+    }
+
+    /// The paired phone was removed. `via` is `mac` (revoked here) or
+    /// `phone` (the phone unpaired itself).
+    static func phoneUnpaired(via: String, service: TelemetryService = .shared) {
+        service.track("phone_unpaired", ["via": via])
+    }
+
+    /// Another device joined this Mac's Sync account. `platform` is
+    /// `iphone` or `other`; no device name or key.
+    static func syncDevicePaired(platform: String, service: TelemetryService = .shared) {
+        service.track("sync_device_paired", ["platform": platform])
+    }
+
+    /// A device was removed from Sync; `rotated_keys` when the account's
+    /// keys were replaced with it.
+    static func syncDeviceRemoved(rotatedKeys: Bool, service: TelemetryService = .shared) {
+        service.track("sync_device_removed", ["rotated_keys": rotatedKeys])
+    }
+
+    // MARK: - Templates
+
+    /// A workflow or agent was published to the registry. `kind` is
+    /// `workflow` or `agent`; `visibility` is the `WorkflowVisibility`
+    /// token; `bundled_published` counts the workflows an agent share
+    /// published with it.
+    static func templateShared(
+        kind: String,
+        visibility: String,
+        bundledPublished: Int = 0,
+        service: TelemetryService = .shared
+    ) {
+        service.track(
+            "template_shared", ["kind": kind, "visibility": visibility, "bundled_published": bundledPublished])
+    }
+
+    /// An import was saved from the review sheet. `kind` is the
+    /// `TemplateKind` token; `origin` is `registry` (downloaded from the
+    /// store, a link, or a workspace catalog) or `file`; `result` is `new`,
+    /// `update`, `copy`, `replace`, `older`, or `already_present`.
+    static func templateImported(kind: String, origin: String, result: String, service: TelemetryService = .shared) {
+        service.track("template_imported", ["kind": kind, "origin": origin, "result": result])
+    }
+
+    // MARK: - Account and keys
+
+    /// A website asked to sign in with Osaurus. `outcome` is `signed_in`,
+    /// `answered_error`, or `rejected_locally`. Never the site or account.
+    static func loginWithOsaurus(outcome: String, service: TelemetryService = .shared) {
+        service.track("login_with_osaurus", ["outcome": outcome])
+    }
+
+    /// An access key was created. No key, label, or scope.
+    static func accessKeyCreated(service: TelemetryService = .shared) {
+        service.track("access_key_created")
+    }
+
+    /// An access key was revoked.
+    static func accessKeyRevoked(service: TelemetryService = .shared) {
+        service.track("access_key_revoked")
+    }
+
+    /// A new credential was saved. `scope` is `shared` or `agent`; `origin`
+    /// is the `CredentialOrigin` token. Never the key name or value; legacy
+    /// imports and updates of an existing credential are not counted.
+    static func credentialSaved(scope: String, origin: String, service: TelemetryService = .shared) {
+        service.track("credential_saved", ["scope": scope, "origin": origin])
+    }
+
+    /// A credential was deleted (not the bulk removal when an agent is
+    /// deleted). `scope` as for `credential_saved`.
+    static func credentialDeleted(scope: String, service: TelemetryService = .shared) {
+        service.track("credential_deleted", ["scope": scope])
+    }
+
+    // MARK: - Spaces, Workspaces, and Sharing
+
+    /// A Space was created. No name.
+    static func spaceCreated(service: TelemetryService = .shared) {
+        service.track("space_created")
+    }
+
+    /// The user confirmed switching to another Space (the app relaunches).
+    static func spaceSwitched(service: TelemetryService = .shared) {
+        service.track("space_switched")
+    }
+
+    /// A Space was deleted. `mode` is `immediate` or `after_relaunch`.
+    static func spaceDeleted(mode: String, service: TelemetryService = .shared) {
+        service.track("space_deleted", ["mode": mode])
+    }
+
+    /// A workspace was created. `via` is `direct`, `checkout` (after a
+    /// browser purchase), or `activation_code`. No name or price.
+    static func workspaceCreated(via: String, service: TelemetryService = .shared) {
+        service.track("workspace_created", ["via": via])
+    }
+
+    /// The user joined a workspace with a code.
+    static func workspaceJoined(service: TelemetryService = .shared) {
+        service.track("workspace_joined")
+    }
+
+    /// An agent was shared into a workspace.
+    static func workspaceAgentShared(service: TelemetryService = .shared) {
+        service.track("workspace_agent_shared")
+    }
+
+    /// A guest's access to one of this Mac's agents was revoked. `state` is
+    /// `active` (a guest who had connected) or `unused_link`.
+    static func guestAccessRevoked(state: String, service: TelemetryService = .shared) {
+        service.track("guest_access_revoked", ["state": state])
+    }
+
+    /// Another person's agent was added from a guest link.
+    static func sharedAgentAdded(service: TelemetryService = .shared) {
+        service.track("shared_agent_added")
     }
 
     // MARK: - Derivation helpers
@@ -767,10 +1103,30 @@ enum FeatureTelemetry {
         case .channel: return "channel"
         case .schedule: return "schedule"
         case .watcher: return "watcher"
+        case .webhook: return "webhook"
+        case .email: return "email"
+        case .automation: return "automation"
         case .selfSchedule: return "self_schedule"
         case .tool: return "tool"
         case .system: return "system"
         }
+    }
+
+    /// The `message_sent` `source` token. Internal model calls that ride a
+    /// chat-owned engine (workflow steps, delegated subagents) and turns this
+    /// Mac hosts for another of the user's devices would otherwise report as
+    /// `chat_ui` and inflate the headline chat count, so they get their own
+    /// tokens. A workflow step wins over subagent: agentic nodes are both.
+    nonisolated static func messageSourceToken(
+        base: InferenceSource,
+        inWorkflow: Bool,
+        isSubagent: Bool,
+        forSyncedDevice: Bool
+    ) -> String {
+        if inWorkflow { return "workflow" }
+        if isSubagent { return "subagent" }
+        if forSyncedDevice { return "synced_device" }
+        return sourceToken(base)
     }
 
     /// What the request asked the resolved local model to do, classified by
@@ -813,6 +1169,9 @@ enum FeatureTelemetry {
         source: InferenceSource,
         isAgent: Bool,
         stream: Bool,
+        inWorkflow: Bool = false,
+        isSubagent: Bool = false,
+        forSyncedDevice: Bool = false,
         defaults: UserDefaults = .standard
     ) -> MessageTelemetryInfo {
         let modelSource: String
@@ -849,21 +1208,20 @@ enum FeatureTelemetry {
             capability = localModelCapability(effectiveModel)
         }
 
+        let token = messageSourceToken(
+            base: source, inWorkflow: inWorkflow, isSubagent: isSubagent, forSyncedDevice: forSyncedDevice)
+
         // Attach the onboarding brain choice only to chat-UI sends — it's a
         // funnel join for "did the user who picked path X send a message", and
-        // it would be misleading on HTTP-API / plugin traffic. The fallback
-        // keeps the dimension total: after the `none`/`pre_choice` writers,
-        // `unknown` should be unreachable, but omission would silently reopen
-        // the coverage gap this vocabulary exists to close.
-        let isChatUI: Bool = {
-            if case .chatUI = source { return true }
-            return false
-        }()
+        // it would be misleading on HTTP-API / plugin / workflow traffic. The
+        // fallback keeps the dimension total: after the `none`/`pre_choice`
+        // writers, `unknown` should be unreachable, but omission would
+        // silently reopen the coverage gap this vocabulary exists to close.
         let brainSource =
-            isChatUI ? (persistedBrainSource(defaults: defaults) ?? brainSourceUnknown) : nil
+            token == "chat_ui" ? (persistedBrainSource(defaults: defaults) ?? brainSourceUnknown) : nil
 
         return MessageTelemetryInfo(
-            source: sourceToken(source),
+            source: token,
             modelSource: modelSource,
             model: model,
             providerType: providerType,

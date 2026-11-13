@@ -8,11 +8,11 @@
 //  popover over every ISO 3166 region the OS knows (localized names
 //  come from `Locale`, not the string catalog). Adding a region turns
 //  on its presets (`PrivacyFilterConfiguration.addHomeRegion`);
-//  removing one only drops the group from "My regions" — nothing is
+//  removing one only drops the group from "My Regions" — nothing is
 //  silently disabled.
 //
 //  Presets: a suggestion banner when any home-region preset is off, a
-//  search field, then groups in the order My regions → Global → Other
+//  search field, then groups in the order My Regions → Global → Other
 //  regions (collapsed). Per-row toggles and the group-level Enable all
 //  / Disable all write through `saveDebounced` so a burst of flips
 //  coalesces into one JSON write.
@@ -23,7 +23,9 @@ import SwiftUI
 // MARK: - My Regions
 
 struct PrivacyRegionsSection: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
     @Binding var configuration: PrivacyFilterConfiguration
     /// Synchronous save — region membership must land immediately.
     let save: () -> Void
@@ -31,17 +33,17 @@ struct PrivacyRegionsSection: View {
     @State private var showAddRegion = false
 
     var body: some View {
-        SettingsSection(title: L("My Regions"), icon: "globe", anchorId: "privacy.rules.regions") {
-            VStack(alignment: .leading, spacing: 10) {
+        SettingsSection(title: "My Regions", anchorId: "privacy.rules.regions") {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
                 Text(
                     "Countries whose national ID, tax, health and bank number formats Osaurus should look for. The first region is detected from your Mac's locale; add or remove any region.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
 
-                FlowLayout(spacing: 8) {
+                FlowLayout(spacing: theme.space.s8) {
                     ForEach(configuration.homeRegions, id: \.self) { code in
                         regionChip(code)
                     }
@@ -55,25 +57,25 @@ struct PrivacyRegionsSection: View {
     private func regionChip(_ code: String) -> some View {
         let presets = PrivacyRulePresets.presets(in: code)
         let enabled = presets.filter { configuration.isPresetEnabled($0.id) }.count
-        return HStack(spacing: 6) {
+        return HStack(spacing: theme.space.s6) {
             Text(verbatim: PrivacyRulePresets.regionFlag(code))
-                .font(.system(size: 13))
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.body)
             Text(verbatim: PrivacyRulePresets.regionDisplayName(code))
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.primaryText)
+                .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                .foregroundColor(theme.text.primary)
             if isDetected(code) {
                 Text("(detected)", bundle: .module)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
             }
             if presets.isEmpty {
                 Text("generic", bundle: .module)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
             } else {
                 Text(verbatim: "\(enabled)/\(presets.count)")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(enabled == presets.count ? theme.secondaryText : theme.accentColor)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.chip)
+                    .foregroundColor(enabled == presets.count ? theme.text.secondary : theme.text.link)
                     .localizedHelp("Presets on for this region, out of the total available.")
             }
             Button {
@@ -81,8 +83,8 @@ struct PrivacyRegionsSection: View {
                 save()
             } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.tertiaryText)
+                    .glyphSize(.caption)
+                    .foregroundColor(theme.text.tertiary)
             }
             .buttonStyle(.plain)
             .localizedHelp("Remove this region. Its presets stay as they are.")
@@ -97,13 +99,9 @@ struct PrivacyRegionsSection: View {
         func body(content: Content) -> some View {
             content
                 .frame(height: 16)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 6)
-                .background(
-                    Capsule()
-                        .fill(theme.tertiaryBackground)
-                        .overlay(Capsule().stroke(theme.inputBorder, lineWidth: 1))
-                )
+                .padding(.horizontal, theme.space.s8)
+                .padding(.vertical, theme.space.s6)
+                .settingsChrome(.control)
         }
     }
 
@@ -120,15 +118,15 @@ struct PrivacyRegionsSection: View {
         Button {
             showAddRegion = true
         } label: {
-            HStack(spacing: 4) {
+            HStack(spacing: theme.space.s4) {
                 Image(systemName: "plus")
-                    .font(.system(size: 10, weight: .semibold))
+                    .glyphSize(.micro, weight: .semibold)
                 Text("Add region…", bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
             }
-            .foregroundColor(theme.accentColor)
+            .foregroundColor(theme.text.link)
             .modifier(ChipChrome(theme: theme))
-            .contentShape(Capsule())
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .popover(isPresented: $showAddRegion, arrowEdge: .bottom) {
@@ -145,7 +143,9 @@ struct PrivacyRegionsSection: View {
 /// Regions with country-specific presets show a count; the rest read
 /// "Generic" so the user knows what adding them buys.
 private struct PrivacyRegionPicker: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
     let excluded: Set<String>
     let onPick: (String) -> Void
 
@@ -226,25 +226,11 @@ private struct PrivacyRegionPicker: View {
                 CGFloat(buckets.rowCount) * Self.rowHeight + CGFloat(buckets.headerCount) * Self.headerHeight
             )
         )
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                TextField(L("Search regions"), text: $query)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 12))
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(theme.tertiaryBackground)
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.inputBorder, lineWidth: 1))
-            )
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            SearchField(text: $query, placeholder: "Search regions", fillsAvailableWidth: true)
 
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
+                LazyVStack(alignment: .leading, spacing: theme.space.s0) {
                     if let detected = buckets.detected {
                         header(L("Detected from your Mac"))
                         row(detected)
@@ -259,16 +245,16 @@ private struct PrivacyRegionPicker: View {
                     }
                     if buckets.isEmpty {
                         Text("No regions match.", bundle: .module)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
+                            .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                            .foregroundColor(theme.text.tertiary)
                             .frame(height: Self.rowHeight)
-                            .padding(.horizontal, 8)
+                            .padding(.horizontal, theme.space.s8)
                     }
                 }
             }
             .frame(height: listHeight)
         }
-        .padding(10)
+        .padding(.horizontal, theme.space.s8).padding(.vertical, theme.space.s8)
         .frame(width: 320)
         .onAppear {
             if entries.isEmpty { entries = buildEntries() }
@@ -276,10 +262,10 @@ private struct PrivacyRegionPicker: View {
     }
 
     private func header(_ text: String) -> some View {
-        Text(verbatim: text.uppercased())
-            .font(.system(size: 9, weight: .semibold))
-            .foregroundColor(theme.tertiaryText)
-            .padding(.horizontal, 8)
+        Text(verbatim: text)
+            .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+            .foregroundColor(theme.text.tertiary)
+            .padding(.horizontal, theme.space.s8)
             .frame(height: Self.headerHeight, alignment: .bottomLeading)
     }
 
@@ -287,23 +273,23 @@ private struct PrivacyRegionPicker: View {
         Button {
             onPick(entry.code)
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 Text(verbatim: PrivacyRulePresets.regionFlag(entry.code))
                 Text(verbatim: entry.name)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                    .foregroundColor(theme.text.primary)
                 Spacer()
                 if entry.presetCount > 0 {
                     Text("\(entry.presetCount) presets", bundle: .module)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.chip)
+                        .foregroundColor(theme.text.secondary)
                 } else {
                     Text("Generic", bundle: .module)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                        .foregroundColor(theme.text.tertiary)
                 }
             }
-            .padding(.horizontal, 8)
+            .padding(.horizontal, theme.space.s8)
             .frame(height: Self.rowHeight)
             .contentShape(Rectangle())
         }
@@ -314,7 +300,9 @@ private struct PrivacyRegionPicker: View {
 // MARK: - Preset Rules
 
 struct PrivacyPresetRulesSection: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
     @Binding var configuration: PrivacyFilterConfiguration
     let saveDebounced: () -> Void
 
@@ -330,14 +318,14 @@ struct PrivacyPresetRulesSection: View {
     private typealias Presets = PrivacyRulePresets
 
     var body: some View {
-        SettingsSection(title: L("Preset Rules"), icon: "books.vertical.fill", anchorId: "privacy.rules.presets") {
-            VStack(alignment: .leading, spacing: 12) {
+        SettingsSection(title: "Preset Rules", anchorId: "privacy.rules.presets") {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 Text(
                     "Country-specific ID, tax, health and bank number formats plus global finance, network and secret patterns. Presets for your regions are on by default; everything else is opt-in. Osaurus redacts matches and blocks sends that leak them.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
 
                 if !bannerDismissed, let suggestion = suggestedPresets, !suggestion.isEmpty {
@@ -370,18 +358,16 @@ struct PrivacyPresetRulesSection: View {
     private func suggestionBanner(_ presets: [Presets.Preset]) -> some View {
         let names = configuration.homeRegions.map { Presets.regionDisplayName($0) }
         let joined = ListFormatter.localizedString(byJoining: names)
-        return HStack(alignment: .center, spacing: 10) {
+        return HStack(alignment: .center, spacing: theme.space.s8) {
             Image(systemName: "lightbulb.fill")
-                .font(.system(size: 12))
-                .foregroundColor(theme.accentColor)
-            VStack(alignment: .leading, spacing: 2) {
+                .glyphSize(.caption)
+                .foregroundColor(theme.text.link)
+            SettingsRowText(compact: true) {
                 Text("\(presets.count) recommended presets are off", bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+            } description: {
                 Text("Osaurus turns these on for \(joined) and Global on a new install.", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
             }
             Spacer()
             Button {
@@ -389,25 +375,13 @@ struct PrivacyPresetRulesSection: View {
             } label: {
                 Text("Turn on", bundle: .module)
             }
-            .buttonStyle(SettingsButtonStyle(isPrimary: true))
-            Button {
-                withAnimation(.easeInOut(duration: 0.15)) { bannerDismissed = true }
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-                    .frame(width: 20, height: 20)
-                    .contentShape(Rectangle())
+            .buttonStyle(.settings(.primary))
+            SettingsIconButton("xmark", help: "Hide until Settings is reopened.", size: .compact) {
+                withAnimation(theme.motion.quick) { bannerDismissed = true }
             }
-            .buttonStyle(.plain)
-            .localizedHelp("Hide until Settings is reopened.")
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.accentColor.opacity(0.08))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.accentColor.opacity(0.25), lineWidth: 1))
-        )
+        .padding(.horizontal, theme.space.s8).padding(.vertical, theme.space.s8)
+        .settingsChrome(.selected)
     }
 
     // MARK: Search
@@ -417,31 +391,7 @@ struct PrivacyPresetRulesSection: View {
     }
 
     private var searchField: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-            TextField(L("Search presets by name, country or type"), text: $searchText)
-                .textFieldStyle(.plain)
-                .font(.system(size: 12))
-            if isSearching {
-                Button {
-                    searchText = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(theme.tertiaryBackground)
-                .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.inputBorder, lineWidth: 1))
-        )
+        SearchField(text: $searchText, placeholder: "Search presets by name, country or type", fillsAvailableWidth: true)
     }
 
     private func matches(_ preset: Presets.Preset, query: String) -> Bool {
@@ -467,12 +417,12 @@ struct PrivacyPresetRulesSection: View {
             if buckets[hit.regionCode] == nil { order.append(hit.regionCode) }
             buckets[hit.regionCode, default: []].append(hit)
         }
-        return VStack(alignment: .leading, spacing: 12) {
+        return VStack(alignment: .leading, spacing: theme.space.s12) {
             if hits.isEmpty {
                 Text("No presets match.", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .padding(.vertical, 6)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
+                    .padding(.vertical, theme.space.s6)
             }
             ForEach(order, id: \.self) { region in
                 groupView(region: region, presets: buckets[region] ?? [], collapsible: false, expanded: true)
@@ -488,9 +438,9 @@ struct PrivacyPresetRulesSection: View {
     }
 
     private var groupedCatalogue: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             if !configuration.homeRegions.isEmpty {
-                sectionLabel(L("My regions"))
+                sectionLabel(L("My Regions"))
                 ForEach(configuration.homeRegions, id: \.self) { code in
                     groupView(region: code, presets: Presets.presets(in: code), collapsible: false, expanded: true)
                 }
@@ -504,10 +454,10 @@ struct PrivacyPresetRulesSection: View {
     }
 
     private func sectionLabel(_ text: String) -> some View {
-        Text(verbatim: text.uppercased())
-            .font(.system(size: 10, weight: .semibold))
-            .foregroundColor(theme.tertiaryText)
-            .padding(.top, 4)
+        Text(verbatim: text)
+            .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+            .foregroundColor(theme.text.tertiary)
+            .padding(.top, theme.space.s4)
     }
 
     private var otherRegionsDisclosure: some View {
@@ -516,19 +466,19 @@ struct PrivacyPresetRulesSection: View {
         let enabled = codes.reduce(0) { sum, code in
             sum + Presets.presets(in: code).filter { configuration.isPresetEnabled($0.id) }.count
         }
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: theme.space.s8) {
             Button {
-                withAnimation(.easeInOut(duration: 0.18)) { otherRegionsExpanded.toggle() }
+                withAnimation(theme.motion.quick) { otherRegionsExpanded.toggle() }
             } label: {
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     sectionLabel(L("Other regions"))
                     Spacer()
                     Text(verbatim: "\(enabled)/\(total)")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
+                        .foregroundColor(theme.text.secondary)
                     Image(systemName: otherRegionsExpanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
+                        .glyphSize(.footnote, weight: .semibold)
+                        .foregroundColor(theme.text.tertiary)
                 }
                 .contentShape(Rectangle())
             }
@@ -557,25 +507,25 @@ struct PrivacyPresetRulesSection: View {
         expanded: Bool
     ) -> some View {
         let enabledCount = presets.filter { configuration.isPresetEnabled($0.id) }.count
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(spacing: theme.space.s8) {
                 if let region {
                     Text(verbatim: Presets.regionFlag(region))
-                        .font(.system(size: 13))
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.body)
                     Text(verbatim: Presets.regionDisplayName(region))
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.primary)
                 } else {
                     Image(systemName: "globe")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
+                        .glyphSize(.caption)
+                        .foregroundColor(theme.text.secondary)
                     Text("Global", bundle: .module)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.primary)
                 }
                 Text(verbatim: "\(enabledCount)/\(presets.count)")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
+                    .foregroundColor(theme.text.secondary)
                 Spacer()
                 if !presets.isEmpty {
                     groupActionButton(L("Enable all"), enabled: enabledCount < presets.count) {
@@ -587,7 +537,7 @@ struct PrivacyPresetRulesSection: View {
                 }
                 if collapsible, let region {
                     Button {
-                        withAnimation(.easeInOut(duration: 0.18)) {
+                        withAnimation(theme.motion.quick) {
                             if expandedOtherRegions.contains(region) {
                                 expandedOtherRegions.remove(region)
                             } else {
@@ -596,8 +546,8 @@ struct PrivacyPresetRulesSection: View {
                         }
                     } label: {
                         Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundColor(theme.tertiaryText)
+                            .glyphSize(.footnote, weight: .semibold)
+                            .foregroundColor(theme.text.tertiary)
                             .frame(width: 20, height: 20)
                             .contentShape(Rectangle())
                     }
@@ -611,11 +561,11 @@ struct PrivacyPresetRulesSection: View {
                         "Generic patterns only — add specific rules under Custom Rules.",
                         bundle: .module
                     )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
                 } else {
-                    VStack(spacing: 8) {
+                    VStack(spacing: theme.space.s8) {
                         ForEach(presets) { preset in
                             presetRow(preset)
                         }
@@ -623,19 +573,15 @@ struct PrivacyPresetRulesSection: View {
                 }
             }
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.secondaryBackground.opacity(0.5))
-                .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.cardBorder, lineWidth: 1))
-        )
+        .padding(.horizontal, theme.space.s8).padding(.vertical, theme.space.s8)
+        .settingsChrome(.surface)
     }
 
     private func groupActionButton(_ title: String, enabled: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(verbatim: title)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(enabled ? theme.accentColor : theme.tertiaryText)
+                .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
+                .foregroundColor(enabled ? theme.text.link : theme.text.tertiary)
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
@@ -644,32 +590,30 @@ struct PrivacyPresetRulesSection: View {
     // MARK: Row
 
     private func presetRow(_ preset: Presets.Preset) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: theme.space.s12) {
             Image(systemName: preset.kind.symbolName)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .glyphSize(.caption)
+                .foregroundColor(theme.text.secondary)
                 .frame(width: 18)
-                .padding(.top, 2)
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 8) {
+                .padding(.top, theme.space.s2)
+            SettingsRowText(compact: true) {
+                HStack(spacing: theme.space.s8) {
                     Text(verbatim: preset.localizedTitle)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.primaryText)
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                     PrivacyCategoryBadge(category: preset.category)
                 }
+            } description: {
                 Text(verbatim: preset.localizedSummary)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 8) {
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                HStack(spacing: theme.space.s8) {
                     Text(verbatim: preset.sample)
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
+                        .catalogTypography(.code, theme: theme, fallback: SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.tertiary)
                         .lineLimit(1)
                         .truncationMode(.tail)
                     Text(LocalizedStringKey(preset.tier.localizationKey), bundle: .module)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText.opacity(0.8))
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                        .foregroundColor(theme.text.tertiary)
                         .help(tierHelp(preset.tier))
                 }
             }
@@ -684,8 +628,7 @@ struct PrivacyPresetRulesSection: View {
                     }
                 )
             )
-            .labelsHidden()
-            .toggleStyle(.switch)
+            .settingsSwitch()
         }
         .settingsRowChrome()
     }

@@ -98,7 +98,13 @@ public enum OsaurusKeychainGroup {
     /// only see that group, so writing there keeps a mixed-version fleet on
     /// one master. The shared group is an *additional* copy of the same
     /// bytes for same-team clients (iOS); it is never the only copy.
-    static func writeAttemptGroups(sharedGroup: String?) -> [[WriteTarget]] {
+    ///
+    /// `allowsSynced == false` (a non-Default Space) yields one device-only
+    /// default-group write, so the item never leaves this Mac.
+    static func writeAttemptGroups(sharedGroup: String?, allowsSynced: Bool = true) -> [[WriteTarget]] {
+        guard allowsSynced else {
+            return [[WriteTarget(accessGroup: nil, synchronizable: false)]]
+        }
         var groups: [[WriteTarget]] = [
             [WriteTarget(accessGroup: nil, synchronizable: true), WriteTarget(accessGroup: nil, synchronizable: false)]
         ]

@@ -31,7 +31,7 @@ struct PendingImportProcessorTests {
     }
 
     private func makeFixture(
-        withServer: Bool = false, withRuntime: Bool = false, orchestratorSpawnable: Bool? = nil
+        withServer: Bool = false, withRuntime: Bool = false, orchestratorSpawnable: Bool? = nil, model: String? = nil
     ) throws -> Fixture {
         let suffix = UUID().uuidString.prefix(8).lowercased()
         let fixture = Fixture(
@@ -59,6 +59,7 @@ struct PendingImportProcessorTests {
             "tools": ["mode": "manual", "enabled": ["tickets_\(suffix)_search"]],
         ]
         if let orchestratorSpawnable { agent["orchestrator_spawnable"] = orchestratorSpawnable }
+        if let model { agent["model"] = model }
         if withServer {
             manifest["mcp_servers"] = [
                 [
@@ -182,6 +183,56 @@ struct PendingImportProcessorTests {
             #expect(rest.items.allSatisfy { $0.status == .done }, "\(rest.items)")
             #expect(SkillManager.shared.skill(named: fixture.skill) == nil)
             #expect(receipts(fixture).isEmpty)
+        }
+    }
+
+    /// Launch applies the queue before the models folder scan has landed. An
+    /// agent pinned to a model that is only in the folder (not a curated id)
+    /// still gets it instead of falling back to the default.
+    @Test
+    func agentPinnedToAModelInTheModelsFolder_getsItWhenTheScanLandsAfterLaunch() async throws {
+        try await exclusive {
+            let suffix = UUID().uuidString.prefix(8).lowercased()
+            let modelId = "probe-org/Import-Scan-\(suffix)-4bit"
+            let bundleRoot = FileManager.default.temporaryDirectory
+                .appendingPathComponent("osaurus-import-model-\(suffix)", isDirectory: true)
+            let bundleDirectory = bundleRoot.appendingPathComponent(modelId, isDirectory: true)
+            try FileManager.default.createDirectory(at: bundleDirectory, withIntermediateDirectories: true)
+            try Data("{}".utf8).write(to: bundleDirectory.appendingPathComponent("config.json"))
+            try Data("{}".utf8).write(to: bundleDirectory.appendingPathComponent("tokenizer.json"))
+            try Data().write(to: bundleDirectory.appendingPathComponent("model.safetensors"))
+            let model = MLXModel(
+                id: modelId, name: "Import Scan Probe", description: "fixture",
+                downloadURL: "https://huggingface.co/\(modelId)", bundleDirectory: bundleDirectory)
+            let fixture = try makeFixture(model: modelId)
+
+            let releaseScan = DispatchSemaphore(value: 0)
+            let previousScan = ModelManager.scanLocalModelsOverrideForTests
+            let previousWaiting = ModelManager.localModelsDispatchWaitingForTests
+            defer {
+                releaseScan.signal()
+                ModelManager.scanLocalModelsOverrideForTests = previousScan
+                ModelManager.localModelsDispatchWaitingForTests = previousWaiting
+                ModelManager.invalidateLocalModelsCache()
+                MLXModelDownloadCache.invalidateAll()
+                try? FileManager.default.removeItem(at: fixture.root)
+                try? FileManager.default.removeItem(at: bundleRoot)
+            }
+            ModelManager.scanLocalModelsOverrideForTests = { _ in
+                releaseScan.wait()
+                releaseScan.signal()
+                return [model]
+            }
+            // The scan finishes only once the import is waiting on it.
+            ModelManager.localModelsDispatchWaitingForTests = { releaseScan.signal() }
+            ModelManager.invalidateLocalModelsCache()
+            #expect(!ModelManager.shared.installedModels().contains { $0.id == modelId })
+
+            let installed = try await run(.install, fixture)
+            #expect(installed.status == .applied, "\(installed.items)")
+            #expect(agent(named: fixture.agent)?.defaultModel == modelId)
+
+            _ = try await run(.remove, fixture)
         }
     }
 
@@ -695,6 +746,86 @@ struct PendingImportProcessorTests {
             #expect(checker.agent.sandbox?.enabled == true)
             #expect(checker.agent.sandbox?.networkEnabled == false)
             #expect(checker.agent.skills == .value([]))
+        }
+    }
+
+    // MARK: - Onboarding
+
+    private func applyOnboarding(
+        _ bundleId: String, _ onboarding: BundleOnboarding? = nil, forgets: Bool = false
+    ) async throws -> ImportResult {
+        let request = ImportRequest(
+            bundleId: bundleId, bundleName: "Onboarding Probe", bundleVersion: "1.0.0", operations: [],
+            confirmHighRisk: false, onboarding: onboarding, forgetsOnboarding: forgets ? true : nil)
+        try ImportQueue.enqueue(request, bundle: nil)
+        return try #require(await processor().process(requestId: request.id))
+    }
+
+    @Test
+    func onboardingIsKeptPerBundle_anUpdateWithoutItKeepsIt_andAWholeRemoveForgetsIt() async throws {
+        try await exclusive {
+            let first = "com.example.onboarding\(UUID().uuidString.prefix(8).lowercased())"
+            let second = "com.example.onboarding\(UUID().uuidString.prefix(8).lowercased())"
+            defer {
+                var kept = ImportQueue.loadOnboarding()
+                kept[first] = nil
+                kept[second] = nil
+                try? ImportQueue.saveOnboarding(kept)
+            }
+            let keeper = BundleOnboarding(skip: true, excludeTeammates: .names(["keeper"]))
+            let applied = try await applyOnboarding(first, keeper)
+            #expect(applied.status == .applied)
+            #expect(applied.exitCode == 0)
+            #expect(ImportQueue.loadOnboarding()[first] == keeper)
+
+            _ = try await applyOnboarding(first)
+            #expect(ImportQueue.loadOnboarding()[first] == keeper, "an update that asks nothing keeps the ask")
+
+            _ = try await applyOnboarding(second, BundleOnboarding(excludeTeammates: .names(["planner"])))
+            let effective = BundleOnboardingPreferences.effective
+            #expect(effective.skip)
+            #expect(effective.excludeTeammates.excludes("keeper") && effective.excludeTeammates.excludes("planner"))
+
+            _ = try await applyOnboarding(first, forgets: true)
+            #expect(ImportQueue.loadOnboarding()[first] == nil)
+            #expect(ImportQueue.loadOnboarding()[second] == BundleOnboarding(excludeTeammates: .names(["planner"])))
+        }
+    }
+
+    @Test
+    func anOnboardedMacKeepsItsTeammates_andTheImportSaysSo() async throws {
+        try await exclusive {
+            let bundleId = "com.example.onboarding\(UUID().uuidString.prefix(8).lowercased())"
+            defer {
+                var kept = ImportQueue.loadOnboarding()
+                kept[bundleId] = nil
+                try? ImportQueue.saveOnboarding(kept)
+            }
+            let agents = [
+                Agent(name: "Files Keeper", sourceTemplateID: Teammate.keeper.templateID),
+                Agent(name: "Scout", sourceTemplateID: Teammate.scout.templateID),
+                Agent(name: "Keeper"),
+            ]
+            func request(_ onboarding: BundleOnboarding) -> ImportRequest {
+                ImportRequest(
+                    bundleId: bundleId, bundleName: nil, bundleVersion: "1.0.0", operations: [],
+                    confirmHighRisk: false, onboarding: onboarding)
+            }
+
+            let keeper = request(BundleOnboarding(skip: true, excludeTeammates: .names(["keeper"])))
+            let warnings = BundleOnboardingPreferences.apply(keeper, alreadyOnboarded: true, agents: agents)
+            #expect(
+                warnings == [
+                    "Onboarding already finished on this Mac, so skipping it has no effect.",
+                    "Files Keeper already exists on this Mac; the bundle does not remove it.",
+                ])
+
+            let all = request(BundleOnboarding(excludeTeammates: .all))
+            #expect(
+                BundleOnboardingPreferences.apply(all, alreadyOnboarded: true, agents: agents).count == 2,
+                "every existing teammate, by its own name; a user agent named Keeper is not one")
+            #expect(BundleOnboardingPreferences.apply(all, alreadyOnboarded: false, agents: agents).isEmpty)
+            #expect(ImportQueue.loadOnboarding()[bundleId] == BundleOnboarding(excludeTeammates: .all))
         }
     }
 }

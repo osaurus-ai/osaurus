@@ -277,8 +277,7 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
 
     /// Returns `true` when the model name indicates an image-generation-capable model.
     fileprivate static func isImageCapableModel(_ modelName: String) -> Bool {
-        Gemini31FlashImageProfile.matches(modelId: modelName) || GeminiProImageProfile.matches(modelId: modelName)
-            || GeminiFlashImageProfile.matches(modelId: modelName)
+        GeminiImageModels.isImageModel(modelName)
     }
 
     /// Thin delegates over `RemoteReasoningPolicy`, which is the single source of
@@ -600,6 +599,13 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
         parameters: GenerationParameters,
         requestedModel: String?
     ) async throws -> String {
+        if parameters.responseSchema != nil,
+            case .unsupported(let reason) = StructuredOutputCapability.support(
+                for: requestedModel ?? "", providerType: provider.providerType, isLocalMLX: false,
+                foundationAvailable: false)
+        {
+            throw StructuredOutputError.unsupportedModel(model: requestedModel ?? provider.name, reason: reason)
+        }
         if Self.oneShotRequiresStreaming(
             providerType: provider.providerType,
             authType: provider.authType
@@ -1797,6 +1803,51 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
             return false
         }
 
+        // A teammate's host waiting on its owner to approve a tool call
+        // (`osaurus_owner_approval`, docs/MOBILE_PROTOCOL.md §21).
+        if dataContent.contains("osaurus_owner_approval"),
+            let root = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+            let approval = root["osaurus_owner_approval"] as? [String: Any],
+            let phase = approval["phase"] as? String,
+            let approvalId = approval["approval_id"] as? String,
+            let name = approval["name"] as? String
+        {
+            let hint = StreamingOwnerApprovalHint.encode(
+                StreamingOwnerApprovalHint.Status(
+                    phase: phase,
+                    approvalId: approvalId,
+                    name: name,
+                    owner: (approval["owner"] as? String) ?? "the owner",
+                    expiresAt: approval["expires_at"] as? String
+                )
+            )
+            state.routerDiagnostics?.recordYield(hint)
+            continuation.yield(hint)
+            return false
+        }
+
+        // The agent's owner speaking in this conversation mid-run
+        // (`osaurus_participant_message`, docs/MOBILE_PROTOCOL.md §21.4).
+        if dataContent.contains("osaurus_participant_message"),
+            let root = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+            let message = root["osaurus_participant_message"] as? [String: Any],
+            let id = message["id"] as? String,
+            let text = message["text"] as? String, !text.isEmpty
+        {
+            let hint = StreamingParticipantMessageHint.encode(
+                StreamingParticipantMessageHint.Message(
+                    id: id,
+                    text: text,
+                    authorKind: (message["author_kind"] as? String) ?? "owner",
+                    authorHandle: message["author_handle"] as? String,
+                    authorWallet: message["author_wallet"] as? String
+                )
+            )
+            state.routerDiagnostics?.recordYield(hint)
+            continuation.yield(hint)
+            return false
+        }
+
         // Artifacts a teammate's host shared during a Mode 2 run
         // (`osaurus_artifacts`, one chunk before finish). Carried as a
         // sentinel so `ChatSession` can import the files into the session's
@@ -2085,6 +2136,25 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
             return parameters.maxTokens
         }
         return parameters.maxTokensExplicit ? parameters.maxTokens : nil
+    }
+
+    /// Share of the context window an implicit Anthropic cap may plan on;
+    /// the prompt estimate is a `chars / 4` heuristic, and Anthropic rejects
+    /// a request whose prompt plus `max_tokens` exceeds the window.
+    static let anthropicImplicitWindowShare = 0.85
+
+    /// The output cap for a native Anthropic request that set none: the
+    /// model's own maximum from the Models API, as far as the context window
+    /// leaves room for the prompt. Never below `resolved`, the chat-wide
+    /// implicit budget, and unchanged when the Models API publishes no limit.
+    static func anthropicImplicitMaxTokens(
+        resolved: Int, modelMaxTokens: Int?, contextWindow: Int?, estimatedPromptTokens: Int
+    ) -> Int {
+        guard let modelMaxTokens, modelMaxTokens > resolved, let contextWindow, contextWindow > 0 else {
+            return resolved
+        }
+        let room = Int(Double(contextWindow) * anthropicImplicitWindowShare) - estimatedPromptTokens
+        return max(resolved, min(modelMaxTokens, room))
     }
 
     /// Apply stop-sequence truncation to a text delta. Returns `(maybeTruncated, hitStop)`:
@@ -3416,7 +3486,15 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
             disableThinking: RemoteReasoningPolicy.requestsReasoningOff(parameters.modelOptions))
         let thinking = effortThinking ?? reasoningOff.thinking
         let isAgentRun = parameters.runAsRemoteAgent
-        let maxTokens = Self.remoteChatMaxTokens(providerType: provider.providerType, parameters: parameters)
+        var maxTokens = Self.remoteChatMaxTokens(providerType: provider.providerType, parameters: parameters)
+        if provider.providerType == .anthropic, !parameters.maxTokensExplicit, !isAgentRun, let resolved = maxTokens,
+            let info = AnthropicModelCatalog.info(providerId: provider.id, modelId: model)
+        {
+            let toolTokens = tools.flatMap { try? JSONEncoder().encode($0) }.map { $0.count / TokenEstimator.charsPerToken } ?? 0
+            maxTokens = Self.anthropicImplicitMaxTokens(
+                resolved: resolved, modelMaxTokens: info.max_tokens, contextWindow: info.max_input_tokens,
+                estimatedPromptTokens: ContextBudgetManager.estimateTokens(for: messages) + toolTokens)
+        }
         // Native Anthropic: the provider's Models API contract decides the
         // `thinking` / `output_config.effort` fields (see
         // `AnthropicReasoningContract`). Read the raw picker value because the
@@ -3590,15 +3668,19 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
         // Parameter fidelity: forward the caller's deterministic seed and JSON
         // mode instead of silently dropping them. Standard OpenAI fields on
         // the chat-completions wire; Gemini remaps them in `toGeminiRequest`;
-        // Anthropic has no faithful equivalent — its `output_config.format`
+        // Anthropic has no json_object equivalent — its `output_config.format`
         // requires a strict json_schema, which schema-free json_object mode
-        // can't provide (documented in docs/REMOTE_PROVIDERS.md).
+        // can't provide (documented in docs/REMOTE_PROVIDERS.md). A
+        // `responseSchema` (workflow nodes) maps onto every wire, Anthropic
+        // included.
         // Canonical signed Int seeds use a UInt64 bit pattern in the local
         // sampler. Recover that same signed value on remote wires (including -1).
         request.seed = parameters.seed.map { Int(truncatingIfNeeded: $0) }
         request.repetition_penalty = parameters.repetitionPenalty
         if !isAgentRun {
-            if let format = parameters.responsesProviderOptions?.text?.format {
+            if let schema = parameters.responseSchema {
+                request.response_format = .jsonSchema(schema)
+            } else if let format = parameters.responsesProviderOptions?.text?.format {
                 request.response_format = ResponseFormat(type: format.type, json_schema: format.schema.map {
                     ResponseJSONSchema(name: format.name ?? "", description: format.description, schema: $0, strict: format.strict)
                 })
@@ -3631,6 +3713,29 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
             let sessionId = parameters.sessionId, !sessionId.isEmpty
         {
             request.remoteAgentSessionId = sessionId
+            request.remoteAgentCallerId = parameters.remoteAgentCallerId
+        }
+        return request
+    }
+
+    /// Mode 2 against an Osaurus peer: the run's `osaurus_caller` when one
+    /// of this Mac's agents sent it, and only the new message when the peer
+    /// keeps the conversation (`host_history`).
+    private func preparingSharedAgentRun(_ request: RemoteChatRequest) async -> RemoteChatRequest {
+        guard request.runAsRemoteAgent, provider.providerType == .osaurus,
+            let sessionId = request.remoteAgentSessionId, !sessionId.isEmpty
+        else { return request }
+        var request = request
+        if let callerId = request.remoteAgentCallerId,
+            let target = provider.remoteAgentAddress, !target.isEmpty
+        {
+            request.osaurusCaller = await RemoteAgentCallerSigner.declaration(
+                agentId: callerId, targetAgentAddress: target, sessionId: sessionId)
+        }
+        if RemotePeerFeatures.supports(RemotePeerFeatures.hostHistory, providerId: provider.id) {
+            let outbound = RemoteAgentHostHistory.outbound(request.messages, sessionId: sessionId)
+            request.messages = outbound.messages
+            request.osaurusHistory = outbound.host ? "host" : nil
         }
         return request
     }
@@ -3657,9 +3762,39 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
         )
     }
 
+    /// The sign-in session the current request uses: the agent's own, else
+    /// the provider's default. Nil is the primary sign-in, whose tokens are
+    /// `cachedOAuthTokens`.
+    private func oauthSession() -> UUID? {
+        SignInSessionResolver.currentSession(for: .modelProvider(provider.id))?.keychainSession
+    }
+
+    /// Other sessions are read from the Keychain on every request, so a
+    /// session signed in again is picked up without rebuilding the service.
+    private func oauthTokens(session: UUID?) async -> RemoteProviderOAuthTokens? {
+        guard let session else { return cachedOAuthTokens }
+        let providerId = provider.id
+        return await RemoteProviderKeychain.runOffCooperativeExecutor {
+            RemoteProviderKeychain.getOAuthTokens(for: providerId, session: session)
+        }
+    }
+
+    private func storeOAuthTokens(_ tokens: RemoteProviderOAuthTokens, session: UUID?) async {
+        let providerId = provider.id
+        guard let session else {
+            cachedOAuthTokens = tokens
+            await RemoteProviderKeychain.saveOAuthTokensOffMainActor(tokens, for: providerId)
+            return
+        }
+        _ = await RemoteProviderKeychain.runOffCooperativeExecutor {
+            RemoteProviderKeychain.saveOAuthTokens(tokens, for: providerId, session: session)
+        }
+    }
+
     private func refreshCodexOAuthIfNeeded() async throws {
         guard provider.authType == .openAICodexOAuth else { return }
-        guard let tokens = cachedOAuthTokens else {
+        let session = oauthSession()
+        guard let tokens = await oauthTokens(session: session) else {
             throw OpenAICodexOAuthError.missingSignInTokens
         }
         guard tokens.isExpired else { return }
@@ -3668,28 +3803,35 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
         do {
             refreshed = try await OpenAICodexOAuthService.refresh(tokens)
         } catch {
-            notifyManagerIfPermanentOAuthFailure(error)
+            notifyManagerIfPermanentOAuthFailure(error, session: session)
             throw error
         }
-        cachedOAuthTokens = refreshed
-        await RemoteProviderKeychain.saveOAuthTokensOffMainActor(refreshed, for: provider.id)
+        await storeOAuthTokens(refreshed, session: session)
     }
 
     /// A mid-chat token refresh that fails with a *permanent* auth error
     /// (`invalid_grant` / 401) means every future request is doomed until the
     /// user signs in again. Tell the manager so it clears the dead tokens and
     /// flips the durable `requiresAuth` state, rather than leaving a
-    /// connected-looking provider that errors on every turn.
-    private func notifyManagerIfPermanentOAuthFailure(_ error: Error) {
+    /// connected-looking provider that errors on every turn. Another
+    /// session only loses its own tokens; the provider stays connected.
+    private func notifyManagerIfPermanentOAuthFailure(_ error: Error, session: UUID?) {
         guard RemoteProviderManager.isPermanentOAuthFailure(error) else { return }
         let providerId = provider.id
+        guard let session else {
+            Task { @MainActor in
+                RemoteProviderManager.shared.handlePermanentOAuthFailure(providerId: providerId)
+            }
+            return
+        }
+        _ = RemoteProviderKeychain.deleteOAuthTokens(for: providerId, session: session)
         Task { @MainActor in
-            RemoteProviderManager.shared.handlePermanentOAuthFailure(providerId: providerId)
+            NotificationCenter.default.post(name: .signInSessionsDidChange, object: nil)
         }
     }
 
-    private func codexOAuthHeaders() throws -> [String: String] {
-        guard let tokens = cachedOAuthTokens else {
+    private func codexOAuthHeaders() async throws -> [String: String] {
+        guard let tokens = await oauthTokens(session: oauthSession()) else {
             throw OpenAICodexOAuthError.missingSignInTokens
         }
         // The Codex backend routes some models (e.g. gpt-5.6-luna) by
@@ -3776,7 +3918,8 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
 
     private func refreshXAIOAuthIfNeeded() async throws {
         guard provider.authType == .xaiOAuth else { return }
-        guard let tokens = cachedOAuthTokens else {
+        let session = oauthSession()
+        guard let tokens = await oauthTokens(session: session) else {
             throw XAIOAuthError.missingSignInTokens
         }
         guard tokens.isExpired else { return }
@@ -3785,15 +3928,14 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
         do {
             refreshed = try await XAIOAuthService.refresh(tokens)
         } catch {
-            notifyManagerIfPermanentOAuthFailure(error)
+            notifyManagerIfPermanentOAuthFailure(error, session: session)
             throw error
         }
-        cachedOAuthTokens = refreshed
-        await RemoteProviderKeychain.saveOAuthTokensOffMainActor(refreshed, for: provider.id)
+        await storeOAuthTokens(refreshed, session: session)
     }
 
-    private func xaiOAuthHeaders() throws -> [String: String] {
-        guard let tokens = cachedOAuthTokens else {
+    private func xaiOAuthHeaders() async throws -> [String: String] {
+        guard let tokens = await oauthTokens(session: oauthSession()) else {
             throw XAIOAuthError.missingSignInTokens
         }
         return [
@@ -4009,7 +4151,7 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
             // rejected. See issue #858.
             //
             // Allowed chars cover:
-            // - standard model IDs: `gemini-2.0-flash-exp`, `gemini-1.5-pro-latest`
+            // - standard model IDs: `gemini-3.8-flash`, `gemini-nano-banana-2.1`
             // - tuned models: `tunedModels/my-tuned-model`
             // - Google's path-parent syntax: `models/foo/bar` (rare)
             // Disallowed: whitespace, colons (reserved for the action
@@ -4018,7 +4160,7 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
             let trimmedModel = request.model.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmedModel.isEmpty {
                 throw RemoteProviderServiceError.requestFailed(
-                    "Gemini model name is empty. Set a model ID like 'gemini-2.0-flash-exp' in provider settings."
+                    "Gemini model name is empty. Set a model ID like 'gemini-3.8-flash' in provider settings."
                 )
             }
             let allowed = CharacterSet(
@@ -4095,7 +4237,7 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
         if provider.providerType == .osaurusRouter {
             headers = [:]
         } else if provider.authType == .openAICodexOAuth {
-            let oauthHeaders = try codexOAuthHeaders()
+            let oauthHeaders = try await codexOAuthHeaders()
             if usesCodexResponsesLite, let codexSessionId {
                 headers = oauthHeaders.merging(
                     Self.codexResponsesLiteHeaders(sessionId: codexSessionId)
@@ -4106,7 +4248,7 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
         } else if provider.authType == .xaiOAuth {
             // Merge the refreshed Bearer over the cached headers so any
             // user-supplied custom headers still apply.
-            headers = cachedHeaders.merging(try xaiOAuthHeaders()) { _, new in new }
+            headers = cachedHeaders.merging(try await xaiOAuthHeaders()) { _, new in new }
         } else {
             // Headers are resolved once at service creation time (on @MainActor)
             // to avoid Keychain access issues from the actor's background executor.
@@ -4181,7 +4323,7 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
             // OpenAI-compat wire. RemoteReasoningPolicy decides how prior-turn
             // reasoning is re-sent: strip (default), keep `reasoning_content`
             // (DeepSeek), or fold it back into `<think>` content (MiniMax).
-            var outbound = request
+            var outbound = await preparingSharedAgentRun(request)
             // Chat Completions rejects image parts on the tool role: hoist
             // tool-result images into a following user message.
             outbound.messages = ToolResultMediaBridge.hoistingToolImagesToUserMessages(outbound.messages)
@@ -5091,6 +5233,14 @@ struct RemoteChatRequest: Encodable {
     /// row under the shared agent) instead of one row per request. Never
     /// encoded for `/chat/completions` — that wire is a plain OpenAI body.
     var remoteAgentSessionId: String? = nil
+    /// Mode 2 only, local: the agent this run speaks for (see
+    /// `GenerationParameters.remoteAgentCallerId`). Never encoded.
+    var remoteAgentCallerId: UUID? = nil
+    /// Mode 2 only: `"host"` when only the new message is sent and the
+    /// host's transcript is the history.
+    var osaurusHistory: String? = nil
+    /// Mode 2 only: the calling agent's signed declaration.
+    var osaurusCaller: OsaurusCallerDeclaration? = nil
     /// OpenRouter only: the conversation id sent as `session_id` on
     /// `/chat/completions` so OpenRouter keeps every turn of one conversation
     /// on the same upstream provider replica (sticky routing) — a prerequisite
@@ -5126,6 +5276,8 @@ struct RemoteChatRequest: Encodable {
         case thinking
         case clamp_to_balance
         case remoteAgentSessionId = "session_id"
+        case osaurusHistory = "osaurus_history"
+        case osaurusCaller = "osaurus_caller"
         case idempotencyKey = "idempotency_key"
         case workspaceContext = "workspace_context"
         case veniceParameters = "venice_parameters"
@@ -5152,8 +5304,12 @@ struct RemoteChatRequest: Encodable {
             if let openRouterSessionId, !openRouterSessionId.isEmpty {
                 try container.encode(openRouterSessionId, forKey: .remoteAgentSessionId)
             }
-        } else if let remoteAgentSessionId, !remoteAgentSessionId.isEmpty {
-            try container.encode(remoteAgentSessionId, forKey: .remoteAgentSessionId)
+        } else {
+            if let remoteAgentSessionId, !remoteAgentSessionId.isEmpty {
+                try container.encode(remoteAgentSessionId, forKey: .remoteAgentSessionId)
+            }
+            try container.encodeIfPresent(osaurusHistory, forKey: .osaurusHistory)
+            try container.encodeIfPresent(osaurusCaller, forKey: .osaurusCaller)
         }
         try container.encode(messages, forKey: .messages)
         try container.encodeIfPresent(responsesProviderOptions?.metadata, forKey: .metadata)
@@ -5427,6 +5583,13 @@ struct RemoteChatRequest: Encodable {
             || anthropicAcceptsSamplerKnobs.map { !$0 }
                 ?? knobDeprecatingClaudePrefixes.contains { bareModel.hasPrefix($0) }
 
+        let outputFormat = response_format?.json_schema.map {
+            AnthropicOutputFormat(type: "json_schema", schema: $0.schema)
+        }
+        let effort = anthropicReasoning?.effort
+        let outputConfig =
+            effort == nil && outputFormat == nil ? nil : AnthropicOutputConfig(effort: effort, format: outputFormat)
+
         return AnthropicMessagesRequest(
             model: model,
             max_tokens: max_completion_tokens ?? Self.anthropicFallbackMaxTokens,
@@ -5451,7 +5614,7 @@ struct RemoteChatRequest: Encodable {
             // 5m after a tool result (tight loop) — see `forConversation`.
             cache_control: AnthropicCacheControl.forConversation(lastMessageRole: messages.last?.role),
             thinking: anthropicReasoning?.thinking,
-            output_config: anthropicReasoning?.effort.map { AnthropicOutputConfig(effort: $0) }
+            output_config: outputConfig
         )
     }
 
@@ -5638,7 +5801,9 @@ struct RemoteChatRequest: Encodable {
 
         // Map OpenAI parameter-fidelity fields into Gemini's generationConfig:
         // `seed` carries over directly; JSON mode becomes `responseMimeType`.
-        let jsonMimeType: String? = response_format?.type == "json_object" ? "application/json" : nil
+        let jsonSchema = response_format?.json_schema?.schema
+        let jsonMimeType: String? =
+            (response_format?.type == "json_object" || jsonSchema != nil) ? "application/json" : nil
         // The picker's effort becomes Gemini's native thinking control:
         // `thinkingLevel` on Gemini 3, a `thinkingBudget` on 2.5.
         let thinkingConfig = GeminiReasoningContract.thinkingConfig(
@@ -5661,6 +5826,7 @@ struct RemoteChatRequest: Encodable {
                 imageConfig: imageConfig,
                 seed: seed,
                 responseMimeType: jsonMimeType,
+                responseJsonSchema: jsonSchema,
                 thinkingConfig: thinkingConfig
             )
         }
@@ -6141,12 +6307,17 @@ struct RemoteChatRequest: Encodable {
                 nil
             }
         let isReasoningModel = OpenAIReasoningProfile.matches(modelId: model)
-        let responseText =
-            response_format?.type == "json_object"
-            ? OpenResponsesTextConfig(
-                format: OpenResponsesTextFormat(type: "json_object")
-            )
-            : nil
+        let responseText: OpenResponsesTextConfig? = {
+            if let spec = response_format?.json_schema {
+                return OpenResponsesTextConfig(
+                    format: OpenResponsesTextFormat(
+                        type: "json_schema", name: spec.name, schema: spec.schema, strict: spec.strict))
+            }
+            if response_format?.type == "json_object" {
+                return OpenResponsesTextConfig(format: OpenResponsesTextFormat(type: "json_object"))
+            }
+            return nil
+        }()
 
         var result = OpenResponsesRequest(
             model: model,
@@ -7135,6 +7306,11 @@ extension RemoteProviderService {
         /// empty state so a remote chat offers the agent's own prompt shortcuts
         /// instead of the local neutral defaults. nil = agent uses defaults.
         public let quickActions: [AgentQuickAction]?
+        /// What the peer supports beyond the base protocol (`features`).
+        public var features: Set<String> = []
+        /// Workflows the agent runs for the people it's shared with
+        /// (`hosted_workflows`); empty from an older peer.
+        public var hostedWorkflows: [HostedWorkflowWire] = []
     }
 
     /// Fetch a paired/discovered Osaurus agent's *live* metadata (effective
@@ -7159,7 +7335,63 @@ extension RemoteProviderService {
         guard let (data, status) = await osaurusGET(req, provider: provider), status < 400 else {
             return nil
         }
-        return parseAgentMetadata(from: data)
+        let metadata = parseAgentMetadata(from: data)
+        if let metadata { RemotePeerFeatures.record(metadata.features, providerId: provider.id) }
+        return metadata
+    }
+
+    /// One page of `GET /conversations/{session_id}/events?after=N`: what the
+    /// shared agent's owner said in this conversation while no run carried it.
+    struct ConversationEventsPage: Sendable, Equatable {
+        let messages: [StreamingParticipantMessageHint.Message]
+        let next: Int
+        /// The host's log restarted below our cursor: resume from `next`.
+        let reset: Bool
+    }
+
+    /// Nil when the peer can't be reached or doesn't answer the route.
+    static func fetchConversationEvents(
+        from provider: RemoteProvider, sessionId: String, after: Int
+    ) async -> ConversationEventsPage? {
+        let encoded = sessionId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? sessionId
+        guard let url = provider.url(for: "/conversations/\(encoded)/events?after=\(max(0, after))") else {
+            return nil
+        }
+        let headers = await provider.resolvedHeadersOffMainActor()
+        var req = URLRequest(url: url)
+        req.httpMethod = "GET"
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.timeoutInterval = min(provider.timeout, 10)
+        for (key, value) in headers { req.setValue(value, forHTTPHeaderField: key) }
+        guard let (data, status) = await osaurusGET(req, provider: provider), status < 400 else { return nil }
+        return parseConversationEvents(from: data)
+    }
+
+    static func parseConversationEvents(from data: Data) -> ConversationEventsPage? {
+        struct Wire: Decodable {
+            struct Message: Decodable {
+                let id: String
+                let text: String
+                let author_kind: String?
+                let author_handle: String?
+                let author_wallet: String?
+            }
+            let messages: [Message]
+            let next: Int
+            let reset: Bool?
+        }
+        guard let wire = try? JSONDecoder().decode(Wire.self, from: data) else { return nil }
+        let messages = wire.messages.compactMap { message -> StreamingParticipantMessageHint.Message? in
+            guard !message.text.isEmpty else { return nil }
+            return StreamingParticipantMessageHint.Message(
+                id: message.id,
+                text: String(message.text.prefix(AttentionLimits.textCharacters)),
+                authorKind: message.author_kind ?? ParticipantKind.owner.rawValue,
+                authorHandle: message.author_handle,
+                authorWallet: message.author_wallet
+            )
+        }
+        return ConversationEventsPage(messages: messages, next: max(0, wire.next), reset: wire.reset == true)
     }
 
     /// Decode + normalize a peer's `GET /agents/{id}` body into
@@ -7174,6 +7406,7 @@ extension RemoteProviderService {
             let name: String?
             let description: String?
             let avatar: String?
+            let features: [String]?
         }
         guard let info = try? JSONDecoder().decode(AgentInfo.self, from: data) else { return nil }
         let rawModel = info.effective_model ?? info.default_model
@@ -7187,8 +7420,43 @@ extension RemoteProviderService {
             name: (trimmedName?.isEmpty == false) ? trimmedName : nil,
             description: trimmedDescription,
             avatar: (trimmedAvatar?.isEmpty == false) ? trimmedAvatar : nil,
-            quickActions: parseQuickActions(from: data)
+            quickActions: parseQuickActions(from: data),
+            features: Set(info.features ?? []),
+            hostedWorkflows: parseHostedWorkflows(from: data)
         )
+    }
+
+    /// `hosted_workflows` on its own envelope, so one bad entry can't fail
+    /// the agent's metadata.
+    static func parseHostedWorkflows(from data: Data) -> [HostedWorkflowWire] {
+        struct Envelope: Decodable { let hosted_workflows: [Lossy]? }
+        struct Lossy: Decodable {
+            let value: HostedWorkflowWire?
+            init(from decoder: Decoder) throws { value = try? HostedWorkflowWire(from: decoder) }
+        }
+        let entries = (try? JSONDecoder().decode(Envelope.self, from: data))?.hosted_workflows ?? []
+        return entries.compactMap(\.value).prefix(100).map { $0 }
+    }
+
+    /// A buffered JSON request to a paired Osaurus agent, over the Secure
+    /// Channel when the provider has one (never a cleartext fallback).
+    /// Nil when the peer can't be reached; otherwise the inner status and
+    /// body, errors included.
+    static func osaurusJSONRequest(
+        provider: RemoteProvider, method: String, path: String, body: Data? = nil, timeout: TimeInterval = 15
+    ) async -> (data: Data, statusCode: Int)? {
+        guard let url = provider.url(for: path) else { return nil }
+        let headers = await provider.resolvedHeadersOffMainActor()
+        var req = URLRequest(url: url)
+        req.httpMethod = method
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let body {
+            req.httpBody = body
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
+        req.timeoutInterval = timeout
+        for (key, value) in headers { req.setValue(value, forHTTPHeaderField: key) }
+        return await osaurusGET(req, provider: provider)
     }
 
     /// Decode + sanitize the agent's Action Bar (`chat_quick_actions`) from a

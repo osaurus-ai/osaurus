@@ -116,7 +116,7 @@ struct ConfigurationToolsGateContractTests {
         #expect(!help.contains("only available to the Default agent"), "got \(help)")
         let inspect = try await run(
             OsaurusInspectTool(),
-            args: #"{"action":"list","scope":"themes"}"#,
+            args: #"{"action":"list","scope":"commands"}"#,
             tokenAgent: agentId
         )
         #expect(!inspect.contains("only available to the Default agent"), "got \(inspect)")
@@ -169,7 +169,10 @@ struct ConsolidatedActionSchemaTests {
     @Test
     func configTool_offersTheFullDeclarativeSurface() {
         let actions = actionEnum(of: OsaurusConfigTool())
-        #expect(Set(actions) == ["schema", "export", "plan", "apply", "templates"])
+        #expect(
+            Set(actions) == [
+                "schema", "export", "plan", "apply", "templates", "workflows", "history", "diff", "revert",
+            ])
     }
 
     @Test
@@ -181,7 +184,7 @@ struct ConsolidatedActionSchemaTests {
 
 /// Pins the read-scope surface of `osaurus_inspect`. These scopes are a
 /// product contract: the configuration agent can only answer "what
-/// skills/watchers/themes/… do I have?" from live state when the scope is
+/// skills/watchers/commands/… do I have?" from live state when the scope is
 /// offered in the schema enum — prompt compaction strips description prose
 /// but KEEPS enums, so this list is the only roster a compact-schema model
 /// ever sees (removing it regressed scope-less/junk-arg calls immediately).
@@ -201,13 +204,21 @@ struct ConfigurationReadScopeTests {
     }
 
     private static let expectedScopes: Set<String> = [
-        "agents", "models", "providers", "mcp", "plugins", "schedules",
-        "skills", "watchers", "knowledge", "themes", "commands", "channels",
+        "agents", "models", "providers", "mcp", "plugins", "automations",
+        "skills", "knowledge", "commands", "channels",
         "search", "workspaces", "shared_agents",
     ]
 
+    /// Scopes whose feature was removed: still offered so a guess gets the
+    /// replacement instead of a generic rejection.
+    private static let retiredScopes: Set<String> = ["themes"]
+
+    /// Read scopes still answered but no longer offered in the schema enum:
+    /// the pre-rename `events` and the legacy `schedules` / `watchers`.
+    private static let aliasScopes: Set<String> = ["mcp_providers", "events", "schedules", "watchers"]
+
     /// Document sections (export/apply redirect) plus the removed
-    /// `server`/`chat`/`app` names (Settings-UI-only teach). Both stay in
+    /// `server` name (Settings-UI-only teach). Both stay in
     /// the enum so the SchemaValidator lets them through to
     /// `unknownScopeFailure` instead of a generic rejection.
     private static let settingsSections: Set<String> = [
@@ -216,12 +227,33 @@ struct ConfigurationReadScopeTests {
     ]
 
     @Test
+    func retiredScopeNamesPassSchemaValidationAsAutomations() throws {
+        let tool = OsaurusInspectTool()
+        let schema = try #require(tool.parameters)
+        for retired in ["events", "Schedules", "watchers"] {
+            let raw = #"{"action":"list","scope":"\#(retired)","filter":"enabled"}"#
+            #expect(!SchemaValidator.validate(arguments: try parse(raw), against: schema).isValid)
+            let normalized = try parse(tool.normalizeArgumentsBeforeValidation(raw))
+            #expect(normalized["scope"] as? String == "automations")
+            #expect(normalized["filter"] as? String == "enabled")
+            #expect(SchemaValidator.validate(arguments: normalized, against: schema).isValid)
+        }
+        let untouched = #"{"action":"list","scope":"agents"}"#
+        #expect(tool.normalizeArgumentsBeforeValidation(untouched) == untouched)
+    }
+
+    private func parse(_ json: String) throws -> [String: Any] {
+        try #require(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+    }
+
+    @Test
     func inspectTool_offersEveryReadScope() {
         let offered = scopeEnum(of: OsaurusInspectTool())
-        #expect(offered.isSuperset(of: Self.expectedScopes))
+        #expect(offered.isSuperset(of: Self.expectedScopes.union(Self.retiredScopes)))
+        #expect(OsaurusInspectTool.knownReadScopes.isDisjoint(with: Self.retiredScopes))
         #expect(
             OsaurusInspectTool.knownReadScopes
-                == Self.expectedScopes.union(["mcp_providers"]))
+                == Self.expectedScopes.union(Self.aliasScopes))
     }
 
     @Test
@@ -256,8 +288,8 @@ struct ConfigurationReadScopeTests {
     @Test
     func originalLoopArguments_throughDispatch() async throws {
         let tool = OsaurusInspectTool()
-        // Configuration tools run only under the Default agent's context.
-        try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+        // Configuration tools run only under the Configurator's context.
+        try await ChatExecutionContext.$currentAgentId.withValue(Agent.configuratorId) {
             let junk = try await tool.execute(
                 argumentsJSON: #"{"action":"describe","id":"00000000-0000-0000-0000-000000000001","scope":"user_profile"}"#)
             #expect(!ToolEnvelope.isSuccess(junk))
@@ -280,7 +312,7 @@ struct ConfigurationReadScopeTests {
     /// inspect scope" (the 29-call loop on build #13).
     @Test
     func documentSectionScope_readsTheSection() async throws {
-        for scope in ["default_agent", "memory", "tools"] {
+        for scope in ["default_agent", "memory", "tools", "model_defaults", "chat", "app"] {
             let envelope = try #require(
                 await OsaurusInspectTool.documentSectionRead(scope: scope, tool: "osaurus_inspect"),
                 "\(scope) must resolve to a section read")
@@ -292,21 +324,27 @@ struct ConfigurationReadScopeTests {
         }
         // Not a section: no read, the caller falls through to the failure.
         #expect(await OsaurusInspectTool.documentSectionRead(scope: "user_profile", tool: "osaurus_inspect") == nil)
-        for removed in ["server", "chat", "app"] {
-            #expect(await OsaurusInspectTool.documentSectionRead(scope: removed, tool: "osaurus_inspect") == nil)
-        }
+        #expect(await OsaurusInspectTool.documentSectionRead(scope: "server", tool: "osaurus_inspect") == nil)
     }
 
     @Test
     func unknownScope_removedSection_teachesSettingsUIOnly() {
-        // Scope reduction 2: the removed section names must get the honest
+        // Scope reduction 2: the removed section name must get the honest
         // "Settings UI only" answer, not the export redirect.
-        for scope in ["server", "chat", "app"] {
+        for scope in ["server"] {
             let envelope = OsaurusInspectTool.unknownScopeFailure(scope: scope, tool: "osaurus_inspect")
             #expect(envelope.contains("Settings UI"), "no redirect for `\(scope)`")
             #expect(!envelope.contains("DOCUMENT SECTION"))
             #expect(!envelope.contains("export"))
         }
+    }
+
+    @Test
+    func unknownScope_retiredThemes_pointsAtAppearance() {
+        let envelope = OsaurusInspectTool.unknownScopeFailure(scope: "themes", tool: "osaurus_inspect")
+        #expect(envelope.contains("Custom themes were removed"))
+        #expect(envelope.contains("General → Appearance"))
+        #expect(!envelope.contains("DOCUMENT SECTION"))
     }
 
     @Test
@@ -322,7 +360,7 @@ struct ConfigurationReadScopeTests {
         // "foundation" is a model VALUE (Apple's built-in on-device model),
         // not an installed model entry; verifying it against the installed
         // list comes back empty and models refuse a valid setting.
-        let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+        let result = try await ChatExecutionContext.$currentAgentId.withValue(Agent.configuratorId) {
             try await OsaurusInspectTool().execute(
                 argumentsJSON:
                     "{\"action\": \"describe\", \"scope\": \"models\", \"id\": \"foundation\"}"

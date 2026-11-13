@@ -12,7 +12,9 @@ import SwiftUI
 
 /// A single toast notification card
 struct ToastView: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var baseTheme
+    @Environment(\.isEnabled) private var componentEnabled
+    private var theme: any ThemeProtocol { baseTheme.catalogFamily(18, enabled: componentEnabled) }
 
     let toast: Toast
     let onDismiss: () -> Void
@@ -27,29 +29,28 @@ struct ToastView: View {
     }
 
     var body: some View {
-        HStack(alignment: verticalAlignment, spacing: 12) {
+        HStack(alignment: verticalAlignment, spacing: theme.catalogLayoutMetric("component.library.18.elements.layout.toastView.body.horizontalGap", inheriting: theme.catalogMetric("gap", fallback: theme.space.s12))) {
             leadingContent
 
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .top, spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.18.elements.layout.toastView.body.verticalGap", inheriting: theme.catalogMetric("gap", fallback: theme.space.s8))) {
+                HStack(alignment: .top, spacing: theme.catalogLayoutMetric("component.library.18.elements.layout.toastView.body.horizontalGap2", inheriting: theme.catalogMetric("gap", fallback: theme.space.s8))) {
                     textContent
                     Spacer(minLength: 4)
                     dismissButton
-                }
+                }.catalogLayoutTarget("component.library.18.elements.layout.toastView.body.horizontalGap2")
 
                 if let actionTitle = toast.effectiveActionTitle, hasAction {
                     actionButton(title: actionTitle)
                 }
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-        .background(ToastBackground(accentColor: accentColor))
-        .clipShape(RoundedRectangle(cornerRadius: ToastStyle.cornerRadius, style: .continuous))
-        .overlay(ToastBorder(accentColor: accentColor, isHovering: isHovering))
+            }.catalogLayoutTarget("component.library.18.elements.layout.toastView.body.verticalGap")
+        }.catalogLayoutTarget("component.library.18.elements.layout.toastView.body.horizontalGap")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.18.elements.layout.toastView.body.paddingX", inheriting: theme.catalogMetric("padding", fallback: theme.space.s14))).catalogLayoutTarget("component.library.18.elements.layout.toastView.body.paddingX")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.18.elements.layout.toastView.body.paddingY", inheriting: theme.catalogMetric("padding", fallback: theme.space.s12))).catalogLayoutTarget("component.library.18.elements.layout.toastView.body.paddingY")
+        .frame(minHeight: theme.catalogMetric("height", fallback: 0))
+        .assignedBaseChrome(18)
         .toastShadow(theme: theme, isHovering: isHovering)
         .onHover { hovering in
-            withAnimation(theme.animationQuick()) {
+            withAnimation(theme.motion.quick) {
                 isHovering = hovering
             }
         }
@@ -76,7 +77,7 @@ struct ToastView: View {
                 .aspectRatio(contentMode: .fill)
                 .frame(width: 36, height: 36)
                 .clipShape(Circle())
-                .overlay(Circle().stroke(accentColor.opacity(0.5), lineWidth: 2))
+                .overlay(Circle().stroke(tone.border, lineWidth: theme.stroke.focus))
         } else {
             iconView
         }
@@ -86,18 +87,18 @@ struct ToastView: View {
     private var iconView: some View {
         ZStack {
             Circle()
-                .fill(accentColor.opacity(theme.isDark ? 0.14 : 0.10))
+                .fill(tone.background)
                 .frame(width: 28, height: 28)
 
             if toast.type == .loading {
                 // A TimelineView-driven arc, not ProgressView: a scaled
                 // CircularProgressViewStyle can render as a static circle in
                 // the toast overlay panel (no spin), reading as a bare dot.
-                ToastSpinnerIcon(accentColor: accentColor, size: 16)
+                SettingsSpinner(size: .large, tint: tone.foreground)
             } else {
                 Image(systemName: toast.type.iconName)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(accentColor)
+                    .glyphSize(.body, weight: .semibold)
+                    .foregroundColor(tone.foreground)
             }
         }
     }
@@ -105,42 +106,32 @@ struct ToastView: View {
     // MARK: - Text Content
 
     private var textContent: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.18.elements.layout.toastView.textContent.verticalGap", inheriting: theme.catalogMetric("gap", fallback: theme.space.s2))) {
             Text(toast.title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+                .assignedTypography("component.library.18.label", fallback: SettingsFont.rowTitle)
+                .foregroundColor(theme.text.primary)
                 .lineLimit(2)
 
             if let message = toast.message {
                 Text(message)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+                    .assignedTypography("component.library.18.caption", fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.secondary)
                     .lineLimit(3)
             }
 
             if toast.type == .loading, let progress = toast.progress {
-                ProgressView(value: progress)
-                    .progressViewStyle(ToastProgressStyle(color: accentColor))
-                    .frame(height: 4)
-                    .padding(.top, 4)
+                SettingsProgressBar(value: progress)
+                    .accessibilityLabel(Text("Loading progress", bundle: .module))
+                    .padding(.top, theme.catalogLayoutMetric("component.library.18.elements.layout.toastView.textContent.paddingY", inheriting: theme.catalogMetric("gap", fallback: theme.space.s4))).catalogLayoutTarget("component.library.18.elements.layout.toastView.textContent.paddingY")
             }
-        }
+        }.catalogLayoutTarget("component.library.18.elements.layout.toastView.textContent.verticalGap")
     }
 
     // MARK: - Buttons
 
     @ViewBuilder
     private func actionButton(title: String) -> some View {
-        Button(action: { onAction?() }) {
-            Text(title)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(accentColor)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(RoundedRectangle(cornerRadius: 6).fill(accentColor.opacity(0.15)))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(accentColor.opacity(0.3), lineWidth: 1))
-        }
-        .buttonStyle(.plain)
+        ToastActionButton(title: title) { onAction?() }
     }
 
     @ViewBuilder
@@ -157,13 +148,13 @@ struct ToastView: View {
         toast.type == .action || toast.action != nil || toast.actionId != nil
     }
 
-    private var accentColor: Color {
+    private var tone: ThemeStatusSet<Color> {
         switch toast.type {
-        case .success: return theme.successColor
-        case .info: return theme.infoColor
-        case .warning: return theme.warningColor
-        case .error: return theme.errorColor
-        case .action, .loading: return theme.accentColor
+        case .success: return theme.status.success
+        case .info: return theme.status.info
+        case .warning: return theme.status.warning
+        case .error: return theme.status.error
+        case .action, .loading: return theme.status.info
         }
     }
 }
@@ -172,15 +163,16 @@ struct ToastView: View {
 
 /// Loading indicator for `.loading` toasts: a smoothly spinning arc driven by
 /// `TimelineView`, same approach as `AnimatedProgressComponents`' spinner.
-private struct ToastSpinnerIcon: View {
-    let accentColor: Color
+struct ToastSpinnerIcon: View {
+    @Environment(\.theme) private var theme
+    let color: Color
     let size: CGFloat
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { timeline in
             let progress = spinProgress(for: timeline.date)
             ToastSpinnerShape(progress: progress)
-                .stroke(accentColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                .stroke(color, style: StrokeStyle(lineWidth: theme.stroke.focus, lineCap: .round))
                 .frame(width: size, height: size)
         }
     }
@@ -191,7 +183,7 @@ private struct ToastSpinnerIcon: View {
     }
 }
 
-private struct ToastSpinnerShape: Shape {
+struct ToastSpinnerShape: Shape {
     var progress: Double
 
     var animatableData: Double {
@@ -219,32 +211,14 @@ private struct ToastSpinnerShape: Shape {
 
 // MARK: - Toast Progress Style
 
-private struct ToastProgressStyle: ProgressViewStyle {
-    let color: Color
-
-    func makeBody(configuration: Configuration) -> some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(color.opacity(0.2))
-                    .frame(height: 4)
-
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(color)
-                    .frame(width: geometry.size.width * (configuration.fractionCompleted ?? 0), height: 4)
-                    .animation(.easeInOut(duration: 0.3), value: configuration.fractionCompleted)
-            }
-        }
-        .frame(height: 4)
-    }
-}
-
 // MARK: - Preview
 
 #if DEBUG
     struct ToastView_Previews: PreviewProvider {
+        @MainActor private static var theme: any ThemeProtocol { ThemeManager.shared.currentTheme }
+
         static var previews: some View {
-            VStack(spacing: 16) {
+            VStack(spacing: theme.space.s16) {
                 ToastView(
                     toast: Toast(
                         type: .success,
@@ -278,7 +252,7 @@ private struct ToastProgressStyle: ProgressViewStyle {
             }
             .padding()
             .frame(width: 420)
-            .background(Color.black.opacity(0.8))
+            .background(CustomizableTheme.dark().surface.canvas)
         }
     }
 #endif

@@ -131,14 +131,6 @@ public struct BusinessDocumentSummary: Equatable, Sendable {
 
     public var chipDetailLabel: String {
         var pieces: [String] = [displayName]
-        if let primary = structureSummary?.primaryCountLabel {
-            pieces.append(primary)
-        }
-        if hasActiveContent {
-            pieces.append("Review")
-        } else if let maximumSeverity, maximumSeverity >= .medium {
-            pieces.append("Review")
-        }
         if let formatted = formattedFileSize {
             pieces.append(formatted)
         }

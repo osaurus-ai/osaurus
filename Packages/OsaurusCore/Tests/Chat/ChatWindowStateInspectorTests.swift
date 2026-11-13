@@ -2,12 +2,12 @@
 //  ChatWindowStateInspectorTests.swift
 //  osaurusTests
 //
-//  The chat window's right-hand rail mirrors the session sidebar: one
-//  toolbar button opens and closes it (reopening on the pane it last
-//  showed), the rail's own lens bar switches between File Changes and
-//  History, "N files changed" rows deep-link to File Changes, the toolbar
-//  badge counts changed files only while the rail is closed, and at narrow
-//  widths the two rails take turns rather than crushing the chat column.
+//  The chat window's right-hand rail mirrors the session sidebar: it shows
+//  the chat's File Changes and only exists once the chat has changed a
+//  file, one toolbar button opens and closes it, "N files changed" rows
+//  deep-link to it, the toolbar badge counts changed files only while the
+//  rail is closed, and at narrow widths the two rails take turns rather
+//  than crushing the chat column.
 //
 
 import Foundation
@@ -19,19 +19,26 @@ import Testing
 @MainActor
 struct ChatWindowStateInspectorTests {
 
-    @Test("the toolbar toggle opens on History first, then closes")
-    func toggleOpensAndCloses() async throws {
+    @Test("File Changes is asked for from the start and appears with the chat's first change")
+    func panelFollowsFileChanges() async throws {
         try await ChatHistoryTestStorage.run {
             let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
             defer { window.cleanup() }
 
+            #expect(window.inspectorPane == .fileChanges)
+            #expect(window.hasContextPanel == false)
+            #expect(window.isContextPanelOpen == false, "no file changes: no panel")
+
+            window.setFileChangeCountsForTesting(files: 1, sets: 1)
+            #expect(window.hasContextPanel)
+            #expect(window.isContextPanelOpen, "the first change brings the panel up")
+
+            window.toggleContextPanel()
             #expect(window.inspectorPane == nil)
-            #expect(window.isInspectorOpen == false)
-            window.toggleInspector()
-            #expect(window.inspectorPane == .history, "a fresh window has no file changes to show")
-            #expect(window.isInspectorOpen)
-            window.toggleInspector()
-            #expect(window.inspectorPane == nil)
+            #expect(window.isContextPanelOpen == false)
+            #expect(window.hasContextPanel, "the toggle stays to bring it back")
+            window.toggleContextPanel()
+            #expect(window.isContextPanelOpen)
         }
     }
 
@@ -51,30 +58,30 @@ struct ChatWindowStateInspectorTests {
         }
     }
 
-    @Test("the lens bar switches panes in place; showing never closes")
+    @Test("showing switches panes in place and never closes")
     func showSwitchesInPlace() async throws {
         try await ChatHistoryTestStorage.run {
             let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
             defer { window.cleanup() }
 
-            window.showInspector(.history)
+            window.showInspector(.workflows)
             window.showInspector(.fileChanges)
             #expect(window.inspectorPane == .fileChanges)
             window.showInspector(.fileChanges)
             #expect(window.inspectorPane == .fileChanges, "re-selecting the open pane keeps it open")
-            window.showInspector(.history)
-            #expect(window.inspectorPane == .history)
+            window.showInspector(.workflows)
+            #expect(window.inspectorPane == .workflows)
         }
     }
 
-    @Test("opening the changes panel shows File Changes focused on the set, even over History")
+    @Test("opening the changes panel shows File Changes focused on the set, even over Workflows")
     func openChangesPanelFocusesSet() async throws {
         try await ChatHistoryTestStorage.run {
             let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
             defer { window.cleanup() }
             let setId = UUID()
 
-            window.showInspector(.history)
+            window.showInspector(.workflows)
             window.openChangesPanel(focusing: setId)
             #expect(window.inspectorPane == .fileChanges)
             #expect(window.changesPanelFocusSetId == setId)
@@ -86,88 +93,37 @@ struct ChatWindowStateInspectorTests {
         }
     }
 
-    @Test("an unpinned File Changes falls back to History while the chat has no change sets")
-    func fileChangesFallsBackToHistory() {
-        #expect(ChatWindowState.effectiveInspectorPane(requested: nil, fileChangeSetCount: 0, isPinned: false) == nil)
-        #expect(ChatWindowState.effectiveInspectorPane(requested: .history, fileChangeSetCount: 0, isPinned: false) == .history)
+    @Test("the context panel draws File Changes only while asked for and the chat has a change")
+    func contextPaneRules() {
+        #expect(ChatWindowState.contextPane(requested: .fileChanges, fileChangeSetCount: 0, isArchitect: false) == nil)
+        #expect(ChatWindowState.contextPane(requested: .fileChanges, fileChangeSetCount: 2, isArchitect: false) == .fileChanges)
+        #expect(ChatWindowState.contextPane(requested: nil, fileChangeSetCount: 2, isArchitect: false) == nil)
         #expect(
-            ChatWindowState.effectiveInspectorPane(requested: .fileChanges, fileChangeSetCount: 0, isPinned: false) == .history,
-            "nothing to show yet: History is the useful pane")
+            ChatWindowState.contextPane(requested: .draft, fileChangeSetCount: 2, isArchitect: false) == .fileChanges,
+            "any request counts: visiting the Architect never hides the next chat's File Changes")
+        #expect(ChatWindowState.contextPane(requested: .workflows, fileChangeSetCount: 2, isArchitect: false) == .fileChanges)
         #expect(
-            ChatWindowState.effectiveInspectorPane(requested: .fileChanges, fileChangeSetCount: 0, isPinned: true) == .fileChanges,
-            "the user asked for it: show the empty state, not a different pane")
-        #expect(ChatWindowState.effectiveInspectorPane(requested: .fileChanges, fileChangeSetCount: 2, isPinned: false) == .fileChanges)
+            ChatWindowState.contextPane(requested: .fileChanges, fileChangeSetCount: 2, isArchitect: true) == nil,
+            "the Architect's draft lives in the Workflows split")
     }
 
-    @Test("the lens bar pins the pane; the toggle reopens unpinned; a new tab on screen unpins")
-    func pinFollowsExplicitPicks() async throws {
+    @Test("a new chat hides the panel until its first change; closing it sticks across chats")
+    func panelAcrossChats() async throws {
         try await ChatHistoryTestStorage.run {
             let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
             defer { window.cleanup() }
 
-            window.toggleInspector()
-            #expect(window.inspectorPanePinned == false)
-            #expect(window.effectiveInspectorPane == .history)
-
-            // Tapping File Changes with nothing in it is an explicit choice.
-            window.showInspector(.fileChanges)
-            #expect(window.inspectorPanePinned)
-            #expect(window.effectiveInspectorPane == .fileChanges)
-
-            // Close and reopen from the toolbar: the remembered pane comes
-            // back unpinned, so the empty pane yields to History again.
-            window.closeInspector()
-            window.toggleInspector()
-            #expect(window.inspectorPane == .fileChanges)
-            #expect(window.inspectorPanePinned == false)
-            #expect(window.effectiveInspectorPane == .history)
-
-            // A deep link pins too, and a new chat on screen clears the pin.
-            window.openChangesPanel()
-            #expect(window.inspectorPanePinned)
-            #expect(window.effectiveInspectorPane == .fileChanges)
+            window.setFileChangeCountsForTesting(files: 2, sets: 2)
+            #expect(window.isContextPanelOpen)
             window.startNewChat()
-            #expect(window.inspectorPanePinned == false)
-            #expect(window.effectiveInspectorPane == .history)
-        }
-    }
+            #expect(window.isContextPanelOpen == false, "a fresh chat has no changes")
+            #expect(window.inspectorPane == .fileChanges, "still asked for, for its first change")
 
-    @Test("on a project the same toggle drives Project Settings, remembered across windows")
-    func projectInspectorToggle() async throws {
-        let defaults = UserDefaults.standard
-        let key = ChatWindowState.projectInspectorDefaultsKey
-        let previous = defaults.object(forKey: key)
-        defer {
-            if let previous { defaults.set(previous, forKey: key) } else { defaults.removeObject(forKey: key) }
-        }
-        defaults.removeObject(forKey: key)
-
-        try await ChatHistoryTestStorage.run {
-            let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
-            defer { window.cleanup() }
-
-            #expect(window.showProjectInspector, "open by default: the settings are what the rail is for")
-            // On a chat the rail state is the chat inspector's.
-            #expect(window.isRightRailOpen == false)
-            window.openProjectId = UUID()
-            #expect(window.isRightRailOpen)
-            window.toggleProjectInspector()
-            #expect(window.showProjectInspector == false)
-            #expect(window.isRightRailOpen == false)
-            #expect(window.inspectorPane == nil, "the chat inspector is untouched")
-
-            // The choice survives into the next window.
-            let next = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
-            defer { next.cleanup() }
-            #expect(next.showProjectInspector == false)
-
-            // Asking for the stepped-aside sidebar back closes the rail on
-            // screen, which on a project is Project Settings.
-            window.toggleProjectInspector()
-            window.isSidebarAutoHidden = true
-            window.toggleSidebar()
-            #expect(window.showProjectInspector == false)
-            #expect(window.showSidebar)
+            window.setFileChangeCountsForTesting(files: 1, sets: 1)
+            window.toggleContextPanel()
+            window.startNewChat()
+            window.setFileChangeCountsForTesting(files: 1, sets: 1)
+            #expect(window.isContextPanelOpen == false, "closed by the user stays closed")
         }
     }
 
@@ -177,15 +133,15 @@ struct ChatWindowStateInspectorTests {
         #expect(ChatWindowState.inspectorBadgeCount(fileChangesCount: 3, isInspectorOpen: false, isRemoteAgentChat: false) == 3)
         #expect(
             ChatWindowState.inspectorBadgeCount(fileChangesCount: 3, isInspectorOpen: true, isRemoteAgentChat: false) == nil,
-            "open, the lens bar carries the count")
+            "open, the panel carries the count")
         #expect(ChatWindowState.inspectorBadgeCount(fileChangesCount: 3, isInspectorOpen: false, isRemoteAgentChat: true) == nil)
     }
 
-    @Test("the rail hides on the project page and keeps its pane for the chat's return")
-    func visiblePane() {
-        #expect(ChatView.visibleInspectorPane(requested: nil, isProjectPageOpen: false) == nil)
-        #expect(ChatView.visibleInspectorPane(requested: .history, isProjectPageOpen: true) == nil)
-        #expect(ChatView.visibleInspectorPane(requested: .fileChanges, isProjectPageOpen: false) == .fileChanges)
+    @Test("Architect chats swap File Changes for the draft; other chats have no Draft")
+    func architectPanes() {
+        #expect(ChatWindowState.effectiveInspectorPane(requested: .fileChanges, isArchitect: true) == .draft)
+        #expect(ChatWindowState.effectiveInspectorPane(requested: .draft, isArchitect: false) == .workflows)
+        #expect(ChatWindowState.effectiveInspectorPane(requested: nil, isArchitect: true) == nil)
     }
 
     @Test("the sidebar steps aside only when both rails plus a readable chat column do not fit")
@@ -199,6 +155,139 @@ struct ChatWindowStateInspectorTests {
         #expect(ChatView.sidebarStepsAside(windowWidth: 1140, sidebarWidth: 400, inspectorOpen: true) == false)
     }
 
+    @Test("picking a workflow opens its run in Workflows, run by the same agent; Architect chats keep the Workflows lens")
+    func workflowsLensKeepsTheAgent() async throws {
+        try await ChatHistoryTestStorage.run {
+            let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
+            defer { window.cleanup() }
+            let tabs = window.tabs.count
+
+            window.showInspector(.workflows)
+            #expect(window.effectiveInspectorPane == .workflows)
+            let workflowID = UUID()
+            window.openWorkflowTab(workflowID: workflowID, agentId: window.agentId)
+            #expect(window.tabs.count == tabs)
+            #expect(window.mainSurface == .workflows)
+            #expect(window.workflowsPath.last == .run(workflowID: workflowID, runID: nil, agentId: Agent.defaultId))
+            #expect(window.agentId == Agent.defaultId)
+
+            let architect = ChatWindowState(windowId: UUID(), agentId: Agent.architectId)
+            defer { architect.cleanup() }
+            architect.showInspector(.workflows)
+            #expect(architect.effectiveInspectorPane == .workflows)
+        }
+    }
+
+    @Test("in an Architect chat, picking a workflow edits it there; New Workflow reuses an untouched chat")
+    func architectWorkflowsLensEditsInPlace() async throws {
+        try await ChatHistoryTestStorage.run {
+            let store = InstalledWorkflowStore.shared
+            store.reload()
+            defer { store.resetForTesting() }
+            let installed = try store.install(WF.template(WF.intake()), bindings: InstallBindings())
+            let drafts = WorkflowDraftStore.shared
+            let window = ChatWindowState(windowId: UUID(), agentId: Agent.architectId)
+            defer { window.cleanup() }
+            let tabs = window.tabs.count
+
+            window.showInspector(.workflows)
+            ArchitectLauncher.edit(installed, in: window)
+            let draft = try #require(drafts.draft(forSession: window.session.sessionId?.uuidString))
+            defer { drafts.delete(draft.id) }
+            #expect(window.effectiveInspectorPane == .draft, "picking a workflow shows its draft")
+            #expect(window.agentId == Agent.architectId)
+            #expect(window.tabs.count == tabs, "a blank Architect chat is reused")
+            #expect(draft.templateID == installed.templateID)
+            #expect(draft.baseVersion == installed.templateVersion)
+            #expect(draft.definition == installed.definition)
+            #expect(
+                draft.pendingUserEdits.contains { $0.contains(installed.name) }, "The Architect hears what it edits")
+
+            window.showInspector(.workflows)
+            ArchitectLauncher.edit(installed, in: window)
+            #expect(window.tabs.count == tabs)
+            #expect(drafts.draft(forSession: window.session.sessionId?.uuidString)?.id == draft.id, "already editing it")
+            #expect(window.effectiveInspectorPane == .draft, "picking the one it edits still shows the draft")
+
+            window.showInspector(.workflows)
+            ArchitectLauncher.newWorkflow(in: window)
+            #expect(window.effectiveInspectorPane == .draft)
+            #expect(window.tabs.count == tabs)
+            #expect(drafts.draft(id: draft.id) == nil, "the untouched draft goes with the reused chat")
+            let fresh = try #require(drafts.draft(forSession: window.session.sessionId?.uuidString))
+            defer { drafts.delete(fresh.id) }
+            #expect(fresh.templateID == nil)
+        }
+    }
+
+    @Test("editing a workflow opens the Architect chat that built it, history and all, on the saved version")
+    func architectEditReopensTheChatThatBuiltIt() async throws {
+        try await ChatHistoryTestStorage.run {
+            let store = InstalledWorkflowStore.shared
+            store.reload()
+            defer { store.resetForTesting() }
+            let installed = try store.install(WF.template(WF.intake()), bindings: InstallBindings())
+            let drafts = WorkflowDraftStore.shared
+
+            let chat = ChatSessionData(
+                title: "Build client intake",
+                turns: [ChatTurnData(role: .user, content: "build me a client intake workflow")],
+                agentId: Agent.architectId)
+            ChatSessionsManager.shared.save(chat)
+            var older = installed.template
+            older.version = installed.templateVersion - 1
+            older.payload = .workflow(WorkflowDefinition())
+            let built = drafts.create(sessionID: chat.id.uuidString, from: older)
+            defer { drafts.delete(built.id) }
+
+            let window = ChatWindowState(windowId: UUID(), agentId: Agent.architectId)
+            defer { window.cleanup() }
+            ArchitectLauncher.edit(installed, in: window)
+            let untouched = drafts.drafts(templateID: installed.templateID).filter { $0.id != built.id }
+            defer { untouched.forEach { drafts.delete($0.id) } }
+
+            #expect(window.session.sessionId == chat.id, "the chat that built it opens")
+            #expect(window.session.turns.count == 1, "with its history")
+            let reopened = try #require(drafts.draft(id: built.id))
+            #expect(reopened.baseVersion == installed.templateVersion, "brought up to the saved version")
+            #expect(reopened.definition == installed.definition)
+            #expect(!reopened.history.isEmpty, "undo restores what the draft held")
+            #expect(untouched.isEmpty, "no second draft for the same workflow")
+
+            ArchitectLauncher.newWorkflow(in: window)
+            let fresh = try #require(drafts.draft(forSession: window.session.sessionId?.uuidString))
+            defer { drafts.delete(fresh.id) }
+            #expect(window.session.sessionId != chat.id)
+            #expect(drafts.draft(id: built.id) != nil, "a chat with history keeps its draft")
+        }
+    }
+
+    @Test("only the Architect opens the inspector, and only when it is closed; leaving it never closes the rail")
+    func agentChangesNeverToggleTheInspector() async throws {
+        try await ChatHistoryTestStorage.run {
+            let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
+            defer { window.cleanup() }
+            window.closeInspector()
+
+            window.openInspectorForArchitect()
+            #expect(window.inspectorPane == nil, "other agents leave the rail as it is")
+
+            window.switchAgent(to: Agent.architectId)
+            window.openInspectorForArchitect()
+            #expect(window.effectiveInspectorPane == .draft, "the Architect opens on its draft")
+
+            window.switchAgent(to: Agent.defaultId)
+            window.openInspectorForArchitect()
+            #expect(window.isInspectorOpen, "leaving the Architect keeps the rail open")
+            #expect(window.effectiveInspectorPane == .workflows, "other agents have no Draft lens")
+
+            window.showInspector(.fileChanges)
+            window.switchAgent(to: Agent.architectId)
+            window.openInspectorForArchitect()
+            #expect(window.inspectorPane == .fileChanges, "an open rail keeps the pane the user picked")
+        }
+    }
+
     @Test("the chrome reports the sidebar actually on screen, and asking for it back closes the inspector")
     func sidebarVisibilityFollowsAutoHide() async throws {
         try await ChatHistoryTestStorage.run {
@@ -209,7 +298,7 @@ struct ChatWindowStateInspectorTests {
             #expect(window.isSidebarVisible)
 
             // Narrow window, inspector open: ChatView reports the step-aside.
-            window.toggleInspector()
+            window.showInspector(.fileChanges)
             window.isSidebarAutoHidden = true
             #expect(window.isSidebarVisible == false)
             #expect(window.showSidebar, "the user's choice is untouched")
@@ -273,6 +362,102 @@ struct ChatWindowStateInspectorTests {
             defer { window.cleanup() }
             #expect(window.inspectorColumnWidth == 0)
             #expect(window.sidebarColumnWidth == 0)
+        }
+    }
+
+    // MARK: - Responsive shell
+
+    @Test("a compact window toggles a drawer and never rewrites the docked sidebar choice")
+    func compactDrawer() async throws {
+        try await ChatHistoryTestStorage.run {
+            let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
+            defer { window.cleanup() }
+            #expect(window.showSidebar)
+
+            window.updateShellBreakpoint(.compact)
+            #expect(window.isCompactSidebarPresented == false, "the drawer starts closed")
+            #expect(window.isSidebarVisible == false)
+
+            window.toggleSidebar()
+            #expect(window.isCompactSidebarPresented)
+            #expect(window.isSidebarVisible)
+            #expect(window.showSidebar, "docked choice untouched")
+
+            window.toggleSidebar()
+            #expect(window.isCompactSidebarPresented == false)
+            #expect(window.showSidebar)
+
+            // Widening closes the drawer and the docked sidebar returns.
+            window.toggleSidebar()
+            window.updateShellBreakpoint(.regular)
+            #expect(window.isCompactSidebarPresented == false)
+            #expect(window.isSidebarVisible)
+        }
+    }
+
+    @Test("compact shows one overlay at a time, and Esc closes the drawer before the context panel")
+    func compactOverlaysAreExclusive() async throws {
+        try await ChatHistoryTestStorage.run {
+            let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
+            defer { window.cleanup() }
+            #expect(window.dismissShellOverlay() == false, "nothing to dismiss outside compact")
+            window.setFileChangeCountsForTesting(files: 1, sets: 1)
+
+            window.updateShellBreakpoint(.compact)
+            window.toggleSidebar()
+            window.toggleContextPanel()
+            #expect(window.isContextPanelOpen)
+            #expect(window.isCompactSidebarPresented == false, "the context overlay replaces the drawer")
+
+            window.toggleSidebar()
+            #expect(window.isCompactSidebarPresented)
+            #expect(window.inspectorPane == nil, "the drawer replaces the context overlay")
+
+            window.inspectorPane = .fileChanges
+            window.isCompactSidebarPresented = true
+            #expect(window.dismissShellOverlay())
+            #expect(window.isCompactSidebarPresented == false)
+            #expect(window.inspectorPane == .fileChanges)
+            #expect(window.dismissShellOverlay())
+            #expect(window.inspectorPane == nil)
+            #expect(window.dismissShellOverlay() == false)
+        }
+    }
+
+    @Test("narrowing into compact closes a docked context panel; widening brings it back")
+    func enteringCompactClosesContext() async throws {
+        try await ChatHistoryTestStorage.run {
+            let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
+            defer { window.cleanup() }
+            window.setFileChangeCountsForTesting(files: 1, sets: 1)
+            window.updateShellBreakpoint(.wide)
+            #expect(window.isContextPanelOpen)
+            window.updateShellBreakpoint(.regular)
+            #expect(window.isContextPanelOpen, "regular still docks")
+            window.updateShellBreakpoint(.compact)
+            #expect(window.isContextPanelOpen == false, "no overlay opens on its own")
+            window.updateShellBreakpoint(.regular)
+            #expect(window.isContextPanelOpen, "widening brings the docked panel back")
+
+            window.toggleContextPanel()
+            window.updateShellBreakpoint(.compact)
+            window.updateShellBreakpoint(.wide)
+            #expect(window.isContextPanelOpen == false, "a panel the user closed stays closed")
+        }
+    }
+
+    @Test("the context toggle works from what is drawn, whatever pane was asked for")
+    func contextToggleFromHiddenPane() async throws {
+        try await ChatHistoryTestStorage.run {
+            let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
+            defer { window.cleanup() }
+            window.setFileChangeCountsForTesting(files: 1, sets: 1)
+            window.showInspector(.workflows)
+            #expect(window.isContextPanelOpen, "the chat surface shows File Changes for any request")
+            window.toggleContextPanel()
+            #expect(window.inspectorPane == nil)
+            window.toggleContextPanel()
+            #expect(window.inspectorPane == .fileChanges)
         }
     }
 }

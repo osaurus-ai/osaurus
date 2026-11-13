@@ -2,7 +2,7 @@
 //  ModelDetailView.swift
 //  osaurus
 //
-//  Modal detail view for individual MLX models.
+//  Detail panel for one MLX model, shown beside the Local Models table.
 //  Displays comprehensive model information and download controls.
 //
 
@@ -21,19 +21,18 @@ struct ModelDetailView: View, Identifiable {
     // output — the same hang-prone churn fixed in the onboarding Configure-AI
     // tree. A plain reference reads the constant without subscribing.
     private let systemMonitor = SystemMonitorService.shared
-    @Environment(\.dismiss) private var dismiss
 
     /// Use computed property to always get the current theme from ThemeManager
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     // MARK: - Properties
 
-    /// Unique identifier for Identifiable conformance (used for sheet presentation)
+    /// Unique identifier for Identifiable conformance
     let id = UUID()
 
-    /// The build currently displayed. Starts as the model the sheet was
+    /// The build currently displayed. Starts as the model the panel was
     /// opened with; the Versions picker swaps it in place (see
-    /// `selectVariant`) so the sheet doesn't tear down and re-animate.
+    /// `selectVariant`) so the panel doesn't tear down and re-animate.
     @State private var selectedModel: MLXModel
 
     /// Alias so the body reads naturally and existing call sites compile
@@ -43,6 +42,9 @@ struct ModelDetailView: View, Identifiable {
     /// Every precision/quant build of this model's family (including
     /// `model` itself). More than one entry surfaces the Versions picker.
     var variants: [MLXModel] = []
+
+    /// Closes the panel.
+    let onClose: () -> Void
 
     // MARK: - State
 
@@ -99,9 +101,10 @@ struct ModelDetailView: View, Identifiable {
     /// shared cache in `init` so a warm cache shows the checkmark immediately.
     @State private var resolvedIsDownloaded: Bool
 
-    init(model: MLXModel, variants: [MLXModel] = []) {
+    init(model: MLXModel, variants: [MLXModel] = [], onClose: @escaping () -> Void) {
         self._selectedModel = State(initialValue: model)
         self.variants = variants
+        self.onClose = onClose
         self._resolvedIsDownloaded = State(
             initialValue: MLXModelDownloadCache.value(for: model.id) ?? false
         )
@@ -119,14 +122,14 @@ struct ModelDetailView: View, Identifiable {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             // Minimal title bar
             headerBar
 
             // Scrollable Content — README model card leads; everything else
             // is condensed beneath it.
             ScrollView {
-                VStack(spacing: 14) {
+                VStack(spacing: theme.space.s14) {
                     compatibilityLine
                     manifestStatus
 
@@ -142,23 +145,20 @@ struct ModelDetailView: View, Identifiable {
 
                     runtimeDiagnosticsSection
                 }
-                .padding(.horizontal, 24)
-                .padding(.top, 18)
-                .padding(.bottom, 24)
+                .padding(.horizontal, theme.space.s16)
+                .padding(.top, theme.space.s16)
+                .padding(.bottom, theme.space.s24)
             }
             .opacity(hasAppeared ? 1 : 0)
 
             // Action Footer
             actionFooter
         }
-        // Clamped to the screen: a hard 720pt height clipped `actionFooter`
-        // off-screen on small displays, taking the Download/Delete buttons
-        // with it. The ScrollView above absorbs whatever height is lost.
-        .fittedSheetFrame(width: 720, height: 720)
-        .background(theme.primaryBackground)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(theme.surface.canvas)
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
-            withAnimation(.easeOut(duration: 0.2)) {
+            withAnimation(theme.motion.quick) {
                 hasAppeared = true
             }
 
@@ -312,69 +312,38 @@ struct ModelDetailView: View, Identifiable {
 
     // MARK: - Header Bar
 
-    /// Minimal title bar: a thin brand-colored accent on top, then the model
-    /// name + verified/type badges on the left and the Hugging Face link +
-    /// close button on the right. Replaces the oversized gradient hero so the
-    /// content (model card) leads.
+    /// Title bar: the model name and type badge on the left, the Hugging
+    /// Face link and close button on the right, so the model card leads.
     private var headerBar: some View {
-        VStack(spacing: 0) {
-            // 3px brand accent keeps the model's identity without the banner.
-            LinearGradient(
-                colors: ModelCardGradient.colors(for: model),
-                startPoint: .leading,
-                endPoint: .trailing
-            )
-            .frame(height: 3)
-
-            HStack(spacing: 10) {
+        VStack(spacing: theme.space.s0) {
+            HStack(spacing: theme.settingsControlGap) {
                 Text(model.name)
-                    .font(.system(size: 17, weight: .bold))
-                    .foregroundColor(theme.primaryText)
-                    .lineLimit(1)
+                    .font(SettingsFont.detailTitle)
+                    .foregroundColor(theme.text.primary)
+                    .lineLimit(2)
                     .truncationMode(.tail)
+                    .layoutPriority(1)
 
                 if resolvedIsDownloaded {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 14))
-                        .foregroundColor(theme.accentColor)
+                        .glyphSize(.body)
+                        .foregroundColor(theme.text.link)
+                        .accessibilityLabel(Text("On this Mac", bundle: .module))
                 }
 
                 modelTypeBadge
 
-                Spacer(minLength: 12)
+                Spacer(minLength: theme.space.s8)
 
-                Button(action: openHuggingFace) {
-                    HStack(spacing: 5) {
-                        Text("🤗")
-                            .font(.system(size: 12))
-                        Text("View on Hugging Face", bundle: .module)
-                            .font(.system(size: 12, weight: .medium))
-                        Image(systemName: "arrow.up.right")
-                            .font(.system(size: 9, weight: .semibold))
-                    }
-                    .foregroundColor(theme.accentColor)
-                }
-                .buttonStyle(PlainButtonStyle())
-
-                Button(action: { dismiss() }) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundColor(theme.secondaryText)
-                        .frame(width: 26, height: 26)
-                        .background(Circle().fill(theme.tertiaryBackground))
-                }
-                .buttonStyle(PlainButtonStyle())
+                SettingsIconButton("arrow.up.right.square", help: "View on Hugging Face", size: .compact, action: openHuggingFace)
+                SettingsIconButton("xmark", help: "Close", size: .compact, action: onClose)
+                    .keyboardShortcut(.cancelAction)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
+            .padding(.horizontal, theme.space.s16)
+            .padding(.vertical, theme.space.s12)
+            ThemeHairlineDivider(color: theme.border.default)
         }
-        .background(theme.primaryBackground)
-        .overlay(
-            Rectangle()
-                .fill(theme.cardBorder)
-                .frame(height: 1),
-            alignment: .bottom
-        )
+        .background(theme.surface.canvas)
     }
 
     /// Open HuggingFace page in browser
@@ -392,17 +361,9 @@ struct ModelDetailView: View, Identifiable {
     private var modelTypeBadge: some View {
         let isVLM = detectIsVLM()
         let typeLabel = model.isDecision ? "D3" : (isVLM ? "VLM" : "LLM")
-        let color: Color = isVLM ? .purple : theme.accentColor
+        let color: Color = isVLM ? theme.dataInk(.purple) : theme.action.primary.default.background
 
-        return Text(typeLabel)
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundColor(color)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(
-                Capsule()
-                    .fill(color.opacity(0.12))
-            )
+        return StatusChip(typeLabel, tint: color)
     }
 
     /// Detect if model is VLM
@@ -420,41 +381,38 @@ struct ModelDetailView: View, Identifiable {
     /// The header still surfaces the one-line verdict so a blocked or
     /// unproven runtime is visible without expanding.
     private var runtimeDiagnosticsSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             Button(action: {
-                withAnimation(.easeInOut(duration: 0.2)) {
+                withAnimation(theme.motion.quick) {
                     isDiagnosticsExpanded.toggle()
                 }
             }) {
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     Text("Runtime Diagnostics", bundle: .module)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.sectionTitle)
+                        .foregroundColor(theme.text.primary)
 
                     if let report = diagnostics {
-                        HStack(spacing: 4) {
+                        HStack(spacing: theme.space.s4) {
                             Image(systemName: runtimeDiagnosticIcon(report.runtime.kind))
-                                .font(.system(size: 10, weight: .semibold))
+                                .glyphSize(.micro, weight: .semibold)
                             Text(report.primaryTitle)
-                                .font(.system(size: 11, weight: .medium))
+                                .font(SettingsFont.smallLabel)
                                 .lineLimit(1)
                         }
                         .foregroundColor(runtimeDiagnosticTint(report.runtime.kind))
                     } else {
-                        ProgressView()
-                            .controlSize(.small)
-                            .scaleEffect(0.6)
-                            .frame(width: 12, height: 12)
+                        SettingsSpinner(size: .mini)
                     }
 
                     Spacer()
 
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
+                        .glyphSize(.micro, weight: .semibold)
+                        .foregroundColor(theme.text.tertiary)
                         .rotationEffect(.degrees(isDiagnosticsExpanded ? 90 : 0))
                 }
-                .padding(14)
+                .padding(theme.space.s12)
                 .contentShape(Rectangle())
             }
             .buttonStyle(PlainButtonStyle())
@@ -464,18 +422,17 @@ struct ModelDetailView: View, Identifiable {
                     if let report = diagnostics {
                         diagnosticsDetail(for: report)
                     } else {
-                        HStack(spacing: 10) {
-                            ProgressView()
-                                .controlSize(.small)
+                        HStack(spacing: theme.space.s10) {
+                            SettingsSpinner()
                             Text("Checking runtime compatibility…", bundle: .module)
-                                .font(.system(size: 12))
-                                .foregroundColor(theme.tertiaryText)
+                                .font(SettingsFont.caption)
+                                .foregroundColor(theme.text.tertiary)
                             Spacer(minLength: 0)
                         }
                     }
                 }
-                .padding(.horizontal, 14)
-                .padding(.bottom, 14)
+                .padding(.horizontal, theme.space.s12)
+                .padding(.bottom, theme.space.s12)
             }
         }
         .detailCardSurface()
@@ -484,19 +441,19 @@ struct ModelDetailView: View, Identifiable {
     private func diagnosticsDetail(
         for report: ModelCompatibilityDiagnostics.Report
     ) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             Text(report.primaryDetail)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
 
             LazyVGrid(
                 columns: [
-                    GridItem(.flexible(), spacing: 14, alignment: .topLeading),
-                    GridItem(.flexible(), spacing: 14, alignment: .topLeading),
+                    GridItem(.flexible(), spacing: theme.space.s14, alignment: .topLeading),
+                    GridItem(.flexible(), spacing: theme.space.s14, alignment: .topLeading),
                 ],
                 alignment: .leading,
-                spacing: 10
+                spacing: theme.space.s10
             ) {
                 DiagnosticFact(label: L("Source"), value: report.source.title)
                 DiagnosticFact(label: L("Bundle"), value: report.localBundle.title)
@@ -516,23 +473,22 @@ struct ModelDetailView: View, Identifiable {
 
             if !report.evidence.isEmpty {
                 Divider()
-                    .background(theme.cardBorder)
+                    .background(theme.border.default)
 
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: theme.space.s6) {
                     Text("Evidence", bundle: .module)
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundColor(theme.tertiaryText)
-                        .textCase(.uppercase)
+                        .font(SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.tertiary)
 
                     ForEach(Array(report.evidence.prefix(6))) { item in
-                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        HStack(alignment: .firstTextBaseline, spacing: theme.space.s8) {
                             Text("\(item.source).\(item.key)")
-                                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                                .foregroundColor(theme.tertiaryText)
+                                .font(SettingsFont.monoSmall)
+                                .foregroundColor(theme.text.tertiary)
                                 .lineLimit(1)
                             Text(item.value)
-                                .font(.system(size: 10))
-                                .foregroundColor(theme.secondaryText)
+                                .font(SettingsFont.footnote)
+                                .foregroundColor(theme.text.secondary)
                                 .lineLimit(2)
                                 .fixedSize(horizontal: false, vertical: true)
                             Spacer(minLength: 0)
@@ -543,24 +499,24 @@ struct ModelDetailView: View, Identifiable {
 
             if !report.featureHooks.isEmpty {
                 Divider()
-                    .background(theme.cardBorder)
+                    .background(theme.border.default)
 
-                VStack(alignment: .leading, spacing: 5) {
+                VStack(alignment: .leading, spacing: theme.space.s4) {
                     ForEach(report.featureHooks) { hook in
-                        HStack(spacing: 6) {
+                        HStack(spacing: theme.space.s6) {
                             Image(systemName: "circle.dashed")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundColor(theme.tertiaryText)
+                                .glyphSize(.tiny, weight: .semibold)
+                                .foregroundColor(theme.text.tertiary)
                             Text(hook.title)
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundColor(theme.secondaryText)
+                                .font(SettingsFont.smallLabel)
+                                .foregroundColor(theme.text.secondary)
                             Text("#\(hook.issue)")
-                                .font(.system(size: 10, weight: .medium, design: .monospaced))
-                                .foregroundColor(theme.tertiaryText)
+                                .font(SettingsFont.monoSmall)
+                                .foregroundColor(theme.text.tertiary)
                         }
                         Text(hook.detail)
-                            .font(.system(size: 10))
-                            .foregroundColor(theme.tertiaryText)
+                            .font(SettingsFont.footnote)
+                            .foregroundColor(theme.text.tertiary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
@@ -571,9 +527,9 @@ struct ModelDetailView: View, Identifiable {
 
     private func runtimeDiagnosticTint(_ kind: ModelCompatibilityDiagnostics.RuntimeStatus.Kind) -> Color {
         switch kind {
-        case .ready: return theme.successColor
-        case .blocked: return theme.errorColor
-        case .partial, .needsDownload, .unproven: return theme.warningColor
+        case .ready: return theme.status.success.foreground
+        case .blocked: return theme.status.error.foreground
+        case .partial, .needsDownload, .unproven: return theme.status.warning.foreground
         }
     }
 
@@ -593,30 +549,30 @@ struct ModelDetailView: View, Identifiable {
     /// grid of compact label/value pairs (only the ones we actually have)
     /// plus the tag chips. Replaces the old "About" rows + 2x2 stat tiles.
     private var detailsCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             Text("Details", bundle: .module)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.sectionTitle)
+                .foregroundColor(theme.text.primary)
 
             LazyVGrid(
                 columns: [
-                    GridItem(.flexible(), spacing: 16, alignment: .topLeading),
-                    GridItem(.flexible(), spacing: 16, alignment: .topLeading),
+                    GridItem(.flexible(), spacing: theme.space.s16, alignment: .topLeading),
+                    GridItem(.flexible(), spacing: theme.space.s16, alignment: .topLeading),
                 ],
                 alignment: .leading,
-                spacing: 12
+                spacing: theme.space.s12
             ) {
-                MetaItem(label: L("Download size"), value: estimatedSizeString)
+                SettingsFactText(label: L("Download size"), value: estimatedSizeString)
 
                 if let weights = model.weightSizeBytes {
-                    MetaItem(label: L("Target weight files"), value: MLXModel.formattedFileSize(weights))
+                    SettingsFactText(label: L("Target weight files"), value: MLXModel.formattedFileSize(weights))
                 }
                 if let memory = model.formattedEstimatedMemory {
-                    MetaItem(label: L("Estimated memory while running"), value: memory)
+                    SettingsFactText(label: L("Estimated memory while running"), value: memory)
                 }
 
                 if let source = model.sizeEstimateSource {
-                    MetaItem(
+                    SettingsFactText(
                         label: L("Estimate basis"),
                         value: source == .measured
                             ? L("Measured model files")
@@ -624,56 +580,56 @@ struct ModelDetailView: View, Identifiable {
                     )
                 }
 
-                MetaItem(
+                SettingsFactText(
                     label: L("Type"),
                     value: detectIsVLM() ? L("Vision + Language") : L("Language")
                 )
 
                 if let params = model.parameterCount {
-                    MetaItem(label: L("Parameters"), value: params)
+                    SettingsFactText(label: L("Parameters"), value: params)
                 }
 
                 if let quant = model.quantization {
-                    MetaItem(label: L("Quantization"), value: quant)
+                    SettingsFactText(label: L("Quantization"), value: quant)
                 }
 
                 if let license = hfDetails?.license {
-                    MetaItem(label: L("License"), value: license.uppercased())
+                    SettingsFactText(label: L("License"), value: license.uppercased())
                 }
 
                 if let downloads = hfDetails?.downloads {
-                    MetaItem(label: L("Downloads"), value: formatNumber(downloads))
+                    SettingsFactText(label: L("Downloads"), value: formatNumber(downloads))
                 }
 
                 if let likes = hfDetails?.likes {
-                    MetaItem(label: L("Likes"), value: formatNumber(likes))
+                    SettingsFactText(label: L("Likes"), value: formatNumber(likes))
                 }
 
                 if let updated = hfDetails?.lastModified {
-                    MetaItem(label: L("Updated"), value: formatRelativeDate(updated))
+                    SettingsFactText(label: L("Updated"), value: formatRelativeDate(updated))
                 }
 
                 if let pipelineTag = hfDetails?.pipelineTag {
-                    MetaItem(
+                    SettingsFactText(
                         label: L("Task"),
                         value: pipelineTag.replacingOccurrences(of: "-", with: " ").capitalized
                     )
                 }
 
                 if let author = hfDetails?.author {
-                    MetaItem(label: L("Author"), value: author)
+                    SettingsFactText(label: L("Author"), value: author)
                 }
 
                 if let baseModels = hfDetails?.baseModels, !baseModels.isEmpty {
-                    MetaItem(label: L("Based on"), value: baseModels.joined(separator: ", "))
+                    SettingsFactText(label: L("Based on"), value: baseModels.joined(separator: ", "))
                 }
 
                 if let source = model.externalSource {
-                    MetaItem(label: L("Source"), value: source)
+                    SettingsFactText(label: L("Source"), value: source)
                 }
 
                 if resolvedIsDownloaded, let downloadedAt = model.downloadedAt {
-                    MetaItem(
+                    SettingsFactText(
                         label: L("Downloaded"),
                         value: RelativeDateTimeFormatter().localizedString(
                             for: downloadedAt,
@@ -685,16 +641,16 @@ struct ModelDetailView: View, Identifiable {
 
             if !displayTags.isEmpty {
                 Divider()
-                    .background(theme.cardBorder)
+                    .background(theme.border.default)
 
-                TagFlowLayout(spacing: 6, runSpacing: 6) {
+                TagFlowLayout(spacing: theme.space.s6, runSpacing: theme.space.s6) {
                     ForEach(displayTags, id: \.self) { tag in
-                        MetadataPill(text: tag, icon: nil, color: theme.secondaryText)
+                        StatusChip(tag)
                     }
                 }
             }
         }
-        .padding(16)
+        .padding(theme.space.s16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .detailCardSurface()
     }
@@ -736,7 +692,7 @@ struct ModelDetailView: View, Identifiable {
                     "checkmark.shield.fill",
                     assessment.compatibility.displayName,
                     L("This estimate leaves room for macOS, other apps, and longer chats."),
-                    theme.successColor
+                    theme.status.success.foreground
                 )
             case .tight:
                 return (
@@ -745,7 +701,7 @@ struct ModelDetailView: View, Identifiable {
                     L(
                         "This model is close to the comfortable limit. Longer chats or other memory-heavy apps may slow it down."
                     ),
-                    theme.warningColor
+                    theme.status.warning.foreground
                 )
             case .tooLarge:
                 return (
@@ -754,30 +710,30 @@ struct ModelDetailView: View, Identifiable {
                     L(
                         "It may load, but macOS is likely to page memory and generation can be very slow. Choose a smaller version."
                     ),
-                    theme.errorColor
+                    theme.status.error.foreground
                 )
             case .unknown:
                 return (
                     "questionmark.circle.fill",
                     assessment.compatibility.displayName,
                     L("We could not estimate running memory yet. Check the download size or try another version."),
-                    theme.tertiaryText
+                    theme.text.tertiary
                 )
             }
         }()
 
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
+        return VStack(alignment: .leading, spacing: theme.space.s10) {
+            HStack(spacing: theme.space.s10) {
                 Image(systemName: icon)
-                    .font(.system(size: 14))
+                    .glyphSize(.body)
                     .foregroundColor(tint)
 
                 Text(title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.sectionTitle)
+                    .foregroundColor(theme.text.primary)
             }
 
-            HStack(alignment: .top, spacing: 24) {
+            HStack(alignment: .top, spacing: theme.space.s24) {
                 compatibilityMetric(
                     label: L("Estimated memory while running"),
                     value: assessment.estimatedRunningMemoryGB.map(formattedMemoryGB) ?? "—"
@@ -801,37 +757,30 @@ struct ModelDetailView: View, Identifiable {
                         MLXModel.formattedFileSize(ssd)
                     )
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
+                .textStyle(.footnote)
+                .foregroundColor(theme.text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             }
 
             Text(explanation)
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.horizontal, theme.space.s12)
+        .padding(.vertical, theme.space.s12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(tint.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(tint.opacity(0.22), lineWidth: 1)
-                )
-        )
+        .settingsChrome(.tinted(tint))
     }
 
     private func compatibilityMetric(label: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
             Text(label)
-                .font(.system(size: 10))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.footnote)
+                .foregroundColor(theme.text.tertiary)
             Text(value)
-                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.monoSmall)
+                .foregroundColor(theme.text.primary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -854,7 +803,7 @@ struct ModelDetailView: View, Identifiable {
     private var variantPickerSection: some View {
         if variants.count > 1 {
             let totalMem = systemMonitor.totalMemoryGB
-            let recommendedId = ModelDownloadView.defaultFamilyVariant(
+            let recommendedId = LanguageModelCatalog.defaultFamilyVariant(
                 among: variants,
                 totalMemoryGB: totalMem,
                 downloadStates: modelManager.downloadStates
@@ -866,18 +815,18 @@ struct ModelDetailView: View, Identifiable {
                 return lhs.id.localizedCaseInsensitiveCompare(rhs.id) == .orderedAscending
             }
 
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s10) {
+                HStack(spacing: theme.space.s8) {
                     Text("Versions", bundle: .module)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.sectionTitle)
+                        .foregroundColor(theme.text.primary)
                     Text("\(variants.count)")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.smallLabel)
+                        .foregroundColor(theme.text.tertiary)
                     Spacer(minLength: 0)
                 }
 
-                VStack(spacing: 6) {
+                VStack(spacing: theme.space.s6) {
                     ForEach(ordered, id: \.id) { variant in
                         variantRow(
                             variant,
@@ -888,7 +837,7 @@ struct ModelDetailView: View, Identifiable {
                     }
                 }
             }
-            .padding(16)
+            .padding(theme.space.s16)
             .frame(maxWidth: .infinity, alignment: .leading)
             .detailCardSurface()
         }
@@ -928,10 +877,10 @@ struct ModelDetailView: View, Identifiable {
             } ?? compatibility.displayName
         let fitTint: Color = {
             switch compatibility {
-            case .compatible: return theme.successColor
-            case .tight: return theme.warningColor
-            case .tooLarge: return theme.errorColor
-            case .unknown: return theme.tertiaryText
+            case .compatible: return theme.status.success.foreground
+            case .tight: return theme.status.warning.foreground
+            case .tooLarge: return theme.status.error.foreground
+            case .unknown: return theme.text.tertiary
             }
         }()
 
@@ -939,83 +888,63 @@ struct ModelDetailView: View, Identifiable {
             guard !isSelected else { return }
             selectVariant(variant)
         } label: {
-            HStack(spacing: 10) {
+            HStack(spacing: theme.space.s10) {
                 Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(isSelected ? theme.accentColor : theme.tertiaryText)
+                    .glyphSize(.label, weight: .semibold)
+                    .foregroundColor(isSelected ? theme.text.link : theme.text.tertiary)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
+                    HStack(spacing: theme.space.s6) {
                         Text(quantLabel)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-
-                        if let framing {
-                            Text(framing)
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.secondaryText)
-                        }
+                            .font(SettingsFont.compactLabel)
+                            .foregroundColor(theme.text.primary)
+                            .lineLimit(1)
 
                         if isRecommended {
-                            Text("Recommended", bundle: .module)
-                                .font(.system(size: 9, weight: .bold))
-                                .foregroundColor(theme.accentColor)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Capsule().fill(theme.accentColor.opacity(0.12)))
+                            StatusChip(L("Recommended"), tone: .accent)
                         }
 
                         if isOnDisk {
-                            HStack(spacing: 3) {
+                            HStack(spacing: theme.space.s2) {
                                 Image(systemName: "checkmark.circle.fill")
-                                    .font(.system(size: 9, weight: .bold))
+                                    .glyphSize(.tiny, weight: .bold)
                                 Text("Downloaded", bundle: .module)
-                                    .font(.system(size: 9, weight: .bold))
+                                    .font(SettingsFont.chip)
                             }
-                            .foregroundColor(theme.successColor)
+                            .foregroundColor(theme.status.success.foreground)
                         }
                     }
 
+                    if let framing {
+                        Text(framing)
+                            .font(SettingsFont.rowDescription)
+                            .foregroundColor(theme.text.secondary)
+                    }
+
+                    Text(fitText)
+                        .font(SettingsFont.chip)
+                        .foregroundColor(fitTint)
+
                     Text(repoTail)
-                        .font(.system(size: 10, design: .monospaced))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.tertiary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
 
                 Spacer(minLength: 8)
 
-                VStack(alignment: .trailing, spacing: 2) {
-                    if let size = displayedVariant.formattedDownloadSize {
-                        Text(size)
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                            .foregroundColor(theme.secondaryText)
-                    }
-                    Text(fitText)
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(fitTint)
+                if let size = displayedVariant.formattedDownloadSize {
+                    Text(size)
+                        .font(SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.secondary)
+                        .fixedSize()
                 }
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(
-                        isSelected
-                            ? theme.accentColor.opacity(0.08)
-                            : theme.tertiaryBackground.opacity(0.4)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8)
-                            .stroke(
-                                isSelected
-                                    ? theme.accentColor.opacity(0.35)
-                                    : theme.cardBorder.opacity(0.5),
-                                lineWidth: 1
-                            )
-                    )
-            )
-            .contentShape(RoundedRectangle(cornerRadius: 8))
+            .padding(.horizontal, theme.space.s8)
+            .padding(.vertical, theme.space.s8)
+            .settingsChrome(isSelected ? .selected : .subtle)
+            .contentShape(RoundedRectangle(cornerRadius: theme.radius.medium))
         }
         .buttonStyle(PlainButtonStyle())
     }
@@ -1026,19 +955,16 @@ struct ModelDetailView: View, Identifiable {
     /// engine. This is the primary content of the modal — always visible and
     /// loaded eagerly on appear.
     private var modelCardSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            HStack(spacing: theme.space.s8) {
                 Text("Model Card", bundle: .module)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.sectionTitle)
+                    .foregroundColor(theme.text.primary)
 
                 Spacer()
 
                 if isLoadingReadme {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle())
-                        .scaleEffect(0.5)
-                        .frame(width: 12, height: 12)
+                    SettingsSpinner(size: .mini)
                 }
             }
 
@@ -1047,17 +973,17 @@ struct ModelDetailView: View, Identifiable {
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else if isLoadingReadme {
                 Text("Loading model card…", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.caption)
+                    .foregroundColor(theme.text.tertiary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
                 Text("No model card available.", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.caption)
+                    .foregroundColor(theme.text.tertiary)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .padding(16)
+        .padding(theme.space.s16)
         .frame(maxWidth: .infinity, alignment: .leading)
         .detailCardSurface()
     }
@@ -1068,9 +994,9 @@ struct ModelDetailView: View, Identifiable {
     /// Osaurus actually downloads. Falls back to a loading state while the
     /// tree request is in flight.
     private var filesSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             Button(action: {
-                withAnimation(.easeInOut(duration: 0.2)) {
+                withAnimation(theme.motion.quick) {
                     isFilesExpanded.toggle()
                 }
                 if isFilesExpanded {
@@ -1079,57 +1005,54 @@ struct ModelDetailView: View, Identifiable {
             }) {
                 HStack {
                     Text("Files", bundle: .module)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.sectionTitle)
+                        .foregroundColor(theme.text.primary)
 
                     if let files = allFiles {
                         Text("\(files.count)")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(theme.tertiaryText)
+                            .font(SettingsFont.smallLabel)
+                            .foregroundColor(theme.text.tertiary)
                     }
 
                     Spacer()
 
                     if isLoadingFiles {
-                        ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle())
-                            .scaleEffect(0.5)
-                            .frame(width: 12, height: 12)
+                        SettingsSpinner(size: .mini)
                     }
 
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
+                        .glyphSize(.micro, weight: .semibold)
+                        .foregroundColor(theme.text.tertiary)
                         .rotationEffect(.degrees(isFilesExpanded ? 90 : 0))
                 }
-                .padding(14)
+                .padding(theme.space.s12)
                 .contentShape(Rectangle())
             }
             .buttonStyle(PlainButtonStyle())
 
             if isFilesExpanded {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: theme.space.s6) {
                     if let files = allFiles, !files.isEmpty {
                         ForEach(files, id: \.path) { file in
                             FileRow(file: file)
                         }
                     } else if isLoadingFiles {
                         Text("Loading files…", bundle: .module)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.tertiaryText)
+                            .font(SettingsFont.caption)
+                            .foregroundColor(theme.text.tertiary)
                     } else {
                         // Network listing unavailable — fall back to the
                         // static download-pattern hint so the section is
                         // never empty.
                         ForEach(ModelDownloadService.downloadFilePatterns, id: \.self) { pattern in
                             Text(pattern)
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundColor(theme.tertiaryText)
+                                .font(SettingsFont.monoSmall)
+                                .foregroundColor(theme.text.tertiary)
                         }
                     }
                 }
-                .padding(.horizontal, 14)
-                .padding(.bottom, 14)
+                .padding(.horizontal, theme.space.s12)
+                .padding(.bottom, theme.space.s12)
             }
         }
         .detailCardSurface()
@@ -1140,31 +1063,31 @@ struct ModelDetailView: View, Identifiable {
     /// Collapsible group for the developer-oriented content. Hidden by
     /// default so the modal reads cleanly for non-technical users.
     private var advancedSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             Button(action: {
-                withAnimation(.easeInOut(duration: 0.2)) {
+                withAnimation(theme.motion.quick) {
                     isAdvancedExpanded.toggle()
                 }
             }) {
                 HStack {
                     Text("Advanced", bundle: .module)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.sectionTitle)
+                        .foregroundColor(theme.text.primary)
 
                     Spacer()
 
                     Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
+                        .glyphSize(.micro, weight: .semibold)
+                        .foregroundColor(theme.text.tertiary)
                         .rotationEffect(.degrees(isAdvancedExpanded ? 90 : 0))
                 }
-                .padding(14)
+                .padding(theme.space.s12)
                 .contentShape(Rectangle())
             }
             .buttonStyle(PlainButtonStyle())
 
             if isAdvancedExpanded {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: theme.space.s12) {
                     DetailInfoRow(label: "Repository", value: repositoryName(from: model.downloadURL))
 
                     if let modelType = hfDetails?.modelType {
@@ -1173,48 +1096,48 @@ struct ModelDetailView: View, Identifiable {
 
                     HStack {
                         Text("Model ID for API", bundle: .module)
-                            .font(.system(size: 13))
-                            .foregroundColor(theme.secondaryText)
+                            .font(SettingsFont.body)
+                            .foregroundColor(theme.text.secondary)
                         Spacer()
                         CopyModelIdButton(modelId: apiModelId)
                     }
 
                     RepositoryLinkRow(url: model.downloadURL)
                 }
-                .padding(.horizontal, 14)
-                .padding(.bottom, 14)
+                .padding(.horizontal, theme.space.s12)
+                .padding(.bottom, theme.space.s12)
             }
         }
         .detailCardSurface()
     }
 
     private var manifestStatus: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             if let check = modelManager.manifestChecks[model.id.lowercased()] {
                 if let version = check.local.manifest?.modelVersion {
                     Text("Installed model revision: \(version)", bundle: .module)
                 }
                 if check.updateAvailable, let version = check.remote?.manifest?.modelVersion {
                     Text("Model update available: revision \(version)", bundle: .module)
-                        .foregroundStyle(theme.accentColor)
+                        .foregroundStyle(theme.text.link)
                 }
                 switch check.status {
                 case .unversionedPublisher:
                     Text("No versioned updates published. Repair can verify this repository's files.", bundle: .module)
-                        .foregroundStyle(theme.secondaryText)
+                        .foregroundStyle(theme.text.secondary)
                 case .verificationRequired:
                     Text("Installed revision unknown. Verify files to check for updates.", bundle: .module)
-                        .foregroundStyle(theme.secondaryText)
+                        .foregroundStyle(theme.text.secondary)
                 case .current:
                     Text("Published revision matches the installed revision.", bundle: .module)
-                        .foregroundStyle(theme.secondaryText)
+                        .foregroundStyle(theme.text.secondary)
                 case .installedNewer:
                     Text("Installed revision is newer than the published revision.", bundle: .module)
-                        .foregroundStyle(theme.secondaryText)
+                        .foregroundStyle(theme.text.secondary)
                 case .invalidLocal:
                     if case .invalid(let failure) = check.local {
                         Text(failure.localizedDescription)
-                            .foregroundStyle(theme.errorColor)
+                            .foregroundStyle(theme.status.error.foreground)
                     }
                 case .unavailable, .updateAvailable:
                     EmptyView()
@@ -1224,7 +1147,7 @@ struct ModelDetailView: View, Identifiable {
                 }
                 if let error = check.error {
                     Text("Could not check for model updates: \(error)", bundle: .module)
-                        .foregroundStyle(theme.secondaryText)
+                        .foregroundStyle(theme.text.secondary)
                 }
                 if isExternalModel, check.updateAvailable || check.verificationRequired {
                     Text("Update this model in the application that manages its files.", bundle: .module)
@@ -1237,7 +1160,7 @@ struct ModelDetailView: View, Identifiable {
             }
             .disabled(modelManager.manifestChecksInFlight.contains(model.id.lowercased()))
         }
-        .font(.system(size: 12))
+        .font(SettingsFont.caption)
         .frame(maxWidth: .infinity, alignment: .leading)
         .accessibilityIdentifier("model-manifest-status")
     }
@@ -1245,17 +1168,17 @@ struct ModelDetailView: View, Identifiable {
     // MARK: - Action Footer
 
     private var actionFooter: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             Divider()
 
             if let message = modelManager.downloadService.repairMessages[model.id] {
                 Text(message)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.caption)
+                    .foregroundColor(theme.text.secondary)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 24)
-                    .padding(.top, 12)
+                    .padding(.horizontal, theme.space.s16)
+                    .padding(.top, theme.space.s12)
                     .accessibilityIdentifier("model-repair-status")
             }
 
@@ -1274,78 +1197,44 @@ struct ModelDetailView: View, Identifiable {
                     completedFooter
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 16)
+            .padding(.horizontal, theme.space.s16)
+            .padding(.vertical, theme.space.s16)
         }
     }
 
     private var notStartedFooter: some View {
-        HStack(spacing: 12) {
-            Button(action: { dismiss() }) {
-                Text("Cancel", bundle: .module)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
-            }
-            .buttonStyle(PlainButtonStyle())
-
+        HStack(spacing: theme.space.s12) {
             Spacer()
 
             Button(action: {
                 modelManager.downloadModel(model)
-                dismiss()
             }) {
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     Image(systemName: "arrow.down.circle")
-                        .font(.system(size: 13))
                     Text("Download", bundle: .module)
-                        .font(.system(size: 14, weight: .semibold))
                 }
-                .foregroundColor(.white)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 9)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.accentColor)
-                )
             }
-            .buttonStyle(PlainButtonStyle())
+            .assignedSettingsButtonStyle(.primary)
         }
     }
 
     private func downloadingFooter(progress: Double, isPaused: Bool) -> some View {
-        VStack(spacing: 10) {
-            GeometryReader { geometry in
-                ZStack(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(theme.tertiaryBackground)
+        VStack(spacing: theme.space.s10) {
+            SettingsProgressBar(value: progress, tint: isPaused ? theme.text.tertiary : nil, height: 6)
 
-                    RoundedRectangle(cornerRadius: 4)
-                        .fill(isPaused ? theme.tertiaryText : theme.accentColor)
-                        .frame(width: max(0, geometry.size.width * progress))
-                }
-            }
-            .frame(height: 6)
-
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 Text("\(Int(progress * 100))%", bundle: .module)
-                    .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.primary)
 
                 if isPaused {
-                    Text("Paused", bundle: .module)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.warningColor)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(
-                            Capsule().fill(theme.warningColor.opacity(0.12))
-                        )
+                    StatusChip(L("Paused"), tone: .warning)
                 } else if let line = formattedMetricsLine() {
                     Text("•")
-                        .foregroundColor(theme.tertiaryText)
+                        .foregroundColor(theme.text.tertiary)
                     Text(line)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.secondary)
                 }
 
                 Spacer()
@@ -1353,31 +1242,27 @@ struct ModelDetailView: View, Identifiable {
                 if isPaused {
                     Button(action: { modelManager.resumeDownload(model.id) }) {
                         Text("Resume", bundle: .module)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.accentColor)
+                            .font(SettingsFont.compactLabel)
+                            .foregroundColor(theme.text.link)
                     }
                     .buttonStyle(PlainButtonStyle())
                 } else {
                     Button(action: { modelManager.pauseDownload(model.id) }) {
                         Text("Pause", bundle: .module)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
                     }
-                    .buttonStyle(PlainButtonStyle())
+                    .assignedSettingsButtonStyle(.secondary, size: .compact)
                 }
 
                 Button(action: { modelManager.cancelDownload(model.id) }) {
                     Text("Cancel", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.errorColor)
                 }
-                .buttonStyle(PlainButtonStyle())
+                .assignedSettingsButtonStyle(.destructive, size: .compact)
             }
         }
     }
 
     private var completedFooter: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             if isExternalModel {
                 // Externally-discovered models (Hugging Face cache, LM Studio)
                 // aren't owned by Osaurus, so in-app delete can't remove their
@@ -1385,34 +1270,33 @@ struct ModelDetailView: View, Identifiable {
                 // them. Offer "Reveal in Finder" instead so users can delete
                 // these unrecognized models manually.
                 Button(action: revealModelInFinder) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: theme.space.s4) {
                         Image(systemName: "folder")
-                            .font(.system(size: 12))
+                            .glyphSize(.caption)
                         Text("Reveal in Finder", bundle: .module)
-                            .font(.system(size: 13, weight: .medium))
+                            .font(SettingsFont.rowTitle)
                     }
-                    .foregroundColor(theme.accentColor)
+                    .foregroundColor(theme.text.link)
                 }
                 .buttonStyle(PlainButtonStyle())
 
                 Button(action: copyModelPath) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: theme.space.s4) {
                         Image(systemName: didCopyPath ? "checkmark" : "doc.on.doc")
-                            .font(.system(size: 12))
+                            .glyphSize(.caption)
                         Text(didCopyPath ? "Copied!" : "Copy Path", bundle: .module)
-                            .font(.system(size: 13, weight: .medium))
+                            .font(SettingsFont.rowTitle)
                     }
-                    .foregroundColor(didCopyPath ? theme.successColor : theme.secondaryText)
+                    .foregroundColor(didCopyPath ? theme.status.success.foreground : theme.text.secondary)
                 }
                 .buttonStyle(PlainButtonStyle())
             } else {
                 Button(action: {
                     Task { await modelManager.deleteModel(model) }
-                    dismiss()
                 }) {
                     Text("Delete Model", bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.errorColor)
+                        .font(SettingsFont.rowTitle)
+                        .foregroundColor(theme.status.error.foreground)
                 }
                 .buttonStyle(PlainButtonStyle())
 
@@ -1424,27 +1308,14 @@ struct ModelDetailView: View, Identifiable {
                                 ? "Verify Model" : "Repair",
                         bundle: .module
                     )
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundColor(theme.accentColor)
+                    .textStyle(.label)
+                    .foregroundColor(theme.text.link)
                 }
                 .buttonStyle(PlainButtonStyle())
                 .localizedHelp("Verify model files against Hugging Face and restore missing or changed files.")
             }
 
             Spacer()
-
-            Button(action: { dismiss() }) {
-                Text("Done", bundle: .module)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 9)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.accentColor)
-                    )
-            }
-            .buttonStyle(PlainButtonStyle())
         }
     }
 
@@ -1467,10 +1338,10 @@ struct ModelDetailView: View, Identifiable {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(model.localDirectory.path, forType: .string)
 
-        withAnimation(.easeInOut(duration: 0.15)) { didCopyPath = true }
+        withAnimation(theme.motion.quick) { didCopyPath = true }
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 1_500_000_000)
-            withAnimation(.easeInOut(duration: 0.15)) { didCopyPath = false }
+            withAnimation(theme.motion.quick) { didCopyPath = false }
         }
     }
 
@@ -1548,81 +1419,12 @@ struct ModelDetailView: View, Identifiable {
 
 // MARK: - Helper Components
 
-/// Compact label-over-value pair for the Details grid.
-private struct MetaItem: View {
-    @Environment(\.theme) private var theme
-
-    let label: String
-    let value: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label)
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-                .lineLimit(1)
-
-            Text(value)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(theme.primaryText)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
 private struct DiagnosticFact: View {
-    @Environment(\.theme) private var theme
-
     let label: String
     let value: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label)
-                .font(.system(size: 10))
-                .foregroundColor(theme.tertiaryText)
-                .lineLimit(1)
-
-            Text(value)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.primaryText)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-/// Metadata pill badge
-private struct MetadataPill: View {
-    let text: String
-    let icon: String?
-    let color: Color
-
-    init(text: String, icon: String? = nil, color: Color) {
-        self.text = text
-        self.icon = icon
-        self.color = color
-    }
-
-    var body: some View {
-        HStack(spacing: 4) {
-            if let icon {
-                Image(systemName: icon)
-                    .font(.system(size: 9, weight: .medium))
-            }
-            Text(text)
-                .font(.system(size: 11, weight: .medium))
-        }
-        .foregroundColor(color)
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(
-            Capsule()
-                .fill(color.opacity(0.08))
-        )
+        SettingsFactText(label: label, value: value, compact: true)
     }
 }
 
@@ -1636,19 +1438,16 @@ private struct CopyModelIdButton: View {
 
     var body: some View {
         Button(action: copyModelId) {
-            HStack(spacing: 5) {
+            HStack(spacing: theme.space.s4) {
                 Image(systemName: showCopied ? "checkmark" : "doc.on.doc")
-                    .font(.system(size: 10, weight: .medium))
+                    .glyphSize(.micro, weight: .medium)
                 Text(LocalizedStringKey(showCopied ? "Copied!" : "Copy Model ID"), bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
+                    .font(SettingsFont.compactLabel)
             }
-            .foregroundColor(showCopied ? theme.successColor : theme.secondaryText)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(isHovering ? theme.tertiaryBackground : theme.tertiaryBackground.opacity(0.6))
-            )
+            .foregroundColor(showCopied ? theme.status.success.foreground : theme.text.secondary)
+            .padding(.horizontal, theme.space.s8)
+            .padding(.vertical, theme.space.s6)
+            .settingsChrome(.hover)
         }
         .buttonStyle(PlainButtonStyle())
         .onHover { hovering in
@@ -1661,13 +1460,13 @@ private struct CopyModelIdButton: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(modelId, forType: .string)
 
-        withAnimation(.easeInOut(duration: 0.15)) {
+        withAnimation(theme.motion.quick) {
             showCopied = true
         }
 
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 1_500_000_000)
-            withAnimation(.easeInOut(duration: 0.15)) {
+            withAnimation(theme.motion.quick) {
                 showCopied = false
             }
         }
@@ -1684,17 +1483,17 @@ private struct DetailInfoRow: View {
     var body: some View {
         HStack {
             Text(LocalizedStringKey(label), bundle: .module)
-                .font(.system(size: 13))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.body)
+                .foregroundColor(theme.text.secondary)
 
             Spacer()
 
             Text(value)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.rowTitle)
+                .foregroundColor(theme.text.primary)
                 .lineLimit(1)
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, theme.space.s2)
     }
 }
 
@@ -1706,24 +1505,24 @@ private struct RepositoryLinkRow: View {
     @State private var showCopied = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             Divider()
-                .padding(.vertical, 4)
+                .padding(.vertical, theme.space.s4)
 
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 // Clickable URL
                 Button(action: openURL) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         Image(systemName: "link")
-                            .font(.system(size: 10))
+                            .glyphSize(.micro)
                         Text(url)
-                            .font(.system(size: 11, design: .monospaced))
+                            .font(SettingsFont.monoSmall)
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Image(systemName: "arrow.up.right")
-                            .font(.system(size: 8, weight: .semibold))
+                            .glyphSize(.tiny, weight: .semibold)
                     }
-                    .foregroundColor(theme.accentColor)
+                    .foregroundColor(theme.text.link)
                 }
                 .buttonStyle(PlainButtonStyle())
 
@@ -1732,8 +1531,8 @@ private struct RepositoryLinkRow: View {
                 // Copy button
                 Button(action: copyURL) {
                     Image(systemName: showCopied ? "checkmark" : "doc.on.doc")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(showCopied ? theme.successColor : theme.tertiaryText)
+                        .glyphSize(.micro, weight: .medium)
+                        .foregroundColor(showCopied ? theme.status.success.foreground : theme.text.tertiary)
                 }
                 .buttonStyle(PlainButtonStyle())
                 .help(showCopied ? Text(localized: "Copied!") : Text(localized: "Copy URL"))
@@ -1751,13 +1550,13 @@ private struct RepositoryLinkRow: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(url, forType: .string)
 
-        withAnimation(.easeInOut(duration: 0.15)) {
+        withAnimation(theme.motion.quick) {
             showCopied = true
         }
 
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 1_500_000_000)
-            withAnimation(.easeInOut(duration: 0.15)) {
+            withAnimation(theme.motion.quick) {
                 showCopied = false
             }
         }
@@ -1771,24 +1570,24 @@ private struct FileRow: View {
     let file: HuggingFaceService.MatchedFile
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: file.isDownloaded ? "arrow.down.circle.fill" : "doc")
-                .font(.system(size: 10))
-                .foregroundColor(file.isDownloaded ? theme.accentColor : theme.tertiaryText)
+                .glyphSize(.micro)
+                .foregroundColor(file.isDownloaded ? theme.text.link : theme.text.tertiary)
 
             Text(file.path)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(file.isDownloaded ? theme.secondaryText : theme.tertiaryText)
+                .font(SettingsFont.monoSmall)
+                .foregroundColor(file.isDownloaded ? theme.text.secondary : theme.text.tertiary)
                 .lineLimit(1)
                 .truncationMode(.middle)
 
             Spacer(minLength: 8)
 
             Text(ByteCountFormatter.string(fromByteCount: file.size, countStyle: .file))
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.monoSmall)
+                .foregroundColor(theme.text.tertiary)
         }
-        .padding(.vertical, 1)
+        .padding(.vertical, theme.space.s2)
     }
 }
 
@@ -1859,14 +1658,7 @@ private struct DetailCardSurface: ViewModifier {
     @Environment(\.theme) private var theme
 
     func body(content: Content) -> some View {
-        content.background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
+        content.settingsChrome(.card)
     }
 }
 
@@ -1874,4 +1666,25 @@ extension View {
     fileprivate func detailCardSurface() -> some View {
         modifier(DetailCardSurface())
     }
+}
+
+/// Extracts the repository name from a Hugging Face URL
+///
+/// Converts full URLs to readable repository names:
+/// - Input: `https://huggingface.co/mlx-community/Llama-3.2-1B-Instruct-4bit`
+/// - Output: `mlx-community/Llama-3.2-1B-Instruct-4bit`
+///
+/// - Parameter urlString: Full Hugging Face URL
+/// - Returns: Repository name in "organization/model" format, or the full URL if parsing fails
+func repositoryName(from urlString: String) -> String {
+    if let url = URL(string: urlString),
+        url.host == "huggingface.co"
+    {
+        let pathComponents = url.pathComponents.filter { $0 != "/" }
+        if pathComponents.count >= 2 {
+            return "\(pathComponents[0])/\(pathComponents[1])"
+        }
+    }
+    // Fallback to showing the full URL if parsing fails
+    return urlString
 }

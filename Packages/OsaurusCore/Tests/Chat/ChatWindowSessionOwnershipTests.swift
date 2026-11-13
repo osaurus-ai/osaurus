@@ -57,7 +57,7 @@ struct ChatWindowSessionOwnershipTests {
                 canonical.save()
                 owner.cleanup()
                 other.cleanup()
-                let persisted = ChatHistoryDatabase.shared.loadSession(id: stored.id)
+                let persisted = ConversationStores.current.loadSession(id: stored.id)
                 #expect(persisted?.turns.map(\.id) == [stored.turns[0].id])
                 #expect(persisted?.turns.map(\.content) == ["Question"])
             }

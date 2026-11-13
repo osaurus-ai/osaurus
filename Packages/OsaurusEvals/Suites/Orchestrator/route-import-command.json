@@ -1,0 +1,23 @@
+{
+  "id": "orchestrator.route-import-command",
+  "domain": "orchestrator",
+  "label": "orchestrator • an install command from another app goes to the Configurator",
+  "query": "Set this up for me: npx -y @upstash/context7-mcp",
+  "notes": "Universal chat import routing. An MCP install command is a configuration change, not a shell task; the Orchestrator hands it to the Configurator instead of running it or delegating.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "configurator_handoff"
+      ],
+      "mustNotCallTools": [
+        "osaurus_config",
+        "osaurus_import",
+        "spawn_agent",
+        "architect_handoff",
+        "sandbox_exec"
+      ],
+      "maxIterations": 5
+    }
+  }
+}

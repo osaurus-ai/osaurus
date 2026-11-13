@@ -2,22 +2,29 @@
 //  SandboxManager.swift
 //  osaurus
 //
-//  Manages the shared Linux container lifecycle via apple/containerization.
+//  Manages the sandbox VM lifecycle via apple/containerization.
 //  Uses Virtualization.framework directly -- no CLI, no XPC daemon.
 //  All container operations are serialized through this actor.
 //
+//  The VM is a LinuxPod: one container per agent (own rootfs, mount and
+//  PID namespaces, only its own home and `shared/` mounted) plus a system
+//  container for VM-wide work. See `SandboxPodLayout`.
+//
 //  Networking: VmnetNetwork (vmnet-backed NAT) for outbound internet,
-//  vsock Unix socket relay for the host API bridge.
+//  one vsock-relayed Unix socket per container for the host API bridge.
 //
 
 #if os(macOS)
 
     import Containerization
+    import ContainerizationArchive
     import ContainerizationError
     import ContainerizationExtras
+    import ContainerizationOCI
     import CryptoKit
     import Darwin
     import Foundation
+    import SystemPackage
     import vmnet
 
     public actor SandboxManager {
@@ -64,19 +71,9 @@
         /// download from silently growing into a multi-GB hash job.
         private static let maxArtifactDownloadBytes: Int = 768 * 1024 * 1024
 
-        /// Host-side Unix socket path for the bridge server (relayed into guest via vsock).
-        /// Symlinks are resolved because a Unix socket path is capped at 104
-        /// bytes: the evals harness points `OsaurusPaths` at a deep temp root
-        /// whose `container/` is a symlink to the real (short) container dir,
-        /// and binding through the unresolved path overflows the cap
-        /// (`unixDomainSocketPathTooLong`) and kills every VM boot. In
-        /// production the path has no symlinks and is unchanged.
-        private static var bridgeSocketPath: String {
-            OsaurusPaths.container().resolvingSymlinksInPath()
-                .appendingPathComponent("bridge.sock").path
-        }
-        /// Where the bridge socket appears inside the guest container
-        private static let guestBridgeSocketPath = "/tmp/osaurus-bridge.sock"
+        /// How long a membership restart waits for other agents' in-flight
+        /// commands and background jobs before restarting anyway.
+        static let membershipRestartMaxWait: TimeInterval = 120
 
         /// In-guest directory holding per-agent bridge auth tokens.
         /// Each file is `<linuxName>.token`, mode 0600, owned by that user.
@@ -86,8 +83,41 @@
 
         private var _status: ContainerStatus = .notProvisioned
         private var _availability: SandboxAvailability?
-        private var containerManager: ContainerManager?
-        private var linuxContainer: LinuxContainer?
+        private var pod: LinuxPod?
+        private var podNetwork: (any Network)?
+        private var bootNetwork: SandboxPodNetwork?
+        /// Agents with a container in the running pod. Fixed for the life
+        /// of the VM: VZ has no hotplug, so joining means a restart.
+        private var podMembers: [String] = []
+        /// Agents whose environment was cloned fresh for the running pod,
+        /// so their system packages (apk) must be reinstalled.
+        private var freshEnvironments: Set<String> = []
+        /// Agents that asked for the sandbox this session, most recent
+        /// first. Drives pod membership on the next boot.
+        private var requestedMembers: [String] = []
+        /// Foreground execs in flight per container id.
+        private var inFlightExecs: [String: Int] = [:]
+        /// Long-lived interactive processes (stdio MCP servers) by process
+        /// id. One counts as running work only while a request is open.
+        private var interactiveProcesses: [String: (containerID: String, activity: SandboxInteractiveActivity?)] = [:]
+        /// Bumped on every pod teardown, so a stdio runner whose process
+        /// exits can tell a restart from a crash.
+        private var _podGeneration = 0
+        public var podGeneration: Int { _podGeneration }
+        /// Agent and workflow execs running at once, across every container.
+        /// The rest wait in order, so a workflow map fan-out can't start tens
+        /// of processes on a couple of vCPUs. Root/system execs are exempt so
+        /// provisioning and health checks never queue behind user work.
+        private var userExecLimit = SandboxManager.userExecLimit(cpus: SandboxConfiguration.default.cpus)
+        private var userExecsRunning = 0
+        private var userExecWaiters: [CheckedContinuation<Void, Never>] = []
+        /// Last time an exec or interactive process started or ended; the
+        /// idle shutdown measures from here.
+        private var lastActivityAt = Date()
+        private var idleWatchTask: Task<Void, Never>?
+        /// Agents removed while their container was running; their
+        /// environment clones are discarded before the next boot.
+        private var pendingEnvironmentResets: Set<String> = []
         private var _removedByUser = false
         /// `true` from a public `stopContainer()` (Sandbox tab Stop, quit
         /// chain) until the next start. Lets `SandboxToolRegistrar` tell a
@@ -98,15 +128,12 @@
         /// Test seam: the singleton outlives each test, and only a real
         /// container start clears the flag.
         func resetExplicitStopForTests() { _stoppedExplicitly = false }
-        /// Set to `true` by `provision()` when the most recent boot reused
-        /// the on-disk `rootfs.ext4` (warm restart), `false` when it had to
-        /// re-unpack the image (cold path). Read by
-        /// `SandboxPluginManager.verifyAndRepairAllPlugins` to skip the
-        /// per-agent `apk add` batch when the in-guest package state from
-        /// the previous boot is still on disk.
-        private var _wasLastBootWarm: Bool = false
-
-        public var wasLastBootWarm: Bool { _wasLastBootWarm }
+        /// Agents in the running pod, and which of them booted from a
+        /// fresh environment clone. `SandboxPluginManager` repairs plugins
+        /// only for members, and reinstalls apk dependencies only for the
+        /// fresh ones; the rest kept their packages on disk.
+        public var podMemberNames: [String] { podMembers }
+        public var freshlyClonedMembers: Set<String> { freshEnvironments }
 
         /// Wall-clock time the last successful provision reached
         /// `.running`. Read by `SandboxAgentProvisioner` to derive the
@@ -115,10 +142,21 @@
 
         public var lastBootReadyAt: Date? { _lastBootReadyAt }
 
-        /// Gateway host + port of the filtering egress proxy while the VM
-        /// runs in allowlist mode; `nil` in open / no-network modes. Exec
-        /// paths read this to inject `http_proxy` env into guest processes.
+        /// Gateway host + port of the egress proxy while the VM has a
+        /// network; `nil` with no network or when an open pod's proxy
+        /// could not bind. Exec paths read this to inject `http_proxy` env
+        /// into guest processes.
         private var egressProxyEndpoint: (host: String, port: Int)?
+
+        /// Proxy credentials minted for one step's commands
+        /// (`SandboxStepScope`), mapped to that step's hosts. Revoked
+        /// when the exec returns.
+        private var stepEgressGrants: [String: [String]] = [:]
+
+        /// Proxy-only credentials for open members without a bridge token
+        /// (workflow environments), so they keep the network in a filtered
+        /// pod without gaining bridge access.
+        private var openMemberEgressTokens: [String: String] = [:]
 
         /// Host-minted credential for root/system guest processes (apk
         /// dependency installs, the network readiness probe). Scoped to
@@ -210,6 +248,8 @@
             /// cached metric tiles back to "nil" and flicker an empty
             /// dashboard until the next `info()` poll returned.
             @Published public var containerInfo: ContainerInfo?
+            /// The running VM's composed network; nil when stopped.
+            @Published public var podNetwork: SandboxPodNetwork?
             /// Mirror of `SandboxToolRegistrar.unavailabilityReason(for:)`
             /// for the currently active agent. Lets SwiftUI views (e.g. the
             /// sandbox chip) observe failures without coupling to the
@@ -233,6 +273,13 @@
         public func checkAvailability() async -> SandboxAvailability {
             if let cached = _availability { return cached }
             return await refreshAvailability()
+        }
+
+        /// Imported stdio MCP servers run only inside the VM sandbox; the
+        /// Seatbelt fallback confines shell tools, not long-lived servers.
+        public func supportsSandboxedStdio() async -> Bool {
+            guard SandboxBackend.current == .virtualMachine else { return false }
+            return await checkAvailability().isAvailable
         }
 
         /// Resolve the backend before an operation gates on availability.
@@ -282,14 +329,13 @@
         }
 
         var staleContainerDir: URL {
-            OsaurusPaths.container().appendingPathComponent("containers/\(Self.containerID)")
+            OsaurusPaths.container().appendingPathComponent("containers/\(SandboxPodLayout.podID)")
         }
 
-        /// Path to the cached EXT4 rootfs unpacked by `manager.create`.
-        /// When present (and the pinned image digest still matches the
-        /// stamp from the last successful boot), `provision()` can take
-        /// the warm path and skip the multi-second 8 GiB unpack.
-        private var rootfsFile: URL {
+        /// The shared mutable rootfs earlier versions booted every agent
+        /// from. Deleted after the first pod boot: it holds every agent's
+        /// leftovers, so no agent container may boot from it.
+        private var legacySharedRootfs: URL {
             staleContainerDir.appendingPathComponent("rootfs.ext4")
         }
 
@@ -299,54 +345,345 @@
                 && fm.fileExists(atPath: OsaurusPaths.containerInitFSFile().path)
         }
 
-        /// True iff the persisted `rootfs.ext4` from the last boot is on
-        /// disk *and* it was produced by the same image reference the
-        /// current binary pins *and* under the same runtime format
-        /// (Containerization SDK / initfs pair). The digest check guards
-        /// against an app update that bumped `containerImage` but left an
-        /// older rootfs behind; the runtime-format check guards against an
-        /// SDK upgrade whose cached rootfs/initfs would otherwise enter a
-        /// doomed warm boot before falling back to the cold rebuild.
-        private var canWarmRestart: Bool {
-            guard FileManager.default.fileExists(atPath: rootfsFile.path) else {
-                return false
-            }
-            return Self.warmBootStampValid(config: SandboxConfigurationStore.load())
-        }
-
-        /// Pure warm-restart key check: the persisted rootfs is reusable
-        /// only when BOTH the pinned image digest and the runtime format
-        /// version match what the last successful boot stamped.
-        /// `nonisolated` + pure so tests can exercise the cache-key
-        /// contract without a VM or disk state.
-        nonisolated static func warmBootStampValid(config: SandboxConfiguration) -> Bool {
-            config.lastBootedImageDigest == containerImage
-                && config.lastRuntimeFormatVersion == SandboxRuntimeAssets.runtimeFormatVersion
-        }
-
-        /// Cache key for the immutable rootfs base template — same
-        /// (image digest, runtime format) pair as the warm-boot stamp.
+        /// Cache key for the immutable rootfs base template and the agent
+        /// environments cloned from it: (image digest, rootfs format).
         nonisolated static var rootfsTemplateKey: String {
             SandboxRootfsTemplateStore.templateKey(
                 imageReference: containerImage,
-                runtimeFormatVersion: SandboxRuntimeAssets.runtimeFormatVersion
+                runtimeFormatVersion: SandboxRuntimeAssets.rootfsFormatVersion
             )
         }
 
-        /// Linux user name of the agent whose preferences drive this boot
-        /// (the active agent) — the environment owner in per-agent
-        /// copy-on-write mode.
-        private static func activeAgentLinuxName() async -> String {
+        /// Linux user name of the active agent, a pod member on every boot.
+        /// Linux names of the agents whose sandbox is on, and the active
+        /// agent's when it is one of them. Built-in agents never are.
+        private static func sandboxAgentLinuxNames() async -> (active: String?, all: Set<String>) {
             await MainActor.run {
-                SandboxAgentProvisioner.linuxName(for: AgentManager.shared.activeAgent.id.uuidString)
+                let manager = AgentManager.shared
+                let names = Set(
+                    manager.agents.compactMap { agent -> String? in
+                        guard manager.effectiveAutonomousExec(for: agent.id)?.enabled == true else { return nil }
+                        return SandboxAgentProvisioner.linuxName(for: agent.id.uuidString)
+                    }
+                )
+                let active = SandboxAgentProvisioner.linuxName(for: manager.activeAgent.id.uuidString)
+                return (names.contains(active) ? active : nil, names)
+            }
+        }
+
+        // MARK: - Pod membership
+
+        /// Members for the next boot: the most recent requester (or the
+        /// active agent, when its sandbox is on), then other recently used
+        /// sandbox agents, up to the configured number of agents kept warm.
+        private func selectPodMembers(cap: Int, excluding removed: Set<String> = []) async -> [String] {
+            let sandboxAgents = await Self.sandboxAgentLinuxNames()
+            let requester = requestedMembers.first ?? sandboxAgents.active
+            let recentEnvironments = SandboxPodLayout.eligibleFillers(
+                SandboxRootfsTemplateStore.listEnvironments().reversed().map(\.name),
+                sandboxAgents: sandboxAgents.all
+            )
+            return SandboxPodLayout.selectMembers(
+                requester: requester,
+                recentFirst: (requestedMembers + podMembers + recentEnvironments).filter { !removed.contains($0) },
+                cap: cap
+            )
+        }
+
+        private func noteRequested(_ agentName: String) {
+            requestedMembers.removeAll { $0 == agentName }
+            requestedMembers.insert(agentName, at: 0)
+            SandboxRootfsTemplateStore.touchEnvironment(agentName: agentName)
+        }
+
+        /// Make sure `agentName` has a container in the running pod. Pod
+        /// membership is fixed at boot, so a newcomer joins through a
+        /// restart: it waits for other agents' in-flight commands and
+        /// background jobs (up to `membershipRestartMaxWait`), then reboots
+        /// warm with the newcomer included. Coalesced with every other
+        /// start through `inFlightStartTask`.
+        private func ensureMember(_ agentName: String) async throws {
+            guard SandboxBackend.current == .virtualMachine,
+                SandboxPodLayout.isAgentName(agentName)
+            else { return }
+            noteRequested(agentName)
+            if podMembers.contains(agentName) { return }
+            if let existing = inFlightStartTask {
+                try await existing.value
+                if podMembers.contains(agentName) { return }
+            }
+            guard pod != nil else {
+                try await startContainer()
+                guard podMembers.contains(agentName) else {
+                    throw SandboxError.containerNotRunning
+                }
+                return
+            }
+            let task = Task<Void, Error> { try await self.performMembershipRestart(joining: agentName) }
+            inFlightStartTask = task
+            defer { inFlightStartTask = nil }
+            try await task.value
+            guard podMembers.contains(agentName) else {
+                throw SandboxError.provisionFailed("Sandbox restarted without a container for this agent")
+            }
+        }
+
+        /// Wait (up to `membershipRestartMaxWait`) for running commands,
+        /// background jobs, and open MCP requests to finish. Returns the
+        /// wait and the containers still busy when it ended (empty when
+        /// the pod went idle).
+        private func waitForRunningWork() async throws -> (waited: TimeInterval, busy: [String]) {
+            let waitStart = Date()
+            await setActivity(L("Waiting for other agents to finish before preparing the sandbox"))
+            while Date().timeIntervalSince(waitStart) < Self.membershipRestartMaxWait {
+                if await activeWorkHolders().isEmpty { break }
+                try await Task.sleep(nanoseconds: 1_000_000_000)
+            }
+            let busy = await activeWorkHolders()
+            await setActivity(nil)
+            return (Date().timeIntervalSince(waitStart), busy)
+        }
+
+        /// A network restart deferred because the pod was busy.
+        private var deferredNetworkRestart: Task<Void, Never>?
+
+        /// Re-check the VM's network after an agent's Sandbox settings
+        /// changed. When the running pod's composed network no longer
+        /// matches its members' policies, restart it (after running work
+        /// finishes); otherwise the proxy already reads policies live.
+        public func networkPolicyChanged() async {
+            guard SandboxBackend.current == .virtualMachine, pod != nil, inFlightStartTask == nil,
+                let running = bootNetwork
+            else { return }
+            let desired = await Self.podNetwork(forMembers: podMembers)
+            guard desired != running, pod != nil, inFlightStartTask == nil else { return }
+            let task = Task<Void, Error> {
+                let (waited, busy) = try await self.waitForRunningWork()
+                guard busy.isEmpty else {
+                    debugLog(
+                        "[Sandbox] Network restart \(running.rawValue) -> \(desired.rawValue) deferred after \(String(format: "%.1f", waited))s; busy: \(busy.joined(separator: ", "))"
+                    )
+                    await self.scheduleDeferredNetworkRestart()
+                    return
+                }
+                debugLog(
+                    "[Sandbox] Network restart \(running.rawValue) -> \(desired.rawValue) after waiting \(String(format: "%.1f", waited))s"
+                )
+                try await self.performRestart()
+            }
+            inFlightStartTask = task
+            defer { inFlightStartTask = nil }
+            do {
+                try await task.value
+            } catch {
+                debugLog("[Sandbox] Network restart failed: \(error)")
+            }
+        }
+
+        private func setBootNetwork(_ network: SandboxPodNetwork?) {
+            bootNetwork = network
+            Task { @MainActor in State.shared.podNetwork = network }
+        }
+
+        private func scheduleDeferredNetworkRestart() {
+            guard deferredNetworkRestart == nil else { return }
+            deferredNetworkRestart = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 30_000_000_000)
+                guard let self else { return }
+                await self.clearDeferredNetworkRestart()
+                await self.networkPolicyChanged()
+            }
+        }
+
+        private func clearDeferredNetworkRestart() { deferredNetworkRestart = nil }
+
+        /// Joining restarts the VM, which would stop every other
+        /// container's work. Running work is never interrupted: when it is
+        /// still running after the wait, the newcomer fails with `.busy`
+        /// and stays first in line for the next boot.
+        private func performMembershipRestart(joining agentName: String) async throws {
+            let (waited, busy) = try await waitForRunningWork()
+            let bucket = SandboxStartupMetricsStore.latencyBucket(waited)
+            await MainActor.run {
+                FeatureTelemetry.sandboxMembershipRestart(waitBucket: bucket, interruptedWork: false)
+            }
+            guard busy.isEmpty else {
+                debugLog(
+                    "[Sandbox] Membership restart for \(agentName) refused after \(String(format: "%.1f", waited))s; busy: \(busy.joined(separator: ", "))"
+                )
+                throw SandboxError.busy(holders: busy)
+            }
+            debugLog(
+                "[Sandbox] Membership restart for \(agentName) after waiting \(String(format: "%.1f", waited))s"
+            )
+            try await performRestart()
+        }
+
+        /// Pod members with running work: a foreground exec, a live
+        /// background job, or an MCP server with a request open.
+        func activeWorkHolders() async -> [String] {
+            var holders: Set<String> = []
+            for (containerID, count) in inFlightExecs where count > 0 {
+                holders.insert(Self.memberName(forContainerID: containerID))
+            }
+            for entry in interactiveProcesses.values where entry.activity?.isBusy == true {
+                holders.insert(Self.memberName(forContainerID: entry.containerID))
+            }
+            for (agentName, pids) in await SandboxBackgroundJobs.shared.allJobs()
+            where podMembers.contains(agentName) && !holders.contains(agentName) {
+                for pid in pids where await BackgroundExecLiveness.isPidAlive(pid: pid, agentName: agentName) {
+                    holders.insert(agentName)
+                    break
+                }
+            }
+            return holders.sorted()
+        }
+
+        nonisolated static func memberName(forContainerID containerID: String) -> String {
+            containerID.hasPrefix("agent-") ? String(containerID.dropFirst("agent-".count)) : containerID
+        }
+
+        /// The stdio runner reports its process gone (stop or exit).
+        public func interactiveProcessEnded(processID: String) {
+            interactiveProcesses[processID] = nil
+            lastActivityAt = Date()
+            publishOccupancy()
+        }
+
+        // MARK: - Occupancy for task admission
+
+        /// Members with a live background job as of the last check.
+        private var backgroundHolders: Set<String> = []
+        private var occupancyVersion = 0
+
+        /// Mirrors who holds the VM to `SandboxPodOccupancy` without running
+        /// anything in the guest; background jobs come from the last
+        /// `refreshOccupancy`.
+        private func publishOccupancy() {
+            var holders = backgroundHolders.intersection(podMembers)
+            for (containerID, count) in inFlightExecs where count > 0 {
+                holders.insert(Self.memberName(forContainerID: containerID))
+            }
+            for entry in interactiveProcesses.values where entry.activity?.isBusy == true {
+                holders.insert(Self.memberName(forContainerID: entry.containerID))
+            }
+            let snapshot = SandboxPodSnapshot(
+                isRunning: pod != nil && _status.isRunning, members: Set(podMembers), busyHolders: holders)
+            occupancyVersion += 1
+            let version = occupancyVersion
+            Task { @MainActor in SandboxPodOccupancy.shared.publish(snapshot, version: version) }
+        }
+
+        /// Re-checks which background jobs are still alive, then publishes.
+        /// The task scheduler calls this while work waits on `sandbox_busy`.
+        public func refreshOccupancy() async {
+            var live: Set<String> = []
+            if pod != nil {
+                for (agentName, pids) in await SandboxBackgroundJobs.shared.allJobs()
+                where podMembers.contains(agentName) {
+                    for pid in pids where await BackgroundExecLiveness.isPidAlive(pid: pid, agentName: agentName) {
+                        live.insert(agentName)
+                        break
+                    }
+                }
+            }
+            backgroundHolders = live
+            publishOccupancy()
+        }
+
+        /// A background job started for `agentName`.
+        public func backgroundJobStarted(agentName: String) {
+            backgroundHolders.insert(agentName)
+            publishOccupancy()
+        }
+
+        // MARK: - Exec concurrency
+
+        /// Concurrent agent/workflow execs for a VM with `cpus` vCPUs.
+        nonisolated static func userExecLimit(cpus: Int) -> Int {
+            max(4, cpus * 3)
+        }
+
+        private func acquireUserExecSlot() async throws {
+            if userExecsRunning < userExecLimit {
+                userExecsRunning += 1
+            } else {
+                // `releaseUserExecSlot` hands its slot straight to the
+                // first waiter, so the count stays put.
+                await withCheckedContinuation { userExecWaiters.append($0) }
+            }
+            if Task.isCancelled {
+                releaseUserExecSlot()
+                throw CancellationError()
+            }
+        }
+
+        private func releaseUserExecSlot() {
+            if userExecWaiters.isEmpty {
+                userExecsRunning = max(0, userExecsRunning - 1)
+            } else {
+                userExecWaiters.removeFirst().resume()
+            }
+        }
+
+        // MARK: - Idle shutdown
+
+        /// Whether a running VM has sat idle long enough to stop. Any
+        /// interactive process (a connected sandboxed MCP server) keeps it
+        /// up, since stopping would disconnect it.
+        nonisolated static func shouldStopWhenIdle(
+            idleMinutes: Int, lastActivity: Date, now: Date,
+            runningExecs: Int, interactiveProcesses: Int, workHolders: Int
+        ) -> Bool {
+            guard idleMinutes > 0, runningExecs == 0, interactiveProcesses == 0, workHolders == 0 else {
+                return false
+            }
+            return now.timeIntervalSince(lastActivity) >= TimeInterval(idleMinutes * 60)
+        }
+
+        private func startIdleWatch() {
+            idleWatchTask?.cancel()
+            lastActivityAt = Date()
+            idleWatchTask = Task { [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(nanoseconds: 60_000_000_000)
+                    guard let self, !Task.isCancelled else { return }
+                    if await self.stopIfIdle() { return }
+                }
+            }
+        }
+
+        /// Stops the VM when Stop When Idle applies. The stop counts as
+        /// deliberate, so the status edge doesn't boot it straight back;
+        /// the next agent or workflow that needs the sandbox starts it.
+        /// Returns true once the watch has nothing left to do: the VM is no
+        /// longer running (the next boot starts a fresh watch) or it stopped.
+        private func stopIfIdle() async -> Bool {
+            guard _status.isRunning, pod != nil else { return true }
+            let minutes = SandboxConfigurationStore.load().idleShutdownMinutes
+            guard minutes > 0, inFlightStartTask == nil else { return false }
+            let running = inFlightExecs.values.reduce(0, +)
+            guard
+                Self.shouldStopWhenIdle(
+                    idleMinutes: minutes, lastActivity: lastActivityAt, now: Date(),
+                    runningExecs: running, interactiveProcesses: interactiveProcesses.count, workHolders: 0)
+            else { return false }
+            let holders = await activeWorkHolders()
+            guard holders.isEmpty, interactiveProcesses.isEmpty, inFlightExecs.isEmpty else { return false }
+            debugLog("[Sandbox] Stopping after \(minutes) idle minute(s)")
+            do {
+                try await stopContainer()
+                return true
+            } catch {
+                debugLog("[Sandbox] Idle stop failed: \(error)")
+                return false
             }
         }
 
         /// Drop cached runtime artifacts produced under an older runtime
         /// format. The initfs is rebuilt from the pinned `vminit` OCI
-        /// artifact (or the raw-blob fallback) on the next provision; the
-        /// rootfs re-unpacks because `canWarmRestart` already reports
-        /// false. Idempotent and cheap when the stamp matches.
+        /// artifact (or the raw-blob fallback) on the next provision.
+        /// Idempotent and cheap when the stamp matches.
         private func invalidateStaleRuntimeArtifacts() {
             let config = SandboxConfigurationStore.load()
             guard config.lastRuntimeFormatVersion != SandboxRuntimeAssets.runtimeFormatVersion
@@ -385,7 +722,7 @@
                 syncStatus()
                 return _status
             }
-            if linuxContainer != nil {
+            if pod != nil {
                 _status = .running
             } else if FileManager.default.fileExists(atPath: staleContainerDir.path) {
                 // Container dir exists from a previous boot. With persistent
@@ -410,12 +747,10 @@
         /// helpers so each helper has a single argument bundle instead of
         /// six positional parameters.
         private struct BootInputs {
-            let workspace: String
-            let bridgeSocketPath: String
-            let guestBridgeSocketPath: String
+            let workspace: URL
             let cpus: Int
             let memoryGB: Int
-            /// Whether the container attaches to the host network. Maps from
+            /// Whether the pod attaches to the host network. Maps from
             /// `SandboxConfiguration.network` ("none" => no egress), which in
             /// turn mirrors the provisioning agent's
             /// `AutonomousExecConfig.sandboxNetworkEnabled`. Cutting egress
@@ -423,8 +758,8 @@
             let networkEnabled: Bool
         }
 
-        /// The single host directory mounted into the sandbox at
-        /// `/workspace`. Centralised + guarded so the combined sandbox +
+        /// The host workspace whose agent homes and `shared/` are mounted
+        /// into the pod's containers. Centralised + guarded so the combined sandbox +
         /// host-read mode invariant cannot regress: no chat's selected
         /// folder is EVER a sandbox mount source. Combined mode reads
         /// the host folder through host-side tools only (`file_read`
@@ -451,80 +786,60 @@
             return workspace
         }
 
-        /// Resolve the boot-time egress decision from the shared sandbox
-        /// config. `SandboxConfiguration.network` is the single VM-wide
-        /// switch (the VM is shared across agents); it mirrors the
-        /// provisioning agent's `AutonomousExecConfig.sandboxNetworkEnabled`
-        /// both when the UI toggle flips (`AgentManager.updateAutonomousExec`)
-        /// and at every boot (`reconcileNetworkFromActiveAgent`, which keeps
-        /// the agent toggle authoritative and heals a stale `sandbox.json`).
-        /// Anything other than the explicit "none" sentinel keeps egress on
-        /// (default "outbound"), so existing installs are unaffected.
-        /// `nonisolated` + pure so the regression test can exercise it
-        /// without booting a VM.
-        nonisolated static func networkEnabled(from config: SandboxConfiguration) -> Bool {
-            config.network != "none"
+        /// An agent's own egress policy from its Sandbox settings.
+        @MainActor static func egressMode(forAgentId id: UUID) -> SandboxEgressMode {
+            let exec = AgentManager.shared.effectiveAutonomousExec(for: id)
+            return SandboxEgressPolicy.mode(
+                networkEnabled: exec?.sandboxNetworkEnabled ?? true,
+                allowedDomains: exec?.sandboxAllowedDomains
+            )
         }
 
-        /// Pure mapping from a provisioning agent's `sandboxNetworkEnabled`
-        /// to the VM-wide `network` string. Factored out of
-        /// `reconcileNetworkFromActiveAgent` so the boot-time reconcile policy
-        /// is testable without a VM, `AgentManager`, or disk. Inverse of
-        /// `networkEnabled(from:)`.
-        nonisolated static func reconciledNetwork(agentNetworkEnabled enabled: Bool) -> String {
-            enabled ? "outbound" : "none"
+        /// A pod member's policy. Agent members are named by their agent id;
+        /// workflow environments and diagnostics have no agent and are open.
+        @MainActor static func egressMode(forMember agentName: String) -> SandboxEgressMode {
+            guard let id = UUID(uuidString: agentName) else { return .open }
+            return egressMode(forAgentId: id)
         }
 
-        /// Full boot-time network reconcile: egress flag + optional domain
-        /// allowlist → the persisted `(network, allowedDomains)` pair.
-        /// "proxy" selects host-only vmnet plus the filtering proxy.
-        nonisolated static func reconciledNetworkSettings(
-            agentNetworkEnabled enabled: Bool,
-            allowedDomains: [String]?
-        ) -> (network: String, allowedDomains: [String]?) {
-            switch SandboxEgressPolicy.mode(networkEnabled: enabled, allowedDomains: allowedDomains) {
-            case .none: return ("none", nil)
-            case .open: return ("outbound", nil)
-            case .allowlist(let domains): return ("proxy", domains)
+        static func podNetwork(forMembers members: [String]) async -> SandboxPodNetwork {
+            await MainActor.run {
+                SandboxEgressPolicy.podNetwork(for: members.map { egressMode(forMember: $0) })
             }
         }
 
-        /// Resolve the boot-time egress mode from the persisted VM config.
-        nonisolated static func egressMode(from config: SandboxConfiguration) -> SandboxEgressMode {
-            guard config.network != "none" else { return .none }
-            guard config.network == "proxy" else { return .open }
-            let domains = SandboxEgressPolicy.normalizedAllowlist(config.allowedDomains)
-            // "proxy" with an empty/invalid allowlist fails closed to
-            // no-network rather than silently opening full egress.
-            return domains.isEmpty ? .none : .allowlist(domains)
+        /// Seatbelt confines each exec separately, so it applies the caller's
+        /// own policy. It has no proxy, so a domain allowlist fails closed to
+        /// no network. System execs (setup, diagnostics) keep the network.
+        @MainActor static func seatbeltNetwork(forUser user: String?) -> SeatbeltSandbox.NetworkPolicy {
+            guard let user, user.hasPrefix("agent-") else { return .allowed }
+            return seatbeltNetwork(for: egressMode(forMember: String(user.dropFirst("agent-".count))))
         }
 
-        /// Build the `LinuxContainer.Configuration` closure that's shared
-        /// between the warm and cold `manager.create` calls. Identical
-        /// process, sockets, and mount setup in both cases — only the
-        /// surrounding `create` overload differs.
-        private static func makeContainerConfig(
-            inputs: BootInputs
-        ) -> (inout LinuxContainer.Configuration) -> Void {
-            return { cfg in
-                cfg.cpus = inputs.cpus
-                cfg.memoryInBytes = UInt64(inputs.memoryGB).gib()
-                cfg.process.arguments = ["sleep", "infinity"]
-                cfg.process.workingDirectory = "/"
-                // Pin the security boundary explicitly instead of inheriting
-                // SDK defaults. Containerization 0.41 narrows its default to
-                // the OCI baseline; keeping the policy here prevents a future
-                // dependency change from silently restoring privileged caps.
-                Self.applyProcessRestrictions(to: &cfg.process)
+        nonisolated static func seatbeltNetwork(for mode: SandboxEgressMode) -> SeatbeltSandbox.NetworkPolicy {
+            mode == .open ? .allowed : .denied
+        }
 
-                let bridgeRelay = UnixSocketConfiguration(
-                    source: URL(fileURLWithPath: inputs.bridgeSocketPath),
-                    destination: URL(fileURLWithPath: inputs.guestBridgeSocketPath),
-                    direction: .into
-                )
-                cfg.sockets = [bridgeRelay]
-                cfg.mounts.append(.share(source: inputs.workspace, destination: "/workspace"))
-            }
+        /// Seatbelt cannot filter by host, so a step scope with no hosts
+        /// takes the network away and one with hosts keeps the caller's.
+        nonisolated static func seatbeltNetwork(
+            _ caller: SeatbeltSandbox.NetworkPolicy, stepHosts: [String]?
+        ) -> SeatbeltSandbox.NetworkPolicy {
+            guard let stepHosts else { return caller }
+            return SandboxEgressPolicy.normalizedAllowlist(stepHosts).isEmpty ? .denied : caller
+        }
+
+        /// VM size for a boot. Since Containerization 0.54 the VM is sized
+        /// only by `VMResources` (default 4 vCPU / 1 GiB) and the
+        /// configuration's `cpus` / `memoryInBytes` are just cgroup limits,
+        /// so the configured size must be passed explicitly. One spare vCPU
+        /// and `guestMemoryOverhead` for the guest kernel and vminitd match
+        /// the sizing earlier SDKs applied implicitly.
+        nonisolated static func vmResources(cpus: Int, memoryGB: Int) -> VMResources {
+            VMResources(
+                cpus: cpus + 1,
+                memoryInBytes: UInt64(memoryGB).gib() + VMResources.guestMemoryOverhead
+            )
         }
 
         /// Apply the same explicit process boundary to init and every exec
@@ -537,151 +852,171 @@
             config.noNewPrivileges = true
         }
 
-        /// Warm-restart create: hands the persisted `rootfs.ext4` to the
-        /// SDK's third `create` overload, bypassing the 8 GiB unpack. The
-        /// `.createContainer` journey step was pre-marked `.skipped` in
-        /// `plannedSteps`, so no step transitions happen here. `image` is
-        /// the already-resolved (prefetched) sandbox image.
-        private func createWarmContainer(
-            manager: inout ContainerManager,
-            inputs: BootInputs,
-            image: Containerization.Image,
-            rootfs rootfsURL: URL
-        ) async throws -> LinuxContainer {
-            // The SDK's block-rootfs create never makes the container dir,
-            // but boot writes `bootlog.log` into it. It exists on the
-            // classic warm path (same dir as the rootfs); the template and
-            // per-agent-environment paths boot a rootfs that lives
-            // elsewhere, so create it explicitly.
-            try OsaurusPaths.ensureExists(staleContainerDir)
-            let rootfs = Mount.block(
-                format: "ext4",
-                source: rootfsURL.absolutePath(),
-                destination: "/",
-                options: []
-            )
-            return try await manager.create(
-                Self.containerID,
-                image: image,
-                rootfs: rootfs,
-                networking: inputs.networkEnabled,
-                configuration: Self.makeContainerConfig(inputs: inputs)
-            )
+        /// SDK default container mounts with `/proc` mounted `hidepid=2`, so
+        /// an agent user sees only its own processes. Root in the container
+        /// can't remount it (no `CAP_SYS_ADMIN`), so it must be set here.
+        nonisolated static func containerBaseMounts() -> [Containerization.Mount] {
+            LinuxContainer.defaultMounts().map { mount in
+                guard mount.type == "proc", mount.destination == "/proc" else { return mount }
+                var proc = mount
+                proc.options += ["nosuid", "noexec", "nodev", "hidepid=2"]
+                return proc
+            }
         }
 
-        /// Cold-create: unpacks the 8 GiB rootfs from the already-pulled
-        /// `image` (layers were fetched concurrently with kernel/initfs
-        /// work by `fetchSandboxImage`). Drives the `.createContainer`
-        /// step start → end. Caller must ensure `staleContainerDir` is
-        /// gone first — the SDK throws "file already exists" otherwise.
-        private func createColdContainer(
-            manager: inout ContainerManager,
-            inputs: BootInputs,
+        /// Limits for commands run as an agent user (not root setup execs):
+        /// a fork bomb or descriptor leak stops at the agent's own UID, and
+        /// crashes don't write core files into the agent's environment.
+        nonisolated static let agentRLimits: [LinuxRLimit] = [
+            LinuxRLimit(kind: .numberOfProcesses, limit: 4096),
+            LinuxRLimit(kind: .openFiles, limit: 65536),
+            LinuxRLimit(kind: .coreFileSize, limit: 0),
+        ]
+
+        /// Cold path: unpack the pinned image (8 GiB ext4) straight into the
+        /// immutable base template every pod container is cloned from.
+        /// Drives the `.createContainer` step start → end.
+        private func unpackTemplate(
             image: Containerization.Image,
-            detail: String,
-            bridge: Task<Void, Error>
-        ) async throws -> LinuxContainer {
+            templateKey: String,
+            detail: String
+        ) async throws {
             await startStep(.createContainer, detail: detail)
-            let progressTracker = Self.makeContainerCreateProgressHandler(
-                stepID: .createContainer
-            )
-            let c: LinuxContainer
+            let staging = SandboxRootfsTemplateStore.stagingFile(key: templateKey)
             do {
-                c = try await manager.create(
-                    Self.containerID,
-                    image: image,
-                    rootfsSizeInBytes: 8.gib(),
-                    networking: inputs.networkEnabled,
-                    progress: progressTracker,
-                    configuration: Self.makeContainerConfig(inputs: inputs)
+                try OsaurusPaths.ensureExists(staging.deletingLastPathComponent())
+                if FileManager.default.fileExists(atPath: staging.path) {
+                    try FileManager.default.removeItem(at: staging)
+                }
+                _ = try await EXT4Unpacker(capacityInBytes: 8.gib()).unpack(
+                    image,
+                    for: .current,
+                    at: staging,
+                    progress: Self.makeContainerCreateProgressHandler(stepID: .createContainer)
                 )
+                try SandboxRootfsTemplateStore.installTemplate(key: templateKey)
             } catch {
+                try? FileManager.default.removeItem(at: staging)
                 await endStep(.createContainer, status: .failed)
-                await resolveBridgeStep(bridge: bridge)
                 throw error
             }
             await endStep(.createContainer, status: .completed)
-            return c
         }
 
-        /// Full-unpack cold create that also (a) captures the pristine,
-        /// never-booted rootfs as the immutable base template — an O(1)
-        /// APFS clonefile, best-effort so template capture can never fail
-        /// a boot — and (b) in per-agent mode, swaps the boot target to
-        /// the agent's own clone of that template so the shared unpack is
-        /// never booted (booting would mutate it).
-        private func createColdBootTarget(
-            manager: inout ContainerManager,
-            inputs: BootInputs,
-            image: Containerization.Image,
-            detail: String,
-            bridge: Task<Void, Error>,
-            templateKey: String,
-            envName: String?
-        ) async throws -> LinuxContainer {
-            let unpacked = try await createColdContainer(
-                manager: &manager,
-                inputs: inputs,
-                image: image,
-                detail: detail,
-                bridge: bridge
-            )
-            try? SandboxRootfsTemplateStore.captureTemplate(from: rootfsFile, key: templateKey)
-            guard let envName else { return unpacked }
-
-            // Per-agent mode: drop the SDK record for the shared unpack and
-            // re-create the container on the agent's clone. Only happens on
-            // the first-ever unpack for this template key; every later boot
-            // takes the instant template-clone path instead.
-            try manager.delete(Self.containerID)
-            let envRootfs = try SandboxRootfsTemplateStore.ensureEnvironment(
-                agentName: envName,
-                key: templateKey
-            )
-            return try await createWarmContainer(
-                manager: &manager,
-                inputs: inputs,
-                image: image,
-                rootfs: envRootfs
-            )
-        }
-
-        /// Fast cold-boot: materialize the boot rootfs as a copy-on-write
-        /// clone of the immutable base template (milliseconds) instead of
-        /// re-unpacking the 8 GiB image (tens of seconds). Used whenever a
-        /// warm restart isn't possible but a template for the current
-        /// (image digest, runtime format) pair exists — resets, invalidated
-        /// warm stamps, and every per-agent environment (re)creation.
-        private func createTemplateCloneContainer(
-            manager: inout ContainerManager,
-            inputs: BootInputs,
-            image: Containerization.Image,
-            templateKey: String,
-            envName: String?,
-            bootRootfs: URL
-        ) async throws -> LinuxContainer {
-            await startStep(.createContainer, detail: L("Cloning base environment"))
-            do {
-                if let envName {
-                    _ = try SandboxRootfsTemplateStore.ensureEnvironment(
-                        agentName: envName,
-                        key: templateKey
-                    )
-                } else {
-                    try SandboxRootfsTemplateStore.cloneTemplate(key: templateKey, to: bootRootfs)
+        /// Write the host-bridge shim into its own directory. A file mount
+        /// shares the file's parent directory with the VM, so nothing else
+        /// may live next to it.
+        private func stageShim() throws {
+            let file = SandboxPodLayout.shimFile(containerRoot: OsaurusPaths.container())
+            let dir = file.deletingLastPathComponent()
+            let fm = FileManager.default
+            if fm.fileExists(atPath: dir.path) {
+                for entry in try fm.contentsOfDirectory(atPath: dir.path) where entry != file.lastPathComponent {
+                    try fm.removeItem(at: dir.appendingPathComponent(entry))
                 }
-                let c = try await createWarmContainer(
-                    manager: &manager,
-                    inputs: inputs,
-                    image: image,
-                    rootfs: bootRootfs
-                )
-                await endStep(.createContainer, status: .completed)
-                return c
-            } catch {
-                await endStep(.createContainer, status: .failed)
-                throw error
             }
+            try OsaurusPaths.ensureExists(dir)
+            if fm.fileExists(atPath: file.path) {
+                try fm.setAttributes([.posixPermissions: 0o644], ofItemAtPath: file.path)
+            }
+            try Data(Self.osaurusHostShimScript.utf8).write(to: file, options: .atomic)
+            try fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: file.path)
+        }
+
+        /// Assemble the pod: the system container plus one container per
+        /// member, each booting its own environment clone of the template
+        /// with only its own mounts and bridge socket. Records which
+        /// environments had to be cloned fresh.
+        private func buildPod(
+            kernel: Kernel,
+            initfs: Containerization.Mount,
+            inputs: BootInputs,
+            specs: [SandboxPodLayout.ContainerSpec],
+            templateKey: String
+        ) async throws -> LinuxPod {
+            var fresh: Set<String> = []
+            var rootfsByID: [String: URL] = [:]
+            for spec in specs {
+                if !SandboxRootfsTemplateStore.environmentIsValid(agentName: spec.environmentName, key: templateKey) {
+                    fresh.insert(spec.environmentName)
+                }
+                rootfsByID[spec.id] = try SandboxRootfsTemplateStore.ensureEnvironment(
+                    agentName: spec.environmentName,
+                    key: templateKey
+                )
+                for mount in spec.mounts where !mount.readOnly {
+                    try OsaurusPaths.ensureExists(URL(fileURLWithPath: mount.source))
+                }
+            }
+            SandboxRootfsTemplateStore.excludeFromBackups()
+            freshEnvironments = fresh.subtracting([SandboxPodLayout.systemEnvironmentName])
+            WorkflowSandboxEnvironment.environmentsReset(freshEnvironments)
+
+            try OsaurusPaths.ensureExists(staleContainerDir)
+            let bootLog = BootLog.file(path: staleContainerDir.appendingPathComponent("bootlog.log"))
+            var interface: (any Interface)?
+            if inputs.networkEnabled, var network = podNetwork {
+                interface = try network.createInterface(SandboxPodLayout.podID)
+                podNetwork = network
+            }
+            let vmm = VZVirtualMachineManager(kernel: kernel, initialFilesystem: initfs)
+            let pod = try LinuxPod(
+                SandboxPodLayout.podID,
+                vmm: vmm,
+                vm: Self.vmResources(cpus: inputs.cpus, memoryGB: inputs.memoryGB)
+            ) { config in
+                config.shareProcessNamespace = false
+                config.bootLog = bootLog
+                if let interface {
+                    config.interfaces = [interface]
+                    if let gateway = interface.ipv4Gateway {
+                        config.dns = DNS(nameservers: [gateway.description])
+                    }
+                }
+            }
+
+            let containerRoot = OsaurusPaths.container()
+            let cpus = inputs.cpus
+            let memory = UInt64(inputs.memoryGB).gib()
+            for spec in specs {
+                guard let rootfsURL = rootfsByID[spec.id] else { continue }
+                let rootfs = Containerization.Mount.block(
+                    format: "ext4",
+                    source: rootfsURL.absolutePath(),
+                    destination: "/",
+                    options: []
+                )
+                let mounts = spec.mounts
+                let socketPath = SandboxPodLayout.bridgeSocketPath(
+                    linuxName: spec.bridgeLinuxName,
+                    containerRoot: containerRoot
+                )
+                try await pod.addContainer(spec.id, rootfs: rootfs) { config in
+                    // cgroup limits only; the VM itself is sized by `vmResources`.
+                    config.cpus = cpus
+                    config.memoryInBytes = memory
+                    config.process.arguments = ["sleep", "infinity"]
+                    config.process.workingDirectory = "/"
+                    config.mounts = Self.containerBaseMounts()
+                    // Pin the security boundary explicitly instead of
+                    // inheriting SDK defaults. Pod execs inherit this config.
+                    Self.applyProcessRestrictions(to: &config.process)
+                    config.mounts += mounts.map {
+                        .share(source: $0.source, destination: $0.destination, options: $0.readOnly ? ["ro"] : [])
+                    }
+                    // Without explicit permissions the guest socket is mode
+                    // 0000 and only root could reach the bridge.
+                    config.sockets = [
+                        UnixSocketConfiguration(
+                            source: URL(fileURLWithPath: socketPath),
+                            destination: URL(fileURLWithPath: SandboxPodLayout.guestBridgeSocketPath),
+                            permissions: FilePermissions(rawValue: 0o666),
+                            direction: .into
+                        )
+                    ]
+                }
+            }
+            return pod
         }
 
         /// Resolve the pinned sandbox image, pulling it when the local
@@ -713,30 +1048,81 @@
                 )
             } catch {
                 if reportProgress {
-                    await endStep(.createContainer, status: .failed)
+                    await failOrResetStep(.createContainer, after: error)
                 }
                 throw error
             }
         }
 
-        /// Boot a freshly created `LinuxContainer`: VM create → bridge
-        /// ready → process start. Drives the `.startContainer` and
-        /// `.startBridge` journey steps. Throws on any SDK failure;
-        /// caller is responsible for any cleanup.
-        private func bootContainer(
-            _ c: LinuxContainer,
-            bridge: Task<Void, Error>
+        private func fetchSandboxImageIfNeeded(
+            store: ImageStore,
+            needed: Bool
+        ) async throws -> Containerization.Image? {
+            guard needed else { return nil }
+            return try await fetchSandboxImage(store: store, reportProgress: true)
+        }
+
+        /// One-time move from the pre-pod layout, where the whole workspace
+        /// was mounted: no container mounts the workspace root any more, so
+        /// loose files there move to `shared/` (or
+        /// `shared/legacy-workspace-root/` on a name collision), and the old
+        /// shim staging file is dropped.
+        nonisolated static func migrateWorkspaceRoot(_ workspace: URL) {
+            let fm = FileManager.default
+            guard let entries = try? fm.contentsOfDirectory(atPath: workspace.path) else { return }
+            let shared = workspace.appendingPathComponent("shared", isDirectory: true)
+            for name in entries where name != "agents" && name != "shared" {
+                let source = workspace.appendingPathComponent(name)
+                if name == ".osaurus-host-shim" || name == ".DS_Store" {
+                    try? fm.removeItem(at: source)
+                    continue
+                }
+                var destination = shared.appendingPathComponent(name)
+                if fm.fileExists(atPath: destination.path) {
+                    let legacy = shared.appendingPathComponent("legacy-workspace-root", isDirectory: true)
+                    try? fm.createDirectory(at: legacy, withIntermediateDirectories: true)
+                    destination = legacy.appendingPathComponent(name)
+                    if fm.fileExists(atPath: destination.path) { continue }
+                }
+                try? fm.moveItem(at: source, to: destination)
+            }
+        }
+
+        private struct ProxyGateway {
+            let address: String
+            let required: Bool
+        }
+
+        /// Boot the pod: VM create → bridge ready → container starts.
+        /// Drives the `.startContainer` and `.startBridge` journey steps.
+        /// Throws on any SDK failure; caller is responsible for cleanup.
+        private func bootPod(
+            _ pod: LinuxPod,
+            containerIDs: [String],
+            bridge: Task<Void, Error>,
+            proxyGateway: ProxyGateway?
         ) async throws {
             await startStep(.startContainer, detail: L("Booting Linux VM"))
-            try await c.create()
-            // Bridge must be bound before container.start() — that's
-            // when the guest attaches the relayed socket. Awaiting
-            // `.value` is idempotent under repeated calls so it's safe
-            // even after `resolveBridgeStep` has already drained the
-            // task in an earlier failure path.
+            try await pod.create()
+            // The gateway address exists on the host only once the VM's
+            // interface is up, so the proxy binds here. A filtered pod fails
+            // closed: no container (and so no agent process) starts without
+            // it. An open pod boots anyway; step-scoped execs then get a
+            // proxy address nothing listens on.
+            if let proxyGateway {
+                do {
+                    try await startEgressProxy(gateway: proxyGateway.address)
+                } catch where !proxyGateway.required {
+                    debugLog("[Sandbox] Egress proxy unavailable in the open pod: \(error)")
+                }
+            }
+            // Bridges must be bound before the containers start — that's
+            // when the guest attaches the relayed sockets.
             try await bridge.value
             await endStep(.startBridge, status: .completed)
-            try await c.start()
+            for id in containerIDs {
+                try await pod.startContainer(id)
+            }
             await endStep(.startContainer, status: .completed)
         }
 
@@ -753,43 +1139,24 @@
             }
         }
 
-        /// Tear down whatever the warm-restart attempt left behind so the
-        /// cold rebuild path can start from a clean slate.
-        private func teardownWarmAttempt(manager: inout ContainerManager) async {
-            if let existing = self.linuxContainer {
-                try? await existing.stop()
+        /// Stop the pod (if any) and release its vmnet interface.
+        private func teardownPod() async {
+            if let pod {
+                try? await pod.stop()
             }
-            try? manager.delete(Self.containerID)
-            self.linuxContainer = nil
-            self.containerManager = nil
-            if FileManager.default.fileExists(atPath: staleContainerDir.path) {
-                try? await Self.forciblyRemoveAsync(at: staleContainerDir)
+            pod = nil
+            SandboxMemoryReservation.vmStopped()
+            backgroundHolders = []
+            podMembers = []
+            inFlightExecs = [:]
+            interactiveProcesses = [:]
+            _podGeneration += 1
+            publishOccupancy()
+            if var network = podNetwork {
+                try? network.releaseInterface(SandboxPodLayout.podID)
             }
-        }
-
-        /// Mirror the active (provisioning) agent's `sandboxNetworkEnabled`
-        /// onto the VM-wide `SandboxConfiguration.network` so the value the VM
-        /// boots from matches the toggle the user controls. Writes through
-        /// `SandboxConfigurationStore.save` (cache-coherent) only when the two
-        /// actually differ, so steady-state boots pay just a load + compare.
-        /// Defaults to egress-on when the agent has no autonomous-exec config,
-        /// matching `AutonomousExecConfig.sandboxNetworkEnabled`'s default.
-        private func reconcileNetworkFromActiveAgent() async {
-            let (enabled, domains): (Bool, [String]?) = await MainActor.run {
-                let id = AgentManager.shared.activeAgent.id
-                let exec = AgentManager.shared.effectiveAutonomousExec(for: id)
-                return (exec?.sandboxNetworkEnabled ?? true, exec?.sandboxAllowedDomains)
-            }
-            let desired = Self.reconciledNetworkSettings(
-                agentNetworkEnabled: enabled,
-                allowedDomains: domains
-            )
-            var config = SandboxConfigurationStore.load()
-            if config.network != desired.network || config.allowedDomains != desired.allowedDomains {
-                config.network = desired.network
-                config.allowedDomains = desired.allowedDomains
-                SandboxConfigurationStore.save(config)
-            }
+            podNetwork = nil
+            setBootNetwork(nil)
         }
 
         /// "Provision" the Seatbelt fallback: no VM, no image download —
@@ -827,7 +1194,16 @@
             }
         }
 
+        /// Provision and boot through the coalesced start path, which holds
+        /// the VM ownership lease for the whole boot.
         public func provision() async throws {
+            _removedByUser = false
+            try await startContainer()
+        }
+
+        /// Callers must hold the VM ownership lease (`startContainer`,
+        /// `performRestart`).
+        private func performProvision() async throws {
             try await requireAvailabilityForOperation()
             _removedByUser = false
 
@@ -846,18 +1222,6 @@
                 prefetchTask = nil
             }
 
-            // Self-heal a desynced egress switch before reading it. The VM
-            // boots from the shared `SandboxConfiguration.network`, but the
-            // toggle users actually see + edit is the per-agent
-            // `sandboxNetworkEnabled`. Those two stores only sync at the
-            // instant the toggle is flipped, so a `sandbox.json` left at
-            // "none" (early-build provisioning, the container-level toggle, or
-            // another agent's flip) keeps egress off forever while the active
-            // agent's own setting says on — with no way to fix it from the
-            // agent UI. Mirroring the provisioning agent's preference here
-            // makes that toggle authoritative on every boot.
-            await reconcileNetworkFromActiveAgent()
-
             // A runtime-format change (SDK upgrade, initfs delivery change)
             // must invalidate the cached initfs BEFORE `hasRequiredAssets`
             // decides which journey steps to plan.
@@ -866,38 +1230,42 @@
             let config = SandboxConfigurationStore.load()
             let isRestart = hasRequiredAssets
             let templateKey = Self.rootfsTemplateKey
-            // Per-agent copy-on-write environments (staged rollout, default
-            // off): the VM boots from the provisioning agent's own clone of
-            // the immutable base template instead of the shared mutable
-            // rootfs, so system-package state persists per agent.
-            let envName: String? =
-                config.perAgentEnvironments ? await Self.activeAgentLinuxName() : nil
-            let bootRootfs: URL =
-                envName.map { SandboxRootfsTemplateStore.environmentRootfs(agentName: $0) }
-                ?? rootfsFile
-            let isWarm: Bool
-            if let envName {
-                isWarm = SandboxRootfsTemplateStore.environmentIsValid(
-                    agentName: envName,
-                    key: templateKey
+            for agentName in pendingEnvironmentResets {
+                try? SandboxRootfsTemplateStore.resetEnvironment(agentName: agentName)
+            }
+            let removedAgents = pendingEnvironmentResets.subtracting(requestedMembers)
+            pendingEnvironmentResets = []
+            let members = await selectPodMembers(
+                cap: config.maxAgentEnvironments,
+                excluding: removedAgents
+            )
+            let workspace = URL(
+                fileURLWithPath: Self.validatedWorkspaceMountSource(
+                    workspace: OsaurusPaths.containerWorkspace().path,
+                    folderRoots: ChatFolderState.liveRootPaths
                 )
-            } else {
-                isWarm = canWarmRestart
+            )
+            let specs = SandboxPodLayout.containers(
+                members: members,
+                workspace: workspace,
+                containerRoot: OsaurusPaths.container()
+            )
+            let hasTemplate = SandboxRootfsTemplateStore.hasTemplate(key: templateKey)
+            let allEnvironmentsValid = specs.allSatisfy {
+                SandboxRootfsTemplateStore.environmentIsValid(agentName: $0.environmentName, key: templateKey)
             }
             let hasPlugins = await Self.installedPluginsRequireVerify()
 
             // Pre-mark cached steps `.skipped` so the UI shows checkmarks
-            // rather than spinners that never tick. Warm restart skips the
-            // image unpack step too.
+            // rather than spinners that never tick. With a template on disk
+            // the image unpack is skipped too (environment clones are
+            // milliseconds).
             let planned = plannedSteps(
                 isRestart: isRestart,
-                isWarmRestart: isWarm,
+                isWarmRestart: hasTemplate,
                 hasPlugins: hasPlugins
             )
             await beginJourney(steps: planned)
-            // Flipped to true below only when the warm path actually
-            // succeeds end-to-end; `verifyAndRepairAllPlugins` reads it.
-            _wasLastBootWarm = false
 
             // Local phase clocks (see `SandboxStartupMetrics`). Full
             // fidelity is persisted locally; telemetry sees only a
@@ -907,240 +1275,164 @@
             var createSeconds: Double?
             var vmBootSeconds: Double?
             var configureSeconds: Double?
-            var bootKind: SandboxBootSample.BootKind = isWarm ? .warm : .cold
+            var bootKind: SandboxBootSample.BootKind =
+                hasTemplate ? (allEnvironmentsValid ? .warm : .template) : .cold
 
             do {
-                // Resolve kernel + initfs + sandbox image concurrently.
-                // All three short-circuit when already cached (the warm
-                // path pays a couple of stat()s / one reference lookup),
-                // and on the cold path the three network fetches overlap
-                // instead of serializing — image layer downloads no
-                // longer wait for kernel/initfs completion. Each future
-                // drives its own journey step so the UI shows accurate
-                // per-asset progress.
+                // Resolve kernel + initfs (+ the sandbox image when there is
+                // no template to clone) concurrently. Each short-circuits
+                // when already cached, and on the cold path the network
+                // fetches overlap instead of serializing. Each future drives
+                // its own journey step so the UI shows per-asset progress.
                 let imageStore = try ImageStore(path: OsaurusPaths.container())
                 async let kernelFuture = ensureKernel()
                 async let initfsFuture = ensureInitFS(store: imageStore)
-                async let imageFuture = fetchSandboxImage(
+                async let imageFuture = fetchSandboxImageIfNeeded(
                     store: imageStore,
-                    reportProgress: !isWarm
+                    needed: !hasTemplate
                 )
-                let (kernel, initfs, image) = try await (kernelFuture, initfsFuture, imageFuture)
+                let (kernel, initfs, prefetchedImage) = try await (kernelFuture, initfsFuture, imageFuture)
                 assetSeconds = Date().timeIntervalSince(provisionStart)
 
                 try ensureHostDirectories()
-
-                // Clean up stale container state from a previous crash.
-                // Warm path skips this so the persisted `rootfs.ext4` stays
-                // available for reuse; the cold path needs the dir gone
-                // because the SDK's `createContainerRoot` uses
-                // `withIntermediateDirectories: false`. `try` (not `try?`)
-                // so a real cleanup failure surfaces here instead of
-                // bubbling up as "file already exists" from `manager.create`.
-                if !isWarm, FileManager.default.fileExists(atPath: staleContainerDir.path) {
-                    debugLog("[Sandbox] Cleaning up stale container state")
-                    try await Self.forciblyRemoveAsync(at: staleContainerDir)
-                }
+                Self.migrateWorkspaceRoot(workspace)
+                try stageShim()
 
                 if #available(macOS 26, *) {
-                    // Bring up the host API bridge concurrently with the
-                    // ContainerManager / rootfs work. The bridge only needs
-                    // to be listening by the time `container.start()` runs
-                    // (that's when the guest attaches the relayed socket),
-                    // so the slower of the two hides the other's cost.
+                    // Bring up one host bridge listener per container
+                    // concurrently with the rootfs work. Each only needs to
+                    // be listening by the time its container starts (that's
+                    // when the guest attaches the relayed socket), and each
+                    // accepts only its own container's agent identity.
                     await startStep(.startBridge, detail: L("Binding host socket"))
-                    let bridgeStarted = Task {
-                        try await HostAPIBridgeServer.shared.start(
-                            socketPath: Self.bridgeSocketPath
+                    let containerRoot = OsaurusPaths.container()
+                    let bindings = specs.map {
+                        HostAPIBridgeServer.SocketBinding(
+                            path: SandboxPodLayout.bridgeSocketPath(
+                                linuxName: $0.bridgeLinuxName,
+                                containerRoot: containerRoot
+                            ),
+                            linuxName: $0.bridgeLinuxName
                         )
                     }
-
-                    // Allowlist mode boots on a host-only vmnet: the guest
-                    // can reach the gateway (where the filtering proxy
-                    // listens) but has no NAT to the outside world. Open
-                    // mode keeps the shared-NAT default.
-                    let egressMode = Self.egressMode(from: config)
-                    let vmnet: VmnetNetwork
-                    if case .allowlist = egressMode {
-                        vmnet = try VmnetNetwork(mode: .VMNET_HOST_MODE)
-                    } else {
-                        vmnet = try VmnetNetwork()
+                    let bridgeStarted = Task {
+                        try await HostAPIBridgeServer.shared.start(bindings: bindings)
                     }
 
-                    if case .allowlist = egressMode {
-                        // Fail-closed: if the proxy can't bind the gateway
-                        // address, provisioning aborts rather than booting
-                        // a guest with no enforcement path.
-                        try await startEgressProxy(gateway: vmnet.ipv4Gateway.description)
-                    } else {
-                        await teardownEgressProxy()
+                    // The network is composed from the members' own
+                    // policies. Filtered boots on a host-only vmnet: the
+                    // guest reaches only the gateway, where the proxy
+                    // applies each caller's policy. NAT is every member
+                    // open; no network creates no vmnet at all.
+                    let network = await Self.podNetwork(forMembers: members)
+                    setBootNetwork(network)
+                    let networkEnabled = network != .none
+                    var proxyGateway: ProxyGateway?
+                    await teardownEgressProxy()
+                    if networkEnabled {
+                        let vmnet: VmnetNetwork
+                        if network == .filtered {
+                            vmnet = try VmnetNetwork(mode: .VMNET_HOST_MODE)
+                            proxyGateway = ProxyGateway(address: vmnet.ipv4Gateway.description, required: true)
+                        } else {
+                            vmnet = try VmnetNetwork()
+                            proxyGateway = ProxyGateway(address: vmnet.ipv4Gateway.description, required: false)
+                        }
+                        podNetwork = vmnet
                     }
 
-                    var manager = try ContainerManager(
-                        kernel: kernel,
-                        initfs: initfs,
-                        imageStore: imageStore,
-                        network: vmnet
-                    )
                     let inputs = BootInputs(
-                        workspace: Self.validatedWorkspaceMountSource(
-                            workspace: OsaurusPaths.containerWorkspace().path,
-                            folderRoots: ChatFolderState.liveRootPaths
-                        ),
-                        bridgeSocketPath: Self.bridgeSocketPath,
-                        guestBridgeSocketPath: Self.guestBridgeSocketPath,
+                        workspace: workspace,
                         cpus: config.cpus,
                         memoryGB: config.memoryGB,
-                        networkEnabled: Self.networkEnabled(from: config)
+                        networkEnabled: networkEnabled
                     )
+                    let containerIDs = specs.map(\.id)
 
-                    let container: LinuxContainer
-                    if isWarm {
-                        // Warm path: hand the persisted boot rootfs (shared
-                        // rootfs.ext4, or the agent's environment clone in
-                        // per-agent mode) to the SDK's block-rootfs create —
-                        // no image unpack. The do/catch covers both the SDK
-                        // call and the subsequent VM boot, since a corrupted
-                        // rootfs typically only manifests on disk attach. On
-                        // any throw we wipe and rebuild via the cold path
-                        // exactly once.
-                        do {
-                            let createStart = Date()
-                            let warmContainer = try await createWarmContainer(
-                                manager: &manager,
-                                inputs: inputs,
-                                image: image,
-                                rootfs: bootRootfs
-                            )
-                            createSeconds = Date().timeIntervalSince(createStart)
-                            // Publish so `cleanupAfterFailure` can tear
-                            // down partial state if `bootContainer` throws.
-                            self.containerManager = manager
-                            self.linuxContainer = warmContainer
-                            let bootStart = Date()
-                            try await bootContainer(warmContainer, bridge: bridgeStarted)
-                            vmBootSeconds = Date().timeIntervalSince(bootStart)
-                            container = warmContainer
-                            _wasLastBootWarm = true
-                        } catch {
-                            debugLog(
-                                "[Sandbox] Warm restart failed (\(error.localizedDescription)), falling back to cold create"
-                            )
-                            bootKind = .warmFallback
-                            await teardownWarmAttempt(manager: &manager)
-                            // `.startContainer` may already be in-progress
-                            // from the failed warm boot — reset so the
-                            // cold rebuild can re-enter it cleanly.
-                            await resetStepStatus(.startContainer, to: .pending)
-                            // Don't trust the lineage of the bad rootfs:
-                            // drop the agent's clone and the template it
-                            // came from so the rebuild recaptures both
-                            // from a fresh unpack.
-                            SandboxRootfsTemplateStore.invalidateTemplate(key: templateKey)
-                            if let envName {
-                                try? SandboxRootfsTemplateStore.resetEnvironment(agentName: envName)
-                            }
-
-                            let createStart = Date()
-                            container = try await createColdBootTarget(
-                                manager: &manager,
-                                inputs: inputs,
-                                image: image,
-                                detail: "Unpacking cached image",
-                                bridge: bridgeStarted,
-                                templateKey: templateKey,
-                                envName: envName
-                            )
-                            createSeconds = Date().timeIntervalSince(createStart)
-                            self.containerManager = manager
-                            self.linuxContainer = container
-                            let bootStart = Date()
-                            try await bootContainer(container, bridge: bridgeStarted)
-                            vmBootSeconds = Date().timeIntervalSince(bootStart)
-                        }
-                    } else if SandboxRootfsTemplateStore.hasTemplate(key: templateKey) {
-                        // Template fast path: no reusable boot rootfs, but
-                        // the immutable base template for the current pin
-                        // exists — clone it (CoW, milliseconds) instead of
-                        // re-unpacking the 8 GiB image. Falls back to the
-                        // full unpack exactly once if the clone won't boot.
-                        do {
-                            bootKind = .template
-                            let createStart = Date()
-                            let cloned = try await createTemplateCloneContainer(
-                                manager: &manager,
-                                inputs: inputs,
-                                image: image,
-                                templateKey: templateKey,
-                                envName: envName,
-                                bootRootfs: bootRootfs
-                            )
-                            createSeconds = Date().timeIntervalSince(createStart)
-                            self.containerManager = manager
-                            self.linuxContainer = cloned
-                            let bootStart = Date()
-                            try await bootContainer(cloned, bridge: bridgeStarted)
-                            vmBootSeconds = Date().timeIntervalSince(bootStart)
-                            container = cloned
-                        } catch {
-                            debugLog(
-                                "[Sandbox] Template-clone boot failed (\(error.localizedDescription)), falling back to full unpack"
-                            )
-                            bootKind = .cold
-                            await teardownWarmAttempt(manager: &manager)
-                            await resetStepStatus(.createContainer, to: .pending)
-                            await resetStepStatus(.startContainer, to: .pending)
-                            SandboxRootfsTemplateStore.invalidateTemplate(key: templateKey)
-                            if let envName {
-                                try? SandboxRootfsTemplateStore.resetEnvironment(agentName: envName)
-                            }
-
-                            let createStart = Date()
-                            container = try await createColdBootTarget(
-                                manager: &manager,
-                                inputs: inputs,
-                                image: image,
-                                detail: "Unpacking sandbox image",
-                                bridge: bridgeStarted,
-                                templateKey: templateKey,
-                                envName: envName
-                            )
-                            createSeconds = Date().timeIntervalSince(createStart)
-                            self.containerManager = manager
-                            self.linuxContainer = container
-                            let bootStart = Date()
-                            try await bootContainer(container, bridge: bridgeStarted)
-                            vmBootSeconds = Date().timeIntervalSince(bootStart)
-                        }
-                    } else {
+                    if !hasTemplate, let prefetchedImage {
                         // Cold path. Layers were already pulled (or found
-                        // locally) by the concurrent `fetchSandboxImage`,
-                        // so create() only unpacks the rootfs here — and
-                        // captures it as the base template for every future
-                        // clone-instead-of-unpack boot.
+                        // locally) by the concurrent fetch, so this only
+                        // unpacks the image into the base template.
                         let createStart = Date()
-                        container = try await createColdBootTarget(
-                            manager: &manager,
+                        do {
+                            try await unpackTemplate(
+                                image: prefetchedImage,
+                                templateKey: templateKey,
+                                detail: L("Unpacking sandbox image")
+                            )
+                        } catch {
+                            await resolveBridgeStep(bridge: bridgeStarted)
+                            throw error
+                        }
+                        createSeconds = Date().timeIntervalSince(createStart)
+                    }
+
+                    do {
+                        let createStart = Date()
+                        let built = try await buildPod(
+                            kernel: kernel,
+                            initfs: initfs,
                             inputs: inputs,
+                            specs: specs,
+                            templateKey: templateKey
+                        )
+                        if createSeconds == nil {
+                            createSeconds = Date().timeIntervalSince(createStart)
+                        }
+                        // Publish so `cleanupAfterFailure` can tear down
+                        // partial state if the boot throws.
+                        self.pod = built
+                        let bootStart = Date()
+                        try await bootPod(
+                            built, containerIDs: containerIDs, bridge: bridgeStarted, proxyGateway: proxyGateway)
+                        vmBootSeconds = Date().timeIntervalSince(bootStart)
+                    } catch where hasTemplate {
+                        // A clone that won't boot means the template lineage
+                        // can't be trusted: drop the template and every
+                        // member's clone, unpack fresh, and retry once.
+                        debugLog(
+                            "[Sandbox] Pod boot from template failed (\(error.localizedDescription)), falling back to full unpack"
+                        )
+                        bootKind = .warmFallback
+                        if let pod { try? await pod.stop() }
+                        pod = nil
+                        // The rebuild allocates the pod's interface again.
+                        if var network = podNetwork {
+                            try? network.releaseInterface(SandboxPodLayout.podID)
+                            podNetwork = network
+                        }
+                        await resetStepStatus(.createContainer, to: .pending)
+                        await resetStepStatus(.startContainer, to: .pending)
+                        SandboxRootfsTemplateStore.invalidateTemplate(key: templateKey)
+                        for spec in specs {
+                            try? SandboxRootfsTemplateStore.resetEnvironment(agentName: spec.environmentName)
+                        }
+                        let image = try await fetchSandboxImage(store: imageStore, reportProgress: true)
+                        let createStart = Date()
+                        try await unpackTemplate(
                             image: image,
-                            detail: "Unpacking sandbox image",
-                            bridge: bridgeStarted,
                             templateKey: templateKey,
-                            envName: envName
+                            detail: L("Unpacking cached image")
+                        )
+                        let rebuilt = try await buildPod(
+                            kernel: kernel,
+                            initfs: initfs,
+                            inputs: inputs,
+                            specs: specs,
+                            templateKey: templateKey
                         )
                         createSeconds = Date().timeIntervalSince(createStart)
-                        // Publish IMMEDIATELY so cleanupAfterFailure() can
-                        // tear down the SDK objects if `bootContainer`
-                        // throws below. Otherwise a partial-provision
-                        // failure leaves the container registered inside
-                        // the SDK and on disk, surfacing as confusing
-                        // "file already exists" on the next attempt.
-                        self.containerManager = manager
-                        self.linuxContainer = container
+                        self.pod = rebuilt
                         let bootStart = Date()
-                        try await bootContainer(container, bridge: bridgeStarted)
+                        try await bootPod(
+                            rebuilt, containerIDs: containerIDs, bridge: bridgeStarted, proxyGateway: proxyGateway)
                         vmBootSeconds = Date().timeIntervalSince(bootStart)
                     }
+                    podMembers = members
+                    SandboxMemoryReservation.vmStarted(
+                        bytes: Self.vmResources(cpus: inputs.cpus, memoryGB: inputs.memoryGB).memoryInBytes)
+                } else {
+                    throw SandboxError.provisionFailed("The sandbox VM requires macOS 26 or later")
                 }
 
                 await startStep(.configureSandbox, detail: L("Installing in-guest shim"))
@@ -1151,27 +1443,31 @@
 
                 _status = .running
                 syncStatus()
+                userExecLimit = Self.userExecLimit(cpus: config.cpus)
+                startIdleWatch()
+                publishOccupancy()
 
                 // Persist full-fidelity phase timings locally and emit a
                 // coarse consent-gated bucket. The first-agent-ready field
                 // is stamped later by `SandboxAgentProvisioner`.
                 let totalToRunning = Date().timeIntervalSince(provisionStart)
                 _lastBootReadyAt = Date()
-                SandboxStartupMetricsStore.record(
-                    SandboxBootSample(
-                        kind: bootKind,
-                        startedAt: provisionStart,
-                        assetResolution: assetSeconds,
-                        containerCreate: createSeconds,
-                        vmBoot: vmBootSeconds,
-                        configure: configureSeconds,
-                        totalToRunning: totalToRunning
-                    )
+                let bootSample = SandboxBootSample(
+                    kind: bootKind,
+                    startedAt: provisionStart,
+                    assetResolution: assetSeconds,
+                    containerCreate: createSeconds,
+                    vmBoot: vmBootSeconds,
+                    configure: configureSeconds,
+                    totalToRunning: totalToRunning
                 )
+                SandboxStartupMetricsStore.record(bootSample)
                 let bootKindToken = bootKind.rawValue
                 let bootBucket = SandboxStartupMetricsStore.latencyBucket(totalToRunning)
+                let dominantPhase = bootSample.dominantPhase
                 await MainActor.run {
-                    FeatureTelemetry.sandboxBoot(kind: bootKindToken, durationBucket: bootBucket)
+                    FeatureTelemetry.sandboxBoot(
+                        kind: bootKindToken, durationBucket: bootBucket, dominantPhase: dominantPhase)
                 }
 
                 var savedConfig = SandboxConfigurationStore.load()
@@ -1197,33 +1493,38 @@
                     savedConfig.lastBootedImageDigest = Self.containerImage
                     configChanged = true
                 }
-                // Stamp the runtime format (SDK/initfs pair) alongside the
-                // image digest — the warm-restart key is the pair of both.
+                // Stamp the runtime format (SDK/initfs pair, keys the
+                // initfs) and the rootfs format (keys the warm rootfs with
+                // the image digest).
                 if savedConfig.lastRuntimeFormatVersion != SandboxRuntimeAssets.runtimeFormatVersion {
                     savedConfig.lastRuntimeFormatVersion = SandboxRuntimeAssets.runtimeFormatVersion
+                    configChanged = true
+                }
+                if savedConfig.lastRootfsFormatVersion != SandboxRuntimeAssets.rootfsFormatVersion {
+                    savedConfig.lastRootfsFormatVersion = SandboxRuntimeAssets.rootfsFormatVersion
                     configChanged = true
                 }
                 if configChanged {
                     SandboxConfigurationStore.save(savedConfig)
                 }
 
-                // Per-agent mode bookkeeping: refresh the booted
-                // environment's recency stamp and bound the pool — stale
-                // clones (old template key) and least-recently-used clones
-                // beyond the cap are evicted. The booted environment is
-                // always protected.
-                if let envName {
-                    SandboxRootfsTemplateStore.touchEnvironment(agentName: envName)
-                    let evicted = SandboxRootfsTemplateStore.enforceLimit(
-                        max: config.maxAgentEnvironments,
-                        currentKey: templateKey,
-                        protecting: envName
-                    )
-                    if !evicted.isEmpty {
-                        debugLog(
-                            "[Sandbox] Evicted agent environments: \(evicted.joined(separator: ", "))"
-                        )
-                    }
+                // The shared rootfs of the pre-pod layout is unreachable
+                // now; reclaim its 8 GiB.
+                if FileManager.default.fileExists(atPath: legacySharedRootfs.path) {
+                    try? FileManager.default.removeItem(at: legacySharedRootfs)
+                }
+
+                // Bound the environment pool: stale clones (old template
+                // key) and least-recently-used clones beyond the cap are
+                // evicted. The running pod's environments are protected.
+                let evicted = SandboxRootfsTemplateStore.enforceLimit(
+                    max: config.effectiveRetainedEnvironments,
+                    currentKey: templateKey,
+                    protecting: Set(specs.map(\.environmentName))
+                )
+                if !evicted.isEmpty {
+                    debugLog("[Sandbox] Evicted agent environments: \(evicted.joined(separator: ", "))")
+                    WorkflowSandboxEnvironment.environmentsReset(evicted)
                 }
 
                 // Bring the dashboard back immediately. When plugins
@@ -1253,12 +1554,11 @@
 
         // MARK: - Background Runtime Prefetch
 
-        /// Consent-gated background download of every runtime asset the
-        /// next provision needs — bundled-kernel install, `vminit` OCI
-        /// initfs, and the pinned sandbox image — WITHOUT booting the VM
-        /// or taking over the UI. Called only from paths where the user
-        /// has already consented to sandbox setup (`setupComplete` or an
-        /// explicit action); never as a surprise download.
+        /// Background download of every runtime asset the next provision
+        /// needs — bundled-kernel install, `vminit` OCI initfs, and the
+        /// pinned sandbox image — WITHOUT booting the VM or taking over the
+        /// UI. Runs once onboarding has finished on VM-capable Macs, so the
+        /// first sandboxed command boots from cache.
         ///
         /// Idempotent and cheap when everything is cached. All downloads
         /// are resumable, so an app quit mid-prefetch loses nothing.
@@ -1266,7 +1566,7 @@
         /// its own (journey-visible) asset resolution.
         public func prefetchRuntimeAssetsInBackground() {
             guard prefetchTask == nil else { return }
-            guard inFlightStartTask == nil, linuxContainer == nil else { return }
+            guard inFlightStartTask == nil, pod == nil else { return }
             prefetchTask = Task { [weak self] in
                 await self?.runRuntimePrefetch()
             }
@@ -1277,6 +1577,8 @@
                 prefetchTask = nil
                 Task { @MainActor in State.shared.isPrefetchingRuntime = false }
             }
+            // Seatbelt hosts run no VM and have no kernel/initfs/image to fetch.
+            guard SandboxBackend.current == .virtualMachine else { return }
             guard (await checkAvailability()).isAvailable else { return }
             await MainActor.run { State.shared.isPrefetchingRuntime = true }
 
@@ -1320,6 +1622,9 @@
         @MainActor
         private func markActiveStepFailed() {
             guard var journey = State.shared.journey else { return }
+            // The step that threw already marked itself; with concurrent
+            // asset steps, `currentStepID` may name an innocent sibling.
+            if journey.steps.contains(where: { $0.status == .failed }) { return }
             let target = journey.currentStepID
             if let target,
                 let index = journey.steps.firstIndex(where: { $0.id == target })
@@ -1372,12 +1677,12 @@
                 _status = .starting
                 syncStatus()
                 do {
-                    try await provision()
+                    try await performProvision()
                 } catch {
                     releaseVMOwnership()
                     _status = .stopped
                     syncStatus()
-                    throw Self.friendlyError(from: error)
+                    throw Self.startError(from: error)
                 }
             }
         }
@@ -1395,7 +1700,7 @@
         /// `publishStoppedStatus` is false during an in-place restart so the
         /// UI moves directly from running to starting instead of briefly
         /// rendering the stopped dashboard between lifecycle phases.
-        private func stopContainer(publishStoppedStatus: Bool) async throws {
+        private func stopContainer(publishStoppedStatus: Bool, keepingLease: Bool = false) async throws {
             if SandboxBackend.current == .seatbelt {
                 // Nothing persistent to tear down — Seatbelt confinement
                 // is per-exec; stopping just gates future execs.
@@ -1403,19 +1708,10 @@
                 if publishStoppedStatus { syncStatus() }
                 return
             }
-            if let container = linuxContainer {
-                try await container.stop()
-            }
-            // Release the network interface but keep the on-disk container
-            // dir (and its `rootfs.ext4`) intact for the warm-restart path.
-            // `manager.delete` would `rm -rf` the whole tree and force a
-            // full 8 GiB re-unpack on the next start. The apk db survives
-            // too, so `verifyAndRepairAllPlugins` skips its batch.
-            if var manager = containerManager {
-                try? manager.releaseNetwork(Self.containerID)
-            }
-            linuxContainer = nil
-            containerManager = nil
+            // Stop the pod and release its network interface. The template
+            // and every agent's environment clone stay on disk, so the next
+            // boot is warm and each agent keeps its apk packages.
+            await teardownPod()
             // Drop network readiness; the next boot must re-verify.
             networkReadyTask?.cancel()
             networkReadyTask = nil
@@ -1435,7 +1731,7 @@
             // mints fresh ones. Leaving stale tokens in memory could falsely
             // authenticate a request to a guest that no longer exists.
             await SandboxBridgeTokenStore.shared.revokeAll()
-            releaseVMOwnership()
+            if !keepingLease { releaseVMOwnership() }
             if publishStoppedStatus {
                 _status = .stopped
                 syncStatus()
@@ -1446,30 +1742,66 @@
             await MainActor.run { State.shared.containerInfo = nil }
         }
 
-        /// Apply boot-time configuration without invoking the destructive
-        /// reset path. Runtime downloads, the shared warm rootfs, the
-        /// immutable CoW template, and existing agent environments all
-        /// survive; switching into per-agent mode can therefore clone the
-        /// existing template instead of unpacking the image again.
+        /// Apply boot-time configuration (and pod membership) without the
+        /// destructive reset path. Runtime downloads, the immutable CoW
+        /// template, and existing agent environments all survive.
         public func restartContainer() async throws {
-            try await stopContainer(publishStoppedStatus: false)
+            // Let an in-flight start finish so this restart applies on top
+            // of it, then share any restart that another caller began.
+            if let existing = inFlightStartTask { try? await existing.value }
+            if let existing = inFlightStartTask {
+                try await existing.value
+                return
+            }
+            let task = Task<Void, Error> { try await self.performRestart() }
+            inFlightStartTask = task
+            defer { inFlightStartTask = nil }
+            try await task.value
+        }
+
+        /// Restart without coalescing; the caller owns `inFlightStartTask`.
+        /// The lease is held from stop through boot so another process can't
+        /// take the VM in between.
+        private func performRestart(beforeBoot: (() throws -> Void)? = nil) async throws {
+            try await stopContainer(publishStoppedStatus: false, keepingLease: true)
             _removedByUser = false
             _stoppedExplicitly = false
             try await acquireVMOwnershipIfNeeded()
             _status = .starting
             syncStatus()
             do {
-                try await provision()
+                try beforeBoot?()
+                try await performProvision()
             } catch {
                 releaseVMOwnership()
                 _status = .stopped
                 syncStatus()
-                throw Self.friendlyError(from: error)
+                throw Self.startError(from: error)
             }
         }
 
+        /// Cancel an in-flight start: the journey's Cancel, or chat Stop
+        /// during first-time setup. Downloads resume on the next start.
+        public func cancelStart() {
+            guard let task = inFlightStartTask else { return }
+            _stoppedExplicitly = true
+            task.cancel()
+        }
+
+        /// A cancelled start surfaces as `CancellationError` whatever the
+        /// interrupted step threw, so callers can tell it from a failure.
+        private static func startError(from error: Error) -> Error {
+            if Task.isCancelled || error is CancellationError { return CancellationError() }
+            return friendlyError(from: error)
+        }
+
         public func removeContainer() async throws {
-            try await stopContainer()
+            _stoppedExplicitly = true
+            try await stopContainer(publishStoppedStatus: true, keepingLease: true)
+            // Another Osaurus app on this data root may be running a VM
+            // from these files; only the lease holder may delete them.
+            try await acquireVMOwnershipIfNeeded()
+            defer { releaseVMOwnership() }
 
             // Collect cleanup failures so the user-initiated full-remove
             // surfaces partial failures (orphan mounts, locked files, etc.)
@@ -1488,6 +1820,9 @@
             // Base template + per-agent clones go too — "Remove" must
             // actually reclaim the disk.
             SandboxRootfsTemplateStore.removeAll()
+            // Workflow environments lose their Linux users and apk packages
+            // with the rootfs; their manifests must not claim otherwise.
+            WorkflowSandboxEnvironment.invalidateAll()
 
             _status = .notProvisioned
             _removedByUser = true
@@ -1499,6 +1834,7 @@
             // Invalidate the warm-restart stamps now that the rootfs is gone.
             config.lastBootedImageDigest = nil
             config.lastRuntimeFormatVersion = nil
+            config.lastRootfsFormatVersion = nil
             SandboxConfigurationStore.save(config)
 
             if !warnings.isEmpty {
@@ -1513,16 +1849,34 @@
 
         /// Discard one agent's copy-on-write environment so its next boot
         /// re-clones a pristine rootfs from the base template. Refuses while
-        /// the VM is running — the environment may be the mounted rootfs.
-        /// Only meaningful with `perAgentEnvironments` on; harmless (no-op
-        /// on a missing directory) otherwise.
+        /// that agent's container is running on it.
         public func resetAgentEnvironment(agentName: String) async throws {
-            guard linuxContainer == nil else {
+            guard !(pod != nil && podMembers.contains(agentName)) else {
                 throw SandboxError.provisionFailed(
                     "Stop the sandbox before resetting an agent environment"
                 )
             }
             try SandboxRootfsTemplateStore.resetEnvironment(agentName: agentName)
+        }
+
+        /// Reset one agent's environment from the Sandbox page. When its
+        /// container is running, the sandbox restarts around the reset
+        /// once running commands finish.
+        public func resetAgentEnvironmentNow(agentName: String) async throws {
+            if let existing = inFlightStartTask { try? await existing.value }
+            guard pod != nil, podMembers.contains(agentName) else {
+                try SandboxRootfsTemplateStore.resetEnvironment(agentName: agentName)
+                return
+            }
+            let task = Task<Void, Error> {
+                _ = try await self.waitForRunningWork()
+                try await self.performRestart {
+                    try SandboxRootfsTemplateStore.resetEnvironment(agentName: agentName)
+                }
+            }
+            inFlightStartTask = task
+            defer { inFlightStartTask = nil }
+            try await task.value
         }
 
         // MARK: - Egress Proxy Lifecycle
@@ -1533,27 +1887,27 @@
         /// domain lists declared by that agent's installed plugins; the
         /// host-minted system token maps to the package-registry setup
         /// allowlist for root execs (apk installs, readiness probe).
+        ///
+        /// An open pod runs the proxy too, for workflow steps whose network
+        /// is scoped to declared hosts; open agents there are not proxied.
         private func startEgressProxy(gateway: String) async throws {
-            let systemToken = SymmetricKey(size: .bits256).withUnsafeBytes {
-                Data($0).base64EncodedString()
-                    .replacingOccurrences(of: "+", with: "-")
-                    .replacingOccurrences(of: "/", with: "_")
-                    .replacingOccurrences(of: "=", with: "")
-            }
+            let systemToken = Self.mintEgressToken()
             systemEgressToken = systemToken
             let setupDomains = SandboxNetworkPolicy.setupAllowlist.sorted()
 
-            let resolver: SandboxEgressProxy.AllowlistResolver = { token in
-                if token == systemToken { return setupDomains }
+            // Read live per connection, so a policy change that keeps the
+            // VM filtered applies without a restart.
+            let resolver: SandboxEgressProxy.AllowlistResolver = { [self] token in
+                if token == systemToken { return .domains(setupDomains) }
+                if let grant = await self.scopedEgressGrant(forToken: token) { return grant }
                 guard let identity = await SandboxBridgeTokenStore.shared.resolve(token: token)
                 else { return nil }
                 return await MainActor.run {
-                    let exec = AgentManager.shared.effectiveAutonomousExec(for: identity.agentId)
                     let pluginPermissions = SandboxPluginManager.shared
                         .plugins(for: identity.agentId.uuidString)
                         .map { $0.plugin.permissions?.network }
-                    return SandboxEgressPolicy.resolvedAllowlist(
-                        agentDomains: exec?.sandboxAllowedDomains,
+                    return SandboxEgressPolicy.proxyGrant(
+                        for: Self.egressMode(forAgentId: identity.agentId),
                         pluginNetworkPermissions: pluginPermissions
                     )
                 }
@@ -1572,25 +1926,94 @@
             }
             egressProxyEndpoint = nil
             systemEgressToken = nil
+            stepEgressGrants = [:]
+            openMemberEgressTokens = [:]
         }
 
-        /// Proxy environment for a guest process. Empty when the VM isn't
-        /// in allowlist mode. The credential embedded in the proxy URL is
-        /// the caller's own bridge token (root/system processes get the
-        /// registry-scoped system token), so the proxy enforces the right
-        /// allowlist per connection — nothing the guest claims is trusted.
-        private func egressProxyEnvironment(
-            forLinuxUser user: String?
-        ) async -> [String: String] {
-            guard let endpoint = egressProxyEndpoint else { return [:] }
+        nonisolated static func mintEgressToken() -> String {
+            SymmetricKey(size: .bits256).withUnsafeBytes {
+                Data($0).base64EncodedString()
+                    .replacingOccurrences(of: "+", with: "-")
+                    .replacingOccurrences(of: "/", with: "_")
+                    .replacingOccurrences(of: "=", with: "")
+            }
+        }
+
+        private func scopedEgressGrant(forToken token: String) -> SandboxProxyGrant? {
+            if let hosts = stepEgressGrants[token] { return .domains(hosts) }
+            if openMemberEgressTokens.values.contains(token) { return .anyPublicHost }
+            return nil
+        }
+
+        /// Proxy environment for a guest process, plus the step credential
+        /// to revoke when the process ends.
+        ///
+        /// A step scope (`stepHosts`) always gets a proxy that reaches only
+        /// those hosts; with no proxy running, an address nothing listens
+        /// on, so proxy-aware clients fail rather than go direct. Outside a
+        /// step, the env is empty unless the pod is filtered. There the
+        /// credential is the caller's own bridge token (root/system
+        /// processes get the registry-scoped system token, open members
+        /// without a bridge token a proxy-only one), so the proxy enforces
+        /// the right allowlist per connection — nothing the guest claims is
+        /// trusted.
+        struct EgressEnvironment {
+            var env: [String: String] = [:]
+            /// The step credential to revoke when the process ends.
+            var stepToken: String?
+            /// The credential in the proxy URL, scrubbed from output.
+            var credential: String?
+        }
+
+        func egressProxyEnvironment(
+            forLinuxUser user: String?,
+            stepHosts: [String]? = nil
+        ) async -> EgressEnvironment {
+            if user != nil, let stepHosts {
+                guard let endpoint = egressProxyEndpoint else {
+                    return EgressEnvironment(env: Self.proxyEnvironment(url: "http://127.0.0.1:9"))
+                }
+                let token = Self.mintEgressToken()
+                stepEgressGrants[token] = SandboxEgressPolicy.normalizedAllowlist(stepHosts)
+                return EgressEnvironment(
+                    env: Self.proxyEnvironment(url: "http://\(token):@\(endpoint.host):\(endpoint.port)"),
+                    stepToken: token, credential: token)
+            }
+            guard bootNetwork == .filtered, let endpoint = egressProxyEndpoint else { return EgressEnvironment() }
             let token: String?
             if let user {
-                token = await SandboxBridgeTokenStore.shared.token(forLinuxName: user)
+                token = await openMemberEgressToken(forLinuxUser: user)
             } else {
                 token = systemEgressToken
             }
-            guard let token else { return [:] }
-            let url = "http://\(token):@\(endpoint.host):\(endpoint.port)"
+            guard let token else { return EgressEnvironment() }
+            return EgressEnvironment(
+                env: Self.proxyEnvironment(url: "http://\(token):@\(endpoint.host):\(endpoint.port)"),
+                credential: token)
+        }
+
+        /// Credentials a guest process can read from its own environment or
+        /// token file, which never belong in tool output or logs.
+        private func credentialSecrets(forLinuxUser user: String?, egress: EgressEnvironment) async -> [String: String] {
+            var secrets: [String: String] = [:]
+            if let credential = egress.credential { secrets["OSAURUS_PROXY_TOKEN"] = credential }
+            if let user, let bridge = await SandboxBridgeTokenStore.shared.token(forLinuxName: user) {
+                secrets["OSAURUS_BRIDGE_TOKEN"] = bridge
+            }
+            return secrets
+        }
+
+        private func openMemberEgressToken(forLinuxUser user: String) async -> String? {
+            if let token = await SandboxBridgeTokenStore.shared.token(forLinuxName: user) { return token }
+            if let token = openMemberEgressTokens[user] { return token }
+            let member = user.hasPrefix("agent-") ? String(user.dropFirst("agent-".count)) : user
+            guard await MainActor.run(body: { Self.egressMode(forMember: member) }) == .open else { return nil }
+            let token = Self.mintEgressToken()
+            openMemberEgressTokens[user] = token
+            return token
+        }
+
+        nonisolated static func proxyEnvironment(url: String) -> [String: String] {
             let noProxy = "localhost,127.0.0.1"
             return [
                 "http_proxy": url,
@@ -1602,8 +2025,38 @@
             ]
         }
 
+        /// The env a guest process runs with. Proxy keys override the
+        /// caller's, so a caller-supplied `http_proxy` can't replace the
+        /// filtering proxy.
+        nonisolated static func mergedExecEnvironment(
+            caller env: [String: String], proxy: [String: String]
+        ) -> [String: String] {
+            env.merging(proxy) { _, proxy in proxy }
+        }
+
         // MARK: - Exec
 
+        /// Record that `agentName` wants the sandbox, so the next boot gives
+        /// it a container. Call before `startContainer()` when the VM is
+        /// started on an agent's behalf; avoids a second boot to join.
+        public func requestMembership(agentName: String) {
+            guard SandboxPodLayout.isAgentName(agentName) else { return }
+            noteRequested(agentName)
+        }
+
+        /// Container an exec with no explicit target runs in: agent users
+        /// (`agent-<name>`) run in their own container, everything else in
+        /// the system container. The diagnostics user lives in the system
+        /// container.
+        nonisolated static func target(forLinuxName linuxName: String?) -> SandboxExecTarget {
+            let target = SandboxExecTarget.implied(byUser: linuxName)
+            if case .agent(SandboxPodLayout.diagnosticsAgentName) = target { return .system }
+            return target
+        }
+
+        /// Run `command` in the pod. `target` picks the container (default:
+        /// the one implied by `user`); an agent that isn't in the running
+        /// pod joins it first (see `ensureMember`).
         public func exec(
             user: String? = nil,
             command: String,
@@ -1614,12 +2067,18 @@
             logSource: String? = nil,
             stdoutTee: (any Writer)? = nil,
             stderrTee: (any Writer)? = nil,
-            onProcessStarted: (@Sendable (ProcessHandle) -> Void)? = nil
+            onProcessStarted: (@Sendable (ProcessHandle) -> Void)? = nil,
+            target: SandboxExecTarget? = nil
         ) async throws -> ContainerExecResult {
+            let limited = user != nil
+            if limited { try await acquireUserExecSlot() }
+            defer { if limited { releaseUserExecSlot() } }
             if SandboxBackend.current == .seatbelt {
-                // Host confinement has no per-user separation — `user` is
-                // ignored; the Seatbelt profile is the isolation boundary.
+                // Host confinement has no per-user separation; the Seatbelt
+                // profile is the isolation boundary, scoped to `user`'s
+                // home plus the shared directory.
                 return try await execViaSeatbelt(
+                    user: user,
                     command: command,
                     env: env,
                     cwd: cwd,
@@ -1630,34 +2089,62 @@
                 )
             }
 
-            guard linuxContainer != nil else {
-                throw SandboxError.containerNotRunning
-            }
+            let target = target ?? Self.target(forLinuxName: user)
+            let containerID = try await runningContainerID(for: target)
+            let args = Self.execArguments(user: user, command: command, cwd: cwd)
 
-            let shellCommand = cwd.map { "cd \($0) && \(command)" } ?? command
-            let args: [String]
+            // In a filtered pod every guest process gets `http_proxy` env
+            // carrying its own credential, and a step-scoped exec gets one
+            // in any pod.
+            let egress = await egressProxyEnvironment(forLinuxUser: user, stepHosts: SandboxStepScope.hosts)
+            defer { if let token = egress.stepToken { stepEgressGrants[token] = nil } }
+            let mergedEnv = Self.mergedExecEnvironment(caller: env, proxy: egress.env)
+            let credentials = await credentialSecrets(forLinuxUser: user, egress: egress)
+
+            let result = try await SandboxLogScrubbing.$secrets.withValue(
+                SandboxLogScrubbing.secrets.merging(credentials) { existing, _ in existing }
+            ) {
+                try await execViaAgent(
+                    containerID: containerID,
+                    args: args,
+                    rlimits: user == nil ? [] : Self.agentRLimits,
+                    env: mergedEnv,
+                    timeout: timeout,
+                    streamToLogs: streamToLogs,
+                    logSource: logSource,
+                    stdoutTee: stdoutTee,
+                    stderrTee: stderrTee,
+                    onProcessStarted: onProcessStarted
+                )
+            }
+            return result.scrubbed(credentials)
+        }
+
+        /// argv for a guest exec: `su` into `user` when given, else a root
+        /// shell. `cwd` is quoted so a path with spaces or metacharacters
+        /// can't split or inject into the command.
+        nonisolated static func execArguments(user: String?, command: String, cwd: String?) -> [String] {
+            let shellCommand =
+                cwd.map { "cd \(SandboxPackageRequest.shellQuote($0)) && \(command)" } ?? command
             if let user {
-                args = ["su", "-s", "/bin/bash", user, "-c", shellCommand]
-            } else {
-                args = ["sh", "-c", shellCommand]
+                return ["su", "-s", "/bin/bash", user, "-c", shellCommand]
             }
+            return ["sh", "-c", shellCommand]
+        }
 
-            // In allowlist mode every guest process gets `http_proxy` env
-            // carrying its own credential; caller-supplied env wins on
-            // key conflicts. No-op (empty) in open / no-network modes.
-            let proxyEnv = await egressProxyEnvironment(forLinuxUser: user)
-            let mergedEnv = proxyEnv.merging(env) { _, caller in caller }
-
-            return try await execViaAgent(
-                args: args,
-                env: mergedEnv,
-                timeout: timeout,
-                streamToLogs: streamToLogs,
-                logSource: logSource,
-                stdoutTee: stdoutTee,
-                stderrTee: stderrTee,
-                onProcessStarted: onProcessStarted
-            )
+        /// Container id to exec in for `target`, joining the agent to the
+        /// pod first when needed. Waits out an in-flight boot.
+        private func runningContainerID(for target: SandboxExecTarget) async throws -> String {
+            switch target {
+            case .agent(let name):
+                try await ensureMember(name)
+            case .system:
+                if pod == nil, let starting = inFlightStartTask {
+                    try await starting.value
+                }
+            }
+            guard pod != nil else { throw SandboxError.containerNotRunning }
+            return SandboxPodLayout.containerID(for: target)
         }
 
         /// Seatbelt-backend exec: run the command as a host process under
@@ -1665,6 +2152,7 @@
         /// the command, cwd, and env are rewritten to the host workspace
         /// so the model-facing path contract matches the VM backend.
         private func execViaSeatbelt(
+            user: String?,
             command: String,
             env: [String: String],
             cwd: String?,
@@ -1677,12 +2165,19 @@
                 throw SandboxError.containerNotRunning
             }
             let root = OsaurusPaths.containerWorkspace().path
-            let network = SeatbeltSandbox.NetworkPolicy.from(
-                configNetwork: SandboxConfigurationStore.load().network)
+            let network = Self.seatbeltNetwork(
+                await MainActor.run { Self.seatbeltNetwork(forUser: user) }, stepHosts: SandboxStepScope.hosts)
+            // Agent execs (`agent-<name>`) reach only their own home and the
+            // shared directory; system execs (no user) keep the workspace.
+            let agentName = user.flatMap { $0.hasPrefix("agent-") ? String($0.dropFirst("agent-".count)) : nil }
+            let scope = agentName.map { SandboxAgentPathScope(agentName: $0) }
+            scope?.ensureRootsExist()
+            let scratch = agentName.map { SeatbeltSandbox.scratchDir(forAgent: $0) } ?? SeatbeltSandbox.scratchDir
             let profile = SeatbeltSandbox.profile(
                 workspaceRoot: root,
-                tempDir: SeatbeltSandbox.scratchDir,
-                network: network
+                tempDir: scratch,
+                network: network,
+                writableRoots: scope.map { $0.hostRoots.map(\.path) }
             )
             let mappedCwd = cwd.map { SeatbeltPathMapper.mapToHost($0, workspaceRoot: root) }
             let netLabel = network == .allowed ? "allowed" : "denied"
@@ -1698,17 +2193,23 @@
                 SeatbeltExecutor.Request(
                     command: SeatbeltPathMapper.mapToHost(command, workspaceRoot: root),
                     env: SeatbeltPathMapper.mapEnvToHost(env, workspaceRoot: root),
-                    cwd: mappedCwd ?? root,
+                    cwd: mappedCwd ?? scope?.hostHome.path ?? root,
                     timeout: timeout,
                     profile: profile,
                     stdoutTee: stdoutTee,
                     stderrTee: stderrTee,
-                    onProcessStarted: onProcessStarted
+                    onProcessStarted: onProcessStarted,
+                    scratchDir: scratch
                 ))
         }
 
+        /// Root exec in `target`'s container. The target is required: with
+        /// one container per agent there is no single guest any more, and
+        /// root work on an agent's files or packages must run where that
+        /// agent's filesystem is mounted.
         public func execAsRoot(
             command: String,
+            target: SandboxExecTarget,
             timeout: TimeInterval? = 60,
             streamToLogs: Bool = false,
             logSource: String? = nil,
@@ -1723,7 +2224,8 @@
                 logSource: logSource,
                 stdoutTee: stdoutTee,
                 stderrTee: stderrTee,
-                onProcessStarted: onProcessStarted
+                onProcessStarted: onProcessStarted,
+                target: target
             )
         }
 
@@ -1775,7 +2277,8 @@
             cwd: String? = nil,
             stdin: any ReaderStream,
             stdout: any Writer,
-            stderr: any Writer
+            stderr: any Writer,
+            activity: SandboxInteractiveActivity? = nil
         ) async throws -> LinuxProcess {
             if SandboxBackend.current == .seatbelt {
                 // Long-lived bidirectional-stdio processes (stdio MCP
@@ -1784,36 +2287,33 @@
                 throw SandboxError.execFailed(
                     "Interactive sandbox processes require the VM backend (macOS 26 or later)")
             }
-            guard let container = linuxContainer else {
-                throw SandboxError.containerNotRunning
-            }
-
-            let shellCommand = cwd.map { "cd \($0) && \(command)" } ?? command
-            let args: [String]
-            if let user {
-                args = ["su", "-s", "/bin/bash", user, "-c", shellCommand]
-            } else {
-                args = ["sh", "-c", shellCommand]
-            }
+            let containerID = try await runningContainerID(for: Self.target(forLinuxName: user))
+            guard let pod else { throw SandboxError.containerNotRunning }
+            let args = Self.execArguments(user: user, command: command, cwd: cwd)
 
             // Long-lived processes (stdio MCP servers) need the proxy env
             // too — they make their own outbound calls in allowlist mode.
-            let proxyEnv = await egressProxyEnvironment(forLinuxUser: user)
-            var mergedEnv = proxyEnv.merging(env) { _, caller in caller }
+            let proxyEnv = await egressProxyEnvironment(forLinuxUser: user).env
+            var mergedEnv = Self.mergedExecEnvironment(caller: env, proxy: proxyEnv)
             if mergedEnv["PATH"] == nil {
                 mergedEnv["PATH"] = LinuxProcessConfiguration.defaultPath
             }
             let environ = mergedEnv.map { "\($0.key)=\($0.value)" }
 
-            let process = try await container.exec(UUID().uuidString) { config in
+            let processID = UUID().uuidString
+            let process = try await pod.execInContainer(containerID, processID: processID) { config in
                 config.arguments = args
                 config.environmentVariables = environ
                 Self.applyProcessRestrictions(to: &config)
+                if user != nil { config.rlimits = Self.agentRLimits }
                 config.stdin = stdin
                 config.stdout = stdout
                 config.stderr = stderr
             }
             try await process.start()
+            interactiveProcesses[process.id] = (containerID, activity)
+            lastActivityAt = Date()
+            publishOccupancy()
             return process
         }
 
@@ -1844,6 +2344,12 @@
                 return
             }
             let linuxName = "agent-\(agentName)"
+            let target = Self.target(forLinuxName: linuxName)
+            // Join the pod before minting: a membership restart revokes every
+            // bridge token, so the token written below must outlive it.
+            if case .agent(let member) = target {
+                try await ensureMember(member)
+            }
             var token: String?
             if let agentId {
                 token = await SandboxBridgeTokenStore.shared.register(
@@ -1856,16 +2362,68 @@
                 homeDir: OsaurusPaths.inContainerAgentHome(agentName),
                 bridgeTokenDir: Self.bridgeTokenDir,
                 token: token,
-                soulSeedBody: soulSeedBody
+                soulSeedBody: soulSeedBody,
+                uid: SandboxAgentUIDs.uid(for: linuxName)
             )
-            let result = try await execAsRoot(command: script)
+            let result = try await serializingUserAdmin(on: target) {
+                try await self.execAsRoot(command: script, target: target)
+            }
             guard result.succeeded else {
                 throw SandboxError.userCreationFailed(
                     result.stderr.isEmpty
                         ? "agent bootstrap failed for \(linuxName)"
-                        : result.stderr
+                        : Self.userAdminFailureMessage(result.stderr, hostFreeBytes: Self.hostFreeBytes())
                 )
             }
+        }
+
+        /// One chain per container for user administration: `adduser` and
+        /// `deluser` rewrite `/etc/passwd` through an exclusive
+        /// `/etc/passwd+`, so two runs in one container race and the loser
+        /// fails with "File exists".
+        private var userAdminTails: [SandboxExecTarget: Task<Void, Never>] = [:]
+
+        private func serializingUserAdmin<T: Sendable>(
+            on target: SandboxExecTarget,
+            _ body: @escaping @Sendable () async throws -> T
+        ) async throws -> T {
+            let previous = userAdminTails[target]
+            let task = Task<T, Error> {
+                await previous?.value
+                return try await body()
+            }
+            userAdminTails[target] = Task { _ = try? await task.value }
+            return try await task.value
+        }
+
+        /// Free space on the volume holding the sandbox data, or nil.
+        nonisolated static func hostFreeBytes() -> Int64? {
+            let values = try? OsaurusPaths.container().resourceValues(
+                forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+            return values?.volumeAvailableCapacityForImportantUsage
+        }
+
+        /// Actionable text for the user-admin failures we can name. The
+        /// bootstrap step marker lines are kept so the failed step can still
+        /// be attributed; the raw stderr follows for diagnosis.
+        nonisolated static func userAdminFailureMessage(_ stderr: String, hostFreeBytes: Int64?) -> String {
+            let lowered = stderr.lowercased()
+            let hint: String?
+            if lowered.contains("no space left on device") {
+                if let hostFreeBytes, hostFreeBytes < 1 << 30 {
+                    hint = L("Your Mac is out of disk space, so the sandbox can't set up this agent. Free up space and try again.")
+                } else {
+                    hint = L(
+                        "This agent's sandbox environment is full. Remove packages it no longer needs, or reset its environment in Settings → Developer Tools → Sandbox."
+                    )
+                }
+            } else if ["/etc/passwd+", "/etc/group+", "/etc/shadow+"].contains(where: stderr.contains) {
+                hint = L("An earlier change to this agent's sandbox users was interrupted. Restart the sandbox to clear it.")
+            } else {
+                hint = nil
+            }
+            guard let hint else { return stderr }
+            return hint + "\n" + stderr
         }
 
         /// Build the batched per-agent bootstrap script. Static so unit
@@ -1882,16 +2440,27 @@
             homeDir: String,
             bridgeTokenDir: String,
             token: String?,
-            soulSeedBody: String?
+            soulSeedBody: String?,
+            uid: UInt32? = nil
         ) -> String {
             let linuxName = "agent-\(agentName)"
+            typealias Step = SandboxProvisionStepError.BootstrapStep
+            func step(_ step: Step) -> String { "STEP=\(step.rawValue)" }
             var lines: [String] = [
                 "set -e",
-                "if ! id \(linuxName) >/dev/null 2>&1; then",
-                "  adduser -D -h '\(homeDir)' \(linuxName)",
-                "fi",
-                "chmod 700 '\(homeDir)'",
+                step(.adduser),
+                "trap 'rc=$?; [ \"$rc\" -eq 0 ] || echo \"\(SandboxProvisionStepError.bootstrapStepMarker)$STEP\" >&2' EXIT",
+            ]
+            lines += userCreationLines(linuxName: linuxName, homeDir: homeDir, uid: uid)
+            lines += [
+                step(.chmodHome),
+                "mkdir -p '\(homeDir)'",
+                // A member's home is its own VirtioFS mount, whose root
+                // refuses chown/chmod; only the diag home lives on ext4.
+                "mountpoint -q '\(homeDir)' || { chown \(linuxName):\(linuxName) '\(homeDir)'; chmod 700 '\(homeDir)'; }",
+                step(.pluginsDir),
                 "install -d -o \(linuxName) -g \(linuxName) '\(homeDir)/plugins'",
+                step(.tokenDir),
                 "mkdir -p \(bridgeTokenDir)",
                 "chmod 0711 \(bridgeTokenDir)",
             ]
@@ -1900,12 +2469,15 @@
                 // no transient world-readable window; `printf %s` keeps
                 // the token byte-exact (no trailing newline).
                 lines.append(contentsOf: [
+                    step(.tokenWrite),
                     "( umask 0077 && printf %s '\(token)' > \(bridgeTokenDir)/\(linuxName).token )",
+                    step(.tokenChown),
                     "chown \(linuxName):\(linuxName) \(bridgeTokenDir)/\(linuxName).token",
                 ])
             }
             if let soulSeedBody {
                 lines.append(contentsOf: [
+                    step(.soulSeed),
                     "if [ ! -f '\(homeDir)/SOUL.md' ]; then",
                     "cat > '\(homeDir)/SOUL.md' <<'SOUL_EOF'",
                     soulSeedBody,
@@ -1915,6 +2487,27 @@
                 ])
             }
             return lines.joined(separator: "\n")
+        }
+
+        /// Create `linuxName` with `uid`, re-creating it when an older
+        /// environment clone gave it a different UID (its home is a
+        /// VirtioFS mount, so no files keep the old owner).
+        static func userCreationLines(linuxName: String, homeDir: String, uid: UInt32?) -> [String] {
+            let add = "adduser -D -H\(uid.map { " -u \($0)" } ?? "") -h '\(homeDir)' \(linuxName)"
+            var lines = [
+                "if ! id \(linuxName) >/dev/null 2>&1; then",
+                "  \(add)",
+            ]
+            if let uid {
+                lines += [
+                    "elif [ \"$(id -u \(linuxName))\" != \"\(uid)\" ]; then",
+                    "  deluser \(linuxName)",
+                    "  delgroup \(linuxName) >/dev/null 2>&1 || true",
+                    "  \(add)",
+                ]
+            }
+            lines.append("fi")
+            return lines
         }
 
         /// Host-side equivalent of the guest bootstrap script, used by the
@@ -1945,25 +2538,29 @@
                 try Self.bootstrapAgentOnHost(agentName: agentName, soulSeedBody: nil)
                 return
             }
-            let checkResult = try await exec(command: "id agent-\(agentName) 2>/dev/null")
+            let linuxName = "agent-\(agentName)"
+            let target = Self.target(forLinuxName: linuxName)
+            let checkResult = try await exec(command: "id \(linuxName) 2>/dev/null", target: target)
             if checkResult.succeeded { return }
 
             let homeDir = OsaurusPaths.inContainerAgentHome(agentName)
-            let addResult = try await execAsRoot(command: "adduser -D -h \(homeDir) agent-\(agentName)")
+            let command = (
+                ["set -e"]
+                    + Self.userCreationLines(
+                        linuxName: linuxName, homeDir: homeDir, uid: SandboxAgentUIDs.uid(for: linuxName))
+                    + [
+                        "mkdir -p '\(homeDir)'",
+                        "mountpoint -q '\(homeDir)' || chown \(linuxName):\(linuxName) '\(homeDir)'",
+                        "install -d -o \(linuxName) -g \(linuxName) '\(homeDir)/plugins'",
+                    ]
+            ).joined(separator: "\n")
+            let addResult = try await serializingUserAdmin(on: target) {
+                try await self.execAsRoot(command: command, target: target)
+            }
             guard addResult.succeeded else {
-                throw SandboxError.userCreationFailed(addResult.stderr)
+                throw SandboxError.userCreationFailed(
+                    Self.userAdminFailureMessage(addResult.stderr, hostFreeBytes: Self.hostFreeBytes()))
             }
-
-            let chmodResult = try await execAsRoot(command: "chmod 700 \(homeDir)")
-            guard chmodResult.succeeded else {
-                throw SandboxError.userCreationFailed("chmod failed: \(chmodResult.stderr)")
-            }
-
-            let pluginsDir = "\(homeDir)/plugins"
-            _ = try await exec(
-                user: "agent-\(agentName)",
-                command: "mkdir -p \(pluginsDir)"
-            )
         }
 
         public func removeAgentUser(_ agentName: String) async throws -> Bool {
@@ -1978,21 +2575,29 @@
                 return true
             }
             let linuxUser = "agent-\(agentName)"
-            let checkResult = try await exec(command: "id \(linuxUser) 2>/dev/null")
-            guard checkResult.succeeded else { return false }
-
-            // Drop the per-agent bridge token before removing the user so
-            // any in-flight bridge calls from this agent fail closed.
+            requestedMembers.removeAll { $0 == agentName }
+            // Drop the per-agent bridge token first so any in-flight bridge
+            // calls from this agent fail closed.
             await SandboxBridgeTokenStore.shared.revoke(linuxName: linuxUser)
-            _ = try? await execAsRoot(
-                command: "rm -f \(Self.bridgeTokenDir)/\(linuxUser).token"
-            )
 
-            let homeDir = OsaurusPaths.inContainerAgentHome(agentName)
-            let removeResult = try await execAsRoot(
-                command:
-                    "pkill -u \(linuxUser) >/dev/null 2>&1 || true; deluser \(linuxUser) >/dev/null 2>&1 || true; rm -rf '\(homeDir)'"
-            )
+            guard pod != nil, podMembers.contains(agentName) else {
+                // No running container: the user, its packages, and its
+                // token file all live in the agent's environment clone.
+                let existed = FileManager.default.fileExists(
+                    atPath: SandboxRootfsTemplateStore.environmentDir(agentName: agentName).path
+                )
+                try SandboxRootfsTemplateStore.resetEnvironment(agentName: agentName)
+                return existed
+            }
+
+            let target = SandboxExecTarget.agent(agentName)
+            let checkResult = try await exec(command: "id \(linuxUser) 2>/dev/null", target: target)
+            guard checkResult.succeeded else { return false }
+            let removeCommand =
+                "rm -f \(Self.bridgeTokenDir)/\(linuxUser).token; pkill -u \(linuxUser) >/dev/null 2>&1 || true; deluser \(linuxUser) >/dev/null 2>&1 || true"
+            let removeResult = try await serializingUserAdmin(on: target) {
+                try await self.execAsRoot(command: removeCommand, target: target)
+            }
             guard removeResult.succeeded else {
                 throw SandboxError.removeFailed(
                     removeResult.stderr.isEmpty
@@ -2000,12 +2605,13 @@
                         : removeResult.stderr
                 )
             }
-
-            let verifyResult = try await exec(command: "id \(linuxUser) 2>/dev/null")
+            let verifyResult = try await exec(command: "id \(linuxUser) 2>/dev/null", target: target)
             guard !verifyResult.succeeded else {
                 throw SandboxError.removeFailed("User \(linuxUser) still exists after cleanup")
             }
-
+            // The running container still boots from the clone; discard it
+            // (and the agent's packages) on the next boot.
+            pendingEnvironmentResets.insert(agentName)
             return true
         }
 
@@ -2022,7 +2628,7 @@
         /// any caller-supplied header.
         public func provisionBridgeToken(linuxName: String, agentId: UUID) async throws {
             // Guest must be running to host the token file.
-            guard linuxContainer != nil else { return }
+            guard pod != nil else { return }
 
             let token = await SandboxBridgeTokenStore.shared.register(
                 agentId: agentId,
@@ -2039,7 +2645,7 @@
                 ( umask 0077 && printf %s '\(token)' > \(tokenPath) ) && \
                 chown \(linuxName):\(linuxName) \(tokenPath)
                 """
-            let result = try await execAsRoot(command: script)
+            let result = try await execAsRoot(command: script, target: Self.target(forLinuxName: linuxName))
             guard result.succeeded else {
                 throw SandboxError.provisionFailed(
                     "Failed to write bridge token for \(linuxName): \(result.stderr)"
@@ -2050,9 +2656,16 @@
         /// Drop in-memory and on-disk traces of the bridge token for `linuxName`.
         public func revokeBridgeToken(linuxName: String) async {
             await SandboxBridgeTokenStore.shared.revoke(linuxName: linuxName)
-            if linuxContainer != nil {
+            let target = Self.target(forLinuxName: linuxName)
+            let isRunningThere: Bool
+            switch target {
+            case .system: isRunningThere = pod != nil
+            case .agent(let name): isRunningThere = pod != nil && podMembers.contains(name)
+            }
+            if isRunningThere {
                 _ = try? await execAsRoot(
-                    command: "rm -f \(Self.bridgeTokenDir)/\(linuxName).token"
+                    command: "rm -f \(Self.bridgeTokenDir)/\(linuxName).token",
+                    target: target
                 )
             }
         }
@@ -2100,9 +2713,9 @@
             // trust it and skip the stat() / stale-dir-cleanup pass
             // inside `refreshStatus()`. Only fall back to the full
             // status walk when we genuinely might have lost the
-            // container (e.g. linuxContainer became nil).
+            // container (e.g. the pod became nil).
             let currentStatus: ContainerStatus
-            if _status == .running && linuxContainer != nil {
+            if _status == .running && pod != nil {
                 currentStatus = .running
             } else {
                 currentStatus = await refreshStatus()
@@ -2162,43 +2775,34 @@
             )
         }
 
-        /// Single round-trip metric collection for the running container.
-        /// Previously this method issued six sequential `exec` calls, each
-        /// paying the full vsock + agent round-trip cost. The settings
-        /// dashboard refreshes every 5 s while the user is on the Sandbox
-        /// tab, so the cumulative cost was meaningful. We now emit one
-        /// `KEY=value` blob and parse on the host.
+        /// Metric collection for the running pod. VM-wide numbers (uptime,
+        /// memory, load) come from one system-container exec; the process
+        /// count sums every container's cgroup; agent users are the pod's
+        /// members; disk usage is measured on the host, since no container
+        /// mounts the whole workspace.
         ///
-        /// Output contract (one line per field, terminated by `\n`):
+        /// Exec output contract (one line per field):
         /// ```
-        /// USERS=agent-a,agent-b
-        /// DISK=4.0K
         /// UPTIME=123 seconds
         /// MEM=128MB / 512MB
         /// CPU=0.10 0.05 0.01
-        /// PROCS=42
         /// ```
-        /// Any individual field may be absent or empty if its underlying
-        /// /proc / awk pipeline failed — the host treats missing fields as
-        /// `nil`, exactly like the prior per-call try-fail semantics.
+        /// Any field may be absent or empty if its /proc read failed — the
+        /// host treats missing fields as `nil`.
         private func collectRunningContainerInfo(status: ContainerStatus) async -> ContainerInfo {
             let script = """
-                printf 'USERS=%s\\n' "$(awk -F: '$3 >= 1000 && $3 < 65534 {print $1}' /etc/passwd 2>/dev/null | paste -sd, -)"
-                printf 'DISK=%s\\n' "$(du -sh /workspace 2>/dev/null | cut -f1)"
                 printf 'UPTIME=%s\\n' "$(awk '{printf "%.0f seconds", $1}' /proc/uptime 2>/dev/null)"
                 printf 'MEM=%s\\n' "$(awk '/MemTotal/{t=$2} /MemAvailable/{a=$2} END{if (t>0) printf "%dMB / %dMB", (t-a)/1024, t/1024}' /proc/meminfo 2>/dev/null)"
                 printf 'CPU=%s\\n' "$(awk '{printf "%s %s %s", $1, $2, $3}' /proc/loadavg 2>/dev/null)"
-                printf 'PROCS=%s\\n' "$(ls -1 /proc 2>/dev/null | grep -c '^[0-9]')"
                 """
 
-            var users: [String] = []
-            var disk: String? = nil
+            let users = podMembers.map { "agent-\($0)" }
             var uptime: String? = nil
             var memoryUsage: String? = nil
             var cpuLoad: String? = nil
             var processCount: Int? = nil
 
-            if let result = try? await exec(command: script, timeout: 5) {
+            if let result = try? await exec(command: script, timeout: 5, target: .system) {
                 for rawLine in result.stdout.split(separator: "\n", omittingEmptySubsequences: true) {
                     let line = String(rawLine)
                     guard let eq = line.firstIndex(of: "=") else { continue }
@@ -2207,23 +2811,22 @@
                         .trimmingCharacters(in: .whitespacesAndNewlines)
                     if value.isEmpty { continue }
                     switch key {
-                    case "USERS":
-                        users = value.split(separator: ",").map(String.init)
-                    case "DISK":
-                        disk = value
-                    case "UPTIME":
-                        uptime = value
-                    case "MEM":
-                        memoryUsage = value
-                    case "CPU":
-                        cpuLoad = value
-                    case "PROCS":
-                        processCount = Int(value)
-                    default:
-                        continue
+                    case "UPTIME": uptime = value
+                    case "MEM": memoryUsage = value
+                    case "CPU": cpuLoad = value
+                    default: continue
                     }
                 }
             }
+            if let pod, let stats = try? await pod.statistics(categories: .process) {
+                processCount = Int(stats.compactMap { $0.process?.current }.reduce(0, +))
+            }
+
+            let workspace = OsaurusPaths.containerWorkspace()
+            let bytes = await Task.detached(priority: .utility) {
+                OsaurusPaths.directorySize(at: workspace)
+            }.value
+            let disk = ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
 
             return ContainerInfo(
                 status: status,
@@ -2268,7 +2871,7 @@
                 return await runSeatbeltDiagnostics()
             }
             async let execD = diagnose("exec") {
-                let r = try await self.exec(command: "echo hello from sandbox")
+                let r = try await self.exec(command: "echo hello from sandbox", target: .system)
                 let out = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard out == "hello from sandbox" else {
                     throw SandboxError.execFailed("expected 'hello from sandbox', got '\(out)'")
@@ -2276,10 +2879,20 @@
                 return out
             }
 
+            let bootNetwork = self.bootNetwork
             async let natD = diagnose("nat-networking") {
+                if bootNetwork == SandboxPodNetwork.none {
+                    return "network is off for every agent in the sandbox"
+                }
+                // Filtered: system processes reach only the setup hosts,
+                // through the proxy.
+                let url =
+                    bootNetwork == .filtered
+                    ? "http://dl-cdn.alpinelinux.org/alpine/" : "http://example.com"
                 let r = try await self.exec(
-                    command: "wget -qO- http://example.com 2>/dev/null | head -5",
-                    timeout: 15
+                    command: "wget -qO- \(url) 2>/dev/null | head -5",
+                    timeout: 15,
+                    target: .system
                 )
                 let out = r.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !out.isEmpty else {
@@ -2296,7 +2909,7 @@
 
             async let apkD = diagnose("apk-install") {
                 _ = await self.awaitNetworkReady()
-                let r = try await self.execAsRoot(command: "apk add --no-cache jq 2>&1", timeout: 60)
+                let r = try await self.execAsRoot(command: "apk add --no-cache jq 2>&1", target: .system, timeout: 60)
                 guard r.succeeded else {
                     throw SandboxError.execFailed(
                         Self.sandboxDiagnosticHint(
@@ -2412,10 +3025,7 @@
                 return "writes outside the workspace are blocked"
             }
 
-            let networkAllowed =
-                SeatbeltSandbox.NetworkPolicy.from(
-                    configNetwork: SandboxConfigurationStore.load().network
-                ) == .allowed
+            let networkAllowed = await MainActor.run { Self.seatbeltNetwork(forUser: nil) } == .allowed
             let networkResult = await diagnose("network") {
                 let r = try await self.exec(
                     command: "curl -s -m 10 https://example.com | head -5",
@@ -2521,14 +3131,28 @@
         /// 0.41 SDK. A registry failure is surfaced and can be retried.
         private func ensureInitFS(store: ImageStore) async throws -> Containerization.Mount {
             let stagedPath = OsaurusPaths.containerInitFSFile()
+            let digestPath = Self.initFSDigestFile(for: stagedPath)
+
+            // The staged block is built locally, so its digest is recorded
+            // when it is built and checked before every boot. A block with
+            // no record (staged by an older build) or a different digest is
+            // rebuilt from the digest-verified content store.
+            if FileManager.default.fileExists(atPath: stagedPath.path),
+                await !Self.stagedAssetMatchesRecord(stagedPath, record: digestPath)
+            {
+                debugLog("[Sandbox] Staged initfs does not match its recorded digest; rebuilding")
+                try? FileManager.default.removeItem(at: stagedPath)
+                try? FileManager.default.removeItem(at: digestPath)
+            }
 
             if !FileManager.default.fileExists(atPath: stagedPath.path) {
                 await startStep(.downloadInitFS, detail: L("Pulling init filesystem"))
                 try OsaurusPaths.ensureExists(OsaurusPaths.container())
                 do {
                     try await Self.buildInitFSFromOCI(store: store, at: stagedPath)
+                    try await Self.recordAssetDigest(of: stagedPath, to: digestPath)
                 } catch {
-                    await endStep(.downloadInitFS, status: .failed)
+                    await failOrResetStep(.downloadInitFS, after: error)
                     throw error
                 }
                 await endStep(.downloadInitFS, status: .completed)
@@ -2560,13 +3184,46 @@
             }
         }
 
+        nonisolated static func initFSDigestFile(for staged: URL) -> URL {
+            staged.appendingPathExtension("sha256")
+        }
+
+        /// Whether `asset` hashes to the digest stored at `record`. A
+        /// missing or unreadable record is a mismatch.
+        nonisolated static func stagedAssetMatchesRecord(_ asset: URL, record: URL) async -> Bool {
+            guard let recorded = try? String(contentsOf: record, encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            else { return false }
+            return (try? await verifySHA256Async(of: asset, expected: recorded, maxBytes: maxArtifactDownloadBytes))
+                != nil
+        }
+
+        nonisolated static func recordAssetDigest(of asset: URL, to record: URL) async throws {
+            let digest = try await Task.detached(priority: .userInitiated) {
+                try Self.sha256Hex(of: asset, maxBytes: Self.maxArtifactDownloadBytes)
+            }.value
+            try Data(digest.utf8).write(to: record, options: .atomic)
+        }
+
         // MARK: - Private: Kernel Management
 
         private func ensureKernel() async throws -> Kernel {
             let kernelPath = OsaurusPaths.containerKernelFile()
 
             if FileManager.default.fileExists(atPath: kernelPath.path) {
-                return Kernel(path: kernelPath, platform: .linuxArm)
+                do {
+                    try await Self.verifySHA256Async(
+                        of: kernelPath,
+                        expected: SandboxRuntimeAssets.kernelSHA256,
+                        maxBytes: Self.maxArtifactDownloadBytes
+                    )
+                    return Kernel(path: kernelPath, platform: .linuxArm)
+                } catch {
+                    debugLog(
+                        "[Sandbox] Installed kernel failed verification (\(error.localizedDescription)); reinstalling"
+                    )
+                    try? FileManager.default.removeItem(at: kernelPath)
+                }
             }
 
             let kernelDir = OsaurusPaths.containerKernelDir()
@@ -2611,7 +3268,7 @@
                     stepID: .downloadKernel
                 )
             } catch {
-                await endStep(.downloadKernel, status: .failed)
+                await failOrResetStep(.downloadKernel, after: error)
                 throw error
             }
             await endStep(.downloadKernel, status: .completed)
@@ -2619,19 +3276,13 @@
 
             await startStep(.extractKernel, detail: L("Untarring archive"))
 
-            // Hand the sync `tar` + `find` + `copyItem` work to a detached
-            // task so `Process.waitUntilExit()` doesn't pin the actor's
-            // executor while extraction runs (tens to hundreds of ms on
-            // fast disks, longer on slow ones). The actor is then free to
-            // service queued calls — e.g. the SandboxView's polling
-            // `info()` or a concurrent `ensureInitFS()` finishing up.
             do {
                 try await Self.extractKernel(
                     from: stableTarball,
                     installTo: kernelPath
                 )
             } catch {
-                await endStep(.extractKernel, status: .failed)
+                await failOrResetStep(.extractKernel, after: error)
                 throw error
             }
             await endStep(.extractKernel, status: .completed)
@@ -2640,41 +3291,24 @@
             return Kernel(path: kernelPath, platform: .linuxArm)
         }
 
-        /// Sync extraction of a Kata tarball into `installTo`. Runs as a
-        /// `static nonisolated` helper invoked from a detached task so the
-        /// `Process.waitUntilExit()` calls don't block the actor executor.
+        /// Pull the production `vmlinux` out of the digest-verified Kata
+        /// tarball into `kernelPath`. Decompression runs in-process: the
+        /// system `/usr/bin/tar` is built without zstd and the app's PATH
+        /// has no external `zstd`, so shelling out fails on stock macOS.
+        /// Detached so the decompress + hash don't pin the actor executor.
         private static func extractKernel(from tarball: URL, installTo kernelPath: URL) async throws {
             try await Task.detached(priority: .userInitiated) {
-                let extractDir = FileManager.default.temporaryDirectory.appendingPathComponent(
-                    "osaurus-kernel-\(UUID().uuidString)"
-                )
-                try FileManager.default.createDirectory(at: extractDir, withIntermediateDirectories: true)
-                defer { try? FileManager.default.removeItem(at: extractDir) }
-
-                let tarProcess = Process()
-                tarProcess.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
-                tarProcess.arguments = [
-                    "-xf", tarball.path, "-C", extractDir.path, "--strip-components=1",
-                ]
-                let tarStderr = Pipe()
-                tarProcess.standardOutput = FileHandle.nullDevice
-                tarProcess.standardError = tarStderr
-                try tarProcess.run()
-                tarProcess.waitUntilExit()
-
-                let tarErrOutput =
-                    String(data: tarStderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-                NSLog(
-                    "[SandboxManager] tar exit: \(tarProcess.terminationStatus), stderr: \(tarErrOutput.prefix(200))"
-                )
-
-                let expectedPath =
-                    extractDir
-                    .appendingPathComponent(SandboxRuntimeAssets.kernelArchivePath)
-
-                guard FileManager.default.fileExists(atPath: expectedPath.path) else {
+                let staged = kernelPath.appendingPathExtension("partial")
+                defer { try? FileManager.default.removeItem(at: staged) }
+                do {
+                    try extractArchiveMember(
+                        SandboxRuntimeAssets.kernelArchivePath,
+                        from: tarball,
+                        to: staged
+                    )
+                } catch {
                     throw SandboxError.provisionFailed(
-                        "Production kernel \(SandboxRuntimeAssets.kernelVersion) not found in Kata tarball"
+                        "Could not extract kernel \(SandboxRuntimeAssets.kernelVersion) from the Kata archive: \(error.localizedDescription)"
                     )
                 }
 
@@ -2682,13 +3316,26 @@
                 // the extracted binary too so the bundled-kernel path and
                 // the download path install byte-identical kernels.
                 try Self.verifySHA256(
-                    of: expectedPath,
+                    of: staged,
                     expected: SandboxRuntimeAssets.kernelSHA256,
                     maxBytes: Self.maxArtifactDownloadBytes
                 )
                 try? FileManager.default.removeItem(at: kernelPath)
-                try FileManager.default.copyItem(at: expectedPath, to: kernelPath)
+                try FileManager.default.moveItem(at: staged, to: kernelPath)
             }.value
+        }
+
+        /// Write one member of a (possibly zstd-compressed) tar archive to
+        /// `destination`. `memberPath` matches with or without a leading
+        /// `./`. Throws when the member is absent or the stream is corrupt.
+        nonisolated static func extractArchiveMember(
+            _ memberPath: String,
+            from archive: URL,
+            to destination: URL
+        ) throws {
+            let reader = try ArchiveReader(file: archive)
+            let (_, data) = try reader.extractFile(path: memberPath)
+            try data.write(to: destination, options: .atomic)
         }
 
         // MARK: - Private: Asset Download
@@ -2789,6 +3436,16 @@
                 )
             }
 
+            let actual = try sha256Hex(of: url, maxBytes: maxBytes)
+            guard actual == normalized else {
+                throw SandboxError.integrityCheckFailed(
+                    "SHA-256 mismatch: expected \(normalized), got \(actual)"
+                )
+            }
+        }
+
+        /// Lower-case hex SHA-256 of the file at `url`, read in 1 MiB chunks.
+        static func sha256Hex(of url: URL, maxBytes: Int) throws -> String {
             let handle = try FileHandle(forReadingFrom: url)
             defer { try? handle.close() }
 
@@ -2803,19 +3460,15 @@
                 }
                 hasher.update(data: chunk)
             }
-
-            let actual = hasher.finalize().map { String(format: "%02x", $0) }.joined()
-            guard actual == normalized else {
-                throw SandboxError.integrityCheckFailed(
-                    "SHA-256 mismatch: expected \(normalized), got \(actual)"
-                )
-            }
+            return hasher.finalize().map { String(format: "%02x", $0) }.joined()
         }
 
         // MARK: - Private: Exec via VM Agent
 
         private func execViaAgent(
+            containerID: String,
             args: [String],
+            rlimits: [LinuxRLimit],
             env: [String: String],
             timeout: TimeInterval?,
             streamToLogs: Bool = false,
@@ -2824,8 +3477,18 @@
             stderrTee: (any Writer)? = nil,
             onProcessStarted: (@Sendable (ProcessHandle) -> Void)? = nil
         ) async throws -> ContainerExecResult {
-            guard let container = linuxContainer else {
+            guard let pod else {
                 throw SandboxError.containerNotRunning
+            }
+            inFlightExecs[containerID, default: 0] += 1
+            lastActivityAt = Date()
+            publishOccupancy()
+            defer {
+                if let count = inFlightExecs[containerID] {
+                    inFlightExecs[containerID] = count > 1 ? count - 1 : nil
+                }
+                lastActivityAt = Date()
+                publishOccupancy()
             }
 
             let source = logSource ?? "exec"
@@ -2857,10 +3520,11 @@
                 mergedEnv["PATH"] = LinuxProcessConfiguration.defaultPath
             }
             let environ = mergedEnv.map { "\($0.key)=\($0.value)" }
-            let process = try await container.exec(UUID().uuidString) { config in
+            let process = try await pod.execInContainer(containerID, processID: UUID().uuidString) { config in
                 config.arguments = args
                 config.environmentVariables = environ
                 Self.applyProcessRestrictions(to: &config)
+                config.rlimits = rlimits
                 config.stdout = stdoutWire
                 config.stderr = stderrWire
             }
@@ -2889,7 +3553,8 @@
                 return ContainerExecResult(
                     stdout: stdoutCollector.string,
                     stderr: stderrCollector.string,
-                    exitCode: exitStatus.exitCode
+                    exitCode: exitStatus.exitCode,
+                    outputTruncated: stdoutCollector.truncated || stderrCollector.truncated
                 )
             } catch {
                 try? await process.delete()
@@ -2957,9 +3622,9 @@
         /// Seatbelt has no guest and is always considered alive.
         public func probeRuntimeAlive() async -> Bool {
             if SandboxBackend.current == .seatbelt { return _status.isRunning }
-            guard linuxContainer != nil else { return false }
+            guard pod != nil else { return false }
             do {
-                let result = try await exec(command: "true", timeout: 10)
+                let result = try await exec(command: "true", timeout: 10, target: .system)
                 return result.succeeded
             } catch {
                 return false
@@ -2981,20 +3646,18 @@
         // MARK: - Helpers
 
         func cleanupAfterFailure() async {
-            if let container = linuxContainer { try? await container.stop() }
-            // Unlike the expected `stopContainer` path (which preserves
-            // `rootfs.ext4` for a warm restart), failure cleanup uses the
-            // full `delete` so we don't carry a half-unpacked rootfs into
-            // the next provision attempt. The cold path will rebuild it.
-            if var mgr = containerManager { try? mgr.delete(Self.containerID) }
-            linuxContainer = nil
-            containerManager = nil
+            // A half-written unpack never becomes the template (it stays at
+            // the staging path), so the template and environments survive.
+            await teardownPod()
             networkReadyTask?.cancel()
             networkReadyTask = nil
             networkReady = false
             postStartVerifyTask?.cancel()
             postStartVerifyTask = nil
-            try? await Self.forciblyRemoveAsync(at: staleContainerDir)
+            let containerDir = staleContainerDir
+            try? await Task.detached(priority: .userInitiated) {
+                try Self.removeContainerStateKeepingLegacyRootfs(at: containerDir)
+            }.value
             await HostAPIBridgeServer.shared.stop()
             await teardownEgressProxy()
             releaseVMOwnership()
@@ -3028,6 +3691,28 @@
             try await Task.detached(priority: .userInitiated) {
                 try Self.forciblyRemove(at: url)
             }.value
+        }
+
+        /// Clears the pod's state directory but keeps a pre-pod
+        /// `rootfs.ext4`. Until a pod boot succeeds (which deletes it) that
+        /// disk is the only copy of the old shared sandbox, and an earlier
+        /// version still boots from it.
+        nonisolated static func removeContainerStateKeepingLegacyRootfs(at dir: URL) throws {
+            let fm = FileManager.default
+            let legacy = dir.appendingPathComponent("rootfs.ext4")
+            guard fm.fileExists(atPath: legacy.path) else {
+                try forciblyRemove(at: dir)
+                return
+            }
+            let parked = dir.deletingLastPathComponent()
+                .appendingPathComponent(".\(dir.lastPathComponent)-legacy-rootfs.ext4")
+            try? fm.removeItem(at: parked)
+            try fm.moveItem(at: legacy, to: parked)
+            defer {
+                try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+                try? fm.moveItem(at: parked, to: legacy)
+            }
+            try forciblyRemove(at: dir)
         }
 
         /// Robust container-state cleanup. A plain `removeItem` can fail and
@@ -3069,6 +3754,26 @@
             try OsaurusPaths.ensureExists(OsaurusPaths.containerSharedDir())
         }
 
+        /// Per-boot guest setup, once per container (each has its own
+        /// `/proc`, `/run`, and `/etc`):
+        ///  - stale `adduser`/`deluser` lock files from a run killed
+        ///    mid-write (no user admin can be running yet),
+        ///  - a check that `/proc` is mounted `hidepid=2`
+        ///    (`containerBaseMounts`); boot fails if it isn't,
+        ///  - the bridge-token directory (token files are mode 0600;
+        ///    0711 on the dir lets the user stat its own file without
+        ///    enumerating; `/run` is tmpfs so this re-runs every boot).
+        /// The shim needs no step: it is a read-only file mount.
+        static var perBootSetupScript: String {
+            """
+            set -e
+            rm -f /etc/passwd+ /etc/group+ /etc/shadow+
+            grep -Eq '^proc /proc proc .*hidepid=(2|invisible)' /proc/mounts || { echo "/proc is not mounted hidepid=2" >&2; exit 1; }
+            mkdir -p \(Self.bridgeTokenDir)
+            chmod 0711 \(Self.bridgeTokenDir)
+            """
+        }
+
         private func configureSandbox() async throws {
             // None of the steps below depend on outbound network — the shim
             // copy + bridge-token dir are pure in-guest filesystem ops. So we
@@ -3078,53 +3783,20 @@
             // is up well before anyone asks, so the wait becomes a no-op.
             startNetworkReadinessProbe()
 
-            // One batched exec covers the per-boot guest setup that used to
-            // take three sequential vsock round-trips:
-            //  - `/proc` hardening (best-effort remount),
-            //  - the bridge-token directory (per-agent token files are
-            //    mode 0600; 0711 on the dir lets each user stat its own
-            //    file without enumerating siblings; `/run` is tmpfs in
-            //    Alpine so this re-runs on every VM boot),
-            //  - the current shim digest probe (last line of stdout).
-            // The mkdir/chmod must succeed (`set -e`); the remount and
-            // digest probe are best-effort.
-            let bootstrap = try await execAsRoot(
-                command: """
-                    set -e
-                    mount -o remount,hidepid=2 /proc 2>/dev/null || true
-                    mkdir -p \(Self.bridgeTokenDir)
-                    chmod 0711 \(Self.bridgeTokenDir)
-                    sha256sum /usr/local/bin/osaurus-host 2>/dev/null | awk '{print $1}' || true
-                    """
-            )
-            guard bootstrap.succeeded else {
-                throw SandboxError.provisionFailed(
-                    "Guest bootstrap failed: \(bootstrap.stderr)"
-                )
-            }
-
-            // The shim at `/usr/local/bin/osaurus-host` lives in the
-            // persistent rootfs, so on warm restarts the previous copy is
-            // almost always byte-identical. Compare digests and skip the
-            // stage + cp + chmod when they already match. On cold boots
-            // the missing-file `sha256sum` yields an empty last line that
-            // won't match, falling through to the install path.
-            let shimScript = Self.osaurusHostShimScript
-            let shimDigest = SHA256.hash(data: Data(shimScript.utf8))
-                .map { String(format: "%02x", $0) }
-                .joined()
-            let existingDigest = bootstrap.stdout
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .components(separatedBy: "\n")
-                .last ?? ""
-            if existingDigest != shimDigest {
-                let shimStagingPath = OsaurusPaths.containerWorkspace()
-                    .appendingPathComponent(".osaurus-host-shim")
-                try shimScript.write(to: shimStagingPath, atomically: true, encoding: .utf8)
-                _ = try await execAsRoot(
-                    command:
-                        "cp /workspace/.osaurus-host-shim /usr/local/bin/osaurus-host && chmod 555 /usr/local/bin/osaurus-host && rm /workspace/.osaurus-host-shim"
-                )
+            let setup = Self.perBootSetupScript
+            let targets: [SandboxExecTarget] = [.system] + podMembers.map { .agent($0) }
+            try await withThrowingTaskGroup(of: Void.self) { group in
+                for target in targets {
+                    group.addTask {
+                        let result = try await self.execAsRoot(command: setup, target: target)
+                        guard result.succeeded else {
+                            throw SandboxError.provisionFailed(
+                                "Guest bootstrap failed in \(SandboxPodLayout.containerID(for: target)): \(result.stderr)"
+                            )
+                        }
+                    }
+                }
+                try await group.waitForAll()
             }
         }
 
@@ -3176,7 +3848,8 @@
                 attempt += 1
                 let result = try? await exec(
                     command: "wget -q --spider http://dl-cdn.alpinelinux.org 2>/dev/null && echo ok",
-                    timeout: 5
+                    timeout: 5,
+                    target: .system
                 )
                 if result?.stdout.contains("ok") == true {
                     debugLog("[Sandbox] Network ready after \(attempt) attempt(s)")
@@ -3332,8 +4005,14 @@
                         "Sandbox start denied by macOS — check that osaurus has the required entitlements.",
                     EPERM:
                         "Sandbox start denied by macOS — check that osaurus has the required entitlements.",
+                    ENOSPC:
+                        "Not enough disk space to start the sandbox. Free up a few GB and try again.",
                 ],
                 substrings: [
+                    (
+                        "No space left on device",
+                        "Not enough disk space to start the sandbox. Free up a few GB and try again."
+                    ),
                     ("GRPC", "Container failed to start (VM error). Try resetting the container."),
                     (
                         "vmnet",
@@ -3514,8 +4193,55 @@
                         step.progress = 1.0
                         step.etaSeconds = 0
                     }
-                    if journey.currentStepID == id { journey.currentStepID = nil }
+                    Self.handOffCurrentStep(from: id, in: &journey)
                 }
+                Self.syncActivityToCurrentStep()
+            }
+        }
+
+        /// Asset steps run concurrently, so when the current step leaves
+        /// `.inProgress` the most recently started sibling still running
+        /// takes over instead of leaving the journey with no current step.
+        private static func handOffCurrentStep(from id: ProvisioningStepID, in journey: inout ProvisioningJourney) {
+            guard journey.currentStepID == id else { return }
+            journey.currentStepID =
+                journey.steps
+                .filter { $0.id != id && $0.status == .inProgress }
+                .max { ($0.startedAt ?? .distantPast) < ($1.startedAt ?? .distantPast) }?
+                .id
+        }
+
+        /// Point the "now doing" line at the current step after a hand-off.
+        /// Leaves the last line in place when nothing is running.
+        @MainActor
+        private static func syncActivityToCurrentStep() {
+            guard let journey = State.shared.journey,
+                let id = journey.currentStepID,
+                let step = journey.step(id)
+            else { return }
+            let line: String?
+            if let total = step.bytesTotal, total > 0 {
+                line = step.detail ?? formatByteActivity(
+                    bytes: step.bytesProcessed ?? 0,
+                    total: total,
+                    bytesPerSecond: step.bytesPerSecond
+                )
+            } else {
+                line = step.detail
+            }
+            if let line, State.shared.currentActivity != line {
+                State.shared.currentActivity = line
+            }
+        }
+
+        /// Close out an asset step whose work threw. A sibling asset failing
+        /// cancels the others; those return to `.pending` rather than
+        /// showing a failure of their own.
+        private func failOrResetStep(_ id: ProvisioningStepID, after error: Error) async {
+            if error is CancellationError || Task.isCancelled {
+                await resetStepStatus(id, to: .pending)
+            } else {
+                await endStep(id, status: .failed)
             }
         }
 
@@ -3538,8 +4264,9 @@
                     step.bytesProcessed = nil
                     step.bytesTotal = nil
                     step.bytesPerSecond = nil
-                    if journey.currentStepID == id { journey.currentStepID = nil }
+                    Self.handOffCurrentStep(from: id, in: &journey)
                 }
+                Self.syncActivityToCurrentStep()
             }
         }
 
@@ -3611,7 +4338,11 @@
                     if let rate { step.bytesPerSecond = rate }
                     if let eta { step.etaSeconds = eta }
                     if let detail { step.detail = detail }
-                    journey.currentStepID = stepID
+                    // Concurrent downloads all report bytes; letting each
+                    // event claim the current step made the UI bounce
+                    // between rows. Only an idle journey is claimed here.
+                    if journey.currentStepID == nil { journey.currentStepID = stepID }
+                    guard journey.currentStepID == stepID else { return }
 
                     if let detail {
                         activityLine = detail
@@ -3930,6 +4661,9 @@
             let processName: String
             let executablePath: String?
             let acquiredAt: String
+            /// Set by an owner that has started quitting, so a contender
+            /// (typically the relaunched app) waits for it instead of failing.
+            var quittingSince: String? = nil
 
             var diagnostic: String {
                 var value = "PID \(pid) (\(processName))"
@@ -3966,7 +4700,10 @@
         }
 
         static func acquire(at url: URL = defaultURL) throws -> SandboxVMOwnershipLease {
-            let descriptor = Darwin.open(url.path, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR)
+            // Close-on-exec: a child spawned while the VM runs (MCP server,
+            // plugin host, shell tool) must not inherit the lock and keep
+            // it held after this process exits.
+            let descriptor = Darwin.open(url.path, O_CREAT | O_RDWR | O_CLOEXEC, S_IRUSR | S_IWUSR)
             guard descriptor >= 0 else {
                 throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
             }
@@ -3991,12 +4728,100 @@
             return try? JSONDecoder().decode(Owner.self, from: data)
         }
 
+        /// Closed telemetry token for who holds a conflicting lease.
+        enum OwnerState: String, CaseIterable, Sendable {
+            /// This process: a lock fd leaked without `release()`.
+            case current = "self"
+            case osaurusAlive = "osaurus_alive"
+            /// The lock file is open in a non-Osaurus process, e.g. a child
+            /// that inherited the descriptor.
+            case otherAlive = "other_alive"
+            case ownerDeadLockHeld = "owner_dead_lock_held"
+            case unknown
+        }
+
+        /// A process with the lease file open.
+        struct Holder: Sendable, Equatable {
+            let pid: Int32
+            let path: String
+
+            var isOsaurus: Bool {
+                URL(fileURLWithPath: path).lastPathComponent.lowercased().contains("osaurus")
+            }
+
+            /// Local-only diagnostic; never sent.
+            var diagnostic: String { "\(pid) \(path)" }
+        }
+
+        static func holders(of url: URL = defaultURL) -> [Holder] {
+            var pids = [Int32](repeating: 0, count: 256)
+            let bytes = pids.withUnsafeMutableBytes { buffer in
+                proc_listpidspath(UInt32(PROC_ALL_PIDS), 0, url.path, 0, buffer.baseAddress, Int32(buffer.count))
+            }
+            guard bytes > 0 else { return [] }
+            return pids.prefix(Int(bytes) / MemoryLayout<Int32>.size).filter { $0 > 0 }.map { pid in
+                var path = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+                let length = proc_pidpath(pid, &path, UInt32(path.count))
+                return Holder(pid: pid, path: length > 0 ? String(cString: path) : "")
+            }
+        }
+
+        static func ownerState(
+            owner: Owner?,
+            holders: [Holder],
+            currentPID: Int32 = getpid(),
+            isProcessAlive: (Int32) -> Bool = defaultIsProcessAlive
+        ) -> OwnerState {
+            if owner?.pid == currentPID || holders.contains(where: { $0.pid == currentPID }) {
+                return .current
+            }
+            if !holders.isEmpty {
+                return holders.contains(where: \.isOsaurus) ? .osaurusAlive : .otherAlive
+            }
+            guard let owner else { return .unknown }
+            return isProcessAlive(owner.pid) ? .osaurusAlive : .ownerDeadLockHeld
+        }
+
+        /// Classify the current holder of a conflicting lease.
+        static func classifyConflict(at url: URL = defaultURL) -> (state: OwnerState, holders: [Holder]) {
+            let holders = holders(of: url)
+            return (ownerState(owner: readOwner(at: url), holders: holders), holders)
+        }
+
         /// How long `acquire(waitingUpTo:)` is willing to wait for a live
         /// owner to exit. Sized for the app-update relaunch window: the
         /// outgoing process's quit chain gives `stopContainer` 3 s and the
         /// rest of its teardown a few more, and Sparkle can have the new
         /// binary running before the old one has closed its lock fd.
         static let defaultOwnerExitWait: TimeInterval = 8
+
+        /// How long to wait for an owner that has marked itself quitting:
+        /// its quit chain stops the VM within a few seconds, but a slow
+        /// teardown (busy model unload, wedged audio) can stretch it.
+        static let quittingOwnerExitWait: TimeInterval = 30
+
+        /// Non-blocking probe: true when no process holds the lease.
+        static func isAvailable(at url: URL = defaultURL) -> Bool {
+            let descriptor = Darwin.open(url.path, O_RDONLY | O_CLOEXEC)
+            guard descriptor >= 0 else { return errno == ENOENT }
+            defer { Darwin.close(descriptor) }
+            guard flock(descriptor, LOCK_EX | LOCK_NB) == 0 else { return false }
+            _ = flock(descriptor, LOCK_UN)
+            return true
+        }
+
+        /// Called at the start of app quit: mark this process's owner record
+        /// as quitting. No-op when another process owns the lease.
+        static func markCurrentOwnerQuitting(at url: URL = defaultURL) {
+            guard var owner = readOwner(at: url), owner.pid == getpid() else { return }
+            owner.quittingSince = ISO8601DateFormatter().string(from: Date())
+            guard let data = try? JSONEncoder().encode(owner) else { return }
+            let descriptor = Darwin.open(url.path, O_WRONLY | O_CLOEXEC)
+            guard descriptor >= 0 else { return }
+            defer { Darwin.close(descriptor) }
+            guard ftruncate(descriptor, 0) == 0 else { return }
+            _ = data.withUnsafeBytes { Darwin.write(descriptor, $0.baseAddress, $0.count) }
+        }
 
         /// `kill(pid, 0)` liveness: `true` unless the kernel says no such
         /// process. EPERM means it exists but is not ours — still alive.
@@ -4041,7 +4866,8 @@
                         throw conflict
                     }
                     let elapsed = Date().timeIntervalSince(start)
-                    guard elapsed < deadline else {
+                    let ownerQuitting = conflict.owner?.quittingSince != nil
+                    guard elapsed < (ownerQuitting ? max(deadline, quittingOwnerExitWait) : deadline) else {
                         if attempts > 1 {
                             debugLog(
                                 "[Sandbox] vmnet lease still held after \(attempts) attempts / \(Int(elapsed))s"
@@ -4121,6 +4947,9 @@
         /// Don't dress this up: if the kernel/initfs we just pulled doesn't
         /// match the expected digest, refuse to boot it.
         case integrityCheckFailed(String)
+        /// Joining needs a VM restart, and these agents or workflows still
+        /// have work running in it.
+        case busy(holders: [String])
 
         public var errorDescription: String? {
             switch self {
@@ -4135,7 +4964,19 @@
             case .timeout: "Command timed out"
             case .ownershipConflict(let msg): msg
             case .integrityCheckFailed(let msg): "Sandbox artifact integrity check failed: \(msg)"
+            case .busy(let holders):
+                L(
+                    "The sandbox is busy: joining needs a restart, and work is still running for \(SandboxError.holderLabel(holders)). Try again when it finishes."
+                )
             }
+        }
+
+        /// Readable names for pod members (`wf-<id>` is a workflow).
+        static func holderLabel(_ holders: [String]) -> String {
+            holders.map { name in
+                if name.hasPrefix("wf-") { return L("a workflow") + " (\(name))" }
+                return name
+            }.joined(separator: ", ")
         }
     }
 
@@ -4145,18 +4986,19 @@
         var data: Data { get }
         var string: String { get }
         var lastWriteTime: Date? { get }
+        var truncated: Bool { get }
     }
 
     /// Collects data written from a container process's stdout/stderr into memory.
     /// Implements the Containerization `Writer` protocol.
     private final class DataWriter: Writer, DataWriterReadable, @unchecked Sendable {
         private let lock = NSLock()
-        private var buffer = Data()
+        private var capture = ExecOutputCapture()
         private var _lastWriteTime: Date?
 
         func write(_ data: Data) throws {
             lock.withLock {
-                buffer.append(data)
+                capture.append(data)
                 _lastWriteTime = Date()
             }
         }
@@ -4164,15 +5006,19 @@
         func close() throws {}
 
         var data: Data {
-            lock.withLock { buffer }
+            lock.withLock { capture.buffer }
         }
 
         var string: String {
-            String(data: data, encoding: .utf8) ?? ""
+            lock.withLock { capture.string }
         }
 
         var lastWriteTime: Date? {
             lock.withLock { _lastWriteTime }
+        }
+
+        var truncated: Bool {
+            lock.withLock { capture.truncated }
         }
     }
 
@@ -4182,14 +5028,18 @@
     /// in real-time. Uses a single lock scope per write and debounced MainActor
     /// dispatch to avoid flooding the main thread under high-throughput output.
     private final class LoggingDataWriter: Writer, DataWriterReadable, @unchecked Sendable {
+        /// A run of output with no newline is logged in pieces this long.
+        static let maxLineBytes = 64 * 1024
+
         private let lock = NSLock()
-        private var buffer = Data()
+        private var capture = ExecOutputCapture()
         private var lineBuffer = Data()
         private var pendingLines: [String] = []
         private var flushScheduled = false
         private var _lastWriteTime: Date?
         private let source: String
         private let level: SandboxLogBuffer.Entry.Level
+        private let secrets = SandboxLogScrubbing.secrets
 
         init(source: String, level: SandboxLogBuffer.Entry.Level) {
             self.source = source
@@ -4198,7 +5048,7 @@
 
         func write(_ data: Data) throws {
             let shouldSchedule: Bool = lock.withLock {
-                buffer.append(data)
+                capture.append(data)
                 _lastWriteTime = Date()
                 lineBuffer.append(data)
                 extractLines()
@@ -4217,7 +5067,7 @@
                     let s = String(data: lineBuffer, encoding: .utf8),
                     !s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 {
-                    pendingLines.append(s)
+                    pendingLines.append(SecretScrubber.scrub(s, secrets: secrets))
                 }
                 lineBuffer.removeAll()
                 return drainPendingLines()
@@ -4225,11 +5075,13 @@
             sendToLogBuffer(lines)
         }
 
-        var data: Data { lock.withLock { buffer } }
+        var data: Data { lock.withLock { capture.buffer } }
 
-        var string: String { String(data: data, encoding: .utf8) ?? "" }
+        var string: String { lock.withLock { capture.string } }
 
         var lastWriteTime: Date? { lock.withLock { _lastWriteTime } }
+
+        var truncated: Bool { lock.withLock { capture.truncated } }
 
         // MARK: Private
 
@@ -4242,12 +5094,17 @@
                 if i > start,
                     let line = String(data: lineBuffer[start ..< i], encoding: .utf8)
                 {
-                    pendingLines.append(line)
+                    pendingLines.append(SecretScrubber.scrub(line, secrets: secrets))
                 }
                 start = lineBuffer.index(after: i)
             }
             if start > lineBuffer.startIndex {
                 lineBuffer = Data(lineBuffer[start...])
+            }
+            if lineBuffer.count > Self.maxLineBytes {
+                let piece = String(decoding: lineBuffer, as: UTF8.self)
+                pendingLines.append(SecretScrubber.scrub(piece, secrets: secrets))
+                lineBuffer.removeAll(keepingCapacity: true)
             }
         }
 

@@ -427,6 +427,9 @@ enum GenerationEventMapper {
                 guard let decodeMs, decodeMs > 0 else { return nil }
                 return Double(count) / (Double(decodeMs) / 1000.0)
             }
+            if let decodeTps, let finalTokenCount {
+                ModelThroughputLedger.record(model: modelName, tokensPerSecond: decodeTps, tokens: finalTokenCount)
+            }
             let logicalTotalMs = Int((logicalEnd - startedAt) * 1000)
             let cleanupDrainMs = max(0, Int((nowEnd - logicalEnd) * 1000))
             PrefillDebugLog.shared.log(

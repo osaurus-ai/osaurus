@@ -82,4 +82,22 @@ struct NativeSearchBackendTests {
         #expect(hits.count == 1)
         #expect(hits[0].url == "https://swift.org")
     }
+
+    @Test func bingResultsThroughItsClickRedirect_parseToTheResultsAddress() {
+        let target = "https://www.energy.gov/heat-pump-systems?x=1"
+        let encoded = Data(target.utf8).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+        let serp = """
+            <ol id="b_results">
+            <li class="b_algo"><h2><a href="https://www.bing.com/ck/a?!&amp;&amp;p=abc&amp;ptn=3&amp;u=a1\(encoded)&amp;ntb=1">Heat pumps</a></h2>
+            <p>How they work.</p></li>
+            </ol>
+            """
+        #expect(BingScrapeBackend.parseHTML(serp, max: 5).map(\.url) == [target])
+
+        let relative = "https://www.bing.com/ck/a?!&&u=a1L2ltYWdlcy9zZWFyY2g_cT1ob3c&ntb=1"
+        #expect(BingScrapeBackend.unwrapClickURL(relative) == relative, "a Bing-internal path stays wrapped")
+        #expect(BingScrapeBackend.unwrapClickURL("https://swift.org/ck/a?u=a1x") == "https://swift.org/ck/a?u=a1x")
+    }
 }

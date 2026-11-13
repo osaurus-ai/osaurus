@@ -160,7 +160,7 @@ Client (this repo):
   v3, additive `INTEGER NOT NULL DEFAULT 0` columns). Missing fields decode as
   `0`, so a pre-cache router and pre-migration ledger rows keep working.
 - Shows the split as "N cached · P%": in the composer wallet panel
-  (session aggregate under "This session"), in Credits → Credits Activity
+  (session aggregate under "This session"), in Osaurus ID → Wallet & Credits → Credits Activity
   ("Cached input" total, shown only when non-zero), and on each activity row's
   token line.
 
@@ -322,7 +322,7 @@ pulled — without a release. `AnnouncementsService` owns the client side:
   the dialog is presented; operators re-show by publishing a new slug.
 - Presentation: `AppDelegate.presentAnnouncementIfEligible()` applies the
   same "don't stack" deferrals as the other first-run dialogs (onboarding,
-  telemetry consent, modal sheets, active streaming, layout tour) and hosts
+  telemetry consent, modal sheets, active streaming) and hosts
   a `ThemedAlertCenter` dialog whose body is `AnnouncementDialogContent`
   (optional `https://` image + `MarkdownDocument`). CTAs: `external_url`
   (`https://` only) opens in the browser; `deeplink` (`osaurus://` only)

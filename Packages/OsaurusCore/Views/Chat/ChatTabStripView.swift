@@ -16,6 +16,13 @@ import AppKit
 import SwiftUI
 
 struct ChatTabStripView: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.nativeCatalogPreview) private var catalogPreview
+    private var theme: any ThemeProtocol {
+        if catalogPreview { return inheritedTheme.catalogFamily(43, enabled: enabled) }
+        return windowState.theme.catalogFamily(43, enabled: enabled)
+    }
     @ObservedObject var windowState: ChatWindowState
     /// Fallback for the width of the chrome preceding this item, used only
     /// until the first live measurement lands (see `measuredChromeX`).
@@ -89,7 +96,7 @@ struct ChatTabStripView: View {
         let inset = Self.leadingInset(
             sidebarWidth: windowState.sidebarColumnWidth,
             chromeWidth: measuredChromeX ?? leadingChromeWidth)
-        return inset > 0 ? inset + Self.edgeGap : 0
+        return inset > 0 ? inset + edgeSpacing : 0
     }
 
     /// The one visual gap the strip keeps around its parts: from an open
@@ -108,76 +115,73 @@ struct ChatTabStripView: View {
         let inset = Self.trailingInset(
             inspectorWidth: windowState.inspectorColumnWidth,
             chromeWidth: measuredTrailingChrome ?? trailingChromeWidth)
-        return inset > 0 ? inset + Self.edgeGap - Self.headerButtonPadding : 0
+        return inset > 0 ? inset + edgeSpacing - headerPadding : 0
     }
 
     var body: some View {
-        // Tabs are chat chrome; the project detail page hides them along
-        // with the rest of the chat-specific toolbar items.
-        if !windowState.isProjectPageVisible {
-            GeometryReader { proxy in
-                let width = stripWidth(in: proxy.size.width)
-                // Every tab renders at `maxTabWidth`, computed so the tabs
-                // fill the track and the row NEVER exceeds the strip. An
-                // overflowing row would push the "+" button outside the
-                // toolbar item's bounds, where it still draws but no longer
-                // hit-tests.
-                tabsRow(stripWidth: width)
-                    // Tour spotlight anchor (invisible; reports the strip's frame).
-                    .background(TourAnchorMarker(anchor: .tabStrip))
-                    // Tabs slide over when a neighbor closes. Opening stays
-                    // un-animated: `newTab()` disables animations in its
-                    // transaction so the strip doesn't interpolate while
-                    // ChatView remounts for the fresh session.
-                    .animation(
-                        windowState.theme.animationQuick(),
-                        value: windowState.scopedTabs.map(\.id)
-                    )
-                    .frame(width: width, alignment: .leading)
-                    .frame(height: Self.stripHeight)
-                    .padding(.leading, leadingInset)
-                    .onChange(of: width, initial: true) { _, newWidth in
-                        lastStripWidth = newWidth
-                    }
-            }
-            .frame(height: Self.stripHeight)
-            // The strip fills the toolbar, so its empty space must still
-            // move the window the way the title bar it covers would.
-            .background(WindowDragArea())
-            // Anchored to the strip's OUTER leading edge (the inset lies
-            // inside the measured bounds, so the reading is the pre-inset
-            // chrome edge — no feedback loop).
-            .background(alignment: .leading) {
-                WindowEdgeReader(edge: .leading) { x in
-                    if abs((measuredChromeX ?? -1) - x) > 0.5 {
-                        measuredChromeX = x
-                    }
+        GeometryReader { proxy in
+            let width = stripWidth(in: proxy.size.width)
+            // Every tab renders at `maxTabWidth`, computed so the tabs
+            // fill the track and the row NEVER exceeds the strip. An
+            // overflowing row would push the "+" button outside the
+            // toolbar item's bounds, where it still draws but no longer
+            // hit-tests.
+            tabsRow(stripWidth: width)
+                // Tabs slide over when a neighbor closes. Opening stays
+                // un-animated: `newTab()` disables animations in its
+                // transaction so the strip doesn't interpolate while
+                // ChatView remounts for the fresh session.
+                .animation(
+                    theme.motion.quick,
+                    value: windowState.scopedTabs.map(\.id)
+                )
+                .frame(width: width, alignment: .leading)
+                .frame(height: Self.inspectionStripHeight(theme))
+                .padding(.leading, leadingInset)
+                .onChange(of: width, initial: true) { _, newWidth in
+                    lastStripWidth = newWidth
                 }
-                .frame(width: 0)
-            }
-            // Same at the OUTER trailing edge: the distance from there to
-            // the window's edge is the trailing chrome, whatever AppKit (or
-            // the full-screen header) puts after the strip.
-            .background(alignment: .trailing) {
-                WindowEdgeReader(edge: .trailing) { gap in
-                    if abs((measuredTrailingChrome ?? -1) - gap) > 0.5 {
-                        measuredTrailingChrome = gap
-                    }
-                }
-                .frame(width: 0)
-            }
-            // Rail open/close slides the tabs along with the rail; keyed on
-            // presence, not width, so a live resize drag is not lagged by
-            // the animation.
-            .animation(windowState.theme.animationQuick(), value: windowState.sidebarColumnWidth > 0)
-            .animation(windowState.theme.animationQuick(), value: windowState.inspectorColumnWidth > 0)
-            // Leaving the strip ends a close streak: widths relax to fit.
-            .onHover { inside in
-                guard !inside, frozenTabWidth != nil else { return }
-                withAnimation(windowState.theme.animationQuick()) { frozenTabWidth = nil }
-            }
-            .environment(\.theme, windowState.theme)
         }
+        .frame(height: Self.inspectionStripHeight(theme))
+        // The strip fills the toolbar, so its empty space must still
+        // move the window the way the title bar it covers would.
+        .background(WindowDragArea())
+        // Anchored to the strip's OUTER leading edge (the inset lies
+        // inside the measured bounds, so the reading is the pre-inset
+        // chrome edge — no feedback loop).
+        .background(alignment: .leading) {
+            WindowEdgeReader(edge: .leading) { x in
+                if abs((measuredChromeX ?? -1) - x) > 0.5 {
+                    measuredChromeX = x
+                }
+            }
+            .frame(width: 0)
+        }
+        // Same at the OUTER trailing edge: the distance from there to
+        // the window's edge is the trailing chrome, whatever AppKit (or
+        // the full-screen header) puts after the strip.
+        .background(alignment: .trailing) {
+            WindowEdgeReader(edge: .trailing) { gap in
+                if abs((measuredTrailingChrome ?? -1) - gap) > 0.5 {
+                    measuredTrailingChrome = gap
+                }
+            }
+            .frame(width: 0)
+        }
+        // Rail open/close slides the tabs along with the rail; keyed on
+        // presence, not width, so a live resize drag is not lagged by
+        // the animation.
+        .animation(theme.motion.quick, value: windowState.sidebarColumnWidth > 0)
+        .animation(theme.motion.quick, value: windowState.inspectorColumnWidth > 0)
+        // Leaving the strip ends a close streak: widths relax to fit.
+        .onHover { inside in
+            guard !inside, frozenTabWidth != nil else { return }
+            withAnimation(theme.motion.quick) { frozenTabWidth = nil }
+        }
+        // A close streak may hold the old width, but live design edits
+        // must measure the current recipe and geometry again.
+        .onChange(of: theme.inspectionRevision) { _, _ in frozenTabWidth = nil }
+        .environment(\.theme, theme)
     }
 
     /// Tab width pinned by a × close: closing a tab would otherwise widen
@@ -201,8 +205,8 @@ struct ChatTabStripView: View {
         let visibleCount = visibleTabs(stripWidth: stripWidth).count
         let count = CGFloat(max(visibleCount, 1))
         let hasHidden = windowState.scopedTabs.count > visibleCount
-        let available = tabsBudget(stripWidth: stripWidth) - (count - 1) * Self.separatorWidth
-            - (hasHidden ? Self.overflowButtonReserve : 0)
+        let available = tabsBudget(stripWidth: stripWidth) - (count - 1) * separatorSlot
+            - (hasHidden ? overflowReserve : 0)
         // Floor at the compact chip: below it a tab is unreadable, so tabs
         // that would push under the floor drop into the overflow menu
         // instead (see `visibleTabs`) — the row never exceeds the strip.
@@ -212,7 +216,7 @@ struct ChatTabStripView: View {
     /// Width left for tabs and their separators once the "+" button and
     /// the track's inner padding are taken out.
     private func tabsBudget(stripWidth: CGFloat) -> CGFloat {
-        stripWidth - Self.plusButtonReserve - 2 * Self.trackPadding
+        stripWidth - plusReserve - 2 * trackInset
     }
 
     static let stripHeight: CGFloat = 30
@@ -238,16 +242,33 @@ struct ChatTabStripView: View {
     static let minimumItemWidth: CGFloat =
         minTabWidth + 2 * trackPadding + overflowButtonReserve + plusButtonReserve
 
+    static func inspectionStripHeight(_ theme: any ThemeProtocol) -> CGFloat {
+        let scoped = theme.catalogFamily(43)
+        return max(scoped.assignedMetric("component.library.43.height", fallback: stripHeight), scoped.lineHeight(.label) + 2 * scoped.assignedMetric("component.library.43.padding", fallback: trackPadding) + 2)
+    }
+    static func inspectionMinimumItemWidth(_ theme: any ThemeProtocol) -> CGFloat {
+        let pad = theme.assignedMetric("component.library.43.padding", fallback: trackPadding)
+        let side = theme.assignedMetric("component.library.43.height", fallback: 28)
+        let gap = theme.assignedMetric("component.library.43.gap", fallback: edgeGap)
+        return minTabWidth + 2 * pad + max(overflowButtonReserve, side + 16) + gap + side + pad
+    }
+    private var edgeSpacing: CGFloat { NativeComponentInspectionStyle.metric(43, "gap", Self.edgeGap, theme) }
+    private var headerPadding: CGFloat { NativeComponentInspectionStyle.metric(43, "padding", Self.headerButtonPadding, theme) }
+    private var trackInset: CGFloat { NativeComponentInspectionStyle.metric(43, "padding", Self.trackPadding, theme) }
+    private var separatorSlot: CGFloat { NativeComponentInspectionStyle.metric(43, "gap", Self.separatorWidth, theme) }
+    private var plusReserve: CGFloat { max(0, edgeSpacing - headerPadding) + NativeComponentInspectionStyle.metric(43, "height", 28, theme) + 2 * headerPadding }
+    private var overflowReserve: CGFloat { max(Self.overflowButtonReserve, NativeComponentInspectionStyle.metric(43, "height", 22, theme) + 16) }
+
     /// How many tabs fit at the floor width, keeping the active tab visible.
     /// Only the active agent's tabs are candidates: the strip is scoped per
     /// agent (other agents' tabs stay live but out of sight until selected).
     private func visibleTabs(stripWidth: CGFloat) -> [ChatTab] {
         let tabs = windowState.scopedTabs
-        let fitsAll = tabsBudget(stripWidth: stripWidth) - CGFloat(tabs.count - 1) * Self.separatorWidth
+        let fitsAll = tabsBudget(stripWidth: stripWidth) - CGFloat(tabs.count - 1) * separatorSlot
             >= CGFloat(tabs.count) * Self.minTabWidth
         if fitsAll { return tabs }
-        let budget = tabsBudget(stripWidth: stripWidth) - Self.overflowButtonReserve
-        let capacity = max(1, Int(budget / (Self.minTabWidth + Self.separatorWidth)))
+        let budget = tabsBudget(stripWidth: stripWidth) - overflowReserve
+        let capacity = max(1, Int(budget / (Self.minTabWidth + separatorSlot)))
         var shown = Array(tabs.prefix(capacity))
         // The active tab always stays in the strip: swap it in for the last
         // visible slot when it would otherwise be folded away.
@@ -267,8 +288,8 @@ struct ChatTabStripView: View {
         // A lone tab reads as the window title; the recessed track only
         // appears once there are tabs to group.
         let showsTrack = shown.count + hiddenTabs.count > 1
-        return HStack(spacing: 0) {
-            HStack(spacing: 0) {
+        return HStack(spacing: theme.space.s0) {
+            HStack(spacing: theme.space.s0) {
                 ForEach(Array(shown.enumerated()), id: \.element.id) { index, tab in
                     // Hairline divider between adjacent tabs, suppressed
                     // when either neighbor is active or hovered (their
@@ -285,12 +306,12 @@ struct ChatTabStripView: View {
             // The track spans the strip even while a close streak pins
             // the tab width, so "+" stays put at the trailing end.
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            .padding(Self.trackPadding)
-            .frame(height: Self.trackHeight)
+            .padding(trackInset)
+            .frame(height: max(Self.trackHeight, Self.inspectionStripHeight(theme) - 2))
             .background {
                 ZStack {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(windowState.theme.secondaryBackground.opacity(windowState.theme.isDark ? 0.4 : 0.5))
+                    RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                        .fill(theme.assignedColor("component.library.43.background", fallback: theme.surface.subtle))
                         .opacity(showsTrack ? 1 : 0)
                     WindowDragArea()
                 }
@@ -298,15 +319,15 @@ struct ChatTabStripView: View {
             // Tabs never draw outside the track, even for a frame mid-resize.
             // Only the track is clipped: clipping the whole row would cut
             // the "+" button's glass shadow into a hard-edged rectangle.
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous))
 
             if !hiddenTabs.isEmpty {
                 overflowButton(hiddenTabs: hiddenTabs)
-                    .padding(.leading, 6)
+                    .padding(.leading, theme.space.s6)
             }
 
             newTabButton
-                .padding(.leading, Self.edgeGap - Self.headerButtonPadding)
+                .padding(.leading, max(0, edgeSpacing - headerPadding))
         }
     }
 
@@ -319,6 +340,7 @@ struct ChatTabStripView: View {
             isHovered: hoveredTabId == tab.id,
             hasSiblings: hasSiblings,
             isHibernated: tab.isHibernated,
+            kind: tab.kind,
             width: tabWidth,
             isDragging: draggingTabId == tab.id,
             dragOffset: draggingTabId == tab.id ? dragOffset : 0,
@@ -328,13 +350,6 @@ struct ChatTabStripView: View {
                 // streak so the next tab's × lands under the cursor.
                 if frozenTabWidth == nil { frozenTabWidth = tabWidth }
                 windowState.closeTab(id: tab.id)
-            },
-            onOpenProject: {
-                windowState.selectTab(id: tab.id)
-                NotificationCenter.default.post(
-                    name: .chatToolbarBackToProject,
-                    object: nil,
-                    userInfo: ["windowId": windowState.windowId])
             },
             onDragChanged: { translation in
                 handleDragChanged(tab.id, translation: translation)
@@ -359,7 +374,7 @@ struct ChatTabStripView: View {
 
     /// Distance between adjacent tab origins: tab width plus the separator
     /// slot laid out between neighbours.
-    private var slotPitch: CGFloat { maxTabWidth(stripWidth: lastStripWidth) + Self.separatorWidth }
+    private var slotPitch: CGFloat { maxTabWidth(stripWidth: lastStripWidth) + separatorSlot }
 
     /// Cumulative pitch already absorbed by live swaps during this drag.
     @State private var swappedDistance: CGFloat = 0
@@ -406,13 +421,13 @@ struct ChatTabStripView: View {
     }
 
     private func move(_ id: UUID, to index: Int) {
-        withAnimation(.easeOut(duration: 0.15)) {
+        withAnimation(theme.motion.quick) {
             windowState.moveTab(id: id, to: index)
         }
     }
 
     private func endDrag() {
-        withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
+        withAnimation(theme.motion.springAnimation) {
             dragOffset = 0
         }
         draggingTabId = nil
@@ -421,44 +436,52 @@ struct ChatTabStripView: View {
 
     private func separator(hidden: Bool) -> some View {
         Rectangle()
-            .fill(windowState.theme.primaryBorder.opacity(hidden ? 0 : 0.55))
-            .frame(width: 1, height: 14)
-            .frame(width: Self.separatorWidth)
+            .fill(hidden ? Color.clear : theme.border.subtle)
+            .frame(width: NativeComponentInspectionStyle.metric(43, "borderWidth", 1, theme), height: 14)
+            .frame(width: separatorSlot)
     }
 
     /// Tabs that don't fit at the floor width, as a native menu. Picking
     /// one selects it, which swaps it into the strip in place of the last
     /// visible tab.
+    @ViewBuilder
     private func overflowButton(hiddenTabs: [ChatTab]) -> some View {
-        Button(action: { presentOverflowTabs(hiddenTabs) }) {
-            HStack(spacing: 2) {
+        AssignedExistingActionMenu(accessibilityLabel: L("More Tabs"), makeMenu: { overflowMenu(hiddenTabs) }, label: overflowLabel(hiddenTabs))
+            .buttonStyle(TabHoverCapsuleButtonStyle(theme: theme))
+    }
+    private func overflowLabel(_ hiddenTabs: [ChatTab]) -> some View {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.43.elements.layout.chatTabStripView.overflowLabel.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(43, "gap", theme.space.s2, theme))) {
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 9, weight: .bold))
+                    .glyphSize(.tiny, weight: .bold)
                 Text(verbatim: "\(hiddenTabs.count)")
-                    .font(.system(size: 10, weight: .semibold))
-            }
-            .foregroundColor(windowState.theme.secondaryText)
+                    .componentInspectionText(43, role: .caption, fallback: .micro, weight: 600, theme: theme)
+            }.catalogLayoutTarget("component.library.43.elements.layout.chatTabStripView.overflowLabel.horizontalGap")
+            .foregroundColor(theme.text.secondary)
             // Wide enough that the capsule highlight reads as a pill, not a
             // squeezed circle around the chevron and count.
-            .padding(.horizontal, 8)
-            .frame(height: 22)
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.43.elements.layout.chatTabStripView.overflowLabel.paddingX", inheriting: NativeComponentInspectionStyle.metric(43, "padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.43.elements.layout.chatTabStripView.overflowLabel.paddingX")
+            .frame(height: NativeComponentInspectionStyle.metric(43, "height", 22, theme))
+            .fixedSize(horizontal: true, vertical: false)
             .contentShape(Capsule())
-        }
-        .buttonStyle(TabHoverCapsuleButtonStyle(theme: windowState.theme))
-        .help(Text(LocalizedStringKey("More Tabs"), bundle: .module))
     }
 
-    private func presentOverflowTabs(_ hiddenTabs: [ChatTab]) {
+    private func overflowMenu(_ hiddenTabs: [ChatTab]) -> NSMenu {
         let menu = NSMenu()
         for tab in hiddenTabs {
+            let title = tab.workflowID.map { InstalledWorkflowStore.shared.workflow(id: $0)?.name ?? L("Workflow") }
+                ?? (tab.session.title.isEmpty ? L("New Chat") : tab.session.title)
             let item = NSMenuItem(
-                title: tab.session.title.isEmpty ? L("New Chat") : tab.session.title,
+                title: title,
                 action: #selector(TabMenuTarget.select(_:)), keyEquivalent: "")
             let target = TabMenuTarget { [windowState] in windowState.selectTab(id: tab.id) }
             item.target = target
             item.representedObject = target  // keeps the target alive with the item
             menu.addItem(item)
         }
+        return menu
+    }
+    private func presentOverflowTabs(_ hiddenTabs: [ChatTab]) {
+        let menu = overflowMenu(hiddenTabs)
         let origin = NSEvent.mouseLocation
         menu.popUp(positioning: nil, at: NSPoint(x: origin.x - 8, y: origin.y - 16), in: nil)
     }
@@ -479,7 +502,7 @@ private struct TabHoverCapsuleButtonStyle: ButtonStyle {
         configuration.label
             .background(
                 Capsule()
-                    .fill(theme.tertiaryBackground)
+                    .fill(theme.surface.hover)
                     .opacity(isHovered || configuration.isPressed ? 1 : 0)
             )
             .onHover { isHovered = $0 }
@@ -502,9 +525,10 @@ private struct ChatTabItemView: View {
     /// the blank test reads session state only this view observes.
     let hasSiblings: Bool
     let isHibernated: Bool
+    let kind: ChatTabKind
 
     private var canClose: Bool {
-        hasSiblings || isHibernated || !session.turns.isEmpty || session.isStreaming
+        kind != .chat || hasSiblings || isHibernated || !session.turns.isEmpty || session.isStreaming
             || session.awaitingClarify != nil
     }
     /// Fixed width computed by the strip: every tab renders the SAME width,
@@ -516,14 +540,14 @@ private struct ChatTabItemView: View {
     let dragOffset: CGFloat
     let onSelect: () -> Void
     let onClose: () -> Void
-    /// Open the project this tab's chat belongs to (folder glyph).
-    let onOpenProject: () -> Void
     /// Horizontal translation since the press (≥ minimum distance).
     let onDragChanged: (CGFloat) -> Void
     let onDragEnded: () -> Void
     let onHover: (Bool) -> Void
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var enabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(43, enabled: enabled) }
     /// Live activity for this tab's session — drives the avatar's spinning
     /// ring, the same signal the sidebar rows use.
     @ObservedObject private var activityMonitor = SessionActivityMonitor.shared
@@ -534,6 +558,9 @@ private struct ChatTabItemView: View {
     /// locally, so the local agent would misrepresent it).
     @ObservedObject private var rosterStore = WorkspaceRosterStore.shared
     @ObservedObject private var remoteAgentManager = RemoteAgentManager.shared
+    /// A hosted tab's agent lives on another Mac; its name and avatar come
+    /// from that Mac's agent directory.
+    @ObservedObject private var agentDirectory = SyncAgentDirectory.shared
 
     private static let avatarDiameter: CGFloat = 16
     private static let closeButtonSize: CGFloat = 15
@@ -544,6 +571,9 @@ private struct ChatTabItemView: View {
     private static let contentInset: CGFloat = closeInset + closeButtonSize + 4
 
     private var title: String {
+        if case .workflowRun(let workflowID, _) = kind {
+            return InstalledWorkflowStore.shared.workflow(id: workflowID)?.name ?? L("Workflow")
+        }
         let stored = session.title.trimmingCharacters(in: .whitespacesAndNewlines)
         // A hibernated tab has no turns in memory but is a saved
         // conversation: show its title, not "New Chat".
@@ -561,8 +591,9 @@ private struct ChatTabItemView: View {
     /// via API / channel, delegated…), so a background run's tab reads as
     /// such at a glance. Nil for ordinary chats.
     private var originIconName: String? {
+        if kind != .chat { return "flowchart" }
         if isFromPairedPhone { return "iphone" }
-        return session.source == .chat ? nil : session.source.iconName
+        return session.source == .chat ? nil : session.runtimeSource.iconName
     }
 
     /// A chat from the paired iPhone: one it started, or an older workspace
@@ -576,6 +607,7 @@ private struct ChatTabItemView: View {
     }
 
     private var originLabel: String? {
+        if kind != .chat { return L("Workflow") }
         if isFromPairedPhone { return "via Mobile" }
         guard session.source != .chat else { return nil }
         // A run hosted for a remote caller names them ("for Alice · Workspace").
@@ -583,7 +615,7 @@ private struct ChatTabItemView: View {
             return session.source.originLabel(workspace: context)
         }
         let pluginName = session.sourcePluginId.map(PluginDisplayNameResolver.displayName(for:))
-        return session.source.originLabel(pluginDisplayName: pluginName)
+        return session.runtimeSource.originLabel(pluginDisplayName: pluginName)
     }
 
     /// Below this width the title is dropped (avatar + × only).
@@ -605,21 +637,37 @@ private struct ChatTabItemView: View {
         return SharedAgentIdentity.resolve(address: context.agentAddress)
     }
 
-    private var avatarMascotId: String? { sharedAgent.map(\.avatar) ?? agent.avatar }
-    private var avatarName: String { sharedAgent?.name ?? agent.displayName }
+    private var isHosted: Bool { session.hostDeviceElsewhere != nil && session.agentId != nil }
+
+    /// Nil when the host no longer lists the agent; the tab then shows the
+    /// same "Agent" fallback as the thread.
+    private var hostedAgent: SyncHostedRunContract.DirectoryEntry? {
+        guard let host = session.hostDeviceElsewhere, let agentId = session.agentId else { return nil }
+        return agentDirectory.entry(device: host, agentId: agentId)
+    }
+
+    private var avatarMascotId: String? {
+        if isHosted { return hostedAgent?.avatar }
+        return sharedAgent.map(\.avatar) ?? agent.avatar
+    }
+    private var avatarName: String {
+        if isHosted { return hostedAgent?.name ?? L("Agent") }
+        return sharedAgent?.name ?? agent.displayName
+    }
     private var avatarCustomImageURL: URL? {
+        if isHosted { return nil }
         if let sharedAgent { return sharedAgent.customAvatarURL }
         return agent.customAvatarURL
     }
 
-    /// The active tab is accent-tinted only when there are siblings to pick
-    /// it out from; a lone tab reads as a neutral window title.
+    /// The active tab is picked out with `surface.selected` only when there
+    /// are siblings to pick it out from; a lone tab reads as a neutral window
+    /// title.
     private var isHighlighted: Bool { isActive && hasSiblings }
     private var titleColor: Color {
-        if isHighlighted { return theme.accentColor }
-        return isActive ? theme.primaryText : theme.secondaryText
+        isActive ? theme.text.primary : theme.text.secondary
     }
-    private var glyphColor: Color { isHighlighted ? theme.accentColor : theme.secondaryText }
+    private var glyphColor: Color { isHighlighted ? theme.text.primary : theme.text.secondary }
 
     private var activityStatus: SessionActivityMonitor.Status? {
         session.sessionId.flatMap { activityMonitor.statuses[$0] }
@@ -631,7 +679,7 @@ private struct ChatTabItemView: View {
         ZStack {
             identity
                 .frame(maxWidth: .infinity)
-                .padding(.horizontal, isCompact ? 0 : Self.contentInset)
+                .padding(.horizontal, isCompact ? 0 : theme.catalogLayoutMetric("component.library.43.elements.layout.chatTabChip.identityInset", inheriting: NativeComponentInspectionStyle.metric(43, "padding", Self.contentInset, theme))).catalogLayoutTarget("component.library.43.elements.layout.chatTabChip.identityInset")
 
             if canClose, !isCompact {
                 closeButton
@@ -645,7 +693,7 @@ private struct ChatTabItemView: View {
         AgentAvatarView(
             mascotId: avatarMascotId,
             name: avatarName,
-            tint: theme.accentColor,
+            tint: theme.text.primary,
             diameter: Self.avatarDiameter,
             customImageURL: avatarCustomImageURL,
             monogramFontSize: 9,
@@ -667,7 +715,7 @@ private struct ChatTabItemView: View {
     }
 
     private var identity: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.43.elements.layout.chatTabItemView.identity.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(43, "gap", theme.space.s6, theme))) {
             if isCompact, canClose, isHovered {
                 // No room for both: the × takes the avatar's slot on hover.
                 closeButton
@@ -675,26 +723,22 @@ private struct ChatTabItemView: View {
                 avatar
             }
 
-            // Project membership: a folder glyph ahead of the title, which
-            // doubles as the "back to project" control (the pill this replaces
-            // lived in the title bar and collided with the strip).
+            // Project membership: a folder glyph ahead of the title; the
+            // tooltip names the project.
             if !isNarrow, let project = projectManager.project(for: session.projectId) {
-                Button(action: onOpenProject) {
-                    Image(systemName: "folder.fill")
-                        .font(.system(size: 9.5, weight: .semibold))
-                        .foregroundColor(glyphColor)
-                        .frame(width: 14, height: 14)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(Text(verbatim: project.name))
+                Image(systemName: "folder.fill")
+                    .glyphSize(.micro, weight: .semibold)
+                    .foregroundColor(glyphColor)
+                    .frame(width: 14, height: 14)
+                    .contentShape(Rectangle())
+                    .help(Text(verbatim: project.name))
             }
 
             // Background-run origin ("scheduled", "via API"…) as a glyph
             // ahead of the title; the tooltip spells it out.
             if !isNarrow, let originIconName {
                 Image(systemName: originIconName)
-                    .font(.system(size: 9, weight: .semibold))
+                    .glyphSize(.tiny, weight: .semibold)
                     .foregroundColor(glyphColor)
                     .frame(width: 12, height: 12)
                     .accessibilityHidden(true)
@@ -702,7 +746,7 @@ private struct ChatTabItemView: View {
 
             if !isNarrow {
                 Text(title)
-                    .font(.system(size: 11.5, weight: isActive ? .semibold : .medium))
+                    .componentInspectionText(43, role: .label, fallback: .footnote, weight: isActive ? 600 : 500, theme: theme)
                     // Optical centring: the label's x-height sits a hair above
                     // the avatar's centre at this size.
                     .offset(y: 0.5)
@@ -710,13 +754,13 @@ private struct ChatTabItemView: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
-        }
+        }.catalogLayoutTarget("component.library.43.elements.layout.chatTabItemView.identity.horizontalGap")
     }
 
     private var closeButton: some View {
         Button(action: onClose) {
             Image(systemName: "xmark")
-                .font(.system(size: 8, weight: .bold))
+                .glyphSize(.tiny, weight: .bold)
                 .foregroundColor(glyphColor)
                 .frame(width: Self.closeButtonSize, height: Self.closeButtonSize)
                 .contentShape(Rectangle())
@@ -727,14 +771,24 @@ private struct ChatTabItemView: View {
         .help(Text(LocalizedStringKey("Close Tab"), bundle: .module))
     }
 
-    /// Accent pill for the active tab (the sidebar lens bar's selected
-    /// segment), a faint neutral pill on hover, nothing at rest. A lone tab
-    /// has nothing to be selected against and reads as the window title, so
-    /// it draws no pill at all.
+    /// `surface.selected` pill for the active tab (the sidebar lens bar's
+    /// selected segment), `surface.hover` on hover, nothing at rest. A lone
+    /// tab has nothing to be selected against and reads as the window title,
+    /// so it draws no pill at all.
     private var pillFill: Color {
         guard hasSiblings else { return .clear }
-        if isActive { return theme.accentColor.opacity(theme.isDark ? 0.28 : 0.18) }
-        return theme.secondaryText.opacity(isHovered ? 0.08 : 0)
+        if isActive { return theme.surface.selected }
+        return isHovered ? theme.surface.hover : theme.assignedColor("component.library.43.background", fallback: .clear)
+    }
+
+    private var marksActive: Bool { hasSiblings && isActive && !theme.isDark }
+
+    private var pillStroke: Color {
+        marksActive ? theme.selectionBorder : theme.assignedColor("component.library.43.border", fallback: .clear)
+    }
+
+    private var pillStrokeWidth: CGFloat {
+        marksActive ? theme.selectionStroke : theme.assignedMetric("component.library.43.borderWidth", fallback: 0)
     }
 
     var body: some View {
@@ -742,9 +796,10 @@ private struct ChatTabItemView: View {
         .frame(width: width)
         .frame(maxHeight: .infinity)
         .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
+            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
                 .fill(pillFill)
         )
+        .overlay(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous).strokeBorder(pillStroke, lineWidth: pillStrokeWidth))
         .contentShape(Rectangle())
         .offset(x: dragOffset)
         .zIndex(isDragging ? 1 : 0)
@@ -758,7 +813,7 @@ private struct ChatTabItemView: View {
                 .onEnded { _ in onDragEnded() }
         )
         .onHover(perform: onHover)
-        .animation(.easeOut(duration: 0.1), value: isHovered)
+        .animation(theme.motion.quick, value: isHovered)
         // Same actions the History dialog / sidebar rows offer, plus Close
         // Tab, so a chat can be managed without leaving the strip.
         .overlay(
@@ -766,6 +821,7 @@ private struct ChatTabItemView: View {
                 ChatTabContextMenu(
                     windowState: windowState,
                     session: session,
+                    isWorkflow: kind != .chat,
                     activityStatus: activityStatus,
                     canClose: canClose,
                     onClose: onClose
@@ -808,6 +864,8 @@ private struct ChatTabItemView: View {
 private struct ChatTabContextMenu {
     let windowState: ChatWindowState
     let session: ChatSession
+    /// Workflow tabs have no conversation: only Close applies.
+    let isWorkflow: Bool
     let activityStatus: SessionActivityMonitor.Status?
     let canClose: Bool
     let onClose: () -> Void
@@ -821,6 +879,10 @@ private struct ChatTabContextMenu {
 
     func makeMenu() -> NSMenu {
         let menu = NSMenu()
+        if isWorkflow {
+            add(to: menu, L("Close Tab"), handler: onClose)
+            return menu
+        }
         let session = self.session
         let windowState = self.windowState
         if activityStatus != nil {
@@ -1188,7 +1250,9 @@ private struct WindowEdgeReader: NSViewRepresentable {
 private struct TabActivityRing: View {
     let status: SessionActivityMonitor.Status
 
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var enabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(43, enabled: enabled) }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isSpinning = false
 
@@ -1199,14 +1263,14 @@ private struct TabActivityRing: View {
         switch status {
         case .working:
             if reduceMotion {
-                ring(theme.accentColor.opacity(0.85))
+                ring(theme.status.info.foreground)
             } else {
                 Circle()
                     .stroke(
                         AngularGradient(
                             gradient: Gradient(colors: [
-                                theme.accentColor.opacity(0.05),
-                                theme.accentColor,
+                                theme.status.info.background,
+                                theme.status.info.foreground,
                             ]),
                             center: .center
                         ),
@@ -1215,14 +1279,14 @@ private struct TabActivityRing: View {
                     .frame(width: Self.diameter, height: Self.diameter)
                     .rotationEffect(.degrees(isSpinning ? 360 : 0))
                     .animation(
-                        .linear(duration: 1.1).repeatForever(autoreverses: false),
+                        theme.motion.loop(duration: 1.1),
                         value: isSpinning
                     )
                     .onAppear { isSpinning = true }
                     .onDisappear { isSpinning = false }
             }
         case .waitingForInput:
-            ring(theme.warningColor.opacity(0.9))
+            ring(theme.status.warning.foreground)
         }
     }
 
@@ -1243,7 +1307,7 @@ private struct TabCloseButtonStyle: ButtonStyle {
         configuration.label
             .background(
                 Circle()
-                    .fill(theme.secondaryText.opacity(configuration.isPressed ? 0.35 : 0.22))
+                    .fill((configuration.isPressed ? theme.text.tertiary : theme.surface.pressed))
                     .opacity(isHovered || configuration.isPressed ? 1 : 0)
             )
             .onHover { isHovered = $0 }
@@ -1262,13 +1326,28 @@ private struct TabCloseButtonStyle: ButtonStyle {
 /// event, and consuming it there keeps the toolbar menu from appearing.
 private struct TabRightClickCatcher: NSViewRepresentable {
     let makeMenu: @MainActor () -> NSMenu
+    @Environment(\.theme) private var theme
 
     func makeNSView(context: Context) -> CatcherView { CatcherView(makeMenu: makeMenu) }
 
-    func updateNSView(_ view: CatcherView, context: Context) { view.makeMenu = makeMenu }
+    func updateNSView(_ view: CatcherView, context: Context) {
+        view.makeMenu = makeMenu
+        view.menuTheme = theme
+        if view.presenter.isPresented { view.showAssignedMenu() }
+    }
+    static func dismantleNSView(_ view: CatcherView, coordinator: ()) {
+        view.presenter.close(notify: false)
+    }
 
     final class CatcherView: NSView {
         var makeMenu: @MainActor () -> NSMenu
+        var menuTheme: (any ThemeProtocol)?
+        let presenter = AssignedMenuPanelPresenter()
+        func showAssignedMenu() {
+            guard let menuTheme else { return }
+            let menu = makeMenu()
+            presenter.showContextMenu(menu, from: self, theme: menuTheme)
+        }
         // `nonisolated(unsafe)`: deinit is nonisolated and only removes the
         // monitor; all writes happen on the main thread (same pattern as
         // WindowEdgeReader's resize observer).
@@ -1303,7 +1382,7 @@ private struct TabRightClickCatcher: NSViewRepresentable {
                 nonisolated(unsafe) let event = incoming
                 let handled = MainActor.assumeIsolated { () -> Bool in
                     guard let self, self.shouldHandle(event) else { return false }
-                    NSMenu.popUpContextMenu(self.makeMenu(), with: event, for: self)
+                    self.showAssignedMenu()
                     return true
                 }
                 return handled ? nil : incoming

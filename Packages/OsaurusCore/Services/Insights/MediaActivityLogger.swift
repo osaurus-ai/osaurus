@@ -31,6 +31,7 @@ enum MediaActivityLogger {
         case voiceInput = "voice_input"
         case chatTool = "chat_tool"
         case imagePanel = "image_panel"
+        case workflow
         case httpAPI = "http_api"
         case background
     }

@@ -3,7 +3,12 @@
 # Example installer for the "Acme Support Starter" Osaurus bundle.
 # Walkthrough: docs/OSAURUS_BUNDLES.md, "Writing the installer script".
 #
-#   ./install.sh [--secrets-file FILE] [--open]
+#   ./install.sh [--secrets-file FILE] [--open] [--skip-onboarding]
+#
+# --skip-onboarding passes through to `osaurus import install`: on first
+# launch Osaurus skips its welcome step and in-chat walkthrough (choosing a
+# model still runs). The manifest's `onboarding` object already leaves out
+# the Keeper starter teammate.
 #
 # Secrets come from the environment (ACME_TICKETS_TOKEN,
 # ACME_TICKETS_WORKSPACE_KEY, GITHUB_TOKEN), from --secrets-file (KEY=VALUE
@@ -21,14 +26,16 @@ KEYCHAIN_SERVICE="com.example.acme-support"
 APP_PATH="${OSAURUS_APP:-/Applications/Osaurus.app}"
 APP_SOURCE="${OSAURUS_APP_SOURCE:-}"
 OSAURUS_TEAM_ID="4W8QF9VR2F"
-MIN_OSAURUS_VERSION="0.26.0"
+MIN_OSAURUS_VERSION="1.0.0"
 
 SECRETS_FILE=""
 OPEN_APP=0
+SKIP_ONBOARDING=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --secrets-file) SECRETS_FILE="$2"; shift 2 ;;
     --open) OPEN_APP=1; shift ;;
+    --skip-onboarding) SKIP_ONBOARDING=1; shift ;;
     *) echo "Unknown option: $1" >&2; exit 1 ;;
   esac
 done
@@ -78,6 +85,7 @@ if [ "$(id -u)" -eq 0 ]; then
   chown "$CONSOLE_USER" "$HANDOFF"
   ARGS=(--secrets-file "$HANDOFF")
   [ "$OPEN_APP" -eq 1 ] && ARGS+=(--open)
+  [ "$SKIP_ONBOARDING" -eq 1 ] && ARGS+=(--skip-onboarding)
   log "Running as $CONSOLE_USER"
   exec launchctl asuser "$CONSOLE_UID" sudo -u "$CONSOLE_USER" -H \
     env OSAURUS_APP="$APP_PATH" "$0" "${ARGS[@]}"
@@ -163,8 +171,10 @@ fi
 
 # --yes confirms the high-risk items: two new MCP servers, one of them a
 # local process (npx). Read the risks in validate.json before shipping.
+IMPORT_ARGS=(--from "$BUNDLE_DIR" --yes --json)
+[ "$SKIP_ONBOARDING" -eq 1 ] && IMPORT_ARGS+=(--skip-onboarding)
 set +e
-"$CLI" import install --from "$BUNDLE_DIR" --yes --json > "$LOG_DIR/install.json"
+"$CLI" import install "${IMPORT_ARGS[@]}" > "$LOG_DIR/install.json"
 STATUS=$?
 set -e
 

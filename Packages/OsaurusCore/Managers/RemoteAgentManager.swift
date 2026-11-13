@@ -80,7 +80,7 @@ public final class RemoteAgentManager: ObservableObject {
     /// `RemoteAgentDetailView`. Matches on the backing provider id first, then
     /// falls back to the provider's configured remote-agent address so
     /// relay-paired agents (whose provider was minted separately) resolve too.
-    /// Returns `nil` for ephemeral Bonjour peers with no stored record.
+    /// Returns `nil` for a provider with no stored record.
     public func remoteAgentDetailId(forProviderId providerId: UUID) -> UUID? {
         if let direct = remoteAgent(forProviderId: providerId)?.id { return direct }
         if let provider = RemoteProviderManager.shared.configuration.providers
@@ -98,8 +98,7 @@ public final class RemoteAgentManager: ObservableObject {
     /// were never captured at all — this keeps the local label/avatar honest.
     /// Empty names and absent descriptions are ignored. An explicit empty
     /// description clears stale routing metadata. Only writes when something actually
-    /// differs. No-ops for addresses we don't have a `RemoteAgent` record for
-    /// (e.g. ephemeral Bonjour peers) — the in-window pin still surfaces those.
+    /// differs. No-ops for addresses we don't have a `RemoteAgent` record for.
     public func updateLiveMetadata(
         forAddress address: String,
         name: String?,
@@ -221,7 +220,7 @@ public final class RemoteAgentManager: ObservableObject {
         }
         guard !resolvedApiKey.isEmpty else { throw RemoteAgentPairError.malformedResponse }
 
-        return upsertPairedAgent(
+        let added = upsertPairedAgent(
             agentAddress: decoded.agentAddress,
             name: decoded.agentName,
             description: decoded.agentDescription ?? "",
@@ -229,6 +228,8 @@ public final class RemoteAgentManager: ObservableObject {
             apiKey: resolvedApiKey,
             note: note
         )
+        FeatureTelemetry.sharedAgentAdded()
+        return added
     }
 
     /// Persist a paired agent + its backing `RemoteProvider`, replacing any
@@ -273,8 +274,8 @@ public final class RemoteAgentManager: ObservableObject {
         }
 
         // Also collapse any other provider already pointing at this agent's
-        // crypto address (e.g. created by the LAN Bonjour pairing flow, which
-        // mints its own provider with a different synthetic `remoteAgentId`).
+        // crypto address (e.g. one left by the retired LAN pairing flow, which
+        // minted its own provider with a different synthetic `remoteAgentId`).
         // Deduping on the address — the agent's stable identity — keeps one
         // provider per agent regardless of which pairing path created it.
         let addressLower = agentAddress.lowercased()
@@ -366,6 +367,19 @@ public final class RemoteAgentManager: ObservableObject {
         else { return false }
         RemoteProviderManager.shared.updateProvider(provider, apiKey: apiKey)
         return true
+    }
+
+    /// Records (or clears) the owner's refusal of a direct share's access
+    /// key. Workspace pairings never record it: a refusal there is a stale
+    /// attestation that re-pairing fixes.
+    public func setAccessRevoked(_ revoked: Bool, forProviderId providerId: UUID, at date: Date = Date()) {
+        guard var agent = remoteAgent(forProviderId: providerId), !agent.isWorkspaceManaged else { return }
+        let next: Date? = revoked ? (agent.accessRevokedAt ?? date) : nil
+        guard agent.accessRevokedAt != next else { return }
+        agent.accessRevokedAt = next
+        RemoteAgentStore.save(agent)
+        refresh()
+        NotificationCenter.default.post(name: .remoteAgentsChanged, object: agent.id)
     }
 
     // MARK: - Mutate

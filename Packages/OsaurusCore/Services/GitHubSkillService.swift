@@ -17,11 +17,17 @@ public struct GitHubRepo: Sendable {
     public let owner: String
     public let name: String
     public let branch: String
+    /// Folder inside the repo a `/tree/<ref>/<path>` link pointed at.
+    public let path: String
+    /// True when the link named a ref, so branch detection keeps it.
+    public let hasExplicitRef: Bool
 
-    public init(owner: String, name: String, branch: String = "main") {
+    public init(owner: String, name: String, branch: String = "main", path: String = "", hasExplicitRef: Bool = false) {
         self.owner = owner
         self.name = name
         self.branch = branch
+        self.path = path
+        self.hasExplicitRef = hasExplicitRef
     }
 
     /// Raw content URL base
@@ -890,7 +896,14 @@ public final class GitHubSkillService: ObservableObject {
     /// GitHub-token flow takes effect immediately — no app restart. Called by
     /// the token card after saving or clearing the token.
     public func reloadAuthentication() {
-        sessionHolder.withLock { $0 = Self.makeSession() }
+        let replaced = sessionHolder.withLock { current -> URLSession in
+            let old = current
+            current = Self.makeSession()
+            return old
+        }
+        // A URLSession stays alive until invalidated; in-flight requests on
+        // the old one still finish.
+        replaced.finishTasksAndInvalidate()
     }
 
     nonisolated static func makeSession() -> URLSession {
@@ -955,8 +968,17 @@ public final class GitHubSkillService: ObservableObject {
     /// - `https://github.com/owner/repo.git`
     /// - `github.com/owner/repo`
     /// - `owner/repo`
+    /// - `https://github.com/owner/repo/tree/<ref>/<path>` (ref and path kept)
     public func parseGitHubURL(_ urlString: String) throws -> GitHubRepo {
         var cleaned = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if cleaned.contains("github.com"),
+            let url = URL(string: cleaned.hasPrefix("http") ? cleaned : "https://\(cleaned)"),
+            let location = GitHubLocation.parse(url), let first = location.candidates.first, let ref = first.ref
+        {
+            return GitHubRepo(
+                owner: location.owner, name: location.repo, branch: ref, path: first.path, hasExplicitRef: true)
+        }
 
         // Remove .git suffix if present
         if cleaned.hasSuffix(".git") {
@@ -1862,6 +1884,7 @@ public final class GitHubSkillService: ObservableObject {
     private nonisolated func detectDefaultBranchNonIsolated(
         _ repo: GitHubRepo
     ) async throws -> GitHubRepo {
+        if repo.hasExplicitRef { return repo }
         guard let apiURL = URL(string: repo.apiURL) else { return repo }
         var request = URLRequest(url: apiURL)
         request.setValue("application/vnd.github.v3+json", forHTTPHeaderField: "Accept")
@@ -1927,6 +1950,7 @@ public final class GitHubSkillService: ObservableObject {
     // MARK: - Private Helpers
 
     private func detectDefaultBranch(_ repo: GitHubRepo) async throws -> GitHubRepo {
+        if repo.hasExplicitRef { return repo }
         // First try 'main', then 'master'
         let branches = ["main", "master"]
 

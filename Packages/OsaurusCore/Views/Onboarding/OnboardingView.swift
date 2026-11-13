@@ -2,22 +2,23 @@
 //  OnboardingView.swift
 //  osaurus
 //
-//  Main container view managing the redesigned 3-screen onboarding flow
-//  (Welcome → Create Dino → Brain setup) at a fixed dark 1000×640 window,
-//  per the Figma onboarding kit. Each step renders a full-window
-//  `OnboardingStepLayout`; the overlay Back/Close glass buttons and the
-//  modal hosts (model chooser, provider connect) live here so
-//  they stay pixel-stable across step transitions. Each step's mutable
-//  state lives in a `@StateObject` here so values survive the slide.
+//  The onboarding window: a stage over the brand landscape where the dino
+//  stands across two chapters. Welcome greets the person and pitches
+//  Osaurus; Model sets up where Osaurus runs (Raptor on this Mac, a
+//  provider key, or Osaurus Cloud). The third chapter, Team, happens in the
+//  first chat, which this window morphs into (`OnboardingHandoff`). The overlay
+//  controls, chapter indicator, and modal hosts live here so they stay
+//  stable across chapter transitions, and each chapter's mutable state
+//  lives in a `@StateObject` here so values survive the slide.
 //
 
+import AppKit
 import SwiftUI
 
 // MARK: - Onboarding Step
 
 public enum OnboardingStep: Int, CaseIterable {
     case welcome
-    case createAgent
     case configureAI
 }
 
@@ -28,22 +29,31 @@ enum OnboardingDirection {
     case backward
 }
 
+/// The pointer over the onboarding window, kept apart from the view state
+/// so pointer moves only redraw the landscape.
+@MainActor
+final class OnboardingPointer: ObservableObject {
+    @Published var location: CGPoint?
+}
+
 // MARK: - Onboarding View
 
 public struct OnboardingView: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled) }
     let onComplete: () -> Void
 
     @State private var currentStep: OnboardingStep
     @State private var direction: OnboardingDirection = .forward
-    /// Latched by `finishOnboarding` to play the ~0.3s scale/fade farewell
-    /// beat (and block re-entry) before `onComplete` closes the window.
+    /// Latched by `finishOnboarding`: the chapter content dissolves, leaving
+    /// the landscape and the dino for the handoff.
     @State private var isFinishing = false
+    /// Latched while the day-one team is created at finish, before the
+    /// farewell beat; blocks a second finish.
+    @State private var isSeedingTeam = false
     /// Guards the one-shot `onboarding_started` + first `stepViewed` emit.
     @State private var didTrackStart = false
-    /// False after the first step navigation: the staggered content cascade
-    /// belongs only to the window's opening moment — subsequent steps ride
-    /// in whole with the slide (see `onboardingEntranceEnabled`).
-    @State private var isFirstScreen = true
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Guards the one-shot identity/Router warm-up kicked off when the user
@@ -51,89 +61,124 @@ public struct OnboardingView: View {
     /// that identity setup is already in flight (so it doesn't start a second,
     /// racing `OsaurusIdentity.setup()` at finish).
     @State private var didPrepareManagedBrain = false
-    /// Whether the full distribution's bundled Raptor 0.6 was ready when the
-    /// Create Agent step was entered. Drives that step's CTA copy ("… and
-    /// start chatting"); the skip itself re-checks at tap time so a seed that
-    /// lands or a model deleted mid-step is honored either way.
-    @State private var bundledBrainReadyOnEntry = false
 
     @StateObject private var welcomeState = WelcomeState()
-    @StateObject private var createAgentState = CreateAgentState()
     @StateObject private var configureAIState = ConfigureAIState()
+    @StateObject private var stage = OnboardingStage()
+    @StateObject private var pointer = OnboardingPointer()
 
     // Identity, sandbox, and crash reporting are configured implicitly on
     // completion (see `configureImplicitDefaults`) rather than shown as their
     // own steps — the crypto/sandbox/diagnostics vocabulary read as jargon to
     // non-technical users.
 
+    /// An installed bundle asked to skip the intro: the window opens on
+    /// Configure AI and no walkthrough follows in chat.
+    private let skipsIntro: Bool
+    /// Team is the walkthrough in chat, so the indicator leaves it out when
+    /// none will follow.
+    private let chapters: [OnboardingChapter]
+
     public init(onComplete: @escaping () -> Void) {
-        self.onComplete = onComplete
-        _currentStep = State(initialValue: .welcome)
+        let preferences = BundleOnboardingPreferences.effective
+        let roster = TeamSeeder.Options(
+            developerMac: DeveloperMacSignal.isDeveloperMac(),
+            brainIsLocal: false,
+            excludedTeammates: preferences.excludeTeammates
+        ).teammates
+        self.init(
+            skipsIntro: preferences.skip,
+            walkthroughFollows: !preferences.skip && !roster.isEmpty,
+            onComplete: onComplete)
     }
 
+    init(skipsIntro: Bool, walkthroughFollows: Bool = true, onComplete: @escaping () -> Void) {
+        self.onComplete = onComplete
+        self.skipsIntro = skipsIntro
+        self.chapters = walkthroughFollows ? OnboardingChapter.allCases : [.welcome, .model]
+        _currentStep = State(initialValue: skipsIntro ? .configureAI : .welcome)
+    }
+
+    private var chapter: OnboardingChapter { currentStep == .welcome ? .welcome : .model }
+
     public var body: some View {
+        Group {
+
         ZStack {
             OnboardingPalette.windowBackground.ignoresSafeArea()
 
-            // Step content slides horizontally; clipped so the slide never
-            // bleeds over the window's rounded corners.
+            OnboardingBackdropHost(stage: stage, pointer: pointer)
+
             ZStack {
-                stepContent
-                    .id(currentStep)
-                    .transition(slideTransition)
+                // Chapter content slides; clipped so the slide never bleeds
+                // over the window's rounded corners.
+                ZStack {
+                    stepContent
+                        .id(currentStep)
+                        .transition(slideTransition)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipped()
+                .opacity(isFinishing ? 0 : 1)
+                .allowsHitTesting(!isFinishing)
+
+                OnboardingStageDino(stage: stage)
+
+                OnboardingDinoHelp(stage: stage, maxRight: helpMaxRight, pages: helpPages)
+                    .opacity(isFinishing ? 0 : 1)
+                    .allowsHitTesting(!isFinishing)
+
+                // Overlay chrome: the chapter indicator, Back (Brain only)
+                // and Close pinned to the window's top edge, above the slide.
+                overlayControls
+                    .opacity(isFinishing ? 0 : 1)
+                    .zIndex(5)
+
+                // Window-root modal host: it must dim and block the whole
+                // window while open, so it can't live inside a step's layout.
+                if currentStep == .configureAI && configureAIState.connectDialog != nil {
+                    ProviderConnectDialog(state: configureAIState)
+                        .transition(OnboardingMotion.modalFade)
+                        .zIndex(10)
+                }
             }
-            .environment(\.onboardingEntranceEnabled, isFirstScreen)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .clipped()
-
-            // Overlay chrome: Back (configure step only) and Close glass
-            // buttons pinned to the window's top corners, above the slide.
-            overlayControls
-                .zIndex(5)
-
-            // Window-root modal hosts: each must dim and block the whole
-            // window while open, so they can't live inside a step's layout.
-            if currentStep == .configureAI && configureAIState.isChoosingModel {
-                ConfigureModelChooserModal(state: configureAIState)
-                    .transition(OnboardingMotion.modalFade)
-                    .zIndex(10)
-            }
-
-            if currentStep == .configureAI && configureAIState.connectDialog != nil {
-                ProviderConnectDialog(state: configureAIState)
-                    .transition(OnboardingMotion.modalFade)
-                    .zIndex(10)
-            }
-
+            .frame(width: OnboardingMetrics.windowWidth, height: OnboardingMetrics.windowHeight)
         }
         // `smooth`, not `bouncy`: this drives the scrim's opacity, and an
         // overshooting spring makes the dimming visibly pulse past its
         // target. The dialog's own transition supplies the character.
-        .animation(OnboardingMotion.smooth, value: configureAIState.isChoosingModel)
         .animation(OnboardingMotion.smooth, value: configureAIState.connectDialog != nil)
-        .frame(width: OnboardingMetrics.windowWidth, height: OnboardingMetrics.windowHeight)
+        .animation(theme.motion.standard, value: isFinishing)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         // The host window is `.titled` + `.fullSizeContentView` with a hidden
         // titlebar, so NSHostingView still reports a ~28pt top safe-area
         // inset. Without this, the fixed 640pt content gets centered in the
         // reduced safe area — shifted ~14pt down and clipped at the bottom.
-        // NOTE: render modifiers (scale/opacity, e.g. the farewell beat)
-        // must come AFTER `.ignoresSafeArea()` — inserted between the frame
-        // and the content they broke the inset compensation and re-shifted
-        // the whole window content down.
         .ignoresSafeArea()
-        // Farewell beat: `finishOnboarding` latches `isFinishing`, the whole
-        // window content settles down/away, then `onComplete` closes it.
-        .scaleEffect(isFinishing && !reduceMotion ? 0.96 : 1)
-        .opacity(isFinishing ? 0 : 1)
+        .onContinuousHover(coordinateSpace: .local) { phase in
+            switch phase {
+            case .active(let location):
+                pointer.location = location
+                stage.pointerMoved(to: location)
+            case .ended:
+                pointer.location = nil
+            }
+        }
         .onAppear {
             // `.onAppear` can fire more than once (window re-activation); the
             // flag keeps "started" and the first step-view to a single emit.
             if !didTrackStart {
                 didTrackStart = true
                 OnboardingTelemetry.started()
-                OnboardingTelemetry.stepViewed(currentStep)
+                if skipsIntro {
+                    OnboardingTelemetry.stepSkipped(.welcome)
+                    openOnBrainSetup()
+                }
+                if !isFinishing && !isSeedingTeam { OnboardingTelemetry.stepViewed(currentStep) }
             }
+            if !skipsIntro { stage.greet() }
         }
+        .onChange(of: helpTopic) { _, _ in stage.closeHelp() }
         .onChange(of: currentStep) { _, newStep in
             OnboardingTelemetry.stepViewed(newStep)
             // Warm up identity + Router as soon as this step appears. Both the
@@ -143,7 +188,9 @@ public struct OnboardingView: View {
                 prepareManagedBrainReadiness()
             }
         }
-    }
+
+        }.environment(\.theme, theme)
+}
 
     // MARK: - Step content dispatch
 
@@ -151,8 +198,9 @@ public struct OnboardingView: View {
     private var stepContent: some View {
         switch currentStep {
         case .welcome:
-            WelcomeStepView(
+            HelloChapterView(
                 state: welcomeState,
+                stage: stage,
                 onGetStarted: {
                     // The welcome claim owns the wallet's first signed Router
                     // action. Persist that choice before identity setup can
@@ -168,14 +216,8 @@ public struct OnboardingView: View {
                     if welcomeState.shareUsageData {
                         TelemetryService.shared.setEnabled(true)
                     }
-                    advance(to: .createAgent)
+                    continueToBrainSetup()
                 }
-            )
-        case .createAgent:
-            CreateAgentStepView(
-                state: createAgentState,
-                isFinalStep: bundledBrainReadyOnEntry,
-                onContinue: { continueFromCreateAgent() }
             )
         case .configureAI:
             ConfigureAIStepView(
@@ -185,28 +227,71 @@ public struct OnboardingView: View {
         }
     }
 
+    // MARK: - Dino help
+
+    private var helpTopic: OnboardingHelp.Topic {
+        switch currentStep {
+        case .welcome: return .welcome
+        case .configureAI:
+            switch configureAIState.screen {
+            case .home: return .paths
+            case .local: return .localModel
+            case .keys, .byok, .claudeCode: return .ownAccount
+            }
+        }
+    }
+
+    /// Welcome: short of the glass card. Model: inside the left column,
+    /// clear of the setup panel.
+    private var helpMaxRight: CGFloat {
+        switch currentStep {
+        case .welcome:
+            return OnboardingMetrics.windowWidth - OnboardingLayout.contentPadding
+                - OnboardingLayout.helloCardWidth - OnboardingLayout.columnGap
+        case .configureAI:
+            return OnboardingLayout.contentPadding + OnboardingLayout.brainColumnWidth
+        }
+    }
+
+    private func helpPages() -> [String] {
+        let totalMemoryGB = SystemMonitorService.shared.totalMemoryGB
+        let pick = configureAIState.selectedModel.map { model in
+            OnboardingHelp.Pick(
+                name: model.simplifiedName,
+                downloadSize: model.formattedDownloadSize,
+                isDownloaded: model.isDownloaded,
+                reason: ConfigureAIState.pickReason(for: model, totalMemoryGB: totalMemoryGB)
+            )
+        }
+        return OnboardingHelp.pages(helpTopic, pick: pick)
+    }
+
     // MARK: - Overlay controls
 
-    /// Back (top-leading, brain-setup step only — per the Figma frames) and
-    /// Close (top-trailing, every step) glass circle buttons at 16pt insets.
+    /// Back (Brain only) and Skip setup on glass at the top corners, with
+    /// the chapter indicator centered between them.
     private var overlayControls: some View {
         VStack {
-            HStack {
-                if currentStep == .configureAI {
-                    OnboardingCircleIconButton(
-                        systemName: "arrow.left",
-                        action: { advance(to: .createAgent, direction: .backward) },
-                        accessibilityLabelKey: "Back"
-                    )
-                    .transition(.opacity)
+            ZStack {
+                OnboardingChapterIndicator(current: chapter, chapters: chapters)
+                HStack {
+                    if currentStep == .configureAI && !skipsIntro {
+                        OnboardingCircleIconButton(
+                            systemName: "arrow.left",
+                            action: {
+                                advance(to: .welcome, direction: .backward)
+                            },
+                            accessibilityLabelKey: "Back"
+                        )
+                        .transition(.opacity)
+                    }
+                    Spacer(minLength: 0)
+                    OnboardingGlassTextButton(title: "Skip setup") {
+                        finishOnboarding(via: .skipButton)
+                    }
                 }
-                Spacer(minLength: 0)
-                OnboardingCircleIconButton(
-                    systemName: "xmark",
-                    action: { finishOnboarding(via: .closeButton) },
-                    accessibilityLabelKey: "Close"
-                )
             }
+            .frame(height: OnboardingLayout.glassButtonDiameter)
             Spacer(minLength: 0)
         }
         .padding(OnboardingLayout.glassButtonInset)
@@ -216,7 +301,7 @@ public struct OnboardingView: View {
     /// One-shot background warm-up for the managed Osaurus brain: create the
     /// identity master key when missing (fresh install — no biometric prompt),
     /// then attempt the Router connect so its model catalog is populated by
-    /// the time `pinSelectedBrainModel` looks for it. Safe to run for users
+    /// the time `OnboardingBrainPin` looks for it. Safe to run for users
     /// who end up choosing local/BYOK: identity is created at finish anyway
     /// (`configureImplicitDefaults`), and the connect only runs while the
     /// router is enabled.
@@ -257,9 +342,6 @@ public struct OnboardingView: View {
 
     private func advance(to step: OnboardingStep, direction: OnboardingDirection = .forward) {
         self.direction = direction
-        // Cascade is an opening-only flourish; from the first navigation on,
-        // steps arrive as one surface with the slide.
-        isFirstScreen = false
         // Seed the Configure AI selection *before* the step is inserted.
         // `ConfigureAIStepView.onAppear` fires mid-slide, and a view inserted
         // into an in-flight offset transition renders at its final position
@@ -267,29 +349,24 @@ public struct OnboardingView: View {
         // `selectedModel`) visibly detached from the step slide. The step's
         // own `onAppear` keeps the same calls as an idempotent safety net.
         if step == .configureAI {
-            configureAIState.ensureLocalSelection(
-                totalMemoryGB: SystemMonitorService.shared.totalMemoryGB
-            )
+            configureAIState.ensureLocalSelection()
             configureAIState.refreshFreeDiskSpace()
+            stage.enterBrain()
+        } else {
+            stage.returnToHello()
         }
-        if step == .createAgent {
-            bundledBrainReadyOnEntry =
-                configureAIState.bundledLocalBrainReady(
-                    totalMemoryGB: SystemMonitorService.shared.totalMemoryGB
-                ) != nil
-        }
-        withAnimation(reduceMotion ? .easeOut(duration: 0.3) : OnboardingMotion.gentle) {
+        withAnimation(reduceMotion ? theme.motion.standard : OnboardingMotion.gentle) {
             currentStep = step
         }
     }
 
-    /// Create Agent's CTA. The full distribution ships Raptor 0.6 inside the
-    /// app and `BundledModelSeeder` installs it at launch, so when that model
-    /// is on disk and fits comfortably there is nothing left to choose:
+    /// The step after Welcome. The full distribution ships Raptor 0.7 inside
+    /// the app and `BundledModelSeeder` installs it at launch, so when that
+    /// model is on disk and fits comfortably there is nothing left to choose:
     /// commit it as the local brain and finish, skipping Configure AI. Every
     /// other case (light build, seed still copying, model deleted, tight RAM)
-    /// proceeds to the Configure AI step unchanged.
-    private func continueFromCreateAgent() {
+    /// proceeds to the Configure AI step.
+    private func continueToBrainSetup() {
         if let bundled = configureAIState.bundledLocalBrainReady(
             totalMemoryGB: SystemMonitorService.shared.totalMemoryGB
         ) {
@@ -301,23 +378,53 @@ public struct OnboardingView: View {
         advance(to: .configureAI)
     }
 
-    private func finishOnboarding(via: OnboardingTelemetry.Completion) {
+    /// The bundle-skip start: the window opens on Configure AI, so do what
+    /// `advance(to: .configureAI)` and the step change would have done. A
+    /// bundled brain that is ready still finishes without the step.
+    private func openOnBrainSetup() {
+        if let bundled = configureAIState.bundledLocalBrainReady(
+            totalMemoryGB: SystemMonitorService.shared.totalMemoryGB
+        ) {
+            configureAIState.commitBundledLocalBrain(bundled)
+            OnboardingTelemetry.stepSkipped(.configureAI)
+            finishOnboarding(via: .finishButton)
+            return
+        }
+        configureAIState.ensureLocalSelection()
+        configureAIState.refreshFreeDiskSpace()
+        stage.enterBrain()
+        prepareManagedBrainReadiness()
+    }
+
+    private func finishOnboarding(via reason: OnboardingTelemetry.Completion) {
+        let via: OnboardingTelemetry.Completion = skipsIntro && reason == .finishButton ? .bundleSkip : reason
         // One-shot: the farewell beat below keeps the window interactive for
-        // ~0.3s, so a double-tap on Close/CTA must not re-run completion.
-        guard !isFinishing else { return }
-        // Closing on any step is an explicit welcome-claim continuation
+        // a moment, so a double-tap on Skip/CTA must not re-run completion.
+        guard !isFinishing, !isSeedingTeam else { return }
+        // Skipping on any step is an explicit welcome-claim continuation
         // (idempotent when "Get started" already selected it).
         WelcomeCreditService.shared.selectForFirstLaunch()
 
+        // Skipping with no brain chosen starts on Osaurus Cloud, the same as
+        // its card, so no way out of the window leaves the
+        // first chat without a model. A re-run that already has a model
+        // keeps it.
+        if configureAIState.selectedBrainSource == nil,
+            OnboardingService.shared.isFreshInstall
+                || AgentManager.shared.effectiveModel(for: Agent.defaultId) == nil
+        {
+            configureAIState.chooseOsaurusAndContinue(onComplete: {})
+        }
+
         // Record where the user left and how: `finishButton` (the brain-setup
-        // step's CTA) is a real completion, `closeButton` at an earlier step
-        // is the drop-off point.
+        // step's CTA) is a real completion, `skipButton` is the drop-off
+        // point.
         OnboardingTelemetry.completed(lastStep: currentStep, via: via)
 
         // Arm the post-onboarding activation funnel: the chat window that
         // opens right after this (see AppDelegate's `onComplete`) fires
-        // `first_time_chat_shown` exactly once. Armed for the close-button
-        // path too — chat opens either way, and `onboarding_completed`'s
+        // `first_time_chat_shown` exactly once. Armed for the skip path
+        // too — chat opens either way, and `onboarding_completed`'s
         // `via` property already separates the two cohorts.
         FeatureTelemetry.armFirstTimeChatShown()
 
@@ -331,9 +438,7 @@ public struct OnboardingView: View {
         }
 
         // First chat lands on the built-in Orchestrator: it introduces
-        // Osaurus, configures things, and delegates work to the Dino created
-        // in step 2 (which stays one click away in the agent switcher and
-        // already joined the default spawn pool on save).
+        // Osaurus, configures things, and routes work to the team.
         AgentManager.shared.setActiveAgent(Agent.defaultId)
         configureImplicitDefaults()
 
@@ -352,132 +457,45 @@ public struct OnboardingView: View {
         // explicitly chose the Cloud-only path. Local and BYOK choices never
         // override a previous opt-out; routing follows the model pinned below.
 
-        // Pin the new/active agent's default model to the brain the user chose
-        // on the Configure AI step, so the first chat respects their selection.
-        pinSelectedBrainModel()
+        // A fresh install gets the team before the first chat opens. The teammates are pinned with the Orchestrator so
+        // delegating never swaps a local model. Onboarding completes after
+        // the seed, so a quit mid-seed runs it again on the next launch.
+        if OnboardingService.shared.isFreshInstall {
+            isSeedingTeam = true
+            let options = TeamSeeder.Options(
+                developerMac: DeveloperMacSignal.isDeveloperMac(),
+                brainIsLocal: configureAIState.selectedBrainSource == .local,
+                excludedTeammates: BundleOnboardingPreferences.effective.excludeTeammates
+            )
+            Task { @MainActor in
+                let team = await TeamSeeder.seedFreshInstall(options)
+                OnboardingBrainPin.pin(configureAIState, forAgents: [Agent.defaultId] + team.map(\.id))
+                // Skip setup means all of it: no walkthrough in the first
+                // chat. The walkthrough introduces the team, so none
+                // follows when a bundle left every teammate out either.
+                let hasTeam = AgentManager.shared.agents.contains { $0.teammate != nil }
+                if via == .finishButton && hasTeam { OnboardingFirstRun.armOpening() }
+                OnboardingService.shared.completeOnboarding()
+                playFarewell()
+            }
+            return
+        }
+
+        // Pin the Orchestrator's default model to the brain the user chose on
+        // the Configure AI step, so the first chat respects their selection.
+        OnboardingBrainPin.pin(configureAIState, forAgents: [Agent.defaultId])
 
         OnboardingService.shared.completeOnboarding()
+        playFarewell()
+    }
 
-        // Farewell beat: settle the content down/away, then hand the window
-        // back. Skipped straight to `onComplete` under Reduce Motion.
-        if reduceMotion {
+    /// The chapter content dissolves, then the window becomes the chat
+    /// (`OnboardingHandoff`).
+    private func playFarewell() {
+        isFinishing = true
+        Task { @MainActor in
+            if !reduceMotion { await OnboardingChoreography.sleep(0.3) }
             onComplete()
-        } else {
-            withAnimation(.easeIn(duration: 0.28)) { isFinishing = true }
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 300_000_000)
-                onComplete()
-            }
-        }
-    }
-
-    /// The agents whose default model should carry the brain choice: the
-    /// Orchestrator always (the first chat after onboarding lands there),
-    /// plus the Dino created in step 2 so switching to it respects the same
-    /// choice.
-    private var brainPinTargets: [UUID] {
-        var targets = [Agent.defaultId]
-        if let createdId = createAgentState.createdAgentId {
-            targets.append(createdId)
-        }
-        return targets
-    }
-
-    /// Pin the Orchestrator's (and the created Dino's) default model to the
-    /// brain source the user committed to on the Configure AI step (managed
-    /// Osaurus, local, or bring-your-own-key). Selecting local or a provider
-    /// never routes through the hosted router implicitly — only the explicit
-    /// `.osaurus` choice pins a router model.
-    private func pinSelectedBrainModel() {
-        switch configureAIState.selectedBrainSource {
-        case .osaurus:
-            // Explicit "Set up later" / start-on-Cloud path: (re-)enable the
-            // managed router — a no-op unless a previous opt-out is being
-            // overridden by this explicit choice — then pin its first
-            // chat-capable model.
-            RemoteProviderManager.shared.setOsaurusRouterEnabled(true)
-            pinOsaurusRouterModel(forAgents: brainPinTargets)
-        case .local:
-            // The model may still be downloading; the id is durable and
-            // `ChatView.refreshPickerItems` re-resolves it once the bundle lands.
-            if let localModelId = configureAIState.localDefaultModelIdToPin {
-                for agentId in brainPinTargets {
-                    AgentManager.shared.updateDefaultModel(for: agentId, model: localModelId)
-                }
-            }
-        case .providerKey:
-            // The provider auto-connects, but its catalog populates async; poll
-            // (bounded) for its first chat-capable model, then pin it.
-            if let providerId = configureAIState.providerModelPinTarget {
-                pinProviderModel(providerId: providerId, forAgents: brainPinTargets)
-            }
-        case .claudeCode:
-            // Claude Code is a harness runtime, not a model: the agents run
-            // their chats in it, and their own model setting stays untouched.
-            let runtime = HarnessRuntimeStore.shared.ensureClaudeCodeRuntime()
-            for agentId in brainPinTargets {
-                var claude = AgentManager.shared.effectiveClaudeCodeConfig(for: agentId)
-                claude.model = ClaudeCodeModel.sonnet.rawValue
-                AgentManager.shared.updateClaudeCodeConfig(claude, for: agentId)
-                AgentManager.shared.updateRuntime(.harness(runtime.id), for: agentId)
-            }
-        case nil:
-            break
-        }
-    }
-
-    /// After onboarding finishes on the managed path, poll (bounded, ~20s) for
-    /// the router's first chat-capable model and pin it. The identity setup
-    /// kicked off on step entry may still be in flight, so each poll retries
-    /// the single-shot connect (a cheap no-op once connected / while
-    /// connecting) before looking the model up. Gives up quietly — the hosted
-    /// models still appear in the picker once the connect lands.
-    private func pinOsaurusRouterModel(forAgents agentIds: [UUID]) {
-        Task { @MainActor in
-            for _ in 0 ..< 40 {
-                if let model = RemoteProviderManager.shared.firstRunOsaurusRouterModelId() {
-                    for agentId in agentIds {
-                        AgentManager.shared.updateDefaultModel(for: agentId, model: model)
-                    }
-                    return
-                }
-                await RemoteProviderManager.shared.connectOsaurusRouterIfPossible()
-                try? await Task.sleep(nanoseconds: 500_000_000)
-            }
-        }
-    }
-
-    /// After onboarding finishes on the BYOK / OAuth path, wait (bounded) for
-    /// the just-connected provider's catalog to populate, then pin the agents'
-    /// default model to its first chat-capable model. Gives up quietly if the
-    /// catalog never arrives (the user can still pick a model in chat).
-    private func pinProviderModel(providerId: UUID, forAgents agentIds: [UUID]) {
-        Task { @MainActor in
-            await pinModelWhenAvailable(forAgents: agentIds, attempts: 20) {
-                RemoteProviderManager.shared.firstChatCapableModelId(forProviderId: providerId)
-            }
-        }
-    }
-
-    /// Poll (bounded) for a model id via `lookup`, pinning it as every
-    /// `agentIds` default the moment one resolves. Used by the BYOK/OAuth
-    /// path, whose catalog populates asynchronously after onboarding
-    /// finishes. Polls every 500ms up to `attempts` times, then gives up
-    /// quietly so it never hangs (the user can still pick in chat).
-    @MainActor
-    private func pinModelWhenAvailable(
-        forAgents agentIds: [UUID],
-        attempts: Int,
-        lookup: () -> String?
-    ) async {
-        for _ in 0 ..< attempts {
-            if let model = lookup() {
-                for agentId in agentIds {
-                    AgentManager.shared.updateDefaultModel(for: agentId, model: model)
-                }
-                return
-            }
-            try? await Task.sleep(nanoseconds: 500_000_000)
         }
     }
 
@@ -507,23 +525,12 @@ public struct OnboardingView: View {
         // overridden here.
 
         // Sandbox: persist the default CPU/RAM config on machines that
-        // support it, but don't provision now. The container boots lazily
-        // the first time it's needed (Sandbox tab / first sandboxed run),
-        // exactly as the old "Skip for now" path behaved — no surprise
-        // multi-GB download for every new user.
+        // support it and download the runtime in the background (no VM
+        // boot, no UI takeover). The container still boots lazily the
+        // first time it's needed, but from cache instead of a cold download.
         if sandboxAvailable {
             SandboxConfigurationStore.save(SandboxConfigurationStore.load())
+            Task { await SandboxManager.shared.prefetchRuntimeAssetsInBackground() }
         }
     }
 }
-
-// MARK: - Preview
-
-#if DEBUG
-    struct OnboardingView_Previews: PreviewProvider {
-        static var previews: some View {
-            OnboardingView(onComplete: {})
-                .frame(width: OnboardingMetrics.windowWidth, height: OnboardingMetrics.windowHeight)
-        }
-    }
-#endif

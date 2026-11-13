@@ -1,0 +1,87 @@
+{
+  "id": "architect.edit-saved-workflow",
+  "domain": "architect",
+  "label": "architect \u2022 one change to a saved workflow, kept as its next version",
+  "query": "Change this workflow so the post always ends with the quote's author in parentheses, like \u201c(Author Name)\u201d. Don't change anything else.",
+  "notes": "Hard case. The harness installs \"Daily Quote\" (fetch a quote over http, then write a one-line post) and opens it for editing, as Edit with the Architect does. Pins that both steps are kept, at most one step is added, the draft still edits the saved workflow (no detach), the change is tested, and the finished workflow's post ends with the author the API returns.",
+  "fixtures": {},
+  "expect": {
+    "architect": {
+      "maxIterations": 25,
+      "fixtureAPI": {
+        "routes": [
+          { "path": "/v1/quote", "body": { "text": "Nothing will work unless you do.", "author": "Maya Angelou" } }
+        ]
+      },
+      "seed": {
+        "name": "Daily Quote",
+        "definition": {
+          "edges": [{ "from": "fetch", "to": "compose" }],
+          "examples": [],
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "topic": { "type": "string", "title": "Topic", "description": "What the quote should be about." }
+            },
+            "required": ["topic"],
+            "x-order": ["topic"]
+          },
+          "model_slots": [],
+          "nodes": [
+            {
+              "id": "fetch",
+              "kind": "http",
+              "name": "Fetch Quote",
+              "http": {
+                "method": "GET",
+                "url": "{{fixture.base_url}}/v1/quote",
+                "query": { "topic": "{{input.topic}}" }
+              },
+              "output_schema": {},
+              "timeout": 30,
+              "retry": { "max_attempts": 1, "backoff_seconds": 1 }
+            },
+            {
+              "id": "compose",
+              "kind": "inference",
+              "name": "Write Post",
+              "inference": {
+                "mode": "generate",
+                "model_slot": "writer",
+                "instructions": "Write a one-line social media post that shares this quote."
+              },
+              "input": { "quote": "{{nodes.fetch.output.body.text}}" },
+              "output_schema": {
+                "type": "object",
+                "properties": { "post": { "type": "string" } },
+                "required": ["post"]
+              },
+              "timeout": 120,
+              "retry": { "max_attempts": 1, "backoff_seconds": 1 }
+            }
+          ],
+          "output": { "post": "{{nodes.compose.output.post}}" },
+          "output_schema": {
+            "type": "object",
+            "properties": { "post": { "type": "string" } },
+            "required": ["post"]
+          },
+          "requirement_notes": {},
+          "secrets": []
+        }
+      },
+      "structure": {
+        "editsSeed": true,
+        "keepsNodes": ["fetch", "compose"],
+        "maxAddedNodes": 1
+      },
+      "postRuns": [
+        { "input": { "topic": "work" }, "outputContains": { "post": ["(maya angelou)"] } }
+      ],
+      "requireTestRun": true,
+      "requireProposeSave": true,
+      "maxToolCalls": 15,
+      "maxPromptTokens": 300000
+    }
+  }
+}

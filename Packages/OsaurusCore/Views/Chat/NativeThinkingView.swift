@@ -23,6 +23,7 @@ final class NativeThinkingView: NSView {
     /// Circular tinted node holding the thinking glyph, matching the tool
     /// timeline nodes (this block is a separate borderless unit — no rail).
     private let iconNode = NSView()
+    private static let iconNodeSize: CGFloat = 28
     private let iconView = NSImageView()
     // Streaming status (in-progress), deliberately a separate catalog key
     // from the mode label `thinking.mode.label` (#2621).
@@ -43,6 +44,10 @@ final class NativeThinkingView: NSView {
     // MARK: State
 
     private var isExpanded = false
+    private var currentTheme: (any ThemeProtocol)?
+    private let headerBackdrop = NSView()
+    private var headerHover = false
+    private var headerTracking: NSTrackingArea?
     private var currentWidth: CGFloat = 0
     /// Block this view was last configured for. The chevron only animates on
     /// an expand-state change within the same block — a fresh or recycled
@@ -103,6 +108,8 @@ final class NativeThinkingView: NSView {
         onToggle: @escaping () -> Void,
         onHeightChanged: @escaping () -> Void
     ) {
+        let theme = theme.catalogFamily(33)
+        currentTheme = theme
         self.onToggle = onToggle
         self.onHeightChanged = onHeightChanged
         self.currentWidth = width
@@ -110,14 +117,18 @@ final class NativeThinkingView: NSView {
         let charCount = thinkingLength ?? thinking.count
 
         // Thinking chrome follows the current theme's text color.
-        let tint = NSColor(theme.primaryText)
-        let titleFont = NSFont.systemFont(ofSize: CGFloat(theme.captionSize), weight: .semibold)
+        let tint = NSColor(theme.text.primary)
+        let titleFont = theme.assignedNativeFont(ThinkingInspectionStyle.key + "label", fallback: theme.nsFont(.label))
+        let titleTracking = theme.assignedTracking(ThinkingInspectionStyle.key + "label")
+        let titleLineHeight: CGFloat? = theme.assignedLineHeight(ThinkingInspectionStyle.key + "label", fallback: titleFont.pointSize)
         titleLabel.font = titleFont
         titleLabel.textColor = tint
 
         iconView.contentTintColor = tint
-        iconNode.layer?.backgroundColor = tint.withAlphaComponent(0.15).cgColor
-        iconNode.layer?.borderColor = tint.withAlphaComponent(0.55).cgColor
+        iconNode.layer?.backgroundColor = NSColor(theme.surface.hover).cgColor
+        iconNode.layer?.borderColor = NSColor(theme.border.default).cgColor
+        iconNode.layer?.borderWidth = theme.stroke.default
+        separatorView.layer?.backgroundColor = NSColor(theme.border.subtle).cgColor
 
         // While streaming, shimmer the present-tense "Thinking" title; once done,
         // show past tense with the elapsed time ("Thought for 30s") when known.
@@ -125,8 +136,10 @@ final class NativeThinkingView: NSView {
             shimmerLabel.configure(
                 text: L("Thinking"),
                 font: titleFont,
-                baseColor: tint.withAlphaComponent(0.45),
-                highlightColor: tint
+                baseColor: NSColor(theme.text.tertiary),
+                highlightColor: tint,
+                tracking: titleTracking,
+                lineHeight: titleLineHeight
             )
             titleLabel.isHidden = true
             shimmerLabel.isHidden = false
@@ -144,8 +157,8 @@ final class NativeThinkingView: NSView {
 
         charCountLabel.isHidden = isExpanded || charCount == 0
         charCountLabel.stringValue = formatCharCount(charCount)
-        charCountLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) - 2, weight: .medium)
-        charCountLabel.textColor = NSColor(theme.tertiaryText)
+        charCountLabel.font = theme.nsFont(.micro, weight: .medium)
+        charCountLabel.textColor = NSColor(theme.text.tertiary)
 
         let isSameBlock = configuredBlockId == blockId
         // Same-block collapsed → expanded: fade the reasoning in instead of
@@ -156,6 +169,24 @@ final class NativeThinkingView: NSView {
             animated: isSameBlock && isExpanded != self.isExpanded
         )
         self.isExpanded = isExpanded
+        headerButton.setAccessibilityLabel(isExpanded ? L("Collapse reasoning") : L("Expand reasoning"))
+        headerButton.setAccessibilityValue(isExpanded ? L("Expanded") : L("Collapsed"))
+        ThinkingInspectionStyle.label(titleLabel, property: "label", color: tint, theme: theme)
+        ThinkingInspectionStyle.label(charCountLabel, property: "caption", color: NSColor(theme.text.secondary), theme: theme)
+        iconView.contentTintColor = NSColor(isStreaming ? theme.border.focus : theme.status.success.foreground)
+        iconNode.layer?.backgroundColor = NSColor(theme.surface.raised).cgColor
+        catalogAssignmentTarget([AgentContentSurfaceAssignments.key(33, "reasoningCard")], name: "Reasoning card", theme: theme)
+        contentContainer.wantsLayer = true
+        contentContainer.layer?.backgroundColor = NSColor(AgentContentSurfaceAssignments.color(33, "reasoningContent", theme)).cgColor
+        iconNode.layer?.borderColor = NSColor(theme.border.default).cgColor
+        iconNode.layer?.cornerRadius = min(CGFloat(theme.radius.medium), Self.iconNodeSize / 2)
+        chevronView.contentTintColor = NSColor(theme.text.secondary)
+        layer?.backgroundColor = NSColor(AgentContentSurfaceAssignments.color(33, "reasoningCard", theme)).cgColor
+        layer?.borderColor = NSColor(theme.border.subtle).cgColor
+        layer?.borderWidth = ThinkingInspectionStyle.metric("borderWidth", 0, theme)
+        layer?.cornerRadius = theme.radius.medium
+        applyAssignedLayout(theme)
+        refreshHeaderFill()
         configuredBlockId = blockId
 
         contentContainer.isHidden = !isExpanded
@@ -165,7 +196,7 @@ final class NativeThinkingView: NSView {
             let mdv = ensureMarkdownView()
             mdv.configure(
                 text: thinking,
-                width: width - 28,
+                width: max(1, width - 2 * ThinkingInspectionStyle.layout("contentPaddingX", "padding", theme.space.s14, theme)),
                 theme: theme,
                 cacheKey: "\(blockId)-thinking",
                 isStreaming: isStreaming
@@ -197,13 +228,14 @@ final class NativeThinkingView: NSView {
     // MARK: Measured height (used by cell coordinator)
 
     func measuredHeight() -> CGFloat {
-        let headerH: CGFloat = 44
-        // collapsed: header only — avoid reserving expanded-content slack (was +14, looked like a dead gap)
-        let collapsedBottomInset: CGFloat = 4
-        guard isExpanded, let mdv = markdownView else { return headerH + collapsedBottomInset }
+        let theme = currentTheme ?? CustomizableTheme.light()
+        let headerH = ThinkingInspectionStyle.headerHeight(theme)
+        // The header already includes its vertical padding. A collapsed
+        // disclosure has no content below it, so reserve only the header.
+        guard isExpanded, let mdv = markdownView else { return headerH }
         // must match `mdv.configure(..., width: width - 28)` — do not subtract container insets twice
-        let contentH = mdv.measuredHeight(for: currentWidth - 28)
-        return headerH + 1 + 8 + contentH + 10
+        let contentH = mdv.measuredHeight(for: max(1, currentWidth - 2 * ThinkingInspectionStyle.layout("contentPaddingX", "padding", theme.space.s14, theme)))
+        return headerH + ThinkingInspectionStyle.metric("borderWidth", 1, theme) + ThinkingInspectionStyle.layout("contentTopGap", "gap", theme.space.s8, theme) + contentH + ThinkingInspectionStyle.layout("contentBottomPadding", "padding", theme.space.s10, theme)
     }
 
     // MARK: - Private
@@ -231,19 +263,15 @@ final class NativeThinkingView: NSView {
         addSubview(headerButton)
 
         // Circular node (tinted fill + ring), matching the tool timeline nodes.
-        // Colors are applied per-theme in configure(); these are neutral defaults.
+        // Colors and stroke are applied per-theme in configure().
         iconNode.translatesAutoresizingMaskIntoConstraints = false
         iconNode.wantsLayer = true
-        iconNode.layer?.cornerRadius = 14
-        iconNode.layer?.borderWidth = 1.5
-        iconNode.layer?.backgroundColor = NSColor.labelColor.withAlphaComponent(0.15).cgColor
-        iconNode.layer?.borderColor = NSColor.labelColor.withAlphaComponent(0.55).cgColor
+        iconNode.layer?.cornerRadius = Self.iconNodeSize / 2
         addSubview(iconNode)
 
         // glyph in the node foreground
         iconView.translatesAutoresizingMaskIntoConstraints = false
         iconView.image = SymbolImageCache.image("brain", accessibilityDescription: nil)
-        iconView.contentTintColor = NSColor.labelColor
         iconView.imageScaling = .scaleProportionallyUpOrDown
         iconNode.addSubview(iconView)
 
@@ -273,7 +301,6 @@ final class NativeThinkingView: NSView {
 
         separatorView.translatesAutoresizingMaskIntoConstraints = false
         separatorView.wantsLayer = true
-        separatorView.layer?.backgroundColor = NSColor.separatorColor.withAlphaComponent(0.2).cgColor
         separatorView.isHidden = true
         addSubview(separatorView)
 
@@ -284,7 +311,7 @@ final class NativeThinkingView: NSView {
         let headerH: CGFloat = 44
 
         // self sizing height constraint (priority 750, overridden by external bottomAnchor if present)
-        let h = heightAnchor.constraint(equalToConstant: headerH + 4)
+        let h = heightAnchor.constraint(equalToConstant: headerH)
         h.priority = NSLayoutConstraint.Priority(rawValue: 750)
         h.isActive = true
         selfHeight = h
@@ -297,8 +324,8 @@ final class NativeThinkingView: NSView {
 
             iconNode.leadingAnchor.constraint(equalTo: leadingAnchor),
             iconNode.centerYAnchor.constraint(equalTo: topAnchor, constant: headerH / 2),
-            iconNode.widthAnchor.constraint(equalToConstant: 28),
-            iconNode.heightAnchor.constraint(equalToConstant: 28),
+            iconNode.widthAnchor.constraint(equalToConstant: Self.iconNodeSize),
+            iconNode.heightAnchor.constraint(equalToConstant: Self.iconNodeSize),
 
             iconView.centerXAnchor.constraint(equalTo: iconNode.centerXAnchor),
             iconView.centerYAnchor.constraint(equalTo: iconNode.centerYAnchor),
@@ -334,7 +361,48 @@ final class NativeThinkingView: NSView {
         // clicks. The button is pinned to the 44pt header row, so it never
         // overlaps expanded content below.
         addSubview(headerButton, positioned: .above, relativeTo: nil)
+        headerBackdrop.translatesAutoresizingMaskIntoConstraints = false
+        headerBackdrop.wantsLayer = true
+        addSubview(headerBackdrop, positioned: .below, relativeTo: iconNode)
+        NSLayoutConstraint.activate([headerBackdrop.leadingAnchor.constraint(equalTo: leadingAnchor), headerBackdrop.trailingAnchor.constraint(equalTo: trailingAnchor), headerBackdrop.topAnchor.constraint(equalTo: topAnchor), headerBackdrop.heightAnchor.constraint(equalTo: headerButton.heightAnchor)])
     }
+
+    private func applyAssignedLayout(_ theme: any ThemeProtocol) {
+        let pad = ThinkingInspectionStyle.layout("headerPaddingX", "padding", theme.space.s14, theme)
+        let contentPad = ThinkingInspectionStyle.layout("contentPaddingX", "padding", theme.space.s14, theme)
+        let gap = ThinkingInspectionStyle.layout("headerIconGap", "gap", theme.space.s8, theme)
+        let height = ThinkingInspectionStyle.headerHeight(theme)
+        headerButton.catalogAssignmentTarget(["headerPaddingX", "headerPaddingY", "headerIconGap", "headerCountGap"].map { ThinkingInspectionStyle.key + "elements.layout." + $0 } + ["background", "hover", "selected"].map { AgentContentSurfaceAssignments.key(33, "reasoningHeader", $0) }, name: "Reasoning header", theme: theme)
+        contentContainer.catalogAssignmentTarget(["contentPaddingX", "contentTopGap", "contentBottomPadding"].map { ThinkingInspectionStyle.key + "elements.layout." + $0 } + [AgentContentSurfaceAssignments.key(33, "reasoningContent")], name: "Expanded reasoning content", theme: theme)
+        headerButton.constraints.first { $0.firstAttribute == .height }?.constant = height
+        separatorView.constraints.first { $0.firstAttribute == .height }?.constant = ThinkingInspectionStyle.metric("borderWidth", 1, theme)
+        separatorView.layer?.backgroundColor = NSColor(theme.border.subtle).cgColor
+        for c in constraints {
+            let view = c.firstItem as? NSView
+            if view === iconNode, c.firstAttribute == .leading { c.constant = pad }
+            if view === iconNode, c.firstAttribute == .centerY { c.constant = height / 2 }
+            if (view === titleLabel || view === shimmerLabel), c.firstAttribute == .leading { c.constant = gap }
+            if view === charCountLabel, c.firstAttribute == .trailing { c.constant = -ThinkingInspectionStyle.layout("headerCountGap", "gap", theme.space.s8, theme) }
+            if view === chevronView, c.firstAttribute == .trailing { c.constant = -pad }
+            if view === separatorView, c.firstAttribute == .top { c.constant = height }
+            if (view === separatorView || view === contentContainer), c.firstAttribute == .leading { c.constant = contentPad }
+            if (view === separatorView || view === contentContainer), c.firstAttribute == .trailing { c.constant = -contentPad }
+            if view === contentContainer, c.firstAttribute == .top { c.constant = ThinkingInspectionStyle.layout("contentTopGap", "gap", theme.space.s8, theme) }
+        }
+    }
+    private func refreshHeaderFill() {
+        guard let theme = currentTheme else { return }
+        headerBackdrop.layer?.cornerRadius = theme.radius.medium
+        headerBackdrop.layer?.backgroundColor = NSColor(AgentContentSurfaceAssignments.color(33, "reasoningHeader", theme, state: headerHover ? "hover" : isExpanded ? "selected" : "background")).cgColor
+    }
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let headerTracking { removeTrackingArea(headerTracking) }
+        let tracking = NSTrackingArea(rect: headerButton.convert(headerButton.bounds, to: self), options: [.activeInKeyWindow, .mouseEnteredAndExited], owner: self)
+        addTrackingArea(tracking); headerTracking = tracking
+    }
+    override func mouseEntered(with event: NSEvent) { super.mouseEntered(with: event); headerHover = true; refreshHeaderFill() }
+    override func mouseExited(with event: NSEvent) { super.mouseExited(with: event); headerHover = false; refreshHeaderFill() }
 
     private func ensureMarkdownView() -> NativeMarkdownView {
         if let mdv = markdownView { return mdv }
