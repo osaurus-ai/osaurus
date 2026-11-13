@@ -167,7 +167,8 @@ enum SyncWorkflowLibrary {
         return chips
     }
 
-    /// Where its model steps run once chosen; nil when it uses no model or none is chosen yet.
+    /// Where its model steps run once chosen; nil when it uses no model or none is chosen yet. Seen on the
+    /// phone, so the Desktop by name rather than "this Mac".
     private static func locality(_ workflow: InstalledWorkflow) -> (icon: String, text: String)? {
         let env = SetupChecker.Environment.live()
         let models = workflow.template.requirements.models.compactMap {
@@ -175,7 +176,7 @@ enum SyncWorkflowLibrary {
         }
         guard !models.isEmpty else { return nil }
         return models.allSatisfy({ SetupChecker.isLocalModel($0, catalog: env.modelCatalog) })
-            ? ("lock.laptopcomputer", L("Runs on this Mac"))
+            ? ("lock.laptopcomputer", L("Runs on Desktop"))
             : ("cloud", L("Uses the cloud"))
     }
 
