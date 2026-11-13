@@ -3,7 +3,7 @@
   "domain": "workflow",
   "label": "workflow • Research Brief searches, reads the pages, and writes a sourced note",
   "query": "Research Brief searches, reads the pages, and writes a sourced note",
-  "notes": "Runs the shipped file. Every tool step returns its fixture under its teammate, so nothing on this Mac is read. The fixture is the shape `search_and_extract` returns: an extracted page carries its text in `markdown`, one that was not read has only its `snippet`.",
+  "notes": "Runs the shipped file. Every tool step returns its fixture under its teammate, so nothing on this Mac is read. `search.item` is the shape `web_search` returns; `extract.item` is the shape `search_and_extract` returns for one direct URL: an opened page carries its text in `markdown`, one that was not read keeps only its search `snippet`.",
   "fixtures": {},
   "expect": {
     "workflow": {
@@ -13,26 +13,38 @@
       },
       "toolResults": {
         "search.item": {
-          "mode": "search_and_extract",
           "query": "cold-climate heat pumps",
+          "category": "web",
+          "provider": "brave_html",
+          "count": 2,
           "results": [
             {
               "rank": 1,
               "url": "https://example.test/heat-pumps-cold",
               "title": "Heat pumps in cold climates",
-              "snippet": "How cold-climate heat pumps hold up in winter.",
-              "extract_status": "ok",
-              "extracted": true,
-              "markdown": "Cold-climate heat pumps keep most of their heating capacity down to -15 C. Field tests in Maine found a seasonal efficiency near 2.5.",
-              "truncated": false,
-              "word_count": 24
+              "snippet": "How cold-climate heat pumps hold up in winter."
             },
             {
               "rank": 2,
               "url": "https://example.test/defrost-cycles",
               "title": "Defrost cycles explained",
-              "snippet": "A heat pump runs short defrost cycles in freezing, humid weather.",
-              "extracted": false
+              "snippet": "A heat pump runs short defrost cycles in freezing, humid weather."
+            }
+          ]
+        },
+        "extract.item": {
+          "mode": "direct_url",
+          "provider": "direct_url",
+          "results": [
+            {
+              "rank": 1,
+              "url": "https://example.test/heat-pumps-cold",
+              "title": "Heat pumps in cold climates",
+              "extract_status": "ok",
+              "extracted": true,
+              "markdown": "Cold-climate heat pumps keep most of their heating capacity down to -15 C. Field tests in Maine found a seasonal efficiency near 2.5.",
+              "truncated": false,
+              "word_count": 24
             }
           ],
           "extraction_attempted_count": 1,
@@ -42,8 +54,7 @@
       },
       "toolArguments": {
         "search.item": {
-          "max_results": 5,
-          "extract_count": 2
+          "max_results": 5
         }
       },
       "outputKeys": [
