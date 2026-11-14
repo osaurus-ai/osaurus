@@ -99,7 +99,7 @@ public final class TranscriptionOverlayWindowService: ObservableObject {
         panel.backgroundColor = .clear
         // Native window shadow traces a black silhouette around the clear, rounded
         // content. The SwiftUI view draws its own shadow, so disable the native one
-        // (matches the toast/notch overlays).
+        // (matches the toast overlay).
         panel.hasShadow = false
         panel.level = .floating
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]

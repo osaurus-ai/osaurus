@@ -3,3 +3,10 @@
 # Use this for intentional English-only strings (proper nouns, debug output,
 # strings already going through L() via a helper the linter can't see, etc.).
 
+# Developer-only design tooling: compiled only into OSAURUS_DESIGN_INSPECTOR
+# (DevelopmentDesign) or DEBUG/inspector builds (SettingsKitGallery).
+Packages/OsaurusCore/DevelopmentDesign/
+Packages/OsaurusCore/Views/DesignSystem/SettingsKitGallery.swift:
+Text("Table list · sample data")
+Text("Chat sidebar · workspace section with sample data")
+Text("Preview only. Revert actions are simulated.")

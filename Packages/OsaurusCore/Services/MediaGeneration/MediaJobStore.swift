@@ -29,6 +29,7 @@ struct DurableMediaJob: Codable, Identifiable, Sendable {
     var cleanupPending: Bool? = nil
     var createdAt: Date
     var updatedAt: Date
+    var effectiveVideo: VideoEffectiveParameters? = nil
 }
 
 actor MediaJobStore {
@@ -58,12 +59,14 @@ actor MediaJobStore {
         state: DurableMediaJobState,
         outputURL: URL? = nil,
         errorMessage: String? = nil,
-        cleanupPending: Bool? = nil
+        cleanupPending: Bool? = nil,
+        effectiveVideo: VideoEffectiveParameters? = nil
     ) throws {
         guard var job = jobs[id] else { return }
         job.state = state
         job.outputURL = outputURL ?? job.outputURL
         job.errorMessage = errorMessage
+        if let effectiveVideo { job.effectiveVideo = effectiveVideo }
         if let cleanupPending {
             job.cleanupPending = cleanupPending
         }

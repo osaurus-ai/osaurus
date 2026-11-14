@@ -38,8 +38,20 @@ final class TextViewFocusController: ObservableObject {
 }
 
 struct EditableTextView: NSViewRepresentable {
+    struct TextStyleKey: Equatable {
+        let role: ThemeTextStyleRole
+        let themeFingerprint: Int
+        let inspectionRevision: String
+        let typographyAssignment: String?
+        let color: Color
+    }
+
     @Binding var text: String
-    let fontSize: CGFloat
+    let theme: ThemeProtocol
+    var textRole: ThemeTextStyleRole = .body
+    /// Per-component full recipe in the isolated design build. Native builds
+    /// continue to resolve their existing named textRole.
+    var typographyAssignment: String? = nil
     let textColor: Color
     let cursorColor: Color
     @Binding var isFocused: Bool
@@ -49,6 +61,15 @@ struct EditableTextView: NSViewRepresentable {
     /// its weak `textView` reference; the parent uses `lockFocus(for:)`
     /// to refuse resignation during state-mutation cascades.
     var focusController: TextViewFocusController? = nil
+    /// False renders the text read-only (composer lock: offline team agent,
+    /// read-only teammate conversation). Selection stays enabled so the
+    /// user can still copy a draft.
+    var isEditable: Bool = true
+    /// Run the macOS spell checker (red underline, right-click suggestions,
+    /// grammar hints) on the text. Autocorrect and smart substitutions stay
+    /// off regardless so nothing is rewritten under the user. Toggled live
+    /// from Settings ▸ Chat (`ComposerSpellCheckSetting`).
+    var spellCheckEnabled: Bool = false
     var onCommit: (() -> Void)? = nil
     var onShiftCommit: (() -> Void)? = nil
     /// Called on ↑ arrow key. Return true to consume the event (prevents cursor movement).
@@ -88,7 +109,7 @@ struct EditableTextView: NSViewRepresentable {
         textView.maxHeight = maxHeight
 
         textView.isRichText = false
-        textView.isEditable = true
+        textView.isEditable = isEditable
         textView.isSelectable = true
         textView.allowsUndo = true
         textView.drawsBackground = false
@@ -106,6 +127,8 @@ struct EditableTextView: NSViewRepresentable {
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
+        textView.isAutomaticSpellingCorrectionEnabled = false
+        Self.applySpellCheck(spellCheckEnabled, to: textView)
 
         let coordinator = context.coordinator
         textView.onMarkedTextChanged = { [weak coordinator] in coordinator?.parent.isComposing = $0 }
@@ -127,12 +150,35 @@ struct EditableTextView: NSViewRepresentable {
 
         syncMaxHeight(textView, scrollView: scrollView)
         syncText(textView, scrollView: scrollView)
+        if textView.isEditable != isEditable { textView.isEditable = isEditable }
         syncStyling(textView, coord: coord)
+        syncSpellCheck(textView)
         syncFocus(textView)
         syncScrollerVisibility(textView, scrollView: scrollView, coord: coord)
     }
 
     // MARK: - updateNSView helpers
+
+    /// Only write on a real diff: toggling continuous spell checking
+    /// re-scans the whole document.
+    private func syncSpellCheck(_ textView: CustomNSTextView) {
+        guard textView.isContinuousSpellCheckingEnabled != spellCheckEnabled else { return }
+        Self.applySpellCheck(spellCheckEnabled, to: textView)
+    }
+
+    static func applySpellCheck(_ enabled: Bool, to textView: NSTextView) {
+        textView.isContinuousSpellCheckingEnabled = enabled
+        textView.isGrammarCheckingEnabled = enabled
+        if !enabled, let layoutManager = textView.layoutManager {
+            // Drop any underline already drawn; the marks are temporary
+            // layout attributes and would otherwise linger until the next
+            // edit of that range.
+            layoutManager.removeTemporaryAttribute(
+                .spellingState,
+                forCharacterRange: NSRange(location: 0, length: textView.string.utf16.count)
+            )
+        }
+    }
 
     private func syncMaxHeight(_ textView: CustomNSTextView, scrollView: NSScrollView) {
         // Avoids triggering NSTextView layout when nothing changed.
@@ -155,13 +201,28 @@ struct EditableTextView: NSViewRepresentable {
     private func syncStyling(_ textView: CustomNSTextView, coord: Coordinator) {
         // Each assignment invalidates layout / triggers needsDisplay even when unchanged,
         // so we cache the last-applied value and only write on a real diff.
-        if coord.lastFontSize != fontSize {
-            textView.font = .systemFont(ofSize: fontSize)
-            coord.lastFontSize = fontSize
-        }
-        if coord.lastTextColor != textColor {
+        let textKey = TextStyleKey(role: textRole, themeFingerprint: theme.renderFingerprint, inspectionRevision: theme.inspectionRevision, typographyAssignment: typographyAssignment, color: textColor)
+        if coord.lastTextStyle != textKey {
+            var attributes = theme.textAttributes(textRole, color: NSColor(textColor))
+            let paragraph = theme.paragraphStyle(textRole)
+            var lineHeight = theme.lineHeight(textRole)
+            if let typographyAssignment {
+                attributes[.font] = theme.assignedNativeFont(typographyAssignment, fallback: theme.nsFont(textRole))
+                lineHeight = theme.assignedLineHeight(typographyAssignment, fallback: lineHeight)
+                paragraph.minimumLineHeight = lineHeight
+                attributes[.paragraphStyle] = paragraph
+                attributes[.kern] = theme.assignedTracking(typographyAssignment) ?? theme.tracking(textRole)
+            }
+            textView.font = attributes[.font] as? NSFont
             textView.textColor = NSColor(textColor)
-            coord.lastTextColor = textColor
+            textView.defaultParagraphStyle = paragraph
+            textView.typingAttributes = attributes
+            textView.minimumLineHeight = lineHeight
+            if let storage = textView.textStorage, storage.length > 0, !textView.hasMarkedText() {
+                storage.setAttributes(attributes, range: NSRange(location: 0, length: storage.length))
+            }
+            coord.lastTextStyle = textKey
+            textView.invalidateIntrinsicContentSize()
         }
         if coord.lastCursorColor != cursorColor {
             textView.insertionPointColor = NSColor(cursorColor)
@@ -206,8 +267,7 @@ struct EditableTextView: NSViewRepresentable {
         var parent: EditableTextView
 
         // Cached appearance values — guards against needsDisplay on every parent re-render.
-        var lastFontSize: CGFloat = 0
-        var lastTextColor: Color = .clear
+        var lastTextStyle: TextStyleKey?
         var lastCursorColor: Color = .clear
         var lastScrollerMaxHeight: CGFloat = -1
         var lastScrollerText: String = ""
@@ -302,6 +362,8 @@ final class AutoSizingScrollView: NSScrollView {
 /// - exposes first-responder transitions via `onFocusChanged`.
 final class CustomNSTextView: NSTextView {
     var maxHeight: CGFloat = .infinity
+    /// The text style's line height; floors the empty editor at one line.
+    var minimumLineHeight: CGFloat = 0
 
     /// Called when IME marked-text state changes (composing / not composing).
     var onMarkedTextChanged: ((Bool) -> Void)?
@@ -387,8 +449,8 @@ final class CustomNSTextView: NSTextView {
         layoutManager.ensureLayout(for: textContainer)
         let usedHeight = layoutManager.usedRect(for: textContainer).height
 
-        let font = self.font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
-        let oneLine = font.ascender - font.descender + font.leading
+        let natural = font.map(ThemeTextMetrics.naturalLineHeight(for:)) ?? 0
+        let oneLine = max(natural, minimumLineHeight)
         let measured = max(usedHeight, oneLine)
 
         // ceil for stable whole-pixel sizing; add textContainerInset (top + bottom).

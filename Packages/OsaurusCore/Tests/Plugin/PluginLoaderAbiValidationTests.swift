@@ -146,6 +146,68 @@ struct PluginLoaderAbiValidationTests {
         #expect(PluginManager.abiTableValidationFailure(api) == nil)
     }
 
+    // MARK: - Slot values that are not code (Sentry APPLE-MACOS-337)
+
+    /// Builds a C function-pointer value out of a raw integer, the way a
+    /// struct-layout mismatch lands an int/bool field of the plugin's own
+    /// struct in one of our function-pointer slots.
+    private static func bogus<F>(_ value: UInt, as _: F.Type) -> F {
+        unsafeBitCast(UnsafeRawPointer(bitPattern: value)!, to: F.self)
+    }
+
+    @Test func freeStringSlotHoldingASmallIntegerIsRejected() throws {
+        // The production table: init/get_manifest were real functions and
+        // ran; free_string was 0x1 (0x2 on the next launch) and passed the
+        // nil check, so the host branched to address 0x1 while freeing the
+        // manifest string. Must be rejected before init is called.
+        var api = completeAPI()
+        api.free_string = Self.bogus(0x1, as: osr_free_string_t.self)
+        let msg = try #require(PluginManager.abiTableValidationFailure(api))
+        #expect(msg.contains("free_string=0x1"))
+        #expect(msg.contains("osaurus_plugin.h"))
+    }
+
+    @Test func secondLaunchValueIsRejectedToo() throws {
+        var api = completeAPI()
+        api.free_string = Self.bogus(0x2, as: osr_free_string_t.self)
+        let msg = try #require(PluginManager.abiTableValidationFailure(api))
+        #expect(msg.contains("free_string=0x2"))
+    }
+
+    @Test func garbageInAnOptionalSlotIsRejected() throws {
+        // Optional slots may be nil, but when populated they are called
+        // later (route dispatch, config pushes, task events) without any
+        // further check, so a non-code value there is just as fatal.
+        var api = completeAPI()
+        api.on_task_event = Self.bogus(0xDEAD_BEEF, as: osr_on_task_event_t.self)
+        let msg = try #require(PluginManager.abiTableValidationFailure(api))
+        #expect(msg.contains("on_task_event=0xdeadbeef"))
+        #expect(!msg.contains("free_string"))
+    }
+
+    @Test func everyBadSlotIsNamed() throws {
+        var api = completeAPI()
+        api.destroy = Self.bogus(0x10, as: osr_destroy_t.self)
+        api.invoke = Self.bogus(0x20, as: osr_invoke_t.self)
+        api.handle_route = Self.bogus(0x30, as: osr_handle_route_t.self)
+        let msg = try #require(PluginManager.abiTableValidationFailure(api))
+        #expect(msg.contains("destroy=0x10"))
+        #expect(msg.contains("invoke=0x20"))
+        #expect(msg.contains("handle_route=0x30"))
+    }
+
+    @Test func realFunctionsInAnyLoadedImagePass() {
+        // Plugin code and system library code both live in loaded images:
+        // a plugin that sets free_string to libc's free() must still load.
+        var api = completeAPI()
+        api.free_string = unsafeBitCast(
+            dlsym(dlopen(nil, RTLD_NOW), "free"), to: osr_free_string_t.self)
+        #expect(api.free_string != nil)
+        #expect(PluginManager.abiTableValidationFailure(api) == nil)
+        #expect(PluginManager.isCodePointerInLoadedImage(unsafeBitCast(api.free_string!, to: UnsafeRawPointer.self)))
+        #expect(!PluginManager.isCodePointerInLoadedImage(UnsafeRawPointer(bitPattern: 0x1)!))
+    }
+
     // MARK: - v1 prefix decode
 
     @Test func v1PrefixLayoutIsExactlyTheFiveRequiredPointers() {

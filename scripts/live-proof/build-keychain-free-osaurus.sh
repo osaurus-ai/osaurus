@@ -24,10 +24,28 @@ mkdir -p "$(dirname "$DERIVED_DATA")"
 
 echo "derived_data=$DERIVED_DATA"
 echo "configuration=Release"
+echo "code_coverage=disabled"
+echo "build_jobs=2"
 echo "xcode_signing=disabled"
 echo "bundle_seal=ad-hoc-keychain-free"
 echo "bundle_id=$BUNDLE_ID"
 echo "user_defaults_domain=$BUNDLE_ID"
+
+env \
+  DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}" \
+  xcodebuild \
+    -workspace "$ROOT/osaurus.xcworkspace" \
+    -scheme osaurus-cli \
+    -configuration Release \
+    -jobs 2 \
+    -derivedDataPath "$DERIVED_DATA" \
+    ENABLE_CODE_COVERAGE=NO \
+    CLANG_COVERAGE_MAPPING=NO \
+    CODE_SIGNING_ALLOWED=NO \
+    CODE_SIGNING_REQUIRED=NO \
+    CODE_SIGN_IDENTITY= \
+    ENABLE_USER_SCRIPT_SANDBOXING=NO \
+    build
 
 env \
   DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer}" \
@@ -36,7 +54,10 @@ env \
     -workspace "$ROOT/osaurus.xcworkspace" \
     -scheme osaurus \
     -configuration Release \
+    -jobs 2 \
     -derivedDataPath "$DERIVED_DATA" \
+    ENABLE_CODE_COVERAGE=NO \
+    CLANG_COVERAGE_MAPPING=NO \
     CODE_SIGNING_ALLOWED=NO \
     CODE_SIGNING_REQUIRED=NO \
     CODE_SIGN_IDENTITY= \
@@ -60,6 +81,14 @@ if [[ "$BUILT_BUNDLE_ID" != "$BUNDLE_ID" ]]; then
   echo "built bundle id mismatch: expected $BUNDLE_ID, got $BUILT_BUNDLE_ID" >&2
   exit 65
 fi
+
+CLI="$DERIVED_DATA/Build/Products/Release/osaurus-cli"
+if [[ ! -x "$CLI" ]]; then
+  echo "missing built CLI executable: $CLI" >&2
+  exit 66
+fi
+mkdir -p "$APP/Contents/Helpers"
+cp "$CLI" "$APP/Contents/Helpers/osaurus"
 
 # macOS 26 rejects the raw CODE_SIGNING_ALLOWED=NO bundle for UI launch
 # because app resources are not sealed. This ad-hoc seal uses no identity,

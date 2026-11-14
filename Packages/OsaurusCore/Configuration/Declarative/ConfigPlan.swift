@@ -59,6 +59,9 @@ public struct ConfigPlan: Equatable, Sendable {
     public var actions: [ConfigPlanAction]
     /// Non-fatal notes (e.g. "3 agents already match — no change").
     public var notes: [String]
+    /// Unified diff of the canonical document before and after this plan,
+    /// computed by the planner; nil when a section has no exporter.
+    public var diffText: String?
 
     public init(actions: [ConfigPlanAction] = [], notes: [String] = []) {
         self.actions = actions
@@ -91,7 +94,12 @@ public struct ConfigPlan: Equatable, Sendable {
         }
         var lines: [String] = []
         var currentSection = ""
-        for action in actions {
+        // One heading per section, in first-seen order (channel config and
+        // channel routing are planned at different points).
+        var sectionOrder: [String] = []
+        for action in actions where !sectionOrder.contains(action.section) { sectionOrder.append(action.section) }
+        let grouped = sectionOrder.flatMap { section in actions.filter { $0.section == section } }
+        for action in grouped {
             if action.section != currentSection {
                 currentSection = action.section
                 lines.append("\(action.section):")
@@ -160,12 +168,19 @@ public struct ConfigApplyResult: Equatable, Sendable {
     public var target: String
     public var status: Status
     public var message: String?
+    /// Secret references (`keychain:SERVICE/ACCOUNT` displays) that did not
+    /// resolve, so the item still needs its secret.
+    public var unresolvedSecretRefs: [String]
 
-    public init(section: String, target: String, status: Status, message: String? = nil) {
+    public init(
+        section: String, target: String, status: Status, message: String? = nil,
+        unresolvedSecretRefs: [String] = []
+    ) {
         self.section = section
         self.target = target
         self.status = status
         self.message = message
+        self.unresolvedSecretRefs = unresolvedSecretRefs
     }
 
     public var payload: [String: Any] {
@@ -175,6 +190,7 @@ public struct ConfigApplyResult: Equatable, Sendable {
             "status": status.rawValue,
         ]
         if let message { row["message"] = message }
+        if !unresolvedSecretRefs.isEmpty { row["unresolved_secret_refs"] = unresolvedSecretRefs }
         return row
     }
 }

@@ -169,22 +169,39 @@ extension EvalRunner {
             }
         }
 
-        if let spawnBatchAssertion = exp.spawnBatch {
+        if let spawnWaveAssertion = exp.spawnWave {
+            // Consecutive toolCall events with no intervening result/assistant
+            // event form one model step (one wave), mirroring the live loop.
+            var stepByCallId: [String: Int] = [:]
+            var step = 0
+            var previousWasCall = false
+            for event in exp.events {
+                let kind = normalizedGroundingKind(event.kind)
+                if kind == "toolcall" {
+                    if !previousWasCall { step += 1 }
+                    if let callId = nonEmpty(event.callId) { stepByCallId[callId] = step }
+                    previousWasCall = true
+                } else {
+                    previousWasCall = false
+                }
+            }
             let invocations = orderedCalls.map { call in
                 let result = parsed.results[call.callId]
-                let observation =
-                    call.tool == "spawn_batch"
-                    ? result.flatMap {
-                        AgentLoopTranscript.spawnBatchObservation(from: $0.content)
-                    }
-                    : nil
+                let observation = result.flatMap {
+                    AgentLoopTranscript.spawnCallObservation(
+                        tool: call.tool,
+                        arguments: call.arguments ?? "",
+                        result: $0.content
+                    )
+                }
                 return AgentLoopTranscript.ToolInvocation(
                     name: call.tool,
                     arguments: call.arguments ?? "",
                     resultPreview: String((result?.content ?? "").prefix(300)),
                     wasDeduped: false,
                     wasError: result.map { ToolEnvelope.isError($0.content) } ?? false,
-                    spawnBatch: observation
+                    step: stepByCallId[call.callId] ?? 0,
+                    spawnCall: observation
                 )
             }
             let transcript = AgentLoopTranscript(
@@ -196,8 +213,8 @@ extension EvalRunner {
                 toolSchemaNames: orderedCalls.map(\.tool),
                 error: nil
             )
-            let structured = scoreSpawnBatch(
-                spawnBatchAssertion,
+            let structured = scoreSpawnWave(
+                spawnWaveAssertion,
                 transcript: transcript
             )
             if structured.passed {

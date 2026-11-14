@@ -234,6 +234,184 @@ public enum ScheduleFrequency: Codable, Sendable, Equatable, Hashable {
         }
     }
 
+    // MARK: - Slot Alignment
+
+    /// Snap window for treating an early wall-clock stamp as a consumed slot.
+    /// `min(60, interval / 2)` so a 1-minute cadence cannot consume the next
+    /// minute on a slightly late fire. Compare with strict `<`, not `<=`.
+    public static func slotSnapTolerance(interval: TimeInterval) -> TimeInterval {
+        min(60, max(interval, 0) / 2)
+    }
+
+    /// Whether `next` should be treated as already consumed by `raw`.
+    public static func shouldConsumeNextSlot(
+        raw: Date,
+        next: Date,
+        interval: TimeInterval
+    ) -> Bool {
+        next.timeIntervalSince(raw) < slotSnapTolerance(interval: interval)
+    }
+
+    /// Nominal snap interval. For `everyNMinutes` this is the stored N
+    /// (not the 5-minute `nextRunDate` clamp) so a 1-minute cadence stays
+    /// at a 30s window even if slot generation still clamps to 5.
+    ///
+    /// Cron uses the gap *after* `reference` from two successive
+    /// `nextRunDate` results. That is not "the real period" for irregular
+    /// expressions (`0 9,17 * * *` varies by time of day). Harmless here:
+    /// any gap ≥ 2 minutes still caps at 60. The 60s fallback is only
+    /// unsafe for a sub-2-minute cron whose next two dates fail to
+    /// compute, which should not happen.
+    public func slotSnapIntervalSeconds(around reference: Date) -> TimeInterval {
+        switch self {
+        case .once:
+            return 120
+        case .everyNMinutes(let minutes):
+            return TimeInterval(max(minutes, 1) * 60)
+        case .hourly:
+            return 3600
+        case .daily:
+            return 86_400
+        case .weekly:
+            return 7 * 86_400
+        case .monthly:
+            return 30 * 86_400
+        case .yearly:
+            return 365 * 86_400
+        case .cron:
+            guard let next = nextRunDate(after: reference),
+                let following = nextRunDate(after: next)
+            else {
+                return 120
+            }
+            let gap = following.timeIntervalSince(next)
+            return gap > 0 ? gap : 120
+        }
+    }
+
+    public func slotSnapToleranceSeconds(around reference: Date) -> TimeInterval {
+        Self.slotSnapTolerance(interval: slotSnapIntervalSeconds(around: reference))
+    }
+
+    /// If `raw` is within the snap window before the next slot, treat that
+    /// slot as already consumed and return the slot instant.
+    public func alignedAnchor(from raw: Date) -> Date {
+        if case .once = self { return raw }
+        guard let next = nextRunDate(after: raw) else { return raw }
+        if Self.shouldConsumeNextSlot(
+            raw: raw,
+            next: next,
+            interval: slotSnapIntervalSeconds(around: raw)
+        ) {
+            return next
+        }
+        return raw
+    }
+
+    /// Result of walking to the most recent slot that is `<= now`.
+    public struct LatestDueSlotWalk: Sendable, Equatable {
+        public var slot: Date?
+        public var steps: Int
+
+        public init(slot: Date?, steps: Int) {
+            self.slot = slot
+            self.steps = steps
+        }
+    }
+
+    /// Most recent slot `<= now` after `rawAnchor`. Returns `nil` when the
+    /// first candidate is already `> now` (empty case: the timer owns that
+    /// slot, not the missed-replay path), even if it is inside
+    /// `shouldRunNow`'s 60s forward window.
+    ///
+    /// Walk start: `everyNMinutes` / `hourly` / `daily` begin at
+    /// `max(anchor, now - 2 * interval)` so a months-old 5-minute schedule
+    /// does not step tens of thousands of times at launch. Two intervals
+    /// (not one) so a DST shift or the strict `>` boundary cannot skip
+    /// the slot we want. Weekly / monthly / yearly walk from the aligned
+    /// anchor — their gaps can exceed the nominal period (monthly on the
+    /// 31st: Jan 31 → Mar 31 is 59 days). Cron uses the observed next gap
+    /// only as a walk bound, not as "the real period."
+    ///
+    /// If that fast start returns `nil` but `nextRunDate(after: aligned)`
+    /// is already `<= now`, the start skipped a real miss (irregular cron
+    /// or DST). Walk again from the aligned anchor. Hitting the iteration
+    /// cap returns `nil` so the timer path can catch up from a live slot
+    /// rather than stamping a mid-walk leftover.
+    public func latestDueSlot(
+        after rawAnchor: Date,
+        asOf now: Date,
+        maxIterations: Int = 512
+    ) -> LatestDueSlotWalk {
+        let aligned = alignedAnchor(from: rawAnchor)
+        let cap = max(1, maxIterations)
+        let fast = walkDueSlots(
+            from: walkStart(alignedAnchor: aligned, asOf: now),
+            asOf: now,
+            maxIterations: cap
+        )
+        if fast.slot != nil {
+            return fast
+        }
+        if let first = nextRunDate(after: aligned), first <= now {
+            return walkDueSlots(from: aligned, asOf: now, maxIterations: cap)
+        }
+        return LatestDueSlotWalk(slot: nil, steps: fast.steps)
+    }
+
+    private func walkDueSlots(
+        from start: Date,
+        asOf now: Date,
+        maxIterations: Int
+    ) -> LatestDueSlotWalk {
+        var cursor = start
+        var lastDue: Date?
+        var steps = 0
+        while steps < maxIterations {
+            guard let next = nextRunDate(after: cursor) else {
+                return LatestDueSlotWalk(slot: lastDue, steps: steps)
+            }
+            if next > now {
+                return LatestDueSlotWalk(slot: lastDue, steps: steps)
+            }
+            lastDue = next
+            cursor = next
+            steps += 1
+        }
+        return LatestDueSlotWalk(slot: nil, steps: steps)
+    }
+
+    /// Actual slot spacing used to bound the latest-due walk.
+    /// `everyNMinutes` matches `nextRunDate`'s 5-minute clamp so
+    /// `now - 2 * interval` cannot land after the real latest slot.
+    private func walkIntervalSeconds(around reference: Date) -> TimeInterval? {
+        switch self {
+        case .everyNMinutes(let minutes):
+            return TimeInterval(max(minutes, 5) * 60)
+        case .hourly:
+            return 3600
+        case .daily:
+            return 86_400
+        case .cron:
+            guard let next = nextRunDate(after: reference),
+                let following = nextRunDate(after: next)
+            else {
+                return nil
+            }
+            let gap = following.timeIntervalSince(next)
+            return gap > 0 ? gap : nil
+        case .once, .weekly, .monthly, .yearly:
+            return nil
+        }
+    }
+
+    private func walkStart(alignedAnchor: Date, asOf now: Date) -> Date {
+        guard let interval = walkIntervalSeconds(around: alignedAnchor) else {
+            return alignedAnchor
+        }
+        return max(alignedAnchor, now.addingTimeInterval(-2 * interval))
+    }
+
     // MARK: - Private Helpers
 
     private func timeString(hour: Int, minute: Int) -> String {
@@ -327,8 +505,17 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
     public var name: String
     /// Instructions to send to the AI when the schedule runs
     public var instructions: String
-    /// The agent to use for the chat (nil = default agent)
-    public var agentId: UUID?
+    /// Who runs the schedule: an agent hosted here or a teammate's shared
+    /// workspace agent. nil = no agent (refused at execution time).
+    public var target: AgentDispatchTarget?
+    /// The local agent, for readers that only understand local agents.
+    /// nil for workspace targets; setting it replaces `target` with `.local`.
+    public var agentId: UUID? {
+        get { target?.localId }
+        set { target = newValue.map(AgentDispatchTarget.local) }
+    }
+    /// The shared workspace agent this schedule runs, or nil for local.
+    public var workspaceTarget: WorkspaceAgentRef? { target?.workspaceRef }
     /// Extra parameters for future extensibility
     public var parameters: [String: String]
     /// Working directory path (for display)
@@ -352,11 +539,14 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
     /// When the schedule was last modified
     public var updatedAt: Date
 
+    /// `agentId` and `target` are two spellings of the same field; `target`
+    /// wins when both are given.
     public init(
         id: UUID = UUID(),
         name: String,
         instructions: String,
         agentId: UUID? = nil,
+        target: AgentDispatchTarget? = nil,
         parameters: [String: String] = [:],
         folderPath: String? = nil,
         folderBookmark: Data? = nil,
@@ -372,7 +562,7 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         self.id = id
         self.name = name
         self.instructions = instructions
-        self.agentId = agentId
+        self.target = target ?? agentId.map(AgentDispatchTarget.local)
         self.parameters = parameters
         self.folderPath = folderPath
         self.folderBookmark = folderBookmark
@@ -390,6 +580,7 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case id, name, instructions, agentId, parameters
+        case target
         case personaId  // legacy key for migration
         case mode  // legacy key (chat / work) — ignored on decode
         case folderPath, folderBookmark
@@ -403,9 +594,13 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         id = try container.decode(UUID.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
         instructions = try container.decode(String.self, forKey: .instructions)
-        agentId =
-            try container.decodeIfPresent(UUID.self, forKey: .agentId)
-            ?? container.decodeIfPresent(UUID.self, forKey: .personaId)
+        // `target` (new) → `agentId` → `personaId` (oldest); every stored
+        // schedule written before workspace targets decodes as `.local`.
+        target = try container.decodeAgentTarget(
+            targetKey: .target,
+            legacyAgentIdKey: .agentId,
+            legacyPersonaIdKey: .personaId
+        )
         // Legacy `mode` field (chat / work) is silently dropped — every
         // scheduled run is now a chat dispatch.
         _ = try container.decodeIfPresent(String.self, forKey: .mode)
@@ -427,7 +622,9 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         try container.encode(id, forKey: .id)
         try container.encode(name, forKey: .name)
         try container.encode(instructions, forKey: .instructions)
-        try container.encodeIfPresent(agentId, forKey: .agentId)
+        // Writes `target` AND (for local) the legacy `agentId` so older
+        // builds keep reading the UUID they expect.
+        try container.encodeAgentTarget(target, targetKey: .target, legacyAgentIdKey: .agentId)
         try container.encode(parameters, forKey: .parameters)
         try container.encodeIfPresent(folderPath, forKey: .folderPath)
         try container.encodeIfPresent(folderBookmark, forKey: .folderBookmark)
@@ -451,17 +648,33 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         return frequency.nextRunDate()
     }
 
-    /// Most recent execution anchor. Trigger time wins over completion time so
-    /// failed or in-flight runs do not replay the same missed slot.
-    public var executionAnchor: Date? {
-        lastTriggeredAt ?? lastRunAt
+    /// The trigger timing this schedule's anchors describe.
+    public var timing: ScheduleTiming {
+        ScheduleTiming(
+            frequency: frequency, isEnabled: isEnabled, lastTriggeredAt: lastTriggeredAt, lastRunAt: lastRunAt)
     }
 
-    /// Calculate the next run date from the execution anchor.
+    public var executionAnchor: Date? { timing.executionAnchor }
+
+    public var consumedExecutionAnchor: Date? { timing.consumedExecutionAnchor }
+
     public func nextRunDateAfterExecutionAnchor(asOf now: Date = Date()) -> Date? {
-        guard isEnabled else { return nil }
-        if case .once = frequency, executionAnchor != nil { return nil }
-        return frequency.nextRunDate(after: executionAnchor ?? now)
+        timing.nextRunDateAfterExecutionAnchor(asOf: now)
+    }
+
+    public func latestDueSlot(
+        asOf now: Date = Date(),
+        initialLookbackSeconds: TimeInterval = 3600
+    ) -> Date? {
+        timing.latestDueSlot(asOf: now, initialLookbackSeconds: initialLookbackSeconds)
+    }
+
+    public func hasMissedRecurringRun(asOf now: Date = Date()) -> Bool {
+        timing.hasMissedRecurringRun(asOf: now)
+    }
+
+    public func scheduledFireTime(asOf now: Date = Date()) -> Date? {
+        timing.scheduledFireTime(asOf: now)
     }
 
     /// Human-readable description of when this will next run
@@ -502,25 +715,13 @@ public struct Schedule: Codable, Identifiable, Sendable, Equatable {
         return formatter.string(from: nextRun)
     }
 
-    /// Whether this schedule should run now (or was missed)
     public func shouldRunNow(
         asOf now: Date = Date(),
         toleranceSeconds: TimeInterval = 60,
         initialLookbackSeconds: TimeInterval = 3600
     ) -> Bool {
-        guard isEnabled else { return false }
-
-        let latestAllowedFireDate = now.addingTimeInterval(toleranceSeconds)
-
-        // A one-shot should never replay once it has been selected for dispatch.
-        if case .once(let date) = frequency {
-            guard executionAnchor == nil else { return false }
-            return date <= latestAllowedFireDate
-        }
-
-        let checkFrom = executionAnchor ?? now.addingTimeInterval(-initialLookbackSeconds)
-        guard let nextRun = frequency.nextRunDate(after: checkFrom) else { return false }
-        return nextRun <= latestAllowedFireDate
+        timing.shouldRunNow(
+            asOf: now, toleranceSeconds: toleranceSeconds, initialLookbackSeconds: initialLookbackSeconds)
     }
 }
 

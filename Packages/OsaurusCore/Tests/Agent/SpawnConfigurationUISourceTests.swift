@@ -3,6 +3,11 @@
 import Foundation
 import Testing
 
+/// Source-level pins for the shared Spawn editor (Settings → Agents →
+/// Delegation and the custom-agent sheet). These guard the simplified delegation
+/// surface: one `spawn_agent` tool, agents (local + shared) as the only
+/// targets, Always Allow as the local default, and stale pool entries
+/// pruned instead of rendered as "Unavailable".
 @Suite("Spawn configuration UI source")
 struct SpawnConfigurationUISourceTests {
     private static func packageRoot() -> URL {
@@ -25,17 +30,41 @@ struct SpawnConfigurationUISourceTests {
 
         #expect(agents.components(separatedBy: "SpawnConfigurationEditor(").count - 1 == 1)
         #expect(settings.components(separatedBy: "SpawnConfigurationEditor(").count - 1 == 1)
-        #expect(settings.contains(#"label: "Main Chat Spawn""#))
-        #expect(editor.contains(#"AgentSheetSectionLabel("Allowed agents")"#))
-        #expect(editor.contains(#"AgentSheetSectionLabel("Allowed models")"#))
-        #expect(editor.contains(#"title: "Max subagents per batch""#))
-        #expect(editor.contains(#"title: "Max child tool calls (0 = default 8)""#))
-        #expect(editor.contains(#"keyPath: \.maxToolCalls"#))
-        #expect(editor.contains(#"Text("Agent tools only""#))
-        #expect(editor.contains(#"Text("Agent tools + read-only files""#))
-        #expect(editor.contains("cancellation-audited subset of their enabled tools"))
-        #expect(editor.contains("host read-only file tools"))
-        #expect(editor.contains("modelPickerCache.chatModelCandidates"))
+        #expect(settings.contains(#"title: "Subagents""#))
+        #expect(settings.contains(#"anchorId: "settings.agents.delegation.mainChat""#))
+        // Labels converge on "subagent" / "delegate"; "Spawn" survives only
+        // in tool ids.
+        #expect(!settings.contains(#"label: "Main Chat Spawn""#))
+        #expect(editor.contains(#"Text("Allowed subagents", bundle: .module)"#))
+        #expect(editor.contains(#"SettingsFieldLabel("Allowed agents")"#))
+        #expect(editor.contains(#"SettingsFieldLabel("Allowed shared agents")"#))
+        #expect(editor.contains(#"title: "Limits""#))
+        #expect(editor.contains(#"title: "Max output tokens per subagent""#))
+        #expect(editor.contains(#"title: "Max turns per subagent""#))
+        #expect(editor.contains(#"title: "Time limit per subagent (seconds)""#))
+        #expect(editor.contains(#"title: "Max local subagents at once""#))
+        #expect(editor.contains(#"title: "Max remote subagents at once""#))
+        #expect(editor.contains(#"keyPath: \.maxRemoteParallelSpawns"#))
+
+        // Bare-model workers and their tool-access switch are gone: the
+        // worker IS the agent, with its own tools and Working Folder.
+        #expect(!editor.contains(#"SettingsFieldLabel("Allowed models")"#))
+        #expect(!editor.contains("maxToolCalls"))
+        #expect(!editor.contains("Let model subagents read files"))
+        #expect(!editor.contains("SpawnToolAccess"))
+        #expect(editor.contains("Agents with their own Working Folder read and write files there."))
+        #expect(editor.contains("inherit the Orchestrator's Working Folder for the run"))
+    }
+
+    @Test("starter agents and Always Allow are the out-of-the-box path")
+    func starterAgentsAndDefaultPermission() throws {
+        let editor = try Self.source("Views/Agent/SpawnConfigurationEditor.swift")
+
+        #expect(editor.contains(#".tertiary, "Create starter agents""#))
+        #expect(editor.contains("TeamSeeder.createTeam("))
+        #expect(editor.contains("Always Allow is the default"))
+        #expect(editor.contains(#""Permission for shared (workspace) agents""#))
+        #expect(editor.contains("SubagentPermissionDefaults.workspaceSpawnKindId"))
     }
 
     @Test("open custom-agent editor refreshes shared handoff and concurrency state")
@@ -65,8 +94,8 @@ struct SpawnConfigurationUISourceTests {
     @Test("shared global editors use revision-safe three-way store saves")
     func globalEditorsDoNotReplaceStaleSharedSnapshots() throws {
         let paths = [
-            "Views/Settings/OrchestratorSettingsView.swift",
-            "Views/Model/AppleScriptModelsView.swift",
+            "Views/Settings/DelegationSettingsView.swift",
+            "Views/Model/AppleScriptAutomationView.swift",
             "Views/ImageGeneration/ImageGenerationView.swift",
         ]
 
@@ -82,9 +111,8 @@ struct SpawnConfigurationUISourceTests {
 
     @Test("Main Chat batch edits use an origin-aware Server update path")
     func mainChatBatchEditsUpdateServerWithoutNotificationEchoes() throws {
-        let settings = try Self.source("Views/Settings/OrchestratorSettingsView.swift")
+        let settings = try Self.source("Views/Settings/DelegationSettingsView.swift")
         let controller = try Self.source("Networking/ServerController.swift")
-        let composer = try Self.source("Services/Chat/SystemPromptComposer.swift")
 
         #expect(settings.contains("server.applyMainChatBatchLimit(from: saved)"))
         #expect(settings.contains("let batchLimitWasExplicitlyEdited ="))
@@ -98,11 +126,6 @@ struct SpawnConfigurationUISourceTests {
                 "runtimeSettings.concurrency.maxConcurrentSequences != requested"
             )
         )
-        #expect(
-            composer.components(
-                separatedBy: "for: ServerRuntimeSettingsStore.snapshot()"
-            ).count - 1 == 2
-        )
         #expect(!controller.contains("subagentConfigurationCancellable"))
     }
 
@@ -110,7 +133,7 @@ struct SpawnConfigurationUISourceTests {
     func runtimeSpawnBoundariesUseCanonicalServerLimit() throws {
         let snapshot = try Self.source("Services/Chat/AgentConfigSnapshot.swift")
         let textSpawn = try Self.source("Subagent/Kinds/TextSubagentKind.swift")
-        let batchSpawn = try Self.source("Tools/SpawnBatchTool.swift")
+        let fanOut = try Self.source("Subagent/SpawnFanOutPolicy.swift")
         let visibility = try Self.source(
             "Subagent/SubagentCapabilityRegistry.swift"
         )
@@ -119,13 +142,10 @@ struct SpawnConfigurationUISourceTests {
         #expect(snapshot.contains("sharedParallelLimit: sharedParallelLimit"))
         #expect(textSpawn.contains("for: ServerRuntimeSettingsStore.snapshot()"))
         #expect(textSpawn.contains("sharedParallelLimit: sharedParallelLimit"))
-        #expect(batchSpawn.contains("maxParallelSpawns: maxParallelSpawns"))
-        #expect(batchSpawn.contains("sharedParallelLimit: maxParallelSpawns"))
-        #expect(
-            batchSpawn.contains(
-                "approved.maxParallelSpawns == current.maxParallelSpawns"
-            )
-        )
+        // The wave policy (several spawn_agent calls in one message) reads
+        // the same canonical source.
+        #expect(fanOut.contains("for: ServerRuntimeSettingsStore.snapshot()"))
+        #expect(fanOut.contains("sharedParallelLimit: SpawnBatchConcurrencyContract.configuredLimit("))
 
         // Keep the budget merger pure: every production boundary must name the
         // canonical source explicitly, while hand-built frozen-schema tests can
@@ -134,91 +154,69 @@ struct SpawnConfigurationUISourceTests {
         #expect(visibility.contains("sharedParallelLimit: Int"))
     }
 
-    @Test("model picker refresh, target status, and capacity contract stay in the shared editor")
+    @Test("capacity contract and shared-agent roster refresh stay in the shared editor")
     func sharedEditorOwnsRefreshStatusAndCapacityCopy() throws {
         let editor = try Self.source("Views/Agent/SpawnConfigurationEditor.swift")
         let concurrency = try Self.source(
             "Views/Settings/ServerSettings/ConcurrencySection.swift"
         )
-        let subagentSettings = try Self.source(
-            "Views/Settings/SubagentSettingsSection.swift"
-        )
 
-        #expect(editor.contains(".task(id: modelPickerPresented)"))
-        #expect(editor.contains("refreshConnectedProviders()"))
-        #expect(editor.contains("buildModelPickerItems()"))
-        #expect(editor.contains("Refreshing local and connected cloud models"))
-        #expect(editor.contains("No local or connected cloud models are available"))
-        #expect(editor.contains(#"disabled: false"#))
-        // The one remaining `addable.isEmpty` gate belongs to Add Agent. Add
-        // Model stays reachable so opening it can refresh a cold cache.
+        #expect(editor.contains(".task(id: workspaceAgentPickerPresented)"))
+        // The `addable.isEmpty` gates belong to Add Agent and Add Shared
+        // Agent; there is no model picker any more.
         #expect(
-            editor.components(separatedBy: #"disabled: addable.isEmpty"#).count - 1 == 1
+            editor.components(separatedBy: #"disabled: addable.isEmpty"#).count - 1 == 2
         )
-        #expect(editor.contains(#"L("Unavailable")"#))
-        #expect(editor.contains(#"L("Checking…")"#))
+        #expect(editor.contains(#"title: "Add agent""#))
+        #expect(editor.contains(#"title: "Add shared agent""#))
 
         // The editor derives the displayed ceiling through the exact planner
         // used at run time instead of cloning min/clamp policy in SwiftUI.
         #expect(editor.contains("SubagentBatchAdmissionPlanner.plan("))
         #expect(editor.contains(#""Configured same-model local ceiling""#))
-        #expect(editor.contains("Different local models run in serial model waves"))
-        #expect(editor.contains("persist one configured limit"))
-        #expect(editor.contains("This agent and Server Concurrent Sessions persist"))
+        // The ceiling row reads `ServerRuntimeSettingsStore.snapshot()` at
+        // render time while the Max-local stepper mirrors into Server
+        // Concurrent Sessions asynchronously, so the row must re-render on
+        // the store's save notification or it shows the pre-edit value.
+        #expect(editor.contains("ServerRuntimeSettingsStore.didSaveNotification"))
+        #expect(editor.contains(".id(runtimeSettingsRevision)"))
+        #expect(editor.contains("share one configured local limit"))
+        #expect(editor.contains("Remote subagents use the separate remote limit"))
+        #expect(editor.contains("This agent and Server Concurrent Sessions share"))
 
         #expect(concurrency.contains("same-model local waves"))
-        #expect(concurrency.contains("Shared with Main Chat Spawn"))
+        #expect(concurrency.contains("Shared with the Orchestrator's and every agent's Max local subagents at once"))
         #expect(concurrency.contains("SpawnBatchConcurrencyContract.bounds"))
         #expect(concurrency.contains("jobs targeting different local models remain serialized"))
-        #expect(subagentSettings.contains("architecture-aware KV, SSM, and activation headroom"))
-        #expect(subagentSettings.contains("split into smaller waves"))
     }
 
-    @Test("turning custom-agent Spawn off does not erase its configured pools")
+    @Test("turning custom-agent Spawn off does not erase its configured pool")
     func disabledSpawnKeepsConfiguredPolicyInSavePath() throws {
         let agents = try Self.source("Views/Agent/AgentsView.swift")
 
         #expect(agents.contains("spawnableAgentIDs: spawnableAgentIDs"))
-        #expect(
-            agents.contains(
-                "spawnableModelNames: SubagentConfiguration.normalizedSpawnableModelNames("
-            )
-        )
+        #expect(!agents.contains("spawnableModelNames"))
         #expect(!agents.contains("spawnDelegationEnabled ? spawnableAgentIDs : []"))
         #expect(!agents.contains("Persist the allow-lists only while spawn is on"))
     }
 
-    @Test("remote rows persist UUID-backed targets and migrate only live legacy matches")
-    func remoteRowsUseStableSpawnIdentity() throws {
+    @Test("stale pool entries are pruned, not rendered as Unavailable")
+    func staleAgentRowsArePruned() throws {
         let editor = try Self.source("Views/Agent/SpawnConfigurationEditor.swift")
 
-        #expect(editor.contains("ConnectedSpawnModelTargetIndex.empty"))
-        #expect(editor.contains("connectedSpawnModelTargetIndex()"))
-        #expect(editor.contains("connectedSpawnTargetIndex.targetID("))
-        #expect(editor.contains("connectedSpawnTargetIndex.target(forStoredId:"))
-        #expect(editor.contains("selectionID(for: item)"))
-        #expect(editor.contains("migrateLegacyRemoteSelections()"))
-        #expect(editor.contains("migratedNotes.removeValue(forKey: legacy)"))
-        #expect(editor.contains("ForEach(group.models, id: \\.self)"))
-        #expect(!editor.contains("setModel(item.id, included: true)"))
+        // Local agents: only ids with a live agent render.
         #expect(
-            editor.components(separatedBy: "RemoteProviderManager.shared").count - 1 == 2
+            editor.contains(
+                "let selected = spawnableAgentIDs.filter { id in agentCandidates.contains { $0.id == id } }"
+            )
         )
-        #expect(!editor.contains(".spawnTargetId("))
-        #expect(!editor.contains(".connectedSpawnModelTarget(forStoredId:"))
-    }
-
-    @Test("stale configured agents remain visible and removable")
-    func staleAgentRowsRemainRepairable() throws {
-        let editor = try Self.source("Views/Agent/SpawnConfigurationEditor.swift")
-
-        #expect(editor.contains("let selected = spawnableAgentIDs"))
-        #expect(editor.contains("ForEach(selected, id: \\.self)"))
-        #expect(editor.contains("let candidate = agentCandidates.first { $0.id == id }"))
-        #expect(editor.contains("label: candidate?.name ?? id.uuidString"))
-        #expect(editor.contains("unavailable: candidate == nil"))
-        #expect(editor.contains("setAgent(id, included: false)"))
-        #expect(editor.contains("Configured agents marked unavailable can still be removed."))
-        #expect(editor.contains(#"Text("Unavailable", bundle: .module)"#))
+        // Shared agents: once the roster is loaded, an unlisted ref is stale
+        // and never renders as a bare address.
+        #expect(editor.contains("!roster.hasWorkspaces || candidates.contains { $0.ref == ref }"))
+        #expect(!editor.contains("Configured agents marked unavailable can still be removed."))
+        // The remote-target index survives only for the Advanced
+        // model-override picker; the per-model pool is gone.
+        #expect(!editor.contains("migrateLegacyRemoteSelections()"))
+        #expect(!editor.contains("setModel("))
     }
 }

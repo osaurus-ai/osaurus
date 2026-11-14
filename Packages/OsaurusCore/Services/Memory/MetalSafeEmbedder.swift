@@ -14,9 +14,14 @@ import VecturaKit
 
 public actor MetalSafeEmbedder: VecturaEmbedder {
     private let inner: any VecturaEmbedder
+    private let maxTextsPerGateHold: Int?
 
-    public init(inner: any VecturaEmbedder) {
+    /// - Parameter maxTextsPerGateHold: texts embedded per exclusive gate
+    ///   hold. A transformer pass over a whole index rebuild would otherwise
+    ///   block generation for its full duration; `nil` keeps one hold per call.
+    public init(inner: any VecturaEmbedder, maxTextsPerGateHold: Int? = nil) {
         self.inner = inner
+        self.maxTextsPerGateHold = maxTextsPerGateHold.map { max(1, $0) }
     }
 
     public var dimension: Int {
@@ -24,29 +29,64 @@ public actor MetalSafeEmbedder: VecturaEmbedder {
     }
 
     public func embed(texts: [String]) async throws -> [[Float]] {
-        // Throws CancellationError if cancelled while waiting; no gate is
-        // held on that path, so the exit pairing below is untouched.
-        try await MetalGate.shared.enterEmbedding()
+        let started = Date()
+        let chunkSize = maxTextsPerGateHold ?? max(texts.count, 1)
+        var result: [[Float]] = []
+        result.reserveCapacity(texts.count)
         do {
-            let result = try await inner.embed(texts: texts)
-            await MetalGate.shared.exitEmbedding()
+            var start = texts.startIndex
+            repeat {
+                let end = min(start + chunkSize, texts.endIndex)
+                // Throws CancellationError if cancelled while waiting; no gate
+                // is held on that path, so the exit pairing is untouched.
+                try await MetalGate.shared.enterEmbedding()
+                do {
+                    result += try await inner.embed(texts: Array(texts[start..<end]))
+                    await MetalGate.shared.exitEmbedding()
+                } catch {
+                    await MetalGate.shared.exitEmbedding()
+                    throw error
+                }
+                start = end
+            } while start < texts.endIndex
+            logActivity(texts: texts, dimensions: result.first?.count, started: started, error: nil)
             return result
         } catch {
-            await MetalGate.shared.exitEmbedding()
+            logActivity(texts: texts, dimensions: nil, started: started, error: error)
             throw error
         }
     }
 
     public func embed(text: String) async throws -> [Float] {
         try await MetalGate.shared.enterEmbedding()
+        let started = Date()
         do {
             let result = try await inner.embed(text: text)
             await MetalGate.shared.exitEmbedding()
+            logActivity(texts: [text], dimensions: result.count, started: started, error: nil)
             return result
         } catch {
             await MetalGate.shared.exitEmbedding()
+            logActivity(texts: [text], dimensions: nil, started: started, error: error)
             throw error
         }
+    }
+
+    /// One Insights `embedding` row per batch (metadata only — never the
+    /// texts). Every local embedding — memory recall, tool/skill index,
+    /// `/v1/embeddings` — funnels through this actor, so this is the single
+    /// place that sees all of them. HTTP requests are skipped: that handler
+    /// logs its own row.
+    private func logActivity(texts: [String], dimensions: Int?, started: Date, error: Error?) {
+        MediaActivityLogger.logEmbedding(
+            model: EmbeddingService.modelName,
+            textCount: texts.count,
+            totalChars: texts.reduce(0) { $0 + $1.count },
+            dimensions: dimensions,
+            purpose: MediaActivityLogger.embeddingPurpose,
+            durationMs: Date().timeIntervalSince(started) * 1000,
+            error: error?.localizedDescription
+        )
     }
 }
 
@@ -54,16 +94,21 @@ public actor VMLXModel2VecEmbedder: VecturaEmbedder {
     private let modelName: String
     private let dimensionValue: Int
     private let tokenizerLoader: any TokenizerLoader
+    private let directory: URL?
     private var pipeline: Model2VecStaticEmbeddingPipeline?
 
+    /// - Parameter directory: a downloaded Model2Vec bundle. `nil` resolves
+    ///   the built-in model through `locateModelDirectory(modelName:)`.
     public init(
         modelName: String,
         dimension: Int,
-        tokenizerLoader: any TokenizerLoader
+        tokenizerLoader: any TokenizerLoader,
+        directory: URL? = nil
     ) {
         self.modelName = modelName
         self.dimensionValue = dimension
         self.tokenizerLoader = tokenizerLoader
+        self.directory = directory
     }
 
     public var dimension: Int {
@@ -94,7 +139,7 @@ public actor VMLXModel2VecEmbedder: VecturaEmbedder {
     }
 
     private func resolveModelDirectory() throws -> URL {
-        guard let directory = Self.locateModelDirectory(modelName: modelName) else {
+        guard let directory = directory ?? Self.locateModelDirectory(modelName: modelName) else {
             throw VMLXModel2VecEmbedderError.modelNotFound(modelName)
         }
         return directory
@@ -102,31 +147,50 @@ public actor VMLXModel2VecEmbedder: VecturaEmbedder {
 
     /// Non-throwing resolution shared by the loader and by availability
     /// probes (e.g. `EmbeddingService.ensureModelPresent()`). Returns the
-    /// usable model directory from the env override, Osaurus's configured
-    /// models directory, `~/models`, or the Hugging Face cache, or `nil` when
-    /// no usable copy exists locally.
+    /// usable model directory from the env override, the copy bundled with
+    /// OsaurusCore, Osaurus's configured models directory, `~/models`, or the
+    /// Hugging Face cache, or `nil` when no usable copy exists locally.
     public static func locateModelDirectory(modelName: String) -> URL? {
         locateModelDirectory(
             modelName: modelName,
             modelsDirectory: DirectoryPickerService.effectiveModelsDirectory(),
             environment: ProcessInfo.processInfo.environment,
-            homeDirectory: FileManager.default.homeDirectoryForCurrentUser
+            homeDirectory: FileManager.default.homeDirectoryForCurrentUser,
+            bundledDirectory: bundledModelDirectory(modelName: modelName)
         )
+    }
+
+    /// The copy shipped in OsaurusCore's resource bundle
+    /// (`EmbeddingModels/<repo>`), when it is present and complete.
+    public static func bundledModelDirectory(modelName: String) -> URL? {
+        let repoName = modelName.split(separator: "/").last.map(String.init) ?? modelName
+        guard let url = Bundle.module.url(forResource: repoName, withExtension: nil),
+            isUsableModelDirectory(url)
+        else { return nil }
+        return url
     }
 
     /// Pure resolution core used by tests to prove every supported storage
     /// layout without mutating process-wide environment or bookmark state.
+    ///
+    /// The bundled copy outranks every on-disk copy: persisted vector indexes
+    /// are only valid for the exact weights they were built with.
     static func locateModelDirectory(
         modelName: String,
         modelsDirectory: URL,
         environment: [String: String],
-        homeDirectory: URL
+        homeDirectory: URL,
+        bundledDirectory: URL? = nil
     ) -> URL? {
         if let override = environment["OSAURUS_EMBEDDING_MODEL_DIR"], !override.isEmpty {
             let url = URL(fileURLWithPath: override, isDirectory: true)
             if isUsableModelDirectory(url) {
                 return url
             }
+        }
+
+        if let bundledDirectory, isUsableModelDirectory(bundledDirectory) {
+            return bundledDirectory
         }
 
         let repoName = modelName.split(separator: "/").last.map(String.init) ?? modelName
@@ -205,7 +269,7 @@ public enum VMLXModel2VecEmbedderError: LocalizedError {
         switch self {
         case .modelNotFound(let modelName):
             return
-                "Could not find local Model2Vec embedding model '\(modelName)'. Install minishlab/\(modelName) in Osaurus's Models Directory or the Hugging Face cache, or set OSAURUS_EMBEDDING_MODEL_DIR."
+                "The embedding model '\(modelName)' that ships with Osaurus is missing from the app bundle. Reinstall Osaurus, or set OSAURUS_EMBEDDING_MODEL_DIR to a minishlab/\(modelName) folder."
         }
     }
 }

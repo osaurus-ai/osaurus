@@ -2,149 +2,95 @@
 //  SubagentSettingsSection.swift
 //  osaurus
 //
-//  Spawn policy for the built-in main chat plus system runtime knobs for local
-//  helper jobs. Custom agents edit the same Spawn controls in their Subagents
-//  tab; the built-in chat has no AgentDetailView, so its persisted
-//  SubagentConfiguration must remain reachable here.
+//  Subagent policy for the built-in main chat (the Orchestrator) plus system
+//  runtime knobs for local subagent jobs, on Settings → Agents → Delegation
+//  (`DelegationSettingsView`). Custom agents edit the same delegation
+//  controls in their Subagents tab; the built-in chat has no
+//  AgentDetailView, so its persisted SubagentConfiguration must remain
+//  reachable here.
+//
+//  Vocabulary (matches Claude Code / Cursor / Codex / Gemini CLI): the noun
+//  is "subagent", the verb is "delegate". `spawn_*` survive only as tool ids.
 //
 
 import SwiftUI
 
 struct SubagentSettingsSection: View {
+    @Environment(\.theme) private var theme
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var modelPickerCache = ModelPickerItemCache.shared
     @Binding var configuration: SubagentConfiguration
 
     var body: some View {
-        systemSection
+        VStack(alignment: .leading, spacing: theme.space.s20) {
+            subagentsSection
+            localModelsSection
+        }
     }
 
-    private var systemSection: some View {
-        SettingsSection(title: "Delegation", icon: "point.3.connected.trianglepath.dotted") {
-            VStack(alignment: .leading, spacing: 16) {
-                SettingsSubsection(label: "Main Chat Capabilities") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text(
-                            "The Orchestrator may use these model-backed helpers. Browser Use and Computer Use remain custom-agent-only.",
-                            bundle: .module
-                        )
-                        .font(.system(size: 11))
-                        .foregroundColor(themeManager.currentTheme.tertiaryText)
-                        .fixedSize(horizontal: false, vertical: true)
+    private var subagentsSection: some View {
+        SettingsSection(
+            title: "Subagents",
+            subtitle:
+                "The Orchestrator hands real work to these agents. Each runs as its own chat session with its own prompt, model, tools, and folder (it inherits the Orchestrator's folder when it has none). Media, AppleScript, Browser Use, and Computer Use live on custom agents — add such an agent here so the Orchestrator can delegate to it.",
+            anchorId: "settings.agents.delegation.mainChat"
+        ) {
+            readinessChip(mainSpawnReadiness)
+        } content: {
+            SpawnConfigurationEditor(
+                excludedAgentID: nil,
+                localHandoffEnabled: configuration.localTextDelegationEnabled,
+                modelOverride: mainChatSpawnModelOverride,
+                spawnableAgentIDs: $configuration.spawnableAgentIDs,
+                spawnableWorkspaceAgents: $configuration.spawnableWorkspaceAgents,
+                removedWorkspaceAgents: $configuration.removedWorkspaceAgents,
+                permissionDefaults: $configuration.permissionDefaults,
+                budgets: $configuration.budgets,
+                anchorPrefix: "settings.agents.delegation",
+                onChange: {},
+                layout: .groupRows
+            )
+        }
+    }
 
-                        mainCapabilityToggle(
-                            title: "Image",
-                            description:
-                                "Generate or edit images with an installed local image model.",
-                            isOn: $configuration.imageDelegationEnabled,
-                            readiness: mainImageReadiness
-                        )
+    private var localModelsSection: some View {
+        SettingsSection(
+            title: "Local Models & Memory",
+            subtitle:
+                "Advanced. The defaults keep local delegation memory-safe; change these only if you know how your Mac's memory is being used.",
+            anchorId: "settings.agents.delegation.handoff"
+        ) {
+            SettingsToggle(
+                title: "Swap Local Models for Subagents",
+                description:
+                    "For text, Browser Use, Computer Use, AppleScript, local image jobs and context compaction using a different local model: On unloads the invoking model, runs the job, then reloads it. AppleScript keep-warm can defer the reload. Off keeps the invoking model loaded during the job, including under Server Strict. Memory checks still apply. Same-model and cloud jobs never swap.",
+                isOn: $configuration.localTextDelegationEnabled
+            )
+            .settingsLandingAnchor("settings.agents.delegation.swapModels")
 
-                        mainCapabilityToggle(
-                            title: "AppleScript",
-                            description:
-                                "Use an installed AppleScript model for Mac queries and approved automation.",
-                            isOn: $configuration.appleScriptDelegationEnabled,
-                            readiness: mainAppleScriptReadiness
-                        )
-                    }
-                }
-
-                Divider()
-                    .overlay(themeManager.currentTheme.inputBorder)
-
-                SettingsSubsection(
-                    label: "Main Chat Spawn",
-                    anchorId: "settings.orchestrator.delegation.mainChat"
-                ) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text(
-                            "Choose the agents and local or cloud models the Orchestrator may delegate to. It selects among this allow-list for each job; an empty allow-list keeps delegation unavailable.",
-                            bundle: .module
-                        )
-                        .font(.system(size: 11))
-                        .foregroundColor(themeManager.currentTheme.tertiaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                        readinessLabel(mainSpawnReadiness)
-
-                        SpawnConfigurationEditor(
-                            excludedAgentID: nil,
-                            localHandoffEnabled: configuration.localTextDelegationEnabled,
-                            modelOverride: mainChatSpawnModelOverride,
-                            spawnableAgentIDs: $configuration.spawnableAgentIDs,
-                            spawnableModelNames: $configuration.spawnableModelNames,
-                            spawnableModelNotes: $configuration.spawnableModelNotes,
-                            permissionDefaults: $configuration.permissionDefaults,
-                            budgets: $configuration.budgets,
-                            toolAccess: $configuration.spawnToolAccess,
-                            onChange: {}
-                        )
-                        .padding(12)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10)
-                                .fill(themeManager.currentTheme.tertiaryBackground)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 10)
-                                        .stroke(
-                                            themeManager.currentTheme.inputBorder,
-                                            lineWidth: 1
-                                        )
-                                )
-                        )
-                    }
-                }
-
-                Divider()
-                    .overlay(themeManager.currentTheme.inputBorder)
-
-                SettingsSubsection(
-                    label: "Local Handoff & RAM Safety",
-                    anchorId: "settings.orchestrator.delegation.handoff"
-                ) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        SettingsToggle(
-                            title: "Local Orchestrator Handoff",
-                            description:
-                                "RAM-safety sequence for every delegation whose helper is a different local model: unload the chat model → load the helper → run → unload the helper → load the chat model back → continue the turn. Applies whether or not the chat model was loaded at the start, and to any agent that delegates. Same-model helpers never swap. Off: the helper runs without this sequence and the server eviction policy decides what stays loaded. (Cloud helpers never need this.)",
-                            isOn: $configuration.localTextDelegationEnabled
-                        )
-
-                        SettingsToggle(
-                            title: "RAM-Safety Preflight",
-                            description:
-                                "Before spawned image or text work, budget one target-model weight footprint plus architecture-aware KV, SSM, and activation headroom for every active child. Same-model batches are split into smaller waves when needed; if even one child cannot fit, refuse before unloading the chat model.",
-                            isOn: $configuration.ramSafetyPreflightEnabled
-                        )
-
-                        SettingsToggle(
-                            title: "Keep Chat Model Loaded (Coexistence)",
-                            description:
-                                "Experimental, only while Local Orchestrator Handoff is off: when the server eviction policy is Flexible (Multi Model) and memory projections say both fit, load the helper model alongside the chat model — skipping the swap round-trip on high-RAM Macs. With the handoff on, the unload/reload sequence always runs instead.",
-                            isOn: $configuration.subagentCoexistenceEnabled
-                        )
-                    }
-                }
-            }
+            SettingsToggle(
+                title: "Check Memory Before Delegating",
+                description:
+                    "Applies to the Orchestrator and every agent. On: check available memory and child KV/activation costs, reusing resident weights once; split batches or refuse when needed. Off: bypass delegation memory checks, including elevated memory pressure. Allocations may fail or the app may crash. Separate Server Memory Safety load budgets and explicit concurrency limits still apply.",
+                isOn: $configuration.ramSafetyPreflightEnabled
+            )
+            .settingsLandingAnchor("settings.agents.delegation.ramSafety")
         }
     }
 
     private var mainSpawnReadiness: AgentCapabilityReadiness {
         let configuredAgentIDs = configuration.spawnableAgentIDs
         let configuredCount =
-            configuredAgentIDs.count + configuration.spawnableModelNames.count
+            configuredAgentIDs.count + configuration.spawnableWorkspaceAgents.count
         let availability = SpawnDescriptors.resolveForPreview(
             agentIDs: configuredAgentIDs,
-            modelNames: configuration.spawnableModelNames,
-            modelNotes: configuration.spawnableModelNotes,
             launcherModelOverride:
-                configuration.subagentModelOverrides[SubagentCapabilityRegistry.spawn.id]
+                configuration.subagentModelOverrides[SubagentCapabilityRegistry.spawn.id],
+            workspaceAgents: configuration.spawnableWorkspaceAgents
         )
         let runnableCount =
-            availability.runnableAgentIDs.count + availability.runnableModelIds.count
-        let checking =
-            availability.agentTargets.contains { $0.state == .checking }
-            || availability.modelTargets.contains { $0.state == .checking }
+            availability.runnableAgentIDs.count + availability.runnableWorkspaceAgents.count
+        let checking = availability.agentTargets.contains { $0.state == .checking }
 
         return AgentCapabilityReadiness.subagent(
             flag: .spawn,
@@ -160,85 +106,20 @@ struct SubagentSettingsSection: View {
         )
     }
 
-    private var mainImageReadiness: AgentCapabilityReadiness {
-        AgentCapabilityReadiness.subagent(
-            flag: .image,
-            configured: configuration.imageDelegationEnabled,
-            toolsEnabled: true,
-            hasResolvedModel: true,
-            hasReadyImageModel: modelPickerCache.hasReadyImageModel,
-            permission: configuration.permissionDefaults.policy(
-                for: SubagentCapabilityRegistry.image.id
-            )
+    private func readinessChip(_ readiness: AgentCapabilityReadiness) -> some View {
+        StatusChip(
+            readiness.statusMessage ?? L("Off"),
+            tone: readinessTone(readiness.state),
+            icon: readiness.isCallable ? "checkmark.circle.fill" : "info.circle.fill"
         )
     }
 
-    private var mainAppleScriptReadiness: AgentCapabilityReadiness {
-        AgentCapabilityReadiness.subagent(
-            flag: .appleScript,
-            configured: configuration.appleScriptDelegationEnabled,
-            toolsEnabled: true,
-            hasResolvedModel: true,
-            hasReadyAppleScriptModel: modelPickerCache.hasReadyAppleScriptModel
-        )
-    }
-
-    private func mainCapabilityToggle(
-        title: LocalizedStringKey,
-        description: LocalizedStringKey,
-        isOn: Binding<Bool>,
-        readiness: AgentCapabilityReadiness
-    ) -> some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title, bundle: .module)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(themeManager.currentTheme.primaryText)
-                Text(description, bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(themeManager.currentTheme.tertiaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-                if readiness.configured {
-                    readinessLabel(readiness)
-                }
-            }
-            Spacer(minLength: 12)
-            Toggle("", isOn: isOn)
-                .toggleStyle(.switch)
-                .labelsHidden()
-        }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(themeManager.currentTheme.tertiaryBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(readinessColor(readiness.state).opacity(0.45), lineWidth: 1)
-                )
-        )
-    }
-
-    private func readinessLabel(_ readiness: AgentCapabilityReadiness) -> some View {
-        let message = readiness.statusMessage ?? L("Off")
-        return HStack(spacing: 5) {
-            Image(systemName: readiness.isCallable ? "checkmark.circle.fill" : "info.circle.fill")
-                .font(.system(size: 9, weight: .semibold))
-            Text(verbatim: message)
-                .font(.system(size: 10, weight: .medium))
-        }
-        .foregroundColor(readinessColor(readiness.state))
-    }
-
-    private func readinessColor(_ state: AgentCapabilityReadinessState) -> Color {
+    private func readinessTone(_ state: AgentCapabilityReadinessState) -> StatusChip.Tone {
         switch state {
-        case .disabled:
-            return themeManager.currentTheme.tertiaryText
-        case .active:
-            return themeManager.currentTheme.successColor
-        case .paused, .needsSetup:
-            return themeManager.currentTheme.warningColor
-        case .unavailable:
-            return themeManager.currentTheme.errorColor
+        case .disabled: return .neutral
+        case .active: return .success
+        case .paused, .needsSetup: return .warning
+        case .unavailable: return .error
         }
     }
 

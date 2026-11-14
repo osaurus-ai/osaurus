@@ -42,6 +42,14 @@ public struct RunLimits: Sendable {
     /// where repetition is legitimate progress (scroll/observe/wait/find) are
     /// exempt.
     public var maxRepeatedActions: Int
+    /// When true (production default), a `done` after at least one acting
+    /// step is only accepted once some step's verify (or a later observe /
+    /// wait) saw the view change. Synthesized macOS input is fire-and-forget,
+    /// so without this a run whose every click was silently dropped could
+    /// still report success. The model gets ONE bounded challenge to observe
+    /// and confirm; a second unverified `done` ends the run as `gaveUp`.
+    /// Scripted evals that only exercise gate/parse contracts may turn it off.
+    public var requireVerifiedChangeForDone: Bool
 
     public init(
         maxSteps: Int = 24,
@@ -51,7 +59,8 @@ public struct RunLimits: Sendable {
         wallClockSeconds: TimeInterval = 300,
         modelStepTimeoutSeconds: TimeInterval = 90,
         maxInferenceRetries: Int = 2,
-        maxRepeatedActions: Int = 4
+        maxRepeatedActions: Int = 4,
+        requireVerifiedChangeForDone: Bool = true
     ) {
         self.maxSteps = max(1, maxSteps)
         self.maxConsecutiveInvalid = max(1, maxConsecutiveInvalid)
@@ -61,6 +70,7 @@ public struct RunLimits: Sendable {
         self.modelStepTimeoutSeconds = modelStepTimeoutSeconds
         self.maxInferenceRetries = max(0, maxInferenceRetries)
         self.maxRepeatedActions = maxRepeatedActions
+        self.requireVerifiedChangeForDone = requireVerifiedChangeForDone
     }
 }
 
@@ -157,6 +167,11 @@ public struct AgentStepInput: Sendable {
 public typealias AgentStepProvider =
     @Sendable (_ input: AgentStepInput) async throws -> ModelActionCall?
 
+/// Image-processing dependency for cloud attachment, like the injected driver
+/// and model-step provider. A successful value must come from FrameScrubber.
+public typealias CloudFrameScrubOperation =
+    @Sendable (CUImage, ScrubMode) async throws -> ScrubbedFrame
+
 public enum ComputerUseLoop {
 
     /// Upper bound on a single `wait` so a model can't park the run against the
@@ -202,18 +217,61 @@ public enum ComputerUseLoop {
         requestCloudVisionConsent: @escaping @Sendable () async -> CloudVisionConsentChoice = {
             .deny
         },
+        /// Returns a reason when no surface can show a confirm card right now
+        /// (e.g. the chat window is closed), so a gated action fails fast with
+        /// that reason instead of parking on `confirm` until the wall clock.
+        /// `nil` (the default) means confirms are presentable.
+        confirmUnavailable: @escaping @Sendable () async -> String? = { nil },
         limits: RunLimits = RunLimits(),
         policySummary: String = "",
         vision: VisionContext = .none,
         sessionId: String,
         enableThinking: Bool? = nil,
+        reasoningEffort: String? = nil,
+        scrubFrame: @escaping CloudFrameScrubOperation = { image, mode in
+            try await FrameScrubber.scrub(
+                image,
+                mode: mode,
+                honorUserRules: true,
+                useModelDetection: mode == .pii
+            )
+        },
         nextAction: AgentStepProvider? = nil
     ) async -> ComputerUseRunResult {
-        let deadline = Date().addingTimeInterval(limits.wallClockSeconds)
+        // The wall clock measures the RUN, not the user. Time spent inside a
+        // confirm card or a cloud-vision consent prompt is credited back, so a
+        // user who takes a few minutes to read a preview doesn't come back to
+        // "Reached the time limit" with nothing done.
+        let userWaitCredit = UserWaitCredit()
+        let baseDeadline = Date().addingTimeInterval(limits.wallClockSeconds)
+        var deadline: Date { baseDeadline.addingTimeInterval(userWaitCredit.total) }
+        let timedConfirm: @Sendable (ActionPreview) async -> Bool = { preview in
+            let began = Date()
+            let approved = await confirm(preview)
+            userWaitCredit.add(Date().timeIntervalSince(began))
+            return approved
+        }
+        let timedCloudVisionConsent: @Sendable () async -> CloudVisionConsentChoice = {
+            let began = Date()
+            let choice = await requestCloudVisionConsent()
+            userWaitCredit.add(Date().timeIntervalSince(began))
+            return choice
+        }
         // Default path drives the live ChatEngine; an injected `nextAction`
         // (tests / scripted-model evals) drives the loop deterministically and
         // never constructs an engine.
-        let engine: ChatEngine? = nextAction == nil ? ChatEngine(source: .chatUI) : nil
+        // Auto-scrub: the user is watching the app being driven, not the
+        // chat window, so a Privacy Filter review sheet per step would go
+        // unanswered until the step timeout failed the run.
+        // Residency follows the run that invoked the tool (chat / HTTP /
+        // channel / schedule…); Insights shows every helper step as Agent.
+        let engine: ChatEngine? =
+            nextAction == nil
+            ? ChatEngine(
+                source: ChatExecutionContext.currentSessionSource?.inferenceSource ?? .chatUI,
+                activitySource: .agent,
+                privacyReviewMode: .autoScrub
+            ) : nil
 
         // Capture availability once: it gates the escalation ladder (som/vision
         // need Screen Recording) for the whole run.
@@ -289,18 +347,23 @@ public enum ComputerUseLoop {
         )
         appendAppGuidance(app: currentApp, into: &messages, hinted: &hintedApps)
         if let frame = initialFrame {
-            await attachFrame(
-                image: frame,
-                vision: vision,
-                consent: &runConsent,
-                requestConsent: requestCloudVisionConsent,
-                availability: availability,
-                messages: &messages,
-                imageTokensInContext: &imageTokensInContext,
-                metrics: &metrics,
-                feed: feed,
-                step: 0
-            )
+            do {
+                try await attachFrame(
+                    image: frame,
+                    vision: vision,
+                    consent: &runConsent,
+                    requestConsent: timedCloudVisionConsent,
+                    availability: availability,
+                    messages: &messages,
+                    imageTokensInContext: &imageTokensInContext,
+                    metrics: &metrics,
+                    feed: feed,
+                    step: 0,
+                    scrubFrame: scrubFrame
+                )
+            } catch {
+                return frameScrubFailureResult(error, step: 0, completedSteps: 0, metrics: metrics, feed: feed)
+            }
         }
 
         var step = 0
@@ -310,6 +373,18 @@ public enum ComputerUseLoop {
         var consecutiveReobserve = 0
         var lastActionSignature: String? = nil
         var repeatedActionCount = 0
+        // Completion evidence. `verifyChanged` counts changes seen by the
+        // verify capture right after an act; an app that renders late shows
+        // the change on a later observe/wait instead, which this flag records
+        // so a slow-but-real edit isn't mistaken for a dropped one.
+        var lateVerifiedChange = false
+        // The one bounded "prove it" re-ask a `done` with no verified change
+        // gets before the run is downgraded.
+        var doneChallengeIssued = false
+        // Told the model once that there is no screenshot rung to climb to
+        // (Screen Recording not granted) when a target failed to resolve, so
+        // it stops expecting pixels and works the AX list / `find` / gives up.
+        var screenRecordingNoticeGiven = false
 
         func terminate(_ outcome: RunOutcome) -> ComputerUseRunResult {
             metrics.steps = step
@@ -337,6 +412,13 @@ public enum ComputerUseLoop {
                 return terminate(.stepCapReached)
             }
 
+            // Collapse old screen listings in batches before building the step
+            // input (see `compactStaleViews`).
+            let compacted = compactStaleViews(&messages)
+            if compacted > 0 {
+                ComputerUseTraceLog.note("compacted \(compacted) stale view(s) before step \(step + 1)")
+            }
+
             // Decide: force the single agent_action tool. When a screenshot is in
             // context, reserve its estimated tokens so the text trim leaves room.
             var iterationBudget = budgetManager
@@ -353,6 +435,7 @@ public enum ComputerUseLoop {
             // repeatedly without re-deriving the (fixed) iteration messages.
             let stepMessages = input.messages
             let stepIndex = step
+            let responseAttempt = nextAction == nil ? DesktopResponsesAttempt() : nil
             let produce: @Sendable () async throws -> ModelStepResult = {
                 if let nextAction {
                     let stepInput = AgentStepInput(
@@ -366,20 +449,27 @@ public enum ComputerUseLoop {
                         modelId: modelId,
                         sessionId: sessionId,
                         messages: stepMessages,
-                        enableThinking: enableThinking
+                        enableThinking: enableThinking,
+                        reasoningEffort: reasoningEffort,
+                        attempt: responseAttempt
                     )
                 }
             }
             let parsed: ModelActionCall?
+            var completedAssistant: ChatMessage?
             do {
                 let stepResult = try await runModelStep(
                     produce,
                     timeout: limits.modelStepTimeoutSeconds,
                     maxRetries: limits.maxInferenceRetries,
                     feed: feed,
-                    step: step
+                    step: step,
+                    shouldRetry: { error in
+                        responseAttempt?.permitsRetry(error, isTimeout: error is ModelStepTimeout) ?? true
+                    }
                 )
-                metrics.modelTokens += stepResult.tokens
+                if let tokens = stepResult.tokens { metrics.modelTokens += tokens }
+                completedAssistant = stepResult.assistantMessage
                 metrics.recordDecodeTokensPerSecond(stepResult.tokensPerSecond)
                 parsed = stepResult.call
             } catch where isMissingRequiredAgentActionError(error) {
@@ -413,7 +503,7 @@ public enum ComputerUseLoop {
                 continue
             }
             let callId = call.id
-            let assistantMessage = ChatMessage(
+            let assistantMessage = completedAssistant ?? ChatMessage(
                 role: "assistant",
                 content: nil,
                 tool_calls: [
@@ -458,8 +548,50 @@ public enum ComputerUseLoop {
                 )
             )
 
-            // Terminal verbs end the run immediately.
+            // Terminal verbs end the run immediately — except a `done` that
+            // nothing observable backs up. Input posting carries no delivery
+            // proof, so "I clicked Send" is only trusted once a verify /
+            // observe saw the app change. One bounded challenge asks the model
+            // to look; a second unproven `done` is reported as such instead of
+            // as success.
             if action.verb == .done {
+                let acted = metrics.actsAttempted > 0
+                let verified = metrics.verifyChanged > 0 || lateVerifiedChange
+                if limits.requireVerifiedChangeForDone, acted, !verified {
+                    if doneChallengeIssued {
+                        return terminate(
+                            .gaveUp(
+                                reason:
+                                    "The model reported the task as done, but none of its "
+                                    + "\(metrics.actsAttempted) action(s) produced an observable "
+                                    + "change in the app, so completion could not be verified."
+                            )
+                        )
+                    }
+                    doneChallengeIssued = true
+                    feed.emit(
+                        SubagentActivityEvent(
+                            step: step,
+                            kind: .retry,
+                            title: "Unverified done",
+                            detail: "No action produced an observable change; asking the model to confirm."
+                        )
+                    )
+                    messages.append(
+                        ChatMessage(
+                            role: "tool",
+                            content:
+                                "You reported done, but none of your actions produced an observable "
+                                + "change in the app, so the result cannot be confirmed. Use `observe` "
+                                + "to check whether the intended state is actually present, then call "
+                                + "`done` only if it is; otherwise call `give_up` and say what did not "
+                                + "take effect.",
+                            tool_calls: nil,
+                            tool_call_id: callId
+                        )
+                    )
+                    continue
+                }
                 return terminate(.done(summary: action.reason ?? "Completed."))
             }
             if action.verb == .giveUp {
@@ -518,6 +650,7 @@ public enum ComputerUseLoop {
                 )
                 lastView = p.view
                 lastSnapshot = p.snapshot
+                if metrics.actsAttempted > 0, p.view?.hasChanges == true { lateVerifiedChange = true }
                 toolResult = augmentEmptyAX(p.render, view: p.view, availability: availability)
 
             case .wait:
@@ -544,6 +677,7 @@ public enum ComputerUseLoop {
                 )
                 lastView = p.view
                 lastSnapshot = p.snapshot
+                if metrics.actsAttempted > 0, p.view?.hasChanges == true { lateVerifiedChange = true }
                 toolResult =
                     "Waited \(seconds)s.\n"
                     + augmentEmptyAX(p.render, view: p.view, availability: availability)
@@ -577,14 +711,17 @@ public enum ComputerUseLoop {
                     appName: action.app,
                     targetLabel: action.app
                 )
+                var openAbort: RunOutcome? = nil
                 if await applyGate(
                     openDecision,
                     action: action,
                     effect: openEffect,
                     appName: action.app,
-                    confirm: confirm,
+                    confirm: timedConfirm,
+                    confirmUnavailable: confirmUnavailable,
                     toolResult: &toolResult,
                     advancedStep: &advancedStep,
+                    abort: &openAbort,
                     metrics: &metrics,
                     feed: feed,
                     step: step + 1
@@ -599,12 +736,38 @@ public enum ComputerUseLoop {
                     case .failure(let message):
                         toolResult = "Could not open app: \(message)"
                     }
+                } else if let openAbort {
+                    return terminate(openAbort)
                 }
 
             case .click, .doubleClick, .rightClick, .drag, .type, .setValue, .clear, .pressKey, .scroll:
                 guard let pid = currentPid else {
                     toolResult =
                         "No app is focused yet. Use `open` to launch or switch to an app first, then act."
+                    advancedStep = false
+                    break
+                }
+                // Re-seed the target before posting input at it. A quit or
+                // relaunched app leaves `currentPid` pointing at a dead (or
+                // recycled) process; per-pid posting into that "succeeds" and
+                // the model spends its step budget acting into a void.
+                if await driver.isRunning(pid: pid) == false {
+                    let name = currentApp ?? "The app"
+                    feed.emit(
+                        SubagentActivityEvent(
+                            step: step + 1,
+                            kind: .blocked,
+                            title: "\(name) is no longer running",
+                            detail: "pid \(pid) exited; input was not posted"
+                        )
+                    )
+                    currentPid = nil
+                    lastView = nil
+                    lastSnapshot = nil
+                    toolResult =
+                        "\(name) is no longer running (it quit or relaunched since it was opened), so "
+                        + "the action was not performed. Use `open` to attach to it again, then re-check "
+                        + "the view before continuing."
                     advancedStep = false
                     break
                 }
@@ -637,6 +800,7 @@ public enum ComputerUseLoop {
                         }
                         // Escalate the capture tier (ax→som→vision) when allowed, so the
                         // re-perception is richer than the one that just failed.
+                        var noPixelsNotice = ""
                         if CaptureRouter.canEscalate(from: currentTier, availability: availability) {
                             currentTier = CaptureRouter.nextTier(
                                 current: currentTier,
@@ -644,6 +808,16 @@ public enum ComputerUseLoop {
                                 availability: availability
                             )
                             metrics.raiseTier(to: currentTier)
+                        } else if !availability.screenRecording, !screenRecordingNoticeGiven {
+                            // The tool description promises a screenshot fallback;
+                            // without Screen Recording there is none. Say so once
+                            // instead of re-serving the same AX list until dead end.
+                            screenRecordingNoticeGiven = true
+                            noPixelsNotice =
+                                "\nNote: Screen Recording permission isn't granted, so there is no "
+                                + "screenshot fallback — only this accessibility list. Use `find` with a "
+                                + "query or `scroll` to locate the control, or `give_up` and ask the user "
+                                + "to grant Screen Recording in System Settings → Privacy & Security."
                         }
                         // Re-perceive so the next turn has a fresh view.
                         let p = await perceive(
@@ -668,10 +842,10 @@ public enum ComputerUseLoop {
                                 )
                             }
                             toolResult =
-                                "Still can't resolve that target after re-looking. \(reason)\nHere is the fresh view:\n"
-                                + p.render
+                                "Still can't resolve that target after re-looking. \(reason)\(noPixelsNotice)\n"
+                                + "Here is the fresh view:\n" + p.render
                         } else {
-                            toolResult = "\(reason)\nHere is the fresh view:\n" + p.render
+                            toolResult = "\(reason)\(noPixelsNotice)\nHere is the fresh view:\n" + p.render
                         }
                         break
                     case .deadEnd(let reason):
@@ -724,14 +898,17 @@ public enum ComputerUseLoop {
                     appName: currentApp,
                     targetLabel: targetLabel
                 )
+                var actAbort: RunOutcome? = nil
                 if await applyGate(
                     decision,
                     action: action,
                     effect: effect,
                     appName: currentApp,
-                    confirm: confirm,
+                    confirm: timedConfirm,
+                    confirmUnavailable: confirmUnavailable,
                     toolResult: &toolResult,
                     advancedStep: &advancedStep,
+                    abort: &actAbort,
                     metrics: &metrics,
                     feed: feed,
                     step: step + 1
@@ -752,6 +929,8 @@ public enum ComputerUseLoop {
                         step: step + 1
                     )
                     consecutiveDeadEnd = 0
+                } else if let actAbort {
+                    return terminate(actAbort)
                 }
 
             case .done, .giveUp:
@@ -767,18 +946,26 @@ public enum ComputerUseLoop {
             // Attach any escalated-capture frame as a trailing user turn (subject to
             // the VisionContext), again after the tool result for the same reason.
             if let frame = pendingFrameImage {
-                await attachFrame(
-                    image: frame,
-                    vision: vision,
-                    consent: &runConsent,
-                    requestConsent: requestCloudVisionConsent,
-                    availability: availability,
-                    messages: &messages,
-                    imageTokensInContext: &imageTokensInContext,
-                    metrics: &metrics,
-                    feed: feed,
-                    step: step + 1
-                )
+                do {
+                    try await attachFrame(
+                        image: frame,
+                        vision: vision,
+                        consent: &runConsent,
+                        requestConsent: timedCloudVisionConsent,
+                        availability: availability,
+                        messages: &messages,
+                        imageTokensInContext: &imageTokensInContext,
+                        metrics: &metrics,
+                        feed: feed,
+                        step: step + 1,
+                        scrubFrame: scrubFrame
+                    )
+                } catch {
+                    return frameScrubFailureResult(
+                        error, step: step + 1, completedSteps: step + (advancedStep ? 1 : 0),
+                        metrics: metrics, feed: feed
+                    )
+                }
             }
             if advancedStep { step += 1 }
         }
@@ -796,8 +983,10 @@ public enum ComputerUseLoop {
         effect: EffectClass,
         appName: String?,
         confirm: (ActionPreview) async -> Bool,
+        confirmUnavailable: () async -> String? = { nil },
         toolResult: inout String,
         advancedStep: inout Bool,
+        abort: inout RunOutcome?,
         metrics: inout ComputerUseRunMetrics,
         feed: SubagentFeed,
         step: Int
@@ -826,6 +1015,34 @@ public enum ComputerUseLoop {
                 appName: appName,
                 decision: "confirm"
             )
+            // Nobody can answer the card (chat window closed / headless
+            // dispatch). Parking here would burn the whole wall clock and end
+            // as "Reached the time limit" — end now with the real reason.
+            if let reason = await confirmUnavailable() {
+                ComputerUseTraceLog.recordGateResolution(
+                    step: step,
+                    action: action.feedLabel,
+                    approved: false
+                )
+                metrics.confirmsUnpresentable += 1
+                feed.emit(
+                    SubagentActivityEvent(
+                        step: step,
+                        kind: .blocked,
+                        title: "Cannot ask for approval: \(action.feedLabel)",
+                        detail: reason
+                    )
+                )
+                toolResult = "Could not ask the user to approve that action: \(reason)."
+                advancedStep = false
+                abort = .gaveUp(
+                    reason:
+                        "\(action.feedLabel) needs the user's approval, but \(reason), so the run "
+                        + "cannot continue. Reopen the chat with this agent and try again, or lower "
+                        + "the autonomy policy's confirm threshold for this app."
+                )
+                return false
+            }
             metrics.confirmsRequested += 1
             feed.emit(
                 SubagentActivityEvent(
@@ -1058,15 +1275,42 @@ public enum ComputerUseLoop {
         case .success(let info):
             let snapshot = await driver.capture(pid: info.pid, tier: .ax)
             let view = AgentView.build(from: snapshot, previous: nil)
+            // The readiness poll gave up AND the follow-up capture is empty:
+            // the process exists but nothing is drivable yet. Reporting
+            // "Opened X" here made the model act into a void and then read the
+            // empty view as "X has no controls".
+            if !info.ready, view.items.isEmpty {
+                let message =
+                    "\(info.name) is running (pid \(info.pid)) but exposed no accessible window "
+                    + "within the readiness budget — it may still be starting, be hidden, or have "
+                    + "no open window. `wait` a few seconds and `open` it again, or ask the user "
+                    + "to bring one of its windows forward."
+                feed.emit(
+                    SubagentActivityEvent(
+                        step: step,
+                        kind: .act,
+                        title: "Open \(info.name): not ready",
+                        detail: message,
+                        success: false
+                    )
+                )
+                return .failure(message)
+            }
             feed.emit(
                 SubagentActivityEvent(step: step, kind: .act, title: "Opened \(info.name)", success: true)
             )
+            var render = "Opened \(info.name).\n" + view.renderForModel()
+            if !info.ready {
+                render +=
+                    "\n(\(info.name) took longer than expected to become ready; this view may be "
+                    + "incomplete — `observe` before acting on anything that isn't listed.)"
+            }
             return .opened(
                 pid: info.pid,
                 app: info.name,
                 view: view,
                 snapshot: snapshot,
-                render: "Opened \(info.name).\n" + view.renderForModel()
+                render: render
             )
         case .failure(let error):
             feed.emit(
@@ -1263,16 +1507,36 @@ public enum ComputerUseLoop {
         // Stage any escalated frame for attachment after this step's tool result.
         if verifyTier != .ax { pendingFrameImage = snapshot.image }
         if view.hasChanges { metrics.verifyChanged += 1 }
+        metrics.recordRoute(result.routeUsed)
+        // A driver "success" only means the input was posted (or AXPress
+        // returned). Without an observed change it is unproven, and the
+        // model is told so — calling it "succeeded" here is what let stalled
+        // runs end in a confident `done`.
+        let unverified = result.success && !view.hasChanges
+        if unverified { metrics.unverifiedActs += 1 }
         feed.emit(
             SubagentActivityEvent(
                 step: step,
                 kind: .verify,
-                title: view.hasChanges ? "Change detected" : "No visible change",
-                success: result.success
+                title: view.hasChanges
+                    ? "Change detected"
+                    : (result.success ? "No visible change (input unverified)" : "No visible change"),
+                // Neutral (nil) for an unverified post: neither a proven
+                // landing nor a driver failure.
+                success: unverified ? nil : result.success
             )
         )
 
-        var out = result.success ? "Action succeeded." : "Action failed: \(result.error ?? "unknown")."
+        var out: String
+        if !result.success {
+            out = "Action failed: \(result.error ?? "unknown")."
+        } else if view.hasChanges {
+            out = "Action succeeded."
+        } else {
+            out =
+                "Input was posted, but no change was observed in the app afterwards, so it cannot "
+                + "be confirmed that it took effect."
+        }
         if result.stale { out += " (the element went stale)" }
         if result.removed { out += " (the element was removed)" }
         if let delta = result.delta?.focusedElement {
@@ -1286,7 +1550,15 @@ public enum ComputerUseLoop {
         case .skyLight, .none:
             break
         }
-        out += view.hasChanges ? " The view changed." : " The view looks unchanged."
+        if view.hasChanges {
+            out += " The view changed."
+        } else if unverified {
+            out +=
+                " The view looks unchanged. If the app may render late, `wait` or `observe` before "
+                + "retrying; do not report the task done unless the intended state is visible."
+        } else {
+            out += " The view looks unchanged."
+        }
         out += "\n\nCurrent view:\n" + view.renderForModel()
         return out
     }
@@ -1390,71 +1662,53 @@ public enum ComputerUseLoop {
 
     // MARK: - Model step
 
-    /// One model step's result: the proposed call (nil when the model emitted
-    /// no usable tool call) plus the token usage that step cost. `Sendable` so
-    /// it can cross the timeout/retry task group; `tokens` is `0` for the
-    /// scripted seam, which makes no model call.
+    /// Sparse model usage and the exact assistant snapshot. Scripted providers
+    /// explicitly report zero tokens because they make no model call.
     struct ModelStepResult: Sendable {
         var call: ModelActionCall?
-        var tokens: Int = 0
-        /// Decode speed (tok/s) for this model step, read from the response
-        /// `usage.tokens_per_second`. `nil` for the scripted seam (no model
-        /// call) and for providers that don't report a rate. The loop folds
-        /// these into `metrics` so a model-driven CU run records real decode
-        /// telemetry (eval harness + diagnostics), not just a token count.
-        var tokensPerSecond: Double?
+        var tokens: Int? = nil
+        var tokensPerSecond: Double? = nil
+        var assistantMessage: ChatMessage? = nil
+        var inputTokenCount: Int? = nil
+        var outputTokenCount: Int? = nil
     }
 
-    /// One forced agent_action call. Returns the first matching tool call (or
-    /// nil when the model emitted no usable tool call) and the step's token
-    /// usage so the run can accumulate a real token total.
-    private static func modelStep(
-        engine: ChatEngine,
+    static func modelStep(
+        engine: any ResponsesEngineProtocol,
         modelId: String,
         sessionId: String,
         messages: [ChatMessage],
-        enableThinking: Bool?
+        enableThinking: Bool?,
+        reasoningEffort: String?,
+        attempt: DesktopResponsesAttempt? = nil
     ) async throws -> ModelStepResult {
-        var req = ChatCompletionRequest(
-            model: modelId,
-            messages: messages,
-            temperature: nil,
-            max_tokens: nil,
-            stream: false,
-            top_p: nil,
-            frequency_penalty: nil,
-            presence_penalty: nil,
-            stop: nil,
-            n: nil,
-            tools: [AgentAction.toolSpec],
-            tool_choice: AgentAction.forcedToolChoice,
-            session_id: sessionId
-        )
-        req.samplingParametersAreImplicit = true
-        req.isAgentRequest = true
-        req.enable_thinking = enableThinking
+        var request = ResponsesInferenceRequest(model: modelId, input: messages)
+        request.tools = [AgentAction.toolSpec]
+        request.toolChoice = AgentAction.forcedToolChoice
+        request.sessionID = sessionId
+        request.context.samplingParametersAreImplicit = true
+        request.context.isAgentRequest = true
+        request.generation.enableThinking = enableThinking
+        request.generation.reasoningEffort = reasoningEffort
         let generateStarted = Date()
-        let response = try await engine.completeChat(request: req)
+        let response = try await DesktopResponsesModelStep.completeResponse(
+            engine: engine, request: request, attempt: attempt
+        )
         ComputerUseTraceLog.record(
-            request: req,
-            response: response,
+            request: request, response: response,
             elapsedSeconds: Date().timeIntervalSince(generateStarted)
         )
-        let tokens = response.usage.total_tokens
-        let tps = response.usage.tokens_per_second
-        guard let message = response.choices.first?.message else {
-            return ModelStepResult(call: nil, tokens: tokens, tokensPerSecond: tps)
+        let call = try DesktopResponsesModelStep.actionCall(
+            from: response, expectedTool: AgentAction.toolName, required: true
+        )
+        let total = response.inputTokenCount.flatMap { input in
+            response.completion.tokenCount.map { input + $0 }
         }
-        if let calls = message.tool_calls,
-            let call = calls.first(where: { $0.function.name == AgentAction.toolName }) ?? calls.first
-        {
-            return ModelStepResult(
-                call: ModelActionCall(id: call.id, arguments: call.function.arguments),
-                tokens: tokens,
-                tokensPerSecond: tps
-            )
-        }
-        return ModelStepResult(call: nil, tokens: tokens, tokensPerSecond: tps)
+        return ModelStepResult(
+            call: call, tokens: total, tokensPerSecond: response.completion.tokensPerSecond,
+            assistantMessage: try response.completedAssistantInput(),
+            inputTokenCount: response.inputTokenCount, outputTokenCount: response.completion.tokenCount
+        )
     }
 
     /// Project the internal conversation into the public, redacted turns an
@@ -1480,16 +1734,16 @@ public enum ComputerUseLoop {
         return nsError.domain == "OsaurusToolChoice" && nsError.code == 422
     }
 
-    /// Run one model step with a per-step timeout and bounded retries. A throw
-    /// or timeout is retried (with a short backoff) up to `maxRetries` times
-    /// before propagating, so a single transient inference failure or hang
-    /// doesn't sink the whole run.
-    private static func runModelStep<T: Sendable>(
+    /// Run one step with its explicit deadline/retry budget. Production retries
+    /// require a transient transport failure before any typed output; scripted
+    /// providers retain their explicit fixture retry policy.
+    static func runModelStep<T: Sendable>(
         _ produce: @escaping @Sendable () async throws -> T,
         timeout: TimeInterval,
         maxRetries: Int,
         feed: SubagentFeed,
-        step: Int
+        step: Int,
+        shouldRetry: (@Sendable (Error) -> Bool)? = nil
     ) async throws -> T {
         var attempt = 0
         while true {
@@ -1501,7 +1755,7 @@ public enum ComputerUseLoop {
                 if isMissingRequiredAgentActionError(error) {
                     throw error
                 }
-                if attempt >= maxRetries { throw error }
+                if attempt >= maxRetries || shouldRetry?(error) == false { throw error }
                 attempt += 1
                 feed.emit(
                     SubagentActivityEvent(
@@ -1611,8 +1865,9 @@ public enum ComputerUseLoop {
         imageTokensInContext: inout Int,
         metrics: inout ComputerUseRunMetrics,
         feed: SubagentFeed,
-        step: Int
-    ) async {
+        step: Int,
+        scrubFrame: CloudFrameScrubOperation
+    ) async throws {
         let effective = vision.withConsent(consent.granted)
         switch VisionAttachment.decide(image: image, context: effective, availability: availability) {
         case .none:
@@ -1620,7 +1875,7 @@ public enum ComputerUseLoop {
             // cloud-vision consent (remote image model + Screen Recording on),
             // offer a just-in-time prompt once per run rather than silently
             // dropping to AX-only.
-            await offerJustInTimeCloudConsent(
+            try await offerJustInTimeCloudConsent(
                 image: image,
                 vision: vision,
                 consent: &consent,
@@ -1630,7 +1885,8 @@ public enum ComputerUseLoop {
                 imageTokensInContext: &imageTokensInContext,
                 metrics: &metrics,
                 feed: feed,
-                step: step
+                step: step,
+                scrubFrame: scrubFrame
             )
         case .localFrame(let img):
             appendImageMessage(
@@ -1650,7 +1906,7 @@ public enum ComputerUseLoop {
                 )
             )
         case .needsScrubForCloud(let img):
-            await attachScrubbedForCloud(
+            try await attachScrubbedForCloud(
                 img,
                 vision: vision,
                 availability: availability,
@@ -1658,7 +1914,8 @@ public enum ComputerUseLoop {
                 imageTokensInContext: &imageTokensInContext,
                 metrics: &metrics,
                 feed: feed,
-                step: step
+                step: step,
+                scrubFrame: scrubFrame
             )
         }
     }
@@ -1678,8 +1935,9 @@ public enum ComputerUseLoop {
         imageTokensInContext: inout Int,
         metrics: inout ComputerUseRunMetrics,
         feed: SubagentFeed,
-        step: Int
-    ) async {
+        step: Int,
+        scrubFrame: CloudFrameScrubOperation
+    ) async throws {
         let effective = vision.withConsent(consent.granted)
         guard
             !consent.asked,
@@ -1723,7 +1981,7 @@ public enum ComputerUseLoop {
                 availability: availability
             )
         else { return }
-        await attachScrubbedForCloud(
+        try await attachScrubbedForCloud(
             img,
             vision: vision,
             availability: availability,
@@ -1731,7 +1989,8 @@ public enum ComputerUseLoop {
             imageTokensInContext: &imageTokensInContext,
             metrics: &metrics,
             feed: feed,
-            step: step
+            step: step,
+            scrubFrame: scrubFrame
         )
     }
 
@@ -1739,7 +1998,7 @@ public enum ComputerUseLoop {
     /// consented cloud route. The route is the only way to reach `.cloudVision`
     /// and only accepts a `ScrubbedFrame`, so a raw or unconsented frame can
     /// never be attached here. Only called once consent is effectively granted.
-    private static func attachScrubbedForCloud(
+    static func attachScrubbedForCloud(
         _ img: CUImage,
         vision: VisionContext,
         availability: MacDriverAvailability,
@@ -1747,16 +2006,12 @@ public enum ComputerUseLoop {
         imageTokensInContext: inout Int,
         metrics: inout ComputerUseRunMetrics,
         feed: SubagentFeed,
-        step: Int
-    ) async {
+        step: Int,
+        scrubFrame: CloudFrameScrubOperation
+    ) async throws {
         let mode = vision.cloudScrubMode
+        let frame = try await scrubFrame(img, mode)
         guard
-            let frame = await FrameScrubber.scrub(
-                img,
-                mode: mode,
-                honorUserRules: true,
-                useModelDetection: mode == .pii
-            ),
             let route = CaptureRouter.cloudRoute(
                 scrubbed: frame,
                 consentGranted: true,
@@ -1779,6 +2034,42 @@ public enum ComputerUseLoop {
                 detail: cloudFrameFeedDetail(mode: mode, masked: frame.report.maskedRegions)
             )
         )
+    }
+
+    private static func frameScrubFailureResult(
+        _ error: Error,
+        step: Int,
+        completedSteps: Int,
+        metrics: ComputerUseRunMetrics,
+        feed: SubagentFeed
+    ) -> ComputerUseRunResult {
+        var metrics = metrics
+        metrics.steps = completedSteps
+        let outcome: RunOutcome
+        if error is CancellationError {
+            outcome = .interrupted
+        } else {
+            let reason = error.localizedDescription
+            feed.emit(
+                SubagentActivityEvent(
+                    step: step,
+                    kind: .error,
+                    title: "Screenshot could not be redacted",
+                    detail: reason
+                )
+            )
+            outcome = .failed(reason: reason)
+        }
+        feed.emit(
+            SubagentActivityEvent(
+                step: step,
+                kind: .outcome,
+                title: outcome.summary,
+                success: outcome.isSuccess
+            )
+        )
+        feed.finish(success: outcome.isSuccess, summary: outcome.summary)
+        return ComputerUseRunResult(outcome: outcome, metrics: metrics)
     }
 
     /// The note attached to a cloud-bound screenshot, honest about what the
@@ -1844,6 +2135,64 @@ public enum ComputerUseLoop {
                 .joined(separator: "\n")
             messages[i] = ChatMessage(role: messages[i].role, content: text)
         }
+    }
+
+    // MARK: - Stale view compaction
+
+    /// Placeholder left where an older screen listing was removed.
+    static let compactedViewMarker = "(older screen listing omitted; act on the latest view)"
+    /// Full screen listings always kept (the current one and the one before,
+    /// so a verify delta still has its reference).
+    static let keptRecentViews = 2
+    /// Stale listings allowed to pile up before one compaction pass.
+    static let viewCompactionBatch = 8
+
+    /// Collapse all but the latest `keepRecent` screen listings once
+    /// `batchSize` stale ones have accumulated. Every step appends a full
+    /// listing (~2.5K tokens) and the history re-sends all of them, so a
+    /// 30-step run grew from 3.5K to 68K prompt tokens and each step got
+    /// slower. Rewriting old messages on EVERY step would keep the prompt
+    /// minimal but change the prefix each time, defeating provider prompt
+    /// caching; batching rewrites the history once per batch and keeps it
+    /// append-only in between. The goal text and each action's result line
+    /// survive; only the listing after them is dropped. Returns how many
+    /// listings were collapsed.
+    @discardableResult
+    static func compactStaleViews(
+        _ messages: inout [ChatMessage],
+        keepRecent: Int = keptRecentViews,
+        batchSize: Int = viewCompactionBatch
+    ) -> Int {
+        let viewIndices = messages.indices.filter { viewListingStart(in: messages[$0].content) != nil }
+        guard viewIndices.count >= keepRecent + batchSize else { return 0 }
+        let stale = viewIndices.dropLast(keepRecent)
+        for index in stale {
+            let message = messages[index]
+            guard let content = message.content, let cut = viewListingStart(in: content) else { continue }
+            let kept = content[..<cut].trimmingCharacters(in: .whitespacesAndNewlines)
+            let replaced = kept.isEmpty ? compactedViewMarker : kept + "\n" + compactedViewMarker
+            messages[index] = ChatMessage(
+                role: message.role,
+                content: replaced,
+                tool_calls: message.tool_calls,
+                tool_call_id: message.tool_call_id
+            )
+        }
+        return stale.count
+    }
+
+    /// Where a rendered `AgentView` listing begins in a message: the
+    /// "Current view:" label when present (step results, the goal message),
+    /// else the listing header line (`open` results start straight at
+    /// "App: … [tier: …]"). Nil for messages without a listing, including
+    /// ones already compacted.
+    static func viewListingStart(in content: String?) -> String.Index? {
+        guard let content else { return nil }
+        if let label = content.range(of: "Current view:\n") { return label.lowerBound }
+        guard let tier = content.range(of: " [tier: ") else { return nil }
+        let lineStart = content[..<tier.lowerBound].lastIndex(of: "\n").map { content.index(after: $0) }
+            ?? content.startIndex
+        return content[lineStart...].hasPrefix("App: ") ? lineStart : nil
     }
 
     // MARK: - App guidance
@@ -1916,6 +2265,28 @@ private actor ScriptedActionCursor {
         let action = index < actions.count ? actions[index] : actions[actions.count - 1]
         index += 1
         return ModelActionCall(id: "scripted-\(index)", arguments: action.argumentsJSON())
+    }
+}
+
+/// Accumulated seconds the run spent waiting on the USER (confirm cards,
+/// cloud-vision consent). Credited back to the wall-clock deadline so those
+/// waits never count against the run's own budget. Lock-based rather than an
+/// actor because it is read synchronously at the loop boundary.
+final class UserWaitCredit: @unchecked Sendable {
+    private let lock = NSLock()
+    private var accumulated: TimeInterval = 0
+
+    var total: TimeInterval {
+        lock.lock()
+        defer { lock.unlock() }
+        return accumulated
+    }
+
+    func add(_ seconds: TimeInterval) {
+        guard seconds > 0 else { return }
+        lock.lock()
+        accumulated += seconds
+        lock.unlock()
     }
 }
 

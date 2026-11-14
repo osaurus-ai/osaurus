@@ -1,0 +1,1245 @@
+//
+//  WorkspacesSheets.swift
+//  osaurus
+//
+//  Modal sheets for the Workspaces tab: create a workspace, activate a
+//  web-purchased workspace from a deep-linked code, join through an invite
+//  link, create an invite link, and share an agent (with agent-key proof).
+//  Every sheet is `SettingsSheetHeader` + scrolling body + `SettingsSheetFooter`
+//  in a `fittedSheetFrame`, with `SettingsTextField`s and hint rows — the
+//  same chrome as the Agents tab's sheets.
+//
+
+import AppKit
+import SwiftUI
+
+// MARK: - Shared sheet shell
+
+/// Header · scrolling body · pinned footer, sized with `fittedSheetFrame`
+/// so the confirm button stays reachable on small displays.
+struct WorkspaceSheetShell<Content: View>: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
+    @Environment(\.dismiss) private var dismiss
+
+    let icon: String
+    let title: LocalizedStringKey
+    /// Already-localized subtitle (may be built with `String(format:)`).
+    let subtitle: String
+    let confirmTitle: LocalizedStringKey
+    let isBusy: Bool
+    let isValid: Bool
+    let onConfirm: () -> Void
+    var secondaryTitle: LocalizedStringKey = "Cancel"
+    /// When true the primary button dismisses instead of confirming (result
+    /// states such as "Invite link ready").
+    var confirmDismisses: Bool = false
+    var width: CGFloat = 460
+    var height: CGFloat = 420
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(spacing: theme.space.s0) {
+            SettingsSheetHeader(
+                icon: icon,
+                title: title,
+                subtitleText: subtitle,
+                onClose: { dismiss() }
+            )
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: theme.space.s12) {
+                    content
+                }
+                .padding(.horizontal, theme.space.s16).padding(.vertical, theme.space.s16)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+
+            SettingsSheetFooter(
+                primary: .init(
+                    label: confirmTitle,
+                    isEnabled: isValid,
+                    isLoading: isBusy,
+                    handler: {
+                        if confirmDismisses { dismiss() } else { onConfirm() }
+                    }
+                ),
+                secondary: .init(label: secondaryTitle, handler: { dismiss() }),
+                hint: confirmDismisses ? nil : "Enter to confirm"
+            )
+        }
+        .fittedSheetFrame(width: width, height: height)
+        .settingsSheetSurface()
+    }
+}
+
+/// Inline check/warn/info line under a field.
+struct SheetHintRow: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
+
+    enum Kind {
+        case ok
+        case warning
+        case info
+        case error
+    }
+
+    let kind: Kind
+    let message: String
+
+    var body: some View {
+        Label {
+            Text(message)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(textColor)
+                .fixedSize(horizontal: false, vertical: true)
+        } icon: {
+            Image(systemName: iconName)
+                .glyphSize(.footnote, weight: .semibold)
+                .foregroundColor(iconColor)
+        }
+    }
+
+    private var iconName: String {
+        switch kind {
+        case .ok: return "checkmark.circle"
+        case .warning: return "exclamationmark.circle"
+        case .info: return "info.circle"
+        case .error: return "exclamationmark.triangle.fill"
+        }
+    }
+
+    private var iconColor: Color {
+        switch kind {
+        case .ok: return theme.status.success.foreground
+        case .warning: return theme.status.warning.foreground
+        case .info: return theme.text.tertiary
+        case .error: return theme.status.error.foreground
+        }
+    }
+
+    private var textColor: Color {
+        switch kind {
+        case .warning: return theme.status.warning.foreground
+        case .error: return theme.status.error.foreground
+        case .ok, .info: return theme.text.secondary
+        }
+    }
+}
+
+/// Read-only monospaced value row (a deep-linked code the user shouldn't
+/// retype).
+private struct SheetReadOnlyValue: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
+    let icon: String
+    let value: String
+
+    var body: some View {
+        HStack(spacing: theme.space.s8) {
+            Image(systemName: icon)
+                .glyphSize(.footnote)
+                .foregroundColor(theme.text.tertiary)
+            Text(value)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                .foregroundColor(theme.text.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, theme.space.s12)
+        .padding(.vertical, theme.space.s8)
+        .settingsChrome(.control)
+    }
+}
+
+/// Shared 1–80 character workspace-name validation used by Create/Activate.
+enum WorkspaceNameValidation {
+    static let maxLength = 80
+
+    static func isValid(_ name: String) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && trimmed.count <= maxLength
+    }
+}
+
+// MARK: - Create workspace
+
+/// Buys a workspace. Three shapes, decided by the owner's subscription:
+/// - **Live subscription** (not trialing): name only; `Create` adds one
+///   workspace to the subscription and lands on it.
+/// - **Trialing with a workspace already**: the router answers
+///   `TRIAL_WORKSPACE_LIMIT`; shown as a dated hint, not an error.
+/// - **No live subscription**: name + billing interval; `Start free trial` /
+///   `Continue to checkout` opens Stripe in the browser and the sheet flips
+///   to a "finish in your browser" state while the service polls for the
+///   webhook-created workspace.
+struct CreateWorkspaceSheet: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var service = WorkspacesService.shared
+    #if OSAURUS_DESIGN_INSPECTOR
+    @Environment(\.inspectorWorkspaceDisplayOnly) private var inspectionDisplayOnly
+    #endif
+
+    var onCreated: (OsaurusRouterWorkspaceDetail) -> Void = { _ in }
+
+    @State private var name = ""
+    @State private var selectedPriceId: String?
+    @State private var errorMessage: String?
+    @State private var hitTrialLimit = false
+    @State private var checkoutOpened = false
+    /// Workspace ids known when Checkout opened, so the sheet recognizes the
+    /// webhook-created one when the service lands on it.
+    @State private var idsBeforeCheckout: Set<String> = []
+
+    private var trimmedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var nameIsValid: Bool { WorkspaceNameValidation.isValid(name) }
+    /// Whether the router will bounce through Stripe Checkout (no live
+    /// subscription) — decides the interval picker and the CTA copy.
+    private var needsCheckout: Bool { !service.hasLiveSubscription }
+    private var plan: OsaurusRouterWorkspacePlan? { service.prices?.plan }
+    #if OSAURUS_DESIGN_INSPECTOR
+    var inspectionPrices: [OsaurusRouterWorkspacePrice] = []
+    #endif
+    private var livePrices: [OsaurusRouterWorkspacePrice] {
+        #if OSAURUS_DESIGN_INSPECTOR
+        if inspectionDisplayOnly { return inspectionPrices }
+        #endif
+        return service.prices?.livePrices ?? []
+    }
+    private var selectedPrice: OsaurusRouterWorkspacePrice? {
+        livePrices.first { $0.id == selectedPriceId } ?? service.prices?.monthly ?? livePrices.first
+    }
+
+    private var confirmTitle: LocalizedStringKey {
+        if checkoutOpened { return "Done" }
+        if !needsCheckout { return "Create" }
+        return service.trialEligible ? "Start Free Trial" : "Continue to Checkout"
+    }
+
+    private var subtitle: String {
+        if checkoutOpened {
+            return L("Finish the payment in your browser. The workspace appears in Osaurus as soon as Stripe confirms it.")
+        }
+        if !needsCheckout {
+            return L("Give it a name. It's added to your subscription and ready right away.")
+        }
+        if service.trialEligible, let days = service.trialDays, days > 0 {
+            return String(
+                format: L("Name it and pick a billing interval. Your first %d days are free; you can cancel anytime before then."),
+                days
+            )
+        }
+        return L("Name it and pick a billing interval. You'll finish the purchase in your browser.")
+    }
+
+    var body: some View {
+        WorkspaceSheetShell(
+            icon: checkoutOpened ? "creditcard.fill" : "rectangle.3.group.fill",
+            title: checkoutOpened ? "Finish in your browser" : "New Workspace",
+            subtitle: subtitle,
+            confirmTitle: confirmTitle,
+            isBusy: service.isBusy("workspace.create"),
+            isValid: checkoutOpened || (nameIsValid && !hitTrialLimit),
+            onConfirm: { submit() },
+            secondaryTitle: checkoutOpened ? "Close" : "Cancel",
+            confirmDismisses: checkoutOpened,
+            height: checkoutOpened ? 320 : (needsCheckout ? 540 : 420)
+        ) {
+            if checkoutOpened {
+                checkoutOpenedBody
+            } else {
+                composeBody
+            }
+        }
+        .onAppear {
+            #if OSAURUS_DESIGN_INSPECTOR
+            if inspectionDisplayOnly { return }
+            #endif
+            name = WorkspacesService.defaultActivationName
+            if selectedPriceId == nil { selectedPriceId = service.prices?.monthly?.id ?? livePrices.first?.id }
+            // Prices/billing may be stale or missing on first open.
+            Task { await service.refreshBilling() }
+        }
+        .onChange(of: service.prices) { _, prices in
+            if selectedPriceId == nil { selectedPriceId = prices?.monthly?.id ?? prices?.livePrices.first?.id }
+        }
+        .onChange(of: service.pendingConfirmation) { _, pending in
+            // The webhook landed while this sheet was open: the service
+            // already selected the new workspace; close the sheet onto it.
+            // (A "Stop waiting" also clears `pending` — then there is no new
+            // owner-role workspace to land on, and the sheet just stays.)
+            if checkoutOpened, pending == nil, let detail = service.detail,
+                detail.typedRole == .owner, !idsBeforeCheckout.contains(detail.id)
+            {
+                dismiss()
+                onCreated(detail)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var composeBody: some View {
+        SettingsFieldLabel("Workspace name")
+        SettingsTextField(
+            placeholder: L("Workspace name"),
+            text: $name,
+            icon: "rectangle.3.group",
+            autofocus: true
+        )
+        .onSubmit { if nameIsValid && !hitTrialLimit { submit() } }
+
+        if needsCheckout, livePrices.count > 1 {
+            SettingsFieldLabel("Billing")
+            AssignedBaseSegmentedPicker(selection: $selectedPriceId, options: livePrices.map { .init(Optional($0.id), $0.displayLabel ?? $0.billingInterval ?? $0.id, verbatim: true) })
+        }
+
+        planSummary
+
+        if hitTrialLimit {
+            SheetHintRow(kind: .warning, message: trialLimitMessage)
+        } else if let errorMessage {
+            SheetHintRow(kind: .error, message: errorMessage)
+        } else if trimmedName.count > WorkspaceNameValidation.maxLength {
+            SheetHintRow(
+                kind: .warning,
+                message: String(
+                    format: L("Workspace names are capped at 80 characters (currently %d)."),
+                    trimmedName.count
+                )
+            )
+        } else if trimmedName.isEmpty {
+            SheetHintRow(kind: .info, message: L("Name it after your group — you can rename it anytime."))
+        } else if needsCheckout {
+            SheetHintRow(kind: .info, message: checkoutHint)
+        } else {
+            SheetHintRow(
+                kind: .ok,
+                message: String(format: L("\"%@\" it is. You'll be the owner."), trimmedName)
+            )
+        }
+    }
+
+    /// What every workspace includes, from the public plan (quiet when the
+    /// router hasn't answered).
+    @ViewBuilder
+    private var planSummary: some View {
+        if let plan {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
+                if let monthly = plan.monthlyCreditMicro, monthly != "0" {
+                    planLine(
+                        icon: "creditcard.fill",
+                        text: String(
+                            format: L("%@ shared credits every month — no rollover"),
+                            OsaurusRouter.formatMicroAsCreditsValue(monthly)
+                        )
+                    )
+                }
+                planLine(
+                    icon: "person.2.fill",
+                    text: plan.seats.map { String(format: L("Up to %d members"), $0) } ?? L("Unlimited members")
+                )
+                planLine(
+                    icon: "antenna.radiowaves.left.and.right",
+                    text: plan.maxSharedAgents.map { String(format: L("Up to %d shared agents"), $0) }
+                        ?? L("Unlimited shared agents")
+                )
+            }
+            .padding(.horizontal, theme.space.s12).padding(.vertical, theme.space.s12)
+            .settingsChrome(.inset)
+        }
+    }
+
+    private func planLine(icon: String, text: String) -> some View {
+        HStack(spacing: theme.space.s8) {
+            Image(systemName: icon)
+                .glyphSize(.footnote, weight: .semibold)
+                .foregroundColor(theme.text.link)
+                .frame(width: 14)
+            Text(text)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.secondary)
+        }
+    }
+
+    /// "14 days free, then $20/month. Card collected now; first charge on
+    /// the trial end." / "$20/month, billed by Stripe in your browser."
+    private var checkoutHint: String {
+        let priceText = selectedPrice?.displayLabel
+        if service.trialEligible, let days = service.trialDays, days > 0 {
+            if let priceText {
+                return String(
+                    format: L("%d days free, then %@. Your card is collected now and first charged when the trial ends."),
+                    days, priceText
+                )
+            }
+            return String(format: L("%d days free. Your card is collected now and first charged when the trial ends."), days)
+        }
+        if let priceText {
+            return String(format: L("%@, billed by Stripe. You'll finish the purchase in your browser."), priceText)
+        }
+        return L("You'll finish the purchase with Stripe in your browser.")
+    }
+
+    private var trialLimitMessage: String {
+        if let raw = service.trialEndsAt, let date = WorkspacesFormatting.date(raw) {
+            return String(
+                format: L("Your free trial covers one workspace. You can add more after it converts on %@."), date
+            )
+        }
+        return L("Your free trial covers one workspace. You can add more once the trial converts to a paid subscription.")
+    }
+
+    @ViewBuilder
+    private var checkoutOpenedBody: some View {
+        HStack(alignment: .top, spacing: theme.space.s8) {
+            SettingsSpinner()
+            VStack(alignment: .leading, spacing: theme.space.s4) {
+                Text(String(format: L("Waiting for Stripe to confirm “%@”"), trimmedName))
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
+                Text(
+                    L(
+                        "Nothing is charged until you complete the checkout. Osaurus checks for the new workspace each time you come back to it; you can also close this and refresh the list."
+                    )
+                )
+                .componentInspectionText(49, role: .caption, fallback: .footnote, theme: theme)
+                .foregroundColor(theme.text.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, theme.space.s12).padding(.vertical, theme.space.s12)
+        .settingsChrome(.inset)
+        SheetHintRow(
+            kind: .info,
+            message: L("Closed the browser tab without paying? Just close this — nothing was created or charged.")
+        )
+    }
+
+    private func submit() {
+        #if OSAURUS_DESIGN_INSPECTOR
+        if inspectionDisplayOnly { return }
+        #endif
+        guard !checkoutOpened, nameIsValid else { return }
+        let priceId = needsCheckout ? selectedPrice?.id : nil
+        idsBeforeCheckout = Set(service.workspaces.map(\.id))
+        Task {
+            if let outcome = await service.createWorkspace(name: name, priceId: priceId) {
+                switch outcome {
+                case .ready(let detail):
+                    dismiss()
+                    onCreated(detail)
+                case .checkoutOpened:
+                    withAnimation(theme.motion.quick) { checkoutOpened = true }
+                }
+            } else {
+                // Scope the failure to this sheet: the page banner behind it
+                // must not double-surface (and outlive) the same message.
+                if service.lastErrorCode == .trialWorkspaceLimit {
+                    hitTrialLimit = true
+                    errorMessage = nil
+                } else {
+                    errorMessage = service.lastError
+                }
+                service.lastError = nil
+            }
+        }
+    }
+}
+
+// MARK: - Activate web-purchased workspace
+
+/// Redeems a subscription purchased on osaurus.ai. Two entry modes:
+/// - Deeplink (`pending` set): the code is fixed and shown read-only, the
+///   name is prefilled from the web when it collected one. One confirm.
+/// - Manual (`pending == nil`): the user pastes the code — the fallback for
+///   a deeplink that didn't open (browser blocked the scheme, wrong
+///   machine, etc.).
+/// On success the router has created the workspace; the caller navigates to it.
+struct ActivateWorkspaceSheet: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var service = WorkspacesService.shared
+    #if OSAURUS_DESIGN_INSPECTOR
+    @Environment(\.inspectorWorkspaceDisplayOnly) private var inspectionDisplayOnly
+    #endif
+
+    let pending: PendingWorkspaceActivation?
+    var onActivated: (OsaurusRouterWorkspaceDetail) -> Void = { _ in }
+
+    @State private var code = ""
+    @State private var name = ""
+    @State private var errorMessage: String?
+
+    private var isDeeplink: Bool { pending != nil }
+    private var trimmedCode: String { code.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var trimmedName: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var codeLooksValid: Bool { PendingWorkspaceActivation.isPlausibleCode(trimmedCode) }
+    private var nameIsValid: Bool { WorkspaceNameValidation.isValid(name) }
+
+    var body: some View {
+        WorkspaceSheetShell(
+            icon: "checkmark.seal.fill",
+            title: "Activate your workspace",
+            subtitle: isDeeplink
+                ? L("Your subscription from osaurus.ai is ready. Name the workspace and you're in.")
+                : L("Paste the activation code from osaurus.ai to create your workspace here."),
+            confirmTitle: "Activate",
+            isBusy: service.isBusy("workspace.activate"),
+            isValid: codeLooksValid && nameIsValid,
+            onConfirm: { submit() },
+            height: 400
+        ) {
+            if let plan = pending?.planLabel, !plan.isEmpty {
+                HStack(spacing: theme.space.s8) {
+                    Image(systemName: "sparkles")
+                        .glyphSize(.footnote, weight: .semibold)
+                        .foregroundColor(theme.text.link)
+                    Text(String(format: L("Plan: %@"), plan))
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.secondary)
+                    Spacer(minLength: 0)
+                }
+            }
+
+            SettingsFieldLabel("Activation code")
+            if isDeeplink {
+                // Read-only code row: the deeplink fixed it; retyping would
+                // only invite typos.
+                SheetReadOnlyValue(icon: "key.fill", value: code)
+            } else {
+                SettingsTextField(
+                    placeholder: L("Activation code"),
+                    text: $code,
+                    icon: "key.fill",
+                    monospaced: true,
+                    autofocus: true
+                )
+            }
+
+            SettingsFieldLabel("Workspace name")
+            SettingsTextField(
+                placeholder: L("Workspace name"),
+                text: $name,
+                icon: "rectangle.3.group",
+                autofocus: isDeeplink
+            )
+            .onSubmit { if codeLooksValid && nameIsValid { submit() } }
+
+            if let errorMessage {
+                SheetHintRow(kind: .error, message: errorMessage)
+            } else if !isDeeplink, !trimmedCode.isEmpty, !codeLooksValid {
+                SheetHintRow(kind: .warning, message: L("That doesn't look like an activation code yet."))
+            } else if trimmedName.count > WorkspaceNameValidation.maxLength {
+                SheetHintRow(
+                    kind: .warning,
+                    message: String(
+                        format: L("Workspace names are capped at 80 characters (currently %d)."),
+                        trimmedName.count
+                    )
+                )
+            } else if trimmedName.isEmpty {
+                SheetHintRow(kind: .info, message: L("Name it after your group — you can rename it anytime."))
+            } else if codeLooksValid {
+                SheetHintRow(
+                    kind: .ok,
+                    message: String(format: L("\"%@\" it is. You'll be the owner."), trimmedName)
+                )
+            } else {
+                SheetHintRow(kind: .info, message: L("The code is on your osaurus.ai receipt and account page."))
+            }
+        }
+        .onAppear {
+            #if OSAURUS_DESIGN_INSPECTOR
+            if inspectionDisplayOnly { return }
+            #endif
+            if let pending {
+                code = pending.code
+                name = pending.suggestedName ?? WorkspacesService.defaultActivationName
+            } else {
+                name = WorkspacesService.defaultActivationName
+            }
+        }
+    }
+
+    private func submit() {
+        #if OSAURUS_DESIGN_INSPECTOR
+        if inspectionDisplayOnly { return }
+        #endif
+        guard codeLooksValid, nameIsValid else { return }
+        Task {
+            if let detail = await service.activate(code: code, name: name) {
+                dismiss()
+                onActivated(detail)
+            } else {
+                // Scope the failure to this sheet: the page banner behind it
+                // must not double-surface (and outlive) the same message.
+                errorMessage = service.lastError
+                service.lastError = nil
+            }
+        }
+    }
+}
+
+// MARK: - Join workspace
+
+/// Redeems an invite link. Two entry modes mirroring `ActivateWorkspaceSheet`:
+/// - Deeplink (`pending` set): code shown read-only; tapping Join is the
+///   consent step (a link is never redeemed just by opening it).
+/// - Manual (`pending == nil`): the user pastes the code from a link that
+///   didn't open.
+struct JoinWorkspaceSheet: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var service = WorkspacesService.shared
+    #if OSAURUS_DESIGN_INSPECTOR
+    @Environment(\.inspectorWorkspaceDisplayOnly) private var inspectionDisplayOnly
+    #endif
+
+    let pending: PendingWorkspaceJoin?
+    var onJoined: (OsaurusRouterWorkspaceDetail) -> Void = { _ in }
+
+    @State private var code = ""
+    @State private var errorMessage: String?
+
+    private var isDeeplink: Bool { pending != nil }
+    private var trimmedCode: String { code.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var codeLooksValid: Bool { OsaurusRouterWorkspaceCode.isPlausible(trimmedCode) }
+
+    var body: some View {
+        WorkspaceSheetShell(
+            icon: "person.badge.plus",
+            title: "Join workspace",
+            subtitle: isDeeplink
+                ? L("A teammate invited you. Joining adds you to their workspace with the role they chose.")
+                : L("Paste the code from an invite link — the part after \"code=\" — or the whole link."),
+            confirmTitle: "Join",
+            isBusy: service.isBusy("workspace.join"),
+            isValid: codeLooksValid,
+            onConfirm: { submit() },
+            height: 300
+        ) {
+            SettingsFieldLabel("Invite code")
+            if isDeeplink {
+                SheetReadOnlyValue(icon: "link", value: code)
+            } else {
+                SettingsTextField(
+                    placeholder: L("Invite code or link"),
+                    text: $code,
+                    icon: "link",
+                    monospaced: true,
+                    autofocus: true
+                )
+                .onSubmit { if codeLooksValid { submit() } }
+                .onChange(of: code) { _, raw in
+                    // Pasting the whole `osaurus://workspaces/join?code=…` link is
+                    // the common case; reduce it to the code.
+                    if let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
+                        let parsed = WorkspacesDeepLinkRouter.parseJoin(url)
+                    {
+                        code = parsed.code
+                    }
+                }
+            }
+
+            if let errorMessage {
+                SheetHintRow(kind: .error, message: errorMessage)
+            } else if !isDeeplink, !trimmedCode.isEmpty, !codeLooksValid {
+                SheetHintRow(kind: .warning, message: L("That doesn't look like an invite code yet."))
+            } else if codeLooksValid {
+                SheetHintRow(kind: .ok, message: L("You'll see the workspace's shared agents right away."))
+            } else {
+                SheetHintRow(kind: .info, message: L("Invite links look like osaurus://workspaces/join?code=…"))
+            }
+        }
+        .onAppear {
+            #if OSAURUS_DESIGN_INSPECTOR
+            if inspectionDisplayOnly { return }
+            #endif
+            if let pending { code = pending.code }
+        }
+    }
+
+    private func submit() {
+        #if OSAURUS_DESIGN_INSPECTOR
+        if inspectionDisplayOnly { return }
+        #endif
+        guard codeLooksValid else { return }
+        Task {
+            if let detail = await service.join(code: trimmedCode) {
+                dismiss()
+                onJoined(detail)
+            } else {
+                errorMessage = service.lastError
+                service.lastError = nil
+            }
+        }
+    }
+}
+
+// MARK: - Create invite link
+
+/// Mints an invite link, then flips to a result state with the link and a
+/// Copy button — the owner shares it however they like (chat, email).
+struct CreateInviteLinkSheet: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var service = WorkspacesService.shared
+    #if OSAURUS_DESIGN_INSPECTOR
+    @Environment(\.inspectorWorkspaceDisplayOnly) private var inspectionDisplayOnly
+    #endif
+
+    let workspaceId: String
+    /// Only owners can mint admin links.
+    let isOwner: Bool
+    /// Seats left under the plan's seat cap (`nil` when unlimited or unknown).
+    var seatsRemaining: Int? = nil
+    var onCreated: (OsaurusRouterWorkspaceInvite) -> Void = { _ in }
+
+    @State private var role: OsaurusRouterWorkspaceRole = .member
+    @State private var maxUses = 1
+    @State private var minted: OsaurusRouterWorkspaceInvite?
+    @State private var errorMessage: String?
+
+    private static let usesRange = 1...100
+
+    private var roleExplainer: String {
+        switch role {
+        case .viewer:
+            return L("Viewers can use the workspace's shared agents but can't share their own.")
+        case .admin:
+            return L("Admins can invite and remove members and manage shared agents.")
+        case .member, .owner:
+            return L("Members can use shared agents, share their own, and spend workspace credits.")
+        }
+    }
+
+    var body: some View {
+        if let minted {
+            resultFrame(minted)
+        } else {
+            composeFrame
+        }
+    }
+
+    private var composeFrame: some View {
+        WorkspaceSheetShell(
+            icon: "link.badge.plus",
+            title: "Create invite link",
+            subtitle: String(
+                format: L("Anyone who opens this link in Osaurus joins as %@. Links expire in 14 days."),
+                role.displayName.lowercased()
+            ),
+            confirmTitle: "Create link",
+            isBusy: service.isBusy("invite.create"),
+            isValid: seatsRemaining != 0,
+            onConfirm: { submit() },
+            height: 360
+        ) {
+            SettingsFieldLabel("Role")
+            let roles: [OsaurusRouterWorkspaceRole] = isOwner ? [.viewer, .member, .admin] : [.viewer, .member]
+            AssignedBaseSegmentedPicker(selection: $role, options: roles.map { .init($0, $0.displayName, verbatim: true) })
+            Text(roleExplainer)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            SettingsFieldLabel("Uses")
+            HStack(spacing: theme.space.s8) {
+                SettingsStepper(value: $maxUses, range: Self.usesRange)
+                    .settingsFieldAccessibility(L("Uses"))
+                Text(
+                    maxUses == 1
+                        ? L("1 person")
+                        : String(format: L("Up to %d people"), maxUses)
+                )
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.secondary)
+                Spacer(minLength: 0)
+            }
+
+            if let seatsRemaining {
+                SheetHintRow(
+                    kind: seatsRemaining == 0 || maxUses > seatsRemaining ? .warning : .info,
+                    message: seatsRemaining == 0
+                        ? L("No seats left in this workspace — free a seat before inviting.")
+                        : maxUses > seatsRemaining
+                            ? String(
+                                format: L("Only %d seats left — extra joins will fail until a seat is freed."),
+                                seatsRemaining
+                            )
+                            : seatsRemaining == 1
+                                ? L("1 seat left in this workspace.")
+                                : String(format: L("%d seats left in this workspace."), seatsRemaining)
+                )
+            }
+
+            if let errorMessage {
+                SheetHintRow(kind: .error, message: errorMessage)
+            }
+        }
+    }
+
+    private func resultFrame(_ invite: OsaurusRouterWorkspaceInvite) -> some View {
+        WorkspaceSheetShell(
+            icon: "checkmark.circle.fill",
+            title: "Invite link ready",
+            subtitle: String(
+                format: L("Share it with your teammate. Anyone who opens it in Osaurus joins as %@."),
+                (invite.role.flatMap(OsaurusRouterWorkspaceRole.init(rawValue:)) ?? role)
+                    .displayName.lowercased()
+            ),
+            confirmTitle: "Done",
+            isBusy: false,
+            isValid: true,
+            onConfirm: {},
+            secondaryTitle: "Close",
+            confirmDismisses: true,
+            height: 280
+        ) {
+            CopyableURLField(label: L("Invite link"), url: invite.url ?? invite.code ?? "")
+
+            SheetHintRow(kind: .info, message: inviteFooter(invite))
+        }
+        .onAppear {
+            #if OSAURUS_DESIGN_INSPECTOR
+            if inspectionDisplayOnly { return }
+            #endif
+            // Copying is what the user opened this sheet to do; save a click.
+            copyLink(invite)
+        }
+    }
+
+    private func inviteFooter(_ invite: OsaurusRouterWorkspaceInvite) -> String {
+        var parts: [String] = []
+        let uses = invite.maxUses ?? maxUses
+        parts.append(uses == 1 ? L("Single use") : String(format: L("Up to %d uses"), uses))
+        if let expires = invite.expiresAt, let date = WorkspacesFormatting.date(expires) {
+            parts.append(String(format: L("expires %@"), date))
+        }
+        parts.append(L("copied to your clipboard — you can copy it again or revoke it from Members."))
+        return parts.joined(separator: " · ")
+    }
+
+    private func copyLink(_ invite: OsaurusRouterWorkspaceInvite) {
+        guard let payload = invite.url ?? invite.code else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(payload, forType: .string)
+    }
+
+    private func submit() {
+        #if OSAURUS_DESIGN_INSPECTOR
+        if inspectionDisplayOnly { return }
+        #endif
+        Task {
+            if let invite = await service.mintInvite(workspaceId: workspaceId, role: role, maxUses: maxUses) {
+                onCreated(invite)
+                withAnimation(theme.motion.quick) { minted = invite }
+            } else {
+                errorMessage = service.lastError
+                service.lastError = nil
+            }
+        }
+    }
+}
+
+// MARK: - Share agent
+
+struct WorkspaceShareAgentSheet: View {
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var service = WorkspacesService.shared
+    #if OSAURUS_DESIGN_INSPECTOR
+    @Environment(\.inspectorWorkspaceDisplayOnly) private var inspectionDisplayOnly
+    #endif
+    @ObservedObject private var agentManager = AgentManager.shared
+
+    let workspaceId: String
+    /// Agent to start with selected (chat sidebar → Share to Workspace →
+    /// <name>). Ignored when it is built-in or already on the roster.
+    var preselectedAgentId: UUID? = nil
+    var onSuccess: () -> Void = {}
+
+    @State private var selectedAgentId: UUID?
+    @State private var displayName = ""
+    /// The last value we auto-filled into `displayName` from an agent's name.
+    /// Lets a later selection replace an untouched prefill while leaving a
+    /// name the user typed alone.
+    @State private var prefilledName: String?
+    @State private var descriptionText = ""
+    @State private var errorMessage: String?
+    @State private var isPreparing = false
+    /// Follows `WorkspacesService.shareBillingDefault` for the selected
+    /// agent until the user flips it.
+    @State private var billWorkspaceCredits = true
+
+    static let displayNameMaxLength = 120
+
+    /// Display name to show after the user picks `selectedAgentName`.
+    /// Follows the selection when the field is empty or still holds the
+    /// previous auto-fill; preserves anything the user typed themselves.
+    static func nextDisplayName(
+        current: String,
+        prefilled: String?,
+        selectedAgentName: String
+    ) -> String {
+        let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed == prefilled {
+            return selectedAgentName
+        }
+        return current
+    }
+
+    /// Lowercased addresses already on this workspace's roster — those rows
+    /// render disabled with "Already shared" instead of failing on submit.
+    static func alreadySharedAddresses(
+        roster: [OsaurusRouterWorkspaceAgent]
+    ) -> Set<String> {
+        Set(roster.map { $0.agentAddress.lowercased() })
+    }
+
+    /// 1–120 characters after trimming.
+    static func displayNameIsValid(_ name: String) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && trimmed.count <= displayNameMaxLength
+    }
+
+    /// Every agent the user built. Sharing needs an agent key (the ownership
+    /// proof is signed by that derived key) and the relay tunnel (teammates
+    /// reach the agent through it); both are turned on as part of sharing
+    /// when missing, so a share is one click rather than a detour through
+    /// the Agents tab. Built-in agents have no key and can't be shared.
+    #if OSAURUS_DESIGN_INSPECTOR
+    var inspectionAgents: [Agent] = []
+    #endif
+    private var shareableAgents: [Agent] {
+        #if OSAURUS_DESIGN_INSPECTOR
+        if inspectionDisplayOnly { return inspectionAgents }
+        #endif
+        return agentManager.agents.filter { !$0.isBuiltIn }
+    }
+
+    private var alreadyShared: Set<String> {
+        Self.alreadySharedAddresses(roster: service.workspaceAgents)
+    }
+
+    private func isAlreadyShared(_ agent: Agent) -> Bool {
+        guard let address = agent.agentAddress?.lowercased() else { return false }
+        return alreadyShared.contains(address)
+    }
+
+    private var selectedAgent: Agent? {
+        shareableAgents.first { $0.id == selectedAgentId }
+    }
+
+    private var trimmedDisplayName: String {
+        displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var isValid: Bool {
+        guard let agent = selectedAgent, !isAlreadyShared(agent) else { return false }
+        return Self.displayNameIsValid(displayName) && !isPreparing
+    }
+
+    /// What sharing will switch on for the selected agent, if anything.
+    private var setupNeeded: (identity: Bool, relay: Bool)? {
+        guard let agent = selectedAgent else { return nil }
+        let identity = agent.agentAddress == nil || agent.agentIndex == nil
+        let relay = !RelayTunnelManager.shared.isTunnelEnabled(for: agent.id)
+        return (identity || relay) ? (identity, relay) : nil
+    }
+
+    var body: some View {
+        WorkspaceSheetShell(
+            icon: "person.2.fill",
+            title: "Share agent",
+            subtitle: L(
+                "Teammates chat with it from their own Osaurus while it keeps running on this Mac. Their chats always use workspace credits."
+            ),
+            confirmTitle: "Share agent",
+            isBusy: service.isBusy("agent.share") || isPreparing,
+            isValid: isValid,
+            onConfirm: { submit() },
+            height: 560
+        ) {
+            if shareableAgents.isEmpty {
+                SettingsEmptyState(
+                    inline: "theatermasks",
+                    title: "No agents to share yet",
+                    hint: "Create one in the Agents tab, then share it here."
+                )
+            } else {
+                SettingsFieldLabel("Agent")
+                ScrollView {
+                    VStack(spacing: theme.space.s6) {
+                        ForEach(shareableAgents, id: \.id) { agent in
+                            agentRow(agent)
+                        }
+                    }
+                }
+                .frame(maxHeight: 220)
+
+                if let setup = setupNeeded, let agent = selectedAgent {
+                    SheetHintRow(
+                        kind: setup.relay ? .warning : .info,
+                        message: setupMessage(setup, agentName: agent.name)
+                    )
+                }
+
+                SettingsFieldLabel("Shown to teammates as")
+                SettingsTextField(
+                    placeholder: L("Display name for the workspace"),
+                    text: $displayName,
+                    icon: "textformat"
+                )
+                if !trimmedDisplayName.isEmpty, !Self.displayNameIsValid(displayName) {
+                    SheetHintRow(
+                        kind: .warning,
+                        message: String(
+                            format: L("Display names are capped at 120 characters (currently %d)."),
+                            trimmedDisplayName.count
+                        )
+                    )
+                } else if selectedAgent != nil, trimmedDisplayName.isEmpty {
+                    SheetHintRow(kind: .info, message: L("Teammates see this name in their sidebar."))
+                }
+
+                SettingsFieldLabel("Description (optional)")
+                SettingsTextField(
+                    placeholder: L("What this agent is good at"),
+                    text: $descriptionText,
+                    icon: "text.alignleft"
+                )
+
+                SettingsToggle(
+                    title: "Bill Workspace Credits",
+                    description: billingDescription,
+                    isOn: $billWorkspaceCredits
+                )
+                .disabled(selectedAgent == nil)
+            }
+
+            if let errorMessage {
+                SheetHintRow(kind: .error, message: errorMessage)
+            }
+        }
+        .onAppear {
+            #if OSAURUS_DESIGN_INSPECTOR
+            if inspectionDisplayOnly { return }
+            #endif
+            guard selectedAgentId == nil, let preselectedAgentId,
+                let agent = shareableAgents.first(where: { $0.id == preselectedAgentId })
+            else { return }
+            select(agent)
+        }
+    }
+
+    private var billingDescription: String {
+        if let agent = selectedAgent, let address = agent.agentAddress,
+            let current = service.billingWorkspaceId(forAgentAddress: address), current != workspaceId
+        {
+            let name = service.workspaces.first { $0.id == current }?.name ?? L("another workspace")
+            return String(
+                format: L("Your own chats with this agent bill %@ today. On moves them to this workspace's credits."),
+                name
+            )
+        }
+        return L(
+            "On, your own chats with this agent also use this workspace's credits. Off, they bill your personal balance."
+        )
+    }
+
+    /// Sharing switches remote access on, so the sheet shows the same
+    /// consent copy as every other remote-access switch; pressing Share
+    /// agent is the consent.
+    private func setupMessage(_ setup: (identity: Bool, relay: Bool), agentName: String) -> String {
+        let identityLine = L("Sharing gives this agent its own identity key, which signs the ownership proof.")
+        let remoteLine = RemoteAccessConsent.message(agentName: agentName)
+        switch (setup.identity, setup.relay) {
+        case (true, true): return identityLine + " " + remoteLine
+        case (true, false): return identityLine
+        default: return remoteLine
+        }
+    }
+
+    /// Makes sure the agent has an identity key and the relay tunnel enabled,
+    /// returning the (address, key path) to sign with. Nil when no master key
+    /// exists to derive from (the tab's Identity gate normally prevents this).
+    private func prepareForSharing(_ agent: Agent) -> (address: String, keyPath: AgentKeyPath)? {
+        var current = agent
+        if current.agentAddress == nil || current.agentIndex == nil {
+            try? AgentManager.shared.assignAddress(to: current)
+            guard let refreshed = AgentManager.shared.agent(for: agent.id) else { return nil }
+            current = refreshed
+        }
+        guard let address = current.agentAddress, let keyPath = current.agentKeyPath else {
+            return nil
+        }
+        if !RelayTunnelManager.shared.isTunnelEnabled(for: current.id) {
+            RelayTunnelManager.shared.setTunnelEnabled(true, for: current.id)
+        }
+        return (address, keyPath)
+    }
+
+    private func submit() {
+        #if OSAURUS_DESIGN_INSPECTOR
+        if inspectionDisplayOnly { return }
+        #endif
+        guard let agent = selectedAgent, isValid else { return }
+        isPreparing = true
+        guard let signer = prepareForSharing(agent) else {
+            isPreparing = false
+            errorMessage = L(
+                "Couldn't give this agent an identity key. Set up your Osaurus ID, then try again."
+            )
+            return
+        }
+        isPreparing = false
+        Task {
+            let ok = await service.shareAgent(
+                workspaceId: workspaceId,
+                agentAddress: signer.address,
+                agentKeyPath: signer.keyPath,
+                displayName: displayName,
+                description: descriptionText.isEmpty ? nil : descriptionText,
+                billWorkspaceCredits: billWorkspaceCredits
+            )
+            if ok {
+                onSuccess()
+                dismiss()
+            } else {
+                errorMessage = service.lastError
+                service.lastError = nil
+            }
+        }
+    }
+
+    /// Select an agent and follow it with the display-name prefill (row
+    /// click and the deep-link preselect share this path).
+    private func select(_ agent: Agent) {
+        guard !isAlreadyShared(agent) else { return }
+        selectedAgentId = agent.id
+        billWorkspaceCredits = WorkspacesService.shareBillingDefault(agentId: agent.id)
+        let next = Self.nextDisplayName(
+            current: displayName,
+            prefilled: prefilledName,
+            selectedAgentName: agent.name
+        )
+        if next == agent.name {
+            prefilledName = agent.name
+        }
+        displayName = next
+    }
+
+    private func agentRow(_ agent: Agent) -> some View {
+        let isSelected = selectedAgentId == agent.id
+        let shared = isAlreadyShared(agent)
+        return Button(action: { select(agent) }) {
+            HStack(spacing: theme.space.s8) {
+                Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
+                    .glyphSize(.label)
+                    .foregroundColor(isSelected ? theme.text.link : theme.text.tertiary)
+                AgentAvatarView(
+                    mascotId: agent.avatar,
+                    name: agent.name,
+                    tint: theme.dataInk(seed: agent.name),
+                    diameter: 26,
+                    customImageURL: agent.customAvatarURL,
+                    monogramFontSize: 11,
+                    borderWidth: 1.5
+                )
+                VStack(alignment: .leading, spacing: theme.space.s2) {
+                    Text(agent.name)
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.primary)
+                    if let address = agent.agentAddress {
+                        Text(SharedAgentIdentity.shortAddress(address))
+                            .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
+                            .foregroundColor(theme.text.tertiary)
+                            .lineLimit(1)
+                            .help(address)
+                    } else {
+                        Text("Identity key and remote access are set up when you share", bundle: .module)
+                            .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                            .foregroundColor(theme.text.tertiary)
+                            .lineLimit(1)
+                    }
+                }
+                Spacer()
+                if shared {
+                    StatusChip(L("Already shared"), tint: theme.status.success.foreground, icon: "checkmark")
+                }
+            }
+            .padding(.horizontal, theme.space.s8)
+            .padding(.vertical, theme.space.s8)
+            .settingsChrome(isSelected ? .selected : .inset)
+            .contentShape(RoundedRectangle(cornerRadius: theme.radius.medium))
+            .opacity(shared ? 0.55 : 1)
+        }
+        .buttonStyle(.plain)
+        .disabled(shared)
+        .help(shared ? L("This agent is already shared with the workspace.") : "")
+    }
+}
+
+#if OSAURUS_DESIGN_INSPECTOR
+extension CreateWorkspaceSheet {
+    static func inspectionSample() -> Self {
+        var view = Self(); view._name = State(initialValue: "Local display workspace")
+        let data = Data(#"[{"id":"local-monthly","billing_interval":"month","price_usd":"20","active":true},{"id":"local-yearly","billing_interval":"year","price_usd":"200","active":true}]"#.utf8)
+        view.inspectionPrices = (try? JSONDecoder().decode([OsaurusRouterWorkspacePrice].self, from: data)) ?? []
+        view._selectedPriceId = State(initialValue: "local-monthly")
+        view._errorMessage = State(initialValue: "Local error display; no account request was made."); return view
+    }
+}
+extension ActivateWorkspaceSheet {
+    static func inspectionSample() -> Self {
+        var view = Self(pending: nil); view._name = State(initialValue: "Local display workspace")
+        view._code = State(initialValue: "local-display-code")
+        view._errorMessage = State(initialValue: "Local activation error display."); return view
+    }
+}
+extension JoinWorkspaceSheet {
+    static func inspectionSample() -> Self {
+        var view = Self(pending: nil); view._code = State(initialValue: "local-display-code")
+        view._errorMessage = State(initialValue: "Local join error display."); return view
+    }
+}
+extension CreateInviteLinkSheet {
+    static func inspectionSample(result: Bool) -> Self {
+        var view = Self(workspaceId: "local-display", isOwner: true, seatsRemaining: 3)
+        if result {
+            let data = Data(#"{"id":"local-invite","code":"local-display-code","url":"osaurus://workspaces/join?code=local-display-code","role":"member","status":"pending","max_uses":3,"uses":0}"#.utf8)
+            view._minted = State(initialValue: try? JSONDecoder().decode(OsaurusRouterWorkspaceInvite.self, from: data))
+        }
+        return view
+    }
+}
+extension WorkspaceShareAgentSheet {
+    static func inspectionSample() -> Self {
+        var view = Self(workspaceId: "local-display")
+        let agent = Agent(id: UUID(uuidString: "ABC00000-0000-4000-8000-000000000049")!, name: "Local display agent", description: "Display only", avatar: "green")
+        view.inspectionAgents = [agent]
+        view._selectedAgentId = State(initialValue: agent.id)
+        view._displayName = State(initialValue: "Local shared agent")
+        view._descriptionText = State(initialValue: "Local display only. No identity, relay or sharing operation is created.")
+        view._errorMessage = State(initialValue: "Local sharing error display."); return view
+    }
+}
+#endif

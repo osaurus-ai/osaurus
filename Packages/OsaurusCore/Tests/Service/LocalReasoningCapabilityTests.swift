@@ -9,6 +9,146 @@ import Testing
 
 @Suite("LocalReasoningCapability template analysis")
 struct LocalReasoningCapabilityTests {
+    @Test("JANG native thinking declaration survives agent dispatch defaults")
+    func jangNativeThinkingDefault() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let template = """
+            {% if add_generation_prompt %}{{ '<|im_start|>assistant\\n' }}
+            {% if enable_thinking is false %}{{ '<think></think>' }}{% endif %}{% endif %}
+            """
+        try template.write(to: directory.appendingPathComponent("chat_template.jinja"), atomically: true, encoding: .utf8)
+        for enabled in [false, true] {
+            let data = try JSONSerialization.data(withJSONObject: [
+                "chat": ["thinking": ["supported": true, "template_flag": "enable_thinking", "default": enabled]]
+            ])
+            try data.write(to: directory.appendingPathComponent("jang_config.json"))
+            let capability = LocalReasoningCapability.detect(at: directory)
+            #expect(capability.declaredDefaultThinkingOn == enabled)
+            #expect(capability.defaultThinkingOn == enabled)
+            for explicit: Bool? in [nil, false, true] {
+                #expect(AgentReasoningPolicy.defaultEnableThinking(
+                    isAgentOrToolRequest: true,
+                    explicitEnableThinking: explicit,
+                    explicitReasoningEffort: nil,
+                    modelOptions: [:],
+                    usesReasoningEffortControl: false,
+                    capability: capability
+                ) == explicit)
+            }
+        }
+        let generation = Data(#"{"default_chat_template_kwargs":{"enable_thinking":false}}"#.utf8)
+        try generation.write(to: directory.appendingPathComponent("generation_config.json"))
+        #expect(LocalReasoningCapability.detect(at: directory).declaredDefaultThinkingOn == false)
+    }
+
+    @Test("JANG thinking metadata must declare the supported native template flag")
+    func incompleteJangThinkingDeclaration() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try "{% if enable_thinking is false %}{{ '<think></think>' }}{% endif %}"
+            .write(to: directory.appendingPathComponent("chat_template.jinja"), atomically: true, encoding: .utf8)
+        for thinking: [String: Any] in [
+            ["supported": false, "template_flag": "enable_thinking", "default": true],
+            ["supported": true, "template_flag": "different_control", "default": true],
+            ["supported": true, "default": true],
+            ["supported": true, "template_flag": "enable_thinking"],
+        ] {
+            let data = try JSONSerialization.data(withJSONObject: ["chat": ["thinking": thinking]])
+            try data.write(to: directory.appendingPathComponent("jang_config.json"))
+            #expect(LocalReasoningCapability.detect(at: directory).declaredDefaultThinkingOn == nil)
+        }
+    }
+
+    @Test("Native omitted mode yields to an explicit publisher default without rewriting the template")
+    func nativeOmissionAndPublisherDefault() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let template = """
+            {% if add_generation_prompt %}{% if enable_thinking is defined %}
+            {% if enable_thinking is true %}{{ '<think>' }}
+            {% elif enable_thinking is false %}{{ '<think></think>' }}{% endif %}
+            {% endif %}{% endif %}
+            """
+        let templateURL = directory.appendingPathComponent("chat_template.jinja")
+        try template.write(to: templateURL, atomically: true, encoding: .utf8)
+        let omitted = LocalReasoningCapability.detect(at: directory)
+        #expect(omitted.preservesOmittedThinking)
+        #expect(omitted.declaredDefaultThinkingOn == nil)
+        for enabled in [false, true] {
+            let data = try JSONSerialization.data(withJSONObject: [
+                "default_chat_template_kwargs": ["enable_thinking": enabled]
+            ])
+            try data.write(to: directory.appendingPathComponent("generation_config.json"))
+            let declared = LocalReasoningCapability.detect(at: directory)
+            #expect(!declared.preservesOmittedThinking)
+            #expect(declared.declaredDefaultThinkingOn == enabled)
+            #expect(declared.defaultThinkingOn == enabled)
+            #expect(try String(contentsOf: templateURL, encoding: .utf8) == template)
+        }
+    }
+
+    @Test("Explicit-only native tail preserves omission as a third mode")
+    func explicitOnlyNativeThinkingTail() {
+        let tail = """
+            {% if add_generation_prompt %}
+            {{ '<|im_start|>assistant\\n' }}
+            {% if enable_thinking is defined %}
+            {% if enable_thinking is false %}{{ '<think>\\n\\n</think>\\n\\n' }}
+            {% elif enable_thinking is true %}{{ '<think>\\n' }}{% endif %}
+            {% endif %}{% endif %}
+            """
+        #expect(LocalReasoningCapability.analyze(template: tail).preservesOmittedThinking)
+        #expect(
+            !LocalReasoningCapability.analyze(
+                template:
+                    tail.replacingOccurrences(
+                        of: "{% endif %}{% endif %}",
+                        with: "{% else %}{{ '<think>' }}{% endif %}{% endif %}"
+                    )
+            ).preservesOmittedThinking
+        )
+        #expect(
+            !LocalReasoningCapability.analyze(
+                template:
+                    "{% if add_generation_prompt %}{% if enable_thinking is defined and enable_thinking is false %}"
+                    + "{{ '<think></think>' }}{% else %}{{ '<think>' }}{% endif %}{% endif %}"
+            ).preservesOmittedThinking
+        )
+    }
+
+    @Test("MiniMax-M3.1: <mm:think> rail; thinking_mode makes it toggleable with Adaptive as the omitted mode")
+    func miniMaxM3ThinkingMode() {
+        // The M3.1 template's own lines (bundle chat_template.jinja, sha256 e8fa0fa5...).
+        let withMode = """
+            {%- set think_begin_token = '<mm:think>' -%}{%- set think_end_token = '</mm:think>' -%}
+            {%- if thinking_mode is defined and thinking_mode == "enabled" -%}{{- 'Current thinking mode: enabled.' }}
+            {%- elif thinking_mode is defined and thinking_mode == "disabled" -%}{{- 'Current thinking mode: disabled.' }}
+            {%- else -%}{{- 'Current thinking mode: adaptive.' }}{%- endif -%}
+            {%- if add_generation_prompt -%}{{- bos_token ~ 'ai' ~ '\n' }}
+            {%- if thinking_mode is defined and thinking_mode == "disabled" -%}{{- think_end_token }}
+            {%- elif thinking_mode is defined and thinking_mode == "enabled" -%}{{- think_begin_token }}{%- endif -%}{%- endif -%}
+            """
+        let capability = LocalReasoningCapability.analyze(template: withMode)
+        #expect(capability.supportsThinking)
+        #expect(capability.isToggleableThinking)
+        #expect(capability.preservesOmittedThinking)
+        // Untouched: no enable_thinking is sent, so the template's adaptive mode is what runs.
+        #expect(AgentReasoningPolicy.defaultEnableThinking(
+            isAgentOrToolRequest: true, explicitEnableThinking: nil, explicitReasoningEffort: nil,
+            modelOptions: [:], usesReasoningEffortControl: false, capability: capability) == nil)
+        // As first shipped (adaptive only): a reasoning channel, no toggle.
+        let adaptiveOnly = """
+            {%- set think_begin_token = '<mm:think>' -%}{{- 'Current thinking mode: adaptive.' }}
+            {%- if add_generation_prompt -%}{{- bos_token ~ 'ai' ~ '\n' }}{%- endif -%}
+            """
+        let shipped = LocalReasoningCapability.analyze(template: adaptiveOnly)
+        #expect(shipped.supportsThinking && !shipped.isToggleableThinking && !shipped.preservesOmittedThinking)
+    }
+
     @Test("MiniMax-style template: injects <think>, has enable_thinking kwarg")
     func minimaxStyle() {
         let template = """

@@ -1,0 +1,16 @@
+{
+  "id": "agent_creation.import-mcp-json",
+  "domain": "agent_creation",
+  "label": "agent creation • a pasted MCP config is queued to install on Create",
+  "query": "I want an agent that answers questions from our docs. It should use this:\n```json\n{\"mcpServers\":{\"acme-docs\":{\"url\":\"https://mcp.acme-docs.example/mcp\"}}}\n```",
+  "notes": "Universal chat import inside the New Agent chat. The MCP server is queued on the draft (Installs When You Create) rather than installed mid-chat; the Configurator may also patch the name and instructions. The harness requires one successful agent_draft import that queued an mcp_server and checks nothing was installed during the turn.",
+  "fixtures": {},
+  "expect": {
+    "agentCreation": {
+      "maxIterations": 8,
+      "replies": ["That's all it needs, just answer from the docs."],
+      "importKinds": ["mcp_server"],
+      "maxClarifications": 1
+    }
+  }
+}

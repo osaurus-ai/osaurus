@@ -47,13 +47,15 @@ public final class OsaurusLocalClient: Sendable {
 
     // MARK: - Agent resolution
 
-    /// The currently active agent's id. "Ask Osaurus" targets whatever agent
-    /// the user has selected in the app (`AgentManager.activeAgentId`), which is
-    /// restored from persistence on launch. This may resolve to the built-in
-    /// "Osaurus" agent when that is the active one — which is why the run/dispatch
-    /// endpoints relax their built-in guard for loopback callers.
+    /// The agent a fresh "Ask Osaurus" targets: the new-chat agent
+    /// (`AgentManager.newChatAgentId` — the Orchestrator unless
+    /// `new_chat_agent` was applied), restored from persistence on launch.
+    /// Not the foreground chat's agent: a Siri/Shortcuts ask is a new
+    /// conversation, so it follows the same default as ⌘N. This commonly
+    /// resolves to the built-in "Osaurus" agent — which is why the
+    /// run/dispatch endpoints relax their built-in guard for loopback callers.
     public func activeAgentID() async -> String {
-        await MainActor.run { AgentManager.shared.activeAgentId.uuidString }
+        await MainActor.run { AgentManager.shared.newChatAgentId.uuidString }
     }
 
     // MARK: - Execution
@@ -74,6 +76,7 @@ public final class OsaurusLocalClient: Sendable {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.setValue(LocalAPIKeyPolicy.appSessionToken, forHTTPHeaderField: LocalAPIKeyPolicy.appTokenHeaderName)
 
         let body: [String: Any] = [
             "model": "default",
@@ -132,6 +135,7 @@ public final class OsaurusLocalClient: Sendable {
         var request = URLRequest(url: base.appendingPathComponent("agents/\(id)/dispatch"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue(LocalAPIKeyPolicy.appSessionToken, forHTTPHeaderField: LocalAPIKeyPolicy.appTokenHeaderName)
 
         // `/dispatch` requires a non-empty prompt. When the intent supplies no
         // input, fall back to a minimal kickoff so the agent still starts.

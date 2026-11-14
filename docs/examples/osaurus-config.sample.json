@@ -5,14 +5,41 @@
     "budget_tokens": 1200,
     "retention_days": 365
   },
+  "harness_runtimes": [
+    {
+      "name": "Pi",
+      "kind": "pi_rpc",
+      "executable": "pi",
+      "arguments": ["--mode", "rpc", "--session-id", "{chat_id}"],
+      "environment": {}
+    }
+  ],
   "default_agent": {
     "name": null,
     "model": "foundation",
     "temperature": 0.7,
     "max_tokens": null,
-    "system_prompt": "You are a friendly, concise assistant."
+    "system_prompt": "You are a friendly, concise assistant.",
+    "runtime": "builtin"
   },
-  "active_agent": "default",
+  "configurator": {
+    "model": null,
+    "temperature": null,
+    "system_prompt": "Prefer the smallest change that does what I asked."
+  },
+  "new_chat_agent": "default",
+  "model_defaults": { "core_model": "foundation", "compaction_model": null },
+  "chat": {
+    "smooth_streaming": true,
+    "group_activity": true,
+    "expand_thinking": false,
+    "spell_check": false,
+    "auto_titles": true,
+    "follow_up_suggestions": true,
+    "clipboard_monitoring": true,
+    "keep_mac_awake": true
+  },
+  "app": { "hotkey": "cmd+;", "start_at_login": false, "show_notifications": true },
   "agents": [
     {
       "name": "Research Agent",
@@ -28,8 +55,17 @@
         "knowledge_collection_ids": [],
         "browser_use_enabled": false,
         "computer_use_enabled": false,
+        "image_enabled": false,
+        "applescript_enabled": false,
+        "apple_apps": [],
         "relay_enabled": false
-      }
+      },
+      "tools": { "mode": "manual", "enabled": ["get_current_time", "web_search"] },
+      "mcp_servers": { "enabled": [], "disabled": [] },
+      "plugins": { "enabled": [] },
+      "sandbox": { "enabled": true, "network_enabled": true, "allowed_domains": [] },
+      "subagents": { "enabled": false, "agents": [], "models": [] },
+      "working_folder": null
     }
   ],
   "tools": {
@@ -43,13 +79,15 @@
   "delegation": {
     "local_text_enabled": true,
     "spawnable_agents": ["Research Agent"],
-    "spawn_tool_access": "read_only",
+    "spawnable_workspace_agents": [],
+    "workspace_auto_join": {},
     "permission_defaults": {
-      "spawn": "ask"
+      "spawn": "always_allow",
+      "spawn_workspace": "ask"
     },
-    "budget_max_tokens": 4096,
-    "budget_max_turns": 4,
-    "budget_max_seconds": 300,
+    "budget_max_tokens": 8192,
+    "budget_max_turns": 24,
+    "budget_max_seconds": 900,
     "ram_safety_preflight": true
   },
   "commands": [
@@ -104,7 +142,7 @@
     }
   ],
   "models": ["mlx-community/Qwen2.5-7B-Instruct-4bit"],
-  "plugins": ["osaurus.weather"],
+  "plugins": ["osaurus.fetch"],
   "providers": [
     {
       "name": "Anthropic",
@@ -123,25 +161,50 @@
       }
     ]
   },
-  "schedules": [
+  "automations": [
     {
       "name": "Morning news",
       "agent": "Research Agent",
       "instructions": "Summarize the top technology headlines.",
-      "frequency": "daily",
-      "frequency_time_of_day": "08:00",
+      "source": {
+        "kind": "schedule",
+        "frequency": "daily",
+        "frequency_time_of_day": "08:00"
+      },
       "enabled": true
-    }
-  ],
-  "watchers": [
+    },
     {
       "name": "Downloads sorter",
       "agent": "Research Agent",
       "instructions": "File new downloads into the right subfolder.",
-      "path": "~/Downloads",
-      "recursive": false,
-      "responsiveness": "balanced",
+      "source": {
+        "kind": "folder",
+        "path": "~/Downloads",
+        "recursive": false,
+        "responsiveness": "balanced"
+      },
       "enabled": true
+    },
+    {
+      "name": "Weekday digest",
+      "workflow": "Daily Digest",
+      "input": {
+        "day": "{{schedule.scheduled_for}}"
+      },
+      "source": {
+        "kind": "schedule",
+        "frequency": "cron",
+        "frequency_value": "0 8 * * 1-5"
+      }
+    },
+    {
+      "name": "Morning quote",
+      "instructions": "Give me one short motivational quote.",
+      "source": {
+        "kind": "schedule",
+        "frequency": "daily",
+        "frequency_time_of_day": "07:30"
+      }
     }
   ]
 }

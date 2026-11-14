@@ -240,13 +240,10 @@ struct AgentRequestQueueSchedulingTests {
         let agentY = UUID()
         let fillers = fillAgentCap(agentX)
 
-        // Force BOTH follow-ups into the queue by zeroing the global limit,
+        // Force BOTH follow-ups into the queue by zeroing the Default queue,
         // then restore it: agent X's request stays capacity-blocked by the
         // per-agent cap while agent Y's is not.
-        let originalConfig = ToastManager.shared.configuration
-        var zeroed = originalConfig
-        zeroed.maxConcurrentTasks = 0
-        ToastManager.shared.updateConfiguration(zeroed)
+        mgr.setDefaultQueueMaxConcurrentForTesting(0)
 
         let probeX = StartProbe()
         let probeY = StartProbe()
@@ -262,7 +259,7 @@ struct AgentRequestQueueSchedulingTests {
         #expect(queuedX.status == .queued)
         #expect(queuedY.status == .queued)
 
-        ToastManager.shared.updateConfiguration(originalConfig)
+        mgr.setDefaultQueueMaxConcurrentForTesting(TaskQueuePolicy.defaultMaxConcurrent)
         mgr.pumpQueueForTesting()
 
         // Y jumps past the capacity-blocked X (no head-of-line blocking);

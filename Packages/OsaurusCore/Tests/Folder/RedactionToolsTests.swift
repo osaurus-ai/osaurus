@@ -59,6 +59,41 @@ struct RedactionToolsTests {
         #expect(samples.first?["text"] as? String == "a@b.co")
     }
 
+    @Test func detectPII_document_rejectsWithReadThenRegeneratePivot() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data([0x50, 0x4B, 0x03, 0x04]).write(to: root.appendingPathComponent("contract.docx"))
+
+        let output = try await DetectPIITool(rootPath: root).execute(
+            argumentsJSON: #"{"path":"contract.docx"}"#
+        )
+        let data = try #require(output.data(using: .utf8))
+        let dict = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(dict["ok"] as? Bool == false)
+        let message = try #require(dict["message"] as? String)
+        #expect(message.contains("file_read"))
+        #expect(message.contains("file_write"))
+        #expect(message.contains(".docx"))
+        #expect(!message.contains("only supports text"))
+    }
+
+    @Test func redactFile_document_rejectsWithRegeneratePivot() async throws {
+        let root = tmpRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data([0x25, 0x50, 0x44, 0x46]).write(to: root.appendingPathComponent("report.pdf"))
+
+        let output = try await RedactFileTool(rootPath: root).execute(
+            argumentsJSON: #"{"path":"report.pdf"}"#
+        )
+        let data = try #require(output.data(using: .utf8))
+        let dict = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        #expect(dict["ok"] as? Bool == false)
+        let message = try #require(dict["message"] as? String)
+        #expect(message.contains("file_read"))
+        #expect(message.contains("regenerate"))
+        #expect(message.contains("file_write"))
+    }
+
     @Test func detectPII_customRule_matchesDomainPattern() async throws {
         let output = try await DetectPIITool().execute(
             argumentsJSON: """

@@ -1,0 +1,41 @@
+{
+  "id": "agent_loop.write-xlsx-by-extension",
+  "domain": "agent_loop",
+  "label": "agent loop • create a real .xlsx with file_write (no CSV-with-xlsx-name, no shell)",
+  "query": "Create budget.xlsx with the columns Item and Amount and these rows: Rent 1200, Groceries 450, Transit 90. Then confirm it was written.",
+  "notes": "file_write generates a spreadsheet package for the .xlsx extension from CSV/TSV/JSON rows. The command assertion proves the output is an OOXML zip (xl/workbook.xml), not CSV bytes renamed.",
+  "fixtures": {},
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 5,
+      "maxToolCalls": 4,
+      "mustCallTools": [
+        "file_write"
+      ],
+      "mustNotCallTools": [
+        "shell_run"
+      ],
+      "toolUsageAudit": [
+        {
+          "tool": "file_write",
+          "minCalls": 1,
+          "maxCalls": 2,
+          "maxErrors": 0,
+          "argsMustContain": "budget.xlsx"
+        }
+      ],
+      "files": [
+        {
+          "path": "budget.xlsx",
+          "exists": true
+        }
+      ],
+      "commands": [
+        {
+          "command": "unzip -l budget.xlsx | grep -q 'xl/workbook.xml'",
+          "expectExitCode": 0
+        }
+      ]
+    }
+  }
+}

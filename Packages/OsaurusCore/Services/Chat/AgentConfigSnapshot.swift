@@ -27,11 +27,24 @@ import Foundation
 /// settings editor saves while context composition is suspended.
 public struct AgentSpawnConfigSnapshot: Sendable, Equatable {
     let agentIDs: [UUID]
-    let modelNames: [String]
-    let modelNotes: [String: String]
     let budgets: SubagentBudgets
-    let toolAccess: SpawnToolAccess
     let launcherModelOverride: String?
+    /// Allow-listed shared workspace agents (durable refs; presence is
+    /// deliberately NOT part of this snapshot so the composed prompt never
+    /// changes when a teammate's host goes offline).
+    let workspaceAgents: [WorkspaceAgentRef]
+
+    init(
+        agentIDs: [UUID],
+        budgets: SubagentBudgets,
+        launcherModelOverride: String?,
+        workspaceAgents: [WorkspaceAgentRef] = []
+    ) {
+        self.agentIDs = agentIDs
+        self.budgets = budgets
+        self.launcherModelOverride = launcherModelOverride
+        self.workspaceAgents = workspaceAgents
+    }
 }
 
 public struct AgentConfigSnapshot: Sendable, Equatable {
@@ -156,13 +169,9 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// Transitional legacy payload. It must be resolved uniquely against the
     /// live descriptor catalog before use and is never itself an auth key.
     let legacySpawnableAgentNames: [String]
-    /// Raw model ids this agent may hand a task to via `spawn_model`. Drives the
-    /// "is there anything to spawn?" half of the `spawn_model` visibility gate
-    /// for custom agents.
-    public let spawnableModelNames: [String]
-    /// Optional "when/how to use" note per spawnable model id, surfaced in the
-    /// spawn guidance descriptor (gate stays on `spawnableModelNames`).
-    public let spawnableModelNotes: [String: String]
+    /// Shared workspace agents this agent may delegate to via `spawn_agent`
+    /// (per-agent allow-list; the Default agent uses the global pool).
+    public let spawnableWorkspaceAgents: [WorkspaceAgentRef]
     /// Effective Default-vs-custom spawn settings captured with this turn. Nil
     /// exists only for source-compatible hand-built test snapshots;
     /// production `capture(...)` always supplies it.
@@ -187,6 +196,32 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
     /// `agent_channel_publish` tool into the schema; the broad
     /// `agent_channel_*` catalog stays deferred behind capability loading.
     public let hasChannelPublishDestinations: Bool
+
+    /// Built-in Apple app families enabled for this agent. Enforced
+    /// authoritatively in `resolveTools`: every `AppleApp.toolNames` entry for
+    /// an app NOT in this set is stripped in both auto and manual mode, and
+    /// the Default agent never receives any Apple tool (its allowlist wins).
+    public let enabledAppleApps: Set<AppleApp>
+
+    /// `workflow_<slug>` tools of the installed workflows this custom agent
+    /// has enabled (Agents → Workflows). Empty for the Orchestrator, which
+    /// reaches workflows through `run_workflow`, and for the Architect.
+    public let workflowToolNames: [String]
+
+    /// Whether any installed workflow is visible to the Orchestrator. The
+    /// Orchestrator's `run_workflow` is in its schema only when this is true.
+    public let hasOrchestratorWorkflows: Bool
+    /// Per-agent opt-ins for the specialist built-ins (`calculate`, and the
+    /// host-folder redaction pair `detect_pii` / `redact_file`).
+    public let calculatorEnabled: Bool
+    public let redactionToolsEnabled: Bool
+    /// Per-agent gates for the agent-loop built-ins: `todo` + `complete`,
+    /// `clarify`, and `share_artifact`. Default on.
+    public let taskChecklistEnabled: Bool
+    public let clarifyEnabled: Bool
+    public let artifactsEnabled: Bool
+    /// The agent's working folder is read only (`AgentSettings.workingFolderReadOnly`).
+    public let workingFolderReadOnly: Bool
 
     public init(
         agentId: UUID,
@@ -213,14 +248,22 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         appleScriptEnabled: Bool = false,
         spawnableAgentIDs: [UUID] = [],
         spawnableAgentNames: [String] = [],
-        spawnableModelNames: [String] = [],
-        spawnableModelNotes: [String: String] = [:],
+        spawnableWorkspaceAgents: [WorkspaceAgentRef] = [],
         spawnConfiguration: AgentSpawnConfigSnapshot? = nil,
         knowledgeEnabled: Bool = false,
         knowledgeCuratorEnabled: Bool = false,
         knowledgeCollections: [KnowledgeGrantDescriptor] = [],
         hasChannelPublishDestinations: Bool = false,
-        projectId: UUID? = nil
+        projectId: UUID? = nil,
+        enabledAppleApps: Set<AppleApp> = [],
+        workflowToolNames: [String] = [],
+        hasOrchestratorWorkflows: Bool = false,
+        calculatorEnabled: Bool = false,
+        redactionToolsEnabled: Bool = false,
+        taskChecklistEnabled: Bool = true,
+        clarifyEnabled: Bool = true,
+        artifactsEnabled: Bool = true,
+        workingFolderReadOnly: Bool = false
     ) {
         self.agentId = agentId
         self.projectId = projectId
@@ -247,13 +290,21 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
         self.appleScriptEnabled = appleScriptEnabled
         self.spawnableAgentIDs = SpawnableAgentIdentity.normalizedIDs(spawnableAgentIDs)
         self.legacySpawnableAgentNames = spawnableAgentNames
-        self.spawnableModelNames = spawnableModelNames
-        self.spawnableModelNotes = spawnableModelNotes
+        self.spawnableWorkspaceAgents = spawnableWorkspaceAgents
         self.spawnConfiguration = spawnConfiguration
         self.knowledgeEnabled = knowledgeEnabled
         self.knowledgeCuratorEnabled = knowledgeCuratorEnabled
         self.knowledgeCollections = knowledgeCollections
         self.hasChannelPublishDestinations = hasChannelPublishDestinations
+        self.enabledAppleApps = enabledAppleApps
+        self.workflowToolNames = workflowToolNames
+        self.hasOrchestratorWorkflows = hasOrchestratorWorkflows
+        self.calculatorEnabled = calculatorEnabled
+        self.redactionToolsEnabled = redactionToolsEnabled
+        self.taskChecklistEnabled = taskChecklistEnabled
+        self.clarifyEnabled = clarifyEnabled
+        self.artifactsEnabled = artifactsEnabled
+        self.workingFolderReadOnly = workingFolderReadOnly
     }
 
     /// Read every `effective*` field in one MainActor batch.
@@ -301,32 +352,23 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
                 perAgentEnabled: caps.spawnDelegationEnabled,
                 perAgentTargets: caps.spawnableAgentIDs
             ).filter { $0 != agentId },
-            modelNames: SubagentToolVisibility.effectiveSpawnableModels(
-                isDefault: isDefault,
-                config: subagentConfig,
-                perAgentEnabled: caps.spawnDelegationEnabled,
-                perAgentModelTargets: caps.spawnableModelNames
-            ),
-            modelNotes:
-                isDefault
-                ? subagentConfig.spawnableModelNotes
-                : caps.spawnableModelNotes,
             budgets: SubagentToolVisibility.effectiveBudgets(
                 isDefault: isDefault,
                 config: subagentConfig,
                 settings: settings,
                 sharedParallelLimit: sharedParallelLimit
             ),
-            toolAccess: SubagentToolVisibility.effectiveSpawnToolAccess(
-                isDefault: isDefault,
-                config: subagentConfig,
-                settings: settings
-            ),
             launcherModelOverride: SubagentToolVisibility.effectiveSubagentModel(
                 capabilityId: SubagentCapabilityRegistry.spawn.id,
                 isDefault: isDefault,
                 config: subagentConfig,
                 settings: settings
+            ),
+            workspaceAgents: SubagentToolVisibility.effectiveSpawnableWorkspaceAgents(
+                isDefault: isDefault,
+                config: subagentConfig,
+                perAgentEnabled: caps.spawnDelegationEnabled,
+                perAgentTargets: caps.spawnableWorkspaceAgents
             )
         )
         return AgentConfigSnapshot(
@@ -354,8 +396,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
             appleScriptEnabled: caps.appleScriptEnabled,
             spawnableAgentIDs: caps.spawnableAgentIDs,
             spawnableAgentNames: caps.legacySpawnableAgentNames,
-            spawnableModelNames: caps.spawnableModelNames,
-            spawnableModelNotes: caps.spawnableModelNotes,
+            spawnableWorkspaceAgents: caps.spawnableWorkspaceAgents,
             spawnConfiguration: spawnConfiguration,
             // Pre-fold the "anything to search?" half of the gate, like the
             // spawn tools: enabled with zero grants keeps the tools hidden.
@@ -376,7 +417,7 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
             }(),
             // Source-usable = enabled, outbound mode != off, and explicitly
             // allowed from this run provenance. Keep the tool out when no
-            // matching Channel Destinations section can be rendered; otherwise
+            // matching Where It Can Post section can be rendered; otherwise
             // the model has no valid binding_id and may mistake a capability id
             // (for example plugin/osaurus.calendar) for a channel binding.
             hasChannelPublishDestinations: !AgentChannelAutoDestinationResolver
@@ -386,7 +427,17 @@ public struct AgentConfigSnapshot: Sendable, Equatable {
                     source: ChatExecutionContext.currentSessionSource
                 )
                 .isEmpty,
-            projectId: projectId
+            projectId: projectId,
+            enabledAppleApps: caps.enabledAppleApps,
+            workflowToolNames: isDefault || agentId == Agent.architectId
+                ? [] : WorkflowTool.toolNames(enabled: settings?.enabledWorkflowIDs ?? []),
+            hasOrchestratorWorkflows: isDefault && !RoutableWorkflowCatalog.docs().isEmpty,
+            calculatorEnabled: caps.calculatorEnabled,
+            redactionToolsEnabled: caps.redactionToolsEnabled,
+            taskChecklistEnabled: caps.taskChecklistEnabled,
+            clarifyEnabled: caps.clarifyEnabled,
+            artifactsEnabled: caps.artifactsEnabled,
+            workingFolderReadOnly: !isDefault && settings?.workingFolderReadOnly == true
         )
     }
 }

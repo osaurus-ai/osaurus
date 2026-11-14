@@ -6,19 +6,21 @@
 //  budget-capped `AgentSubagentRunner` mini-loop, an agent target runs as a
 //  REAL dispatched `ChatSession` via `BackgroundTaskManager.dispatchChat`:
 //
-//   • the child runs under the TARGET agent's own settings (model, tools,
-//     temperature, memory, the normal chat-loop cap) — the launcher's
-//     `SubagentBudgets` turn/tool-call/token caps do not apply;
-//   • one fresh persisted session per delegation call (`source:
-//     .delegation`), visible in the target agent's chat history;
-//   • the dispatched run is a real background task, so the notch row's
+//   • the child retains the TARGET agent's tools, temperature and memory;
+//     its model is the exact identity resolved by spawn admission (including
+//     an explicit launcher override), and delegated budgets tighten its caps;
+//   • one persisted session per delegation call (`source: .delegation`),
+//     visible in the target agent's chat history; a follow-up call with
+//     `continue: <session_id>` reattaches to that same session so the worker
+//     keeps its context (`externalSessionKey` = `delegation:<session id>`);
+//   • the dispatched run is a real background task, so the Activity row's
 //     "Open Chat" opens the live child chat mid-run.
 //
 //  The caller (`TextSubagentKind.run`) still owns the full host lifecycle:
 //  the spawn allow-list, permission gate, recursion guard, process-wide
 //  admission, and the local-model residency handoff all ran before this
-//  dispatcher is reached. Only the launcher's `maxElapsedSeconds` survives
-//  as a wall-clock safety budget on the awaited run.
+//  dispatcher is reached. The launcher's `maxElapsedSeconds` also bounds
+//  the awaited run's wall-clock execution time.
 //
 //  CAPABILITY SURFACE CONTRACT — the delegated child IS the target agent:
 //  it carries the target agent's full direct-chat tool surface, including
@@ -49,6 +51,13 @@
 
 import Foundation
 
+/// A working folder handed to a delegated child (the target's own or the
+/// requester's, inherited for the task).
+struct DelegatedWorkingFolder: Sendable, Equatable {
+    let bookmark: Data?
+    let path: String?
+}
+
 /// Terminal outcome of one delegated child chat run.
 struct AgentDelegationOutcome: Sendable {
     /// The persisted child session id (== the background task id).
@@ -77,12 +86,95 @@ struct AgentDelegationOutcome: Sendable {
     /// spawn payload's `artifacts_shared` count. Zero when the child shared
     /// nothing (or no parent session was supplied).
     var artifactsShared: Int = 0
+    /// True when the child ended its turn asking the requester for input
+    /// (its final message starts with the `needsInputMarker`). The parent
+    /// answers with `spawn_agent(continue: session_id, input: …)`.
+    var needsInput: Bool {
+        AgentDelegationDispatcher.isNeedsInput(finalText)
+    }
+}
+
+/// Typed metadata from the one terminal tool rejection in a chat run.
+/// Kept separately from its user-visible lifecycle error string.
+struct DelegatedToolFailure: Sendable {
+    let runID: UUID
+    let kind: ToolEnvelope.Kind
+    let message: String
+    let retryable: Bool?
+}
+
+struct DelegatedToolFailureState {
+    private(set) var runID: UUID?
+    private var accepting = false
+    private var failure: DelegatedToolFailure?
+
+    mutating func begin(runID: UUID) {
+        self.runID = runID
+        accepting = true
+        failure = nil
+    }
+
+    mutating func finish(runID: UUID) {
+        guard self.runID == runID else { return }
+        accepting = false
+    }
+
+    mutating func record(_ envelope: String, runID: UUID) {
+        guard accepting, self.runID == runID,
+            let data = envelope.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            object["ok"] as? Bool == false,
+            let rawKind = object["kind"] as? String,
+            let kind = ToolEnvelope.Kind(rawValue: rawKind)
+        else { return }
+        failure = DelegatedToolFailure(runID: runID, kind: kind,
+            message: ToolEnvelope.failureMessage(envelope), retryable: object["retryable"] as? Bool)
+    }
+
+    var current: DelegatedToolFailure? {
+        guard let failure, failure.runID == runID else { return nil }
+        return failure
+    }
 }
 
 enum AgentDelegationDispatcher {
+    /// Prefix a delegated child uses to hand a question back to the
+    /// requester instead of guessing (the child has no `clarify` tool —
+    /// its requester is the orchestrator model, not the user).
+    static let needsInputMarker = "NEEDS INPUT:"
+
+    /// The stable reattach key for a delegated child session, so a
+    /// `continue` call finds the same persisted row.
+    static func externalSessionKey(for sessionId: UUID) -> String {
+        "delegation:" + sessionId.uuidString
+    }
+
+    /// Whether a child's final message is a request for input.
+    static func isNeedsInput(_ finalText: String) -> Bool {
+        finalText.trimmingCharacters(in: .whitespacesAndNewlines)
+            .uppercased()
+            .hasPrefix(needsInputMarker)
+    }
+
+    /// Whether the marker appears somewhere other than the start — the
+    /// contract is prefix-only, so `needs_input` stays false, but the
+    /// mismatch between the recorded flag and the text must be observable
+    /// (payload hint + log) rather than silently lost.
+    static func hasOffPrefixNeedsInputMarker(_ finalText: String) -> Bool {
+        guard !isNeedsInput(finalText) else { return false }
+        return finalText.uppercased().contains(needsInputMarker)
+    }
+
     /// Title prefix for delegated child sessions in the target agent's
     /// chat history sidebar.
     static let titlePrefix = "Delegated: "
+
+    /// The tool result a parent reads when a shared (workspace) agent could
+    /// not be dispatched: the typed reason (offline, unshared, router off…)
+    /// plus the re-plan instruction. Pure; the workspace eval lane pins it.
+    static func workspaceRefusal(reason: String) -> String {
+        reason + " Pick a different agent for this task, or report that it is unavailable."
+    }
 
     /// How long a dispatched child may sit `.queued` (dispatch capacity
     /// saturated) before the delegation gives up. Separate from the run
@@ -100,18 +192,98 @@ enum AgentDelegationDispatcher {
     /// pass through to the requesting conversation. Without the contract,
     /// workers paste whole files into their answer (truncated by the digest
     /// cap) or end the run on intermediate commentary that becomes the
-    /// digest. Pure, for unit tests.
-    static func delegatedPrompt(input: String) -> String {
-        input + "\n\n" + deliveryContract
+    /// digest. When the local target agent has a configured Working Folder
+    /// (`workingFolderPath`), the contract also names it: the dispatched run
+    /// mounts that folder (`BackgroundTaskManager.resolveDispatchFolder`), so
+    /// the child's file tools can write there — the only on-disk delivery
+    /// path a delegation has (issue #2703). Pure, for unit tests.
+    static func delegatedPrompt(
+        input: String,
+        remote: Bool = false,
+        workingFolderPath: String? = nil,
+        resuming: Bool = false
+    ) -> String {
+        if resuming {
+            return input + "\n\n" + followUpContract
+        }
+        let contract: String
+        if remote {
+            contract = remoteDeliveryContract
+        } else if let folder = workingFolderPath, !folder.isEmpty {
+            contract = workingFolderDeliveryContract(folderPath: folder)
+        } else {
+            contract = deliveryContract
+        }
+        return input + "\n\n" + contract
     }
 
-    /// Appended to every delegated child prompt (see `delegatedPrompt`).
-    static let deliveryContract: String =
-        "[Delegated task]\n"
+    /// Envelope markers around the delivery contracts. Shared with
+    /// `DispatchEnvelope`, which strips the contract for display, so the
+    /// producer and the parser can never drift apart.
+    static let delegatedTaskOpen = "[Delegated task]"
+    static let delegatedTaskClose = "[/Delegated task]"
+    static let delegatedFollowUpOpen = "[Delegated follow-up]"
+    static let delegatedFollowUpClose = "[/Delegated follow-up]"
+
+    /// Shared framing every local contract opens with: the requester sees
+    /// only the final message, and questions go back as `NEEDS INPUT:`.
+    static let requesterFraming: String =
+        delegatedTaskOpen + "\n"
         + "You are running as a delegated subtask for another agent. The requester "
         + "sees ONLY your final message, returned as a compact size-capped digest — "
         + "intermediate commentary is lost, so finish with a message that stands "
         + "alone as the result.\n"
+        + "If you cannot proceed without an answer from the requester, end your turn "
+        + "with a message that starts with `\(needsInputMarker)` followed by the exact "
+        + "question; the requester will reply in this same conversation. Otherwise "
+        + "state reasonable assumptions and finish the work.\n"
+
+    /// Delivery contract for a local child that has a working folder (its
+    /// own, or the requester's folder inherited for this task). Deliverables
+    /// go on disk under it; the final message names the paths so the
+    /// requester can read them with `file_read` instead of paying for the
+    /// content twice. `share_artifact` stays the path for content the
+    /// REQUESTER should receive as a card. If the folder failed to mount,
+    /// `ExecutionContext` already prefixed the prompt with an explicit
+    /// folder-unreadable preamble, so this text never asks the child to
+    /// invent a location.
+    static func workingFolderDeliveryContract(folderPath: String) -> String {
+        requesterFraming
+            + "Your working folder is `\(folderPath)`. Your file tools operate on it with "
+            + "paths relative to that folder. Write deliverables (code, documents, data, "
+            + "reports) there with `file_write` / `file_edit`, and end with a SHORT summary "
+            + "that lists the exact relative paths you wrote plus the key findings — do NOT "
+            + "paste file contents into the final message. Use `share_artifact` only when "
+            + "the task asks for a file to be returned to the requester rather than saved "
+            + "in the working folder. Never write outside the working folder or invent a "
+            + "different location.\n"
+            + delegatedTaskClose
+    }
+
+    /// Contract for a workspace (Mode 2) child: the host runs its own agent
+    /// loop and only the final visible answer streams back, so files
+    /// written or shared on the host stay on the host — unless the host
+    /// attaches small artifacts to the final envelope, which the requester's
+    /// Osaurus promotes to artifact cards.
+    static let remoteDeliveryContract: String =
+        delegatedTaskOpen + "\n"
+        + "You are running as a delegated subtask for another agent on a teammate's "
+        + "Osaurus. The requester sees ONLY your final message, returned as a compact "
+        + "size-capped digest — intermediate commentary is lost, so finish with a "
+        + "message that stands alone as the result. Include deliverable content "
+        + "directly in that final message, or share files with `share_artifact`: small "
+        + "files (a few MB in total) reach the requester as cards with your final message; "
+        + "larger ones and plain files written to disk stay on this Mac — say so, and "
+        + "summarise their content instead.\n"
+        + "If you cannot proceed without an answer from the requester, end your turn "
+        + "with a message that starts with `\(needsInputMarker)` followed by the exact "
+        + "question.\n"
+        + delegatedTaskClose
+
+    /// Appended to every delegated child prompt that has no working folder
+    /// (see `delegatedPrompt`).
+    static let deliveryContract: String =
+        requesterFraming
         + "File deliverables (code files, documents, pages, data): when a "
         + "`share_artifact` tool is available, share each file with it "
         + "(`content` + `filename`) — shared files reach the requesting "
@@ -119,7 +291,16 @@ enum AgentDelegationDispatcher {
         + "final message a short summary that names the shared file(s); do NOT "
         + "paste their content again. Only when `share_artifact` is unavailable, "
         + "include the complete deliverable in your final message.\n"
-        + "[/Delegated task]"
+        + delegatedTaskClose
+
+    /// Short reminder appended to a `continue` follow-up: the session
+    /// already carries the full contract in its first turn.
+    static let followUpContract: String =
+        delegatedFollowUpOpen + "\n"
+        + "Same rules as before: the requester sees only your final message; write "
+        + "deliverables to your working folder (or `share_artifact`) and name them; "
+        + "start with `\(needsInputMarker)` if you are blocked on a question.\n"
+        + delegatedFollowUpClose
 
     /// Compact one-line child session title derived from the spawn input.
     static func sessionTitle(for input: String) -> String {
@@ -138,7 +319,7 @@ enum AgentDelegationDispatcher {
     /// Why the awaited child run was cancelled by this dispatcher (as
     /// opposed to failing or completing on its own).
     private enum CancelReason: Sendable {
-        /// The spawn card / notch Stop button tripped the interrupt token.
+        /// The spawn card / Activity Stop button tripped the interrupt token.
         case interrupt
         /// The launcher's wall-clock budget (`maxElapsedSeconds`) expired
         /// while the child was actually executing.
@@ -198,19 +379,188 @@ enum AgentDelegationDispatcher {
         maxResponseTokens: Int? = nil,
         maxAssistantTurns: Int? = nil,
         maxContextPositions: Int? = nil,
+        model: String,
         feed: SubagentFeed,
         interrupt: InterruptToken,
-        parentSessionId: String? = nil
+        parentSessionId: String? = nil,
+        launcherWorkingFolder: DelegatedWorkingFolder? = nil,
+        continueSessionId: UUID? = nil,
+        freshSessionId: UUID? = nil
+    ) async throws -> AgentDelegationOutcome {
+        try await run(
+            target: .local(targetAgentId),
+            targetAgentName: targetAgentName,
+            input: input,
+            maxElapsedSeconds: maxElapsedSeconds,
+            maxResponseTokens: maxResponseTokens,
+            maxAssistantTurns: maxAssistantTurns,
+            maxContextPositions: maxContextPositions,
+            model: model,
+            feed: feed,
+            interrupt: interrupt,
+            parentSessionId: parentSessionId,
+            launcherWorkingFolder: launcherWorkingFolder,
+            continueSessionId: continueSessionId,
+            freshSessionId: freshSessionId
+        )
+    }
+
+    /// Pick the folder a local child runs in: the target agent's own Working
+    /// Folder wins; otherwise the requester's folder is inherited for this
+    /// task so a folder-less worker still has somewhere to read inputs and
+    /// write deliverables. Pure, for unit tests.
+    static func resolveChildWorkingFolder(
+        targetFolder: DelegatedWorkingFolder?,
+        launcherFolder: DelegatedWorkingFolder?
+    ) -> (folder: DelegatedWorkingFolder?, inherited: Bool) {
+        if let targetFolder, targetFolder.path?.isEmpty == false || targetFolder.bookmark != nil {
+            return (targetFolder, false)
+        }
+        if let launcherFolder, launcherFolder.path?.isEmpty == false || launcherFolder.bookmark != nil {
+            return (launcherFolder, true)
+        }
+        return (nil, false)
+    }
+
+    /// Validate a `continue` target before dispatch: the session must exist,
+    /// be a delegated child of the same target, and not be running right
+    /// now. Returns the persisted row (turns not needed).
+    @MainActor
+    static func validateResumeSession(
+        _ sessionId: UUID,
+        target: AgentDispatchTarget,
+        targetAgentName: String
+    ) throws -> ChatSessionData {
+        if let live = BackgroundTaskManager.shared.taskState(for: sessionId), live.status.isActive {
+            throw SubagentError.unavailable(
+                "Worker session \(sessionId.uuidString) for '\(targetAgentName)' is still running; "
+                    + "wait for its result before continuing it."
+            )
+        }
+        let db = ConversationStores.current
+        if !db.isOpenNonBlocking { try? db.open() }
+        guard let session = db.loadSession(id: sessionId) else {
+            throw SubagentError.unavailable(
+                "No delegated worker session \(sessionId.uuidString) exists to continue. "
+                    + "Start a new task instead (omit `continue`)."
+            )
+        }
+        // A `continue` that names the wrong agent or a non-worker session is
+        // a correctable call-shape mistake, not a policy refusal: nothing ran
+        // and no state changed. `invalid_args` gives the parent one correction
+        // (pick the producing agent, or omit `continue`) instead of the
+        // chat loop's terminal `rejected` stop. Live Raptor 0.6.1 wave
+        // (2026-09-29): a `rejected` here ended the whole turn with the
+        // second worker never dispatched.
+        guard session.source == .delegation else {
+            throw SubagentError.invalidArgs(
+                message:
+                    "Session \(sessionId.uuidString) is not a delegated worker session; only "
+                    + "`session_id` values returned by spawn_agent can be continued. "
+                    + "Omit `continue` to start a new task.",
+                field: "continue",
+                expected: "a session_id returned by an earlier spawn_agent result"
+            )
+        }
+        switch target {
+        case .local(let agentId):
+            guard session.agentId == agentId else {
+                throw SubagentError.invalidArgs(
+                    message:
+                        "Session \(sessionId.uuidString) belongs to a different agent than "
+                        + "'\(targetAgentName)'. Continue it with the agent that produced it, "
+                        + "or omit `continue` to give '\(targetAgentName)' a new task.",
+                    field: "agent",
+                    expected: "the agent named in the spawn_result that returned this session_id"
+                )
+            }
+        case .workspace(let ref):
+            guard let stamped = session.workspace,
+                stamped.agentAddress.caseInsensitiveCompare(ref.agentAddress) == .orderedSame
+            else {
+                throw SubagentError.invalidArgs(
+                    message:
+                        "Session \(sessionId.uuidString) was not produced by workspace agent "
+                        + "'\(targetAgentName)'. Continue it with the agent that produced it, "
+                        + "or omit `continue` to give '\(targetAgentName)' a new task.",
+                    field: "agent",
+                    expected: "the agent named in the spawn_result that returned this session_id"
+                )
+            }
+        }
+        guard session.externalSessionKey == externalSessionKey(for: sessionId) else {
+            throw SubagentError.unavailable(
+                "Session \(sessionId.uuidString) predates resumable delegation and cannot be "
+                    + "continued. Start a new task instead."
+            )
+        }
+        return session
+    }
+
+    /// `run` for any `AgentDispatchTarget`. A `.workspace` target is a Mode 2 run on
+    /// the teammate's Mac: `BackgroundTaskManager.dispatchChat` probes the
+    /// host's liveness and connects before registering the task, and a
+    /// refusal (offline, lapsed key, unshared) surfaces here as
+    /// `SubagentError.unavailable` with the exact reason — the parent model
+    /// re-plans from the tool result; nothing in the prompt changes.
+    static func run(
+        target: AgentDispatchTarget,
+        targetAgentName: String,
+        input: String,
+        maxElapsedSeconds: Int,
+        maxResponseTokens: Int? = nil,
+        maxAssistantTurns: Int? = nil,
+        maxContextPositions: Int? = nil,
+        model: String? = nil,
+        feed: SubagentFeed,
+        interrupt: InterruptToken,
+        parentSessionId: String? = nil,
+        launcherWorkingFolder: DelegatedWorkingFolder? = nil,
+        continueSessionId: UUID? = nil,
+        freshSessionId: UUID? = nil
     ) async throws -> AgentDelegationOutcome {
         let started = Date()
-        let request = DispatchRequest(
-            prompt: delegatedPrompt(input: input),
-            agentId: targetAgentId,
+        // The folder the child will actually run in: the target agent's
+        // configured Working Folder, else the requester's folder inherited
+        // for this task. The request carries the resolved folder explicitly
+        // so `resolveDispatchFolder` mounts exactly what the contract names.
+        let childFolder: (folder: DelegatedWorkingFolder?, inherited: Bool) = await MainActor.run {
+            guard case .local(let agentId) = target else { return (nil, false) }
+            let own = AgentManager.shared.workingFolder(for: agentId)
+            return resolveChildWorkingFolder(
+                targetFolder: own.map { DelegatedWorkingFolder(bookmark: $0.bookmark, path: $0.path) },
+                launcherFolder: launcherWorkingFolder
+            )
+        }
+        if let continueSessionId {
+            _ = try await MainActor.run {
+                try validateResumeSession(
+                    continueSessionId,
+                    target: target,
+                    targetAgentName: targetAgentName
+                )
+            }
+        }
+        // A caller that announced the session ahead of the run (background
+        // ack) passes the same `freshSessionId`, so ack and result agree.
+        let sessionId = continueSessionId ?? freshSessionId ?? UUID()
+        var request = DispatchRequest(
+            id: sessionId,
+            prompt: delegatedPrompt(
+                input: input,
+                remote: target.isWorkspace,
+                workingFolderPath: childFolder.folder?.path,
+                resuming: continueSessionId != nil
+            ),
+            target: target,
             title: sessionTitle(for: input),
+            folderPath: target.isWorkspace ? nil : childFolder.folder?.path,
+            folderBookmark: target.isWorkspace ? nil : childFolder.folder?.bookmark,
             source: .delegation,
-            // Fresh session per delegation call (user decision): no
-            // externalSessionKey, so no reattach grouping ever applies.
-            externalSessionKey: nil,
+            // Every delegated session is keyed by its own id so a later
+            // `continue` reattaches to it; a fresh call never collides
+            // because its id is new.
+            externalSessionKey: externalSessionKey(for: sessionId),
             // The orchestrator turn is synchronously waiting on this run
             // (or awaiting its report-back), so its model load carries
             // interactive intent.
@@ -220,8 +570,11 @@ enum AgentDelegationDispatcher {
             // RAM admission prices the child from the SAME values.
             delegationResponseTokenCap: maxResponseTokens,
             delegationContextPositionCap: maxContextPositions,
-            delegationAssistantTurnCap: maxAssistantTurns
+            delegationAssistantTurnCap: maxAssistantTurns,
+            delegationModel: target.isWorkspace ? nil : model,
+            taskIntent: ChatTaskIntent(userText: input)
         )
+        request.inferenceSourceOverride = ChatExecutionContext.inferenceSourceOverride
 
         // The child is a REAL chat session of the target agent, not a
         // nested subagent loop: clear the family recursion guard so the
@@ -231,19 +584,33 @@ enum AgentDelegationDispatcher {
         // Fan-out is prevented structurally instead: the composer strips
         // every spawn tool from `.delegation`-sourced sessions, and the
         // execution scope rejects tools outside the composed schema.
+        if target.isWorkspace {
+            feed.emitPhase("checking", detail: "confirming '\(targetAgentName)' is online")
+        }
         let handle = await SubagentSession.$activeKindId.withValue(nil) {
             await BackgroundTaskManager.shared.dispatchChat(request)
         }
         guard let handle else {
+            if let ref = target.workspaceRef,
+                let reason = await MainActor.run(body: {
+                    BackgroundTaskManager.shared.consumeWorkspaceDispatchRefusal(for: ref)
+                })
+            {
+                throw SubagentError.unavailable(workspaceRefusal(reason: reason))
+            }
             throw SubagentError.unavailable(
                 "Agent '\(targetAgentName)' could not be dispatched as a delegated chat session."
             )
         }
         let taskId = handle.id
         feed.setDelegatedSessionId(taskId.uuidString)
+        let resumedNote = continueSessionId != nil ? " (continuing worker session)" : ""
+        let folderNote = childFolder.inherited ? " in the requester's folder" : ""
         feed.emitPhase(
             "delegated",
-            detail: "running as a chat session of '\(targetAgentName)'"
+            detail: target.isWorkspace
+                ? "running on '\(targetAgentName)' via workspace relay\(resumedNote)"
+                : "running as a chat session of '\(targetAgentName)'\(folderNote)\(resumedNote)"
         )
 
         let reasonBox = CancelReasonBox()
@@ -372,14 +739,15 @@ enum AgentDelegationDispatcher {
         // watchdog only backstops a cancel that never reaches a terminal
         // state.
         let watchdogSeconds = UInt64(queueGrace + runBudget) + 120
-        let result = await withTaskCancellationHandler {
-            await BackgroundTaskManager.shared.awaitCompletion(
+        let completion = await withTaskCancellationHandler {
+            await BackgroundTaskManager.shared.awaitCompletionWithToolFailure(
                 taskId,
                 timeoutSeconds: watchdogSeconds
             )
         } onCancel: {
             cancelChild(.parentTask)
         }
+        let result = completion.result
         let elapsed = Date().timeIntervalSince(started)
 
         // Artifact pass-through for EVERY terminal state: whatever the child
@@ -425,18 +793,28 @@ enum AgentDelegationDispatcher {
                     retryable: false
                 )
             case .none:
-                // Cancelled from outside this dispatcher (notch Stop on the
+                // Cancelled from outside this dispatcher (Activity Stop on the
                 // child task itself, app shutdown).
                 throw SubagentError.userDenied(
                     "Delegated run for '\(targetAgentName)' was stopped."
                 )
             }
         case .failed(let message):
-            throw SubagentError.executionFailed(
-                message: "Delegated agent '\(targetAgentName)' failed: \(message)",
-                retryable: true
-            )
+            throw failureForChild(message: message, targetAgentName: targetAgentName,
+                terminalFailure: completion.terminalToolFailure)
         }
+    }
+
+    /// Preserve a terminal tool refusal across the child background-task
+    /// boundary, without classifying user-facing summary strings.
+    static func failureForChild(message: String, targetAgentName: String,
+        terminalFailure: DelegatedToolFailure?) -> SubagentError
+    {
+        if let terminalFailure, terminalFailure.kind == .userDenied {
+            return .userDenied("Delegated agent '\(targetAgentName)' stopped: \(terminalFailure.message)")
+        }
+        return .executionFailed(message: "Delegated agent '\(targetAgentName)' failed: \(message)",
+            retryable: terminalFailure?.retryable ?? true)
     }
 
     /// Read the persisted child session (saved by `markCompleted` before the

@@ -30,6 +30,8 @@ xcodebuild -workspace osaurus.xcworkspace \
   -derivedDataPath build \
   -clonedSourcePackagesDirPath build/SourcePackages \
   -disableAutomaticPackageResolution \
+  -skipPackagePluginValidation \
+  -skipMacroValidation \
   ARCHS=arm64 \
   VALID_ARCHS=arm64 \
   ONLY_ACTIVE_ARCH=NO \
@@ -38,12 +40,39 @@ xcodebuild -workspace osaurus.xcworkspace \
   CODE_SIGN_STYLE=Manual \
   clean build
 
+# 1b. Build the workflow code-node helper (JavaScriptCore runner).
+echo "Building code-node helper (osaurus-js-host)..."
+xcodebuild -workspace osaurus.xcworkspace \
+  -scheme osaurus-js-host \
+  -configuration Release \
+  -derivedDataPath build \
+  -clonedSourcePackagesDirPath build/SourcePackages \
+  -disableAutomaticPackageResolution \
+  -skipPackagePluginValidation \
+  -skipMacroValidation \
+  ARCHS=arm64 \
+  VALID_ARCHS=arm64 \
+  ONLY_ACTIVE_ARCH=NO \
+  CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY_VALUE}" \
+  DEVELOPMENT_TEAM="${DEVELOPMENT_TEAM}" \
+  CODE_SIGN_STYLE=Manual \
+  build
+
 # 2. Archive the App (which doesn't have the CLI embedded yet via Xcode).
 #
 # osaurus.entitlements carries no profile-managed entitlements (the only one,
 # keychain-access-groups, was removed — it shipped without a provisioning
 # profile and made AMFI kill the app at launch). Manual Developer ID signing
 # therefore archives directly against the entitlements file with no profile.
+#
+# Per-file -O instead of whole-module optimization: the whole-module job for
+# OsaurusCore (~700k lines) runs its optimizer on a single core, 67 of the
+# ~90 archive minutes on CI runners; per-file compiles run in parallel
+# batches. Swift packages default to -Owholemodule in Release, which
+# outranks SWIFT_COMPILATION_MODE, so all three settings are needed. They
+# must be build settings, not -no-whole-module-optimization in Package.swift:
+# Xcode plans whole-module outputs from the settings and fails the archive
+# when the compiler does not produce them.
 echo "Archiving App (osaurus)..."
 xcodebuild -workspace osaurus.xcworkspace \
   -scheme osaurus \
@@ -51,9 +80,14 @@ xcodebuild -workspace osaurus.xcworkspace \
   -derivedDataPath build \
   -clonedSourcePackagesDirPath build/SourcePackages \
   -disableAutomaticPackageResolution \
+  -skipPackagePluginValidation \
+  -skipMacroValidation \
   ARCHS=arm64 \
   VALID_ARCHS=arm64 \
   ONLY_ACTIVE_ARCH=NO \
+  SWIFT_OPTIMIZATION_LEVEL=-O \
+  SWIFT_WHOLE_MODULE_OPTIMIZATION=NO \
+  SWIFT_COMPILATION_MODE=singlefile \
   MARKETING_VERSION="${VERSION}" \
   CURRENT_PROJECT_VERSION="${VERSION}" \
   APTABASE_APP_KEY="${APTABASE_APP_KEY:-}" \
@@ -78,6 +112,14 @@ fi
 mkdir -p "$ARCHIVE_APP/Contents/Helpers"
 cp "$CLI_SRC" "$ARCHIVE_APP/Contents/Helpers/osaurus"
 chmod +x "$ARCHIVE_APP/Contents/Helpers/osaurus"
+
+JS_HOST_SRC="build/Build/Products/Release/osaurus-js-host"
+if [[ ! -f "$JS_HOST_SRC" ]]; then
+  echo "Error: code-node helper not found at $JS_HOST_SRC"
+  exit 1
+fi
+cp "$JS_HOST_SRC" "$ARCHIVE_APP/Contents/Helpers/osaurus-js-host"
+chmod +x "$ARCHIVE_APP/Contents/Helpers/osaurus-js-host"
 
 # 3b. Bundle the sandbox guest kernel (digest-verified, with provenance
 # sidecar) so first-run sandbox setup installs it from the signed app

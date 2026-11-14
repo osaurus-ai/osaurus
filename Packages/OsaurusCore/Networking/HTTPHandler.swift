@@ -6,17 +6,33 @@
 //
 
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 import LocalAuthentication
+import MLX
 @preconcurrency import MLXLMCommon
 import NIOCore
 import NIOHTTP1
 import NIOPosix
+import OsaurusRepository
 
 private final class SendableBool: @unchecked Sendable {
     private var _value: Bool
     private let _lock = NSLock()
     init(_ value: Bool) { _value = value }
     var value: Bool {
+        get { _lock.withLock { _value } }
+        set { _lock.withLock { _value = newValue } }
+    }
+}
+
+/// Thread-safe counter for cross-closure capture (e.g. how many loop
+/// messages the agent-run route has already mirrored into a hosted tab).
+private final class SendableInt: @unchecked Sendable {
+    private var _value: Int
+    private let _lock = NSLock()
+    init(_ value: Int) { _value = value }
+    var value: Int {
         get { _lock.withLock { _value } }
         set { _lock.withLock { _value = newValue } }
     }
@@ -43,6 +59,27 @@ private final class SendableConnectionBox: @unchecked Sendable {
     private var _value: RequestConnectionInfo?
     private let _lock = NSLock()
     var value: RequestConnectionInfo? {
+        get { _lock.withLock { _value } }
+        set { _lock.withLock { _value = newValue } }
+    }
+}
+
+/// Off-loop-readable client address for the current request (set at `.head`,
+/// read by `logRequest` from inside `runRequestTask`). Same reasoning as
+/// `SendableConnectionBox`: the `NIOLoopBound` state traps off the loop.
+private final class SendableClientIPBox: @unchecked Sendable {
+    private var _value: String = "unknown"
+    private let _lock = NSLock()
+    var value: String {
+        get { _lock.withLock { _value } }
+        set { _lock.withLock { _value = newValue } }
+    }
+}
+
+private final class SendableFlagBox: @unchecked Sendable {
+    private var _value = false
+    private let _lock = NSLock()
+    var value: Bool {
         get { _lock.withLock { _value } }
         set { _lock.withLock { _value = newValue } }
     }
@@ -86,24 +123,25 @@ private final class OpenResponsesContextStore: @unchecked Sendable {
     private var entries: [String: Entry] = [:]
     private var insertionOrder: [String] = []
     private let maxEntries = 128
-    private let maxMessagesPerEntry = 40
 
-    func transcript(for responseId: String?, model: String) -> [ChatMessage] {
+    func transcript(for responseId: String?, model: String) throws -> [ChatMessage] {
         guard let responseId, !responseId.isEmpty else { return [] }
-        return lock.withLock {
-            guard let entry = entries[responseId], entry.model == model else { return [] }
+        return try lock.withLock {
+            guard let entry = entries[responseId], entry.model == model else {
+                throw NSError(domain: "OsaurusResponsesContext", code: 404,
+                    userInfo: [NSLocalizedDescriptionKey: "The previous response is unavailable for this model. Send the complete input history to continue."])
+            }
             return entry.messages
         }
     }
 
     func store(responseId: String, model: String, messages: [ChatMessage]) {
         guard !responseId.isEmpty, !messages.isEmpty else { return }
-        let clipped = Array(messages.suffix(maxMessagesPerEntry))
         lock.withLock {
             if entries[responseId] == nil {
                 insertionOrder.append(responseId)
             }
-            entries[responseId] = Entry(model: model, messages: clipped)
+            entries[responseId] = Entry(model: model, messages: messages)
 
             while insertionOrder.count > maxEntries {
                 let evicted = insertionOrder.removeFirst()
@@ -197,6 +235,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// (set by the auth gate, cleared on each `.head`). See
     /// `SendableConnectionBox` for why this isn't read off the `RequestState`.
     private let _inboundConnection = SendableConnectionBox()
+    /// Off-loop-readable mirror of the current request's client address
+    /// (loopback / LAN peer / first `X-Forwarded-For` hop for relay traffic).
+    /// Attribution hint for Insights `inboundAPI` rows, never an identity claim.
+    private let _clientIP = SendableClientIPBox()
+    /// Off-loop-readable mirror of `RequestState.isSecureChannel`, for
+    /// `logRequest`, which also runs from request tasks off the event loop.
+    private let _isSecureChannel = SendableFlagBox()
     private static let openResponsesContextStore = OpenResponsesContextStore()
 
     /// Internal marker header stamped by `RelayTunnelManager` on every request
@@ -238,6 +283,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// all-agent key. Agent-scoped keys (`false`) are confined to their
         /// own agent's routes.
         var authedScopeIsMaster: Bool = false
+        /// `true` when the validated agent-scoped key was minted by the
+        /// Workspaces attestation handshake (vs. a legacy `/pair` or
+        /// `AgentInvite` key). Workspace keys get the strict route allowlist;
+        /// legacy keys keep their pre-existing surface so paired peers are not
+        /// disrupted. See `agentScopedRouteRejection`.
+        var authedKeyIsWorkspaceMinted: Bool = false
         /// `true` when the caller presented a Bearer token that validated
         /// against the configured access keys. Set by the global auth gate
         /// (non-loopback) or by the opportunistic loopback validation, and
@@ -245,12 +296,28 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         /// gates (Osaurus Router) can tell keyed callers from key-less
         /// loopback-trusted ones.
         var callerHasVerifiedAccessKey: Bool = false
+        /// `true` when that verified key is master-scoped. Unlike
+        /// `authedScopeIsMaster` this is also set by the opportunistic
+        /// loopback validation, so owner-only routes (`/credits/*`) can
+        /// refuse agent-scoped keys that loopback trust lets past the gate.
+        var callerAccessKeyIsMaster: Bool = false
         /// Set when the request arrived as an encrypted `/secure/call`
         /// envelope and was rewritten to its inner request. Routes that
         /// hard-require end-to-end encryption (`/agents/{id}/run`,
         /// `/agents/{id}/dispatch`) check this to reject non-loopback
         /// plaintext with 426.
         var isSecureChannel: Bool = false
+        /// The address that Secure Channel was opened with: the agent (or
+        /// the connect identity) the caller reaches this Mac through.
+        var secureChannelAgentAddress: String?
+        /// Set by the auth gate when a local harness presented its live
+        /// agent token. Confines the request to `HarnessGrantStore.allowedRoutes`
+        /// and that agent's tools.
+        var harnessGrant: HarnessGrant?
+        /// Set by the auth gate when `LocalAPIKeyPolicy` made a loopback
+        /// caller present an agent-scoped key: that caller is held to the
+        /// remote contract, so `isLoopbackConnection` reports `false`.
+        var loopbackTrustWithdrawn: Bool = false
     }
     let stateRef: NIOLoopBound<RequestState>
 
@@ -259,6 +326,25 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// envelope is decrypted so the response is sealed on the way out.
     let responseEncryptor: SecureChannelResponseEncryptor?
 
+    /// Live read of the owner's "share my models for inference with paired
+    /// agents" switch (`PeerInferenceSharing`). Read per request so a toggle
+    /// takes effect without a server restart; injectable so the gate can be
+    /// tested in both positions without touching global defaults.
+    private let peerInferenceSharingProvider: @Sendable () -> Bool
+    private var peerInferenceEnabled: Bool { peerInferenceSharingProvider() }
+
+    /// Live read of the owner's "require an access key from this Mac too"
+    /// switch (`LocalAPIKeyPolicy`), injectable for the same reason.
+    private let localKeyRequiredProvider: @Sendable () -> Bool
+
+    /// Live read of whether the 6-digit pairing retired on this Mac
+    /// (`MobileConnectMigration.isRetired`), injectable for the same reason.
+    private let pairingRetiredProvider: @Sendable () -> Bool
+
+    private func localKeyRequired(for normalizedPath: String) -> Bool {
+        LocalAPIKeyPolicy.isProtectedRoute(normalizedPath) && localKeyRequiredProvider()
+    }
+
     init(
         configuration: ServerConfiguration,
         apiKeyValidator: APIKeyValidator = .empty,
@@ -266,13 +352,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         eventLoop: EventLoop,
         chatEngine: ChatEngineProtocol = ChatEngine(),
         trustLoopback: Bool = true,
-        responseEncryptor: SecureChannelResponseEncryptor? = nil
+        responseEncryptor: SecureChannelResponseEncryptor? = nil,
+        peerInferenceSharingProvider: @escaping @Sendable () -> Bool = { PeerInferenceSharing.isEnabled() },
+        localKeyRequiredProvider: @escaping @Sendable () -> Bool = { LocalAPIKeyPolicy.isEnabled() },
+        pairingRetiredProvider: @escaping @Sendable () -> Bool = { MobileConnectMigration.isRetired() }
     ) {
         self.configuration = configuration
         self.apiKeyValidatorProvider = apiKeyValidatorProvider ?? { apiKeyValidator }
         self.chatEngine = chatEngine
         self.trustLoopback = trustLoopback
         self.responseEncryptor = responseEncryptor
+        self.peerInferenceSharingProvider = peerInferenceSharingProvider
+        self.localKeyRequiredProvider = localKeyRequiredProvider
+        self.pairingRetiredProvider = pairingRetiredProvider
         self.stateRef = NIOLoopBound(RequestState(), eventLoop: eventLoop)
     }
 
@@ -308,10 +400,64 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         context.fireUserInboundEventTriggered(event)
     }
 
+    /// `outlivesConnection`: a phone run (§6.4) that the channel closing
+    /// must not cancel. It is not tracked with the connection's tasks and is
+    /// stopped through its `DetachedPhoneRun` instead.
+    @discardableResult
+    /// Paths whose handler logs its own Insights row (see
+    /// `ActivityCategory.mediaCategory(forPath:)`); in-process emitters on
+    /// the same code path skip when `ChatExecutionContext.currentRequestSource`
+    /// is `.httpAPI`.
+    static func handlerWritesOwnActivityRow(path: String) -> Bool {
+        RequestLog.mediaCategory(forPath: path) != nil
+    }
+
+    /// Row facts for `/v1/embeddings` and `/api/embed`. Never the texts.
+    static func embeddingActivityDetails(texts: [String], dimensions: Int?) -> [String: String] {
+        var details: [String: String] = [
+            "texts": String(texts.count),
+            "chars": String(texts.reduce(0) { $0 + $1.count }),
+        ]
+        if let dimensions { details["dims"] = String(dimensions) }
+        return details
+    }
+
+    /// Row facts for the `/v1/images/*` and `/v1/videos/*` handlers; mirrors
+    /// the keys `MediaActivityLogger` writes for in-app media jobs so the
+    /// Insights detail pane renders both the same way.
+    static func mediaActivityDetails(
+        kind: String,
+        operation: String,
+        backend: MediaGenerationBackend,
+        count: Int?,
+        width: Int?,
+        height: Int?,
+        aspect: String?,
+        resolution: String?,
+        extra: [String: String] = [:]
+    ) -> [String: String] {
+        var details: [String: String] = [
+            "media_kind": kind,
+            "operation": operation,
+            "backend": String(describing: backend),
+        ]
+        if let count { details["count"] = String(count) }
+        if let width, let height {
+            details["size"] = "\(width)x\(height)"
+        } else if let resolution, !resolution.isEmpty {
+            details["size"] = aspect.map { "\(resolution) \($0)" } ?? resolution
+        } else if let aspect, !aspect.isEmpty {
+            details["size"] = aspect
+        }
+        details.merge(extra) { current, _ in current }
+        return details
+    }
+
     private func runRequestTask(
         priority: TaskPriority? = nil,
+        outlivesConnection: Bool = false,
         operation: @escaping () async -> Void
-    ) {
+    ) -> Task<Void, Never> {
         let id = UUID()
         let requestTasks = requestTasks
         let operationBox = RequestTaskOperation(operation)
@@ -321,18 +467,29 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // key-less loopback-trusted ones without threading a flag through
         // every request struct.
         let callerContext = HTTPCallerContext(
-            hasVerifiedAccessKey: stateRef.value.callerHasVerifiedAccessKey
+            hasVerifiedAccessKey: stateRef.value.callerHasVerifiedAccessKey,
+            isSecureChannel: stateRef.value.isSecureChannel
         )
+        // Activity-log double-write guard: these handlers write their own
+        // Insights row with the HTTP request/response, so the in-process
+        // emitters they call (embedder, SpeechService, media coordinators)
+        // must stay quiet for the duration of this task.
+        let activityGuard: RequestSource? =
+            Self.handlerWritesOwnActivityRow(path: stateRef.value.normalizedPath) ? .httpAPI : nil
         let task = Task(priority: priority) {
             defer { requestTasks.remove(id: id) }
             await HTTPCallerContext.$current.withValue(callerContext) {
-                await operationBox.run()
+                await ChatExecutionContext.$currentRequestSource.withValue(activityGuard) {
+                    await operationBox.run()
+                }
             }
         }
+        guard !outlivesConnection else { return task }
         channelCloseFuture.snapshot()?.whenComplete { _ in
             task.cancel()
         }
         requestTasks.insert(id: id, task: task)
+        return task
     }
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
@@ -345,9 +502,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             stateRef.value.bodyBytesSeen = 0
             stateRef.value.rejectedTooLarge = false
             stateRef.value.isSecureChannel = false
+            _isSecureChannel.value = false
+            stateRef.value.secureChannelAgentAddress = nil
             stateRef.value.authedAudience = nil
             stateRef.value.authedScopeIsMaster = false
             stateRef.value.callerHasVerifiedAccessKey = false
+            stateRef.value.callerAccessKeyIsMaster = false
+            stateRef.value.harnessGrant = nil
+            stateRef.value.loopbackTrustWithdrawn = false
             // Clear last request's attribution so a keep-alive connection's
             // next (possibly loopback / public) request can't inherit it.
             _inboundConnection.value = nil
@@ -355,10 +517,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // trust so the relay marker can strip loopback privileges.
             stateRef.value.isRelayOrigin =
                 head.headers.first(name: HTTPHandler.relayOriginHeaderName) != nil
+            _clientIP.value = remoteIP(context)
             stateRef.value.corsHeaders = computeCORSHeaders(
                 for: head,
                 isPreflight: false,
-                isLoopback: isLoopbackConnection(context)
+                isLoopback: isLoopbackConnection(context),
+                explicitOriginsOnly: localKeyRequired(for: normalize(extractPath(from: head.uri)))
             )
             stateRef.value.bodyByteLimit = bodyByteLimit(for: head)
 
@@ -461,7 +625,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let cors = computeCORSHeaders(
                     for: head,
                     isPreflight: true,
-                    isLoopback: isLoopbackConnection(context)
+                    isLoopback: isLoopbackConnection(context),
+                    explicitOriginsOnly: localKeyRequired(for: path)
                 )
                 sendResponse(
                     context: context,
@@ -481,6 +646,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // Authorization header flows through the existing validator,
             // scope check, and routing untouched. The response encryptor is
             // armed here so everything the route writes goes out sealed.
+            let outerHead = head
             if head.method == .POST, path == "/secure/call" {
                 guard let rewritten = decryptSecureCall(head: head, context: context) else {
                     // decryptSecureCall already sent the error response.
@@ -493,17 +659,120 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 stateRef.value.requestHead = head
                 stateRef.value.normalizedPath = path
                 stateRef.value.isSecureChannel = true
+                _isSecureChannel.value = true
+            }
+
+            // `LocalAPIKeyPolicy`: on a protected route, a browser origin not
+            // listed by name is refused outright (key or not), and the
+            // in-process app token stands in for a key over physical loopback.
+            let localKeyRequired = localKeyRequired(for: path)
+            var presentedAppToken = false
+            if localKeyRequired {
+                stateRef.value.corsHeaders = computeCORSHeaders(
+                    for: outerHead,
+                    isPreflight: false,
+                    isLoopback: false,
+                    explicitOriginsOnly: true
+                )
+                let origin = outerHead.headers.first(name: "Origin") ?? head.headers.first(name: "Origin")
+                if let origin,
+                    !LocalAPIKeyPolicy.isExplicitlyAllowedOrigin(origin, allowedOrigins: configuration.allowedOrigins)
+                {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: stateRef.value.corsHeaders)
+                    let message =
+                        "Browser requests to this route are refused. Add the origin to Allowed Origins (CORS) to permit it."
+                    let errorBody =
+                        #"{"error":{"code":"browser_origin_refused","message":"\#(message)","type":"permission_error"}}"#
+                    sendResponse(
+                        context: context,
+                        version: head.version,
+                        status: .forbidden,
+                        headers: headers,
+                        body: errorBody
+                    )
+                    logRequest(
+                        method: method,
+                        path: path,
+                        userAgent: userAgent,
+                        requestBody: nil,
+                        responseBody: errorBody,
+                        responseStatus: 403,
+                        startTime: startTime,
+                        errorMessage: message
+                    )
+                    stateRef.value.requestHead = nil
+                    stateRef.value.requestBodyBuffer = nil
+                    return
+                }
+                presentedAppToken =
+                    isPhysicalLoopbackConnection(context)
+                    && LocalAPIKeyPolicy.isAppSessionToken(head.headers.first(name: LocalAPIKeyPolicy.appTokenHeaderName))
             }
 
             // Access key authentication gate (all data snapshotted at server start, zero locks)
             // Plugin routes handle their own auth per-route, so skip the global gate.
             // Loopback connections (CLI / local tools) are trusted without a token.
-            let publicPaths: Set<String> = [
-                "/", "/health", "/pair", "/pair/challenge", "/pair-invite", "/secure/session",
-            ]
+            // The 6-digit pairing routes stay public for one release beside
+            // Sync; once an iPhone joins Sync they only answer 410.
+            let publicPaths =
+                pairingRetiredProvider()
+                ? Set(["/", "/health", "/pair-invite", "/secure/session"]).union(Self.retiredPhonePairingPaths)
+                : ["/", "/health", "/pair/hello", "/pair/code", "/pair/confirm", "/pair-invite", "/secure/session"]
             let isPluginRoute = path.hasPrefix("/plugins/")
+            // Agent Channel webhook routes are authenticated by the connection's
+            // provider secret (shared header or HMAC) inside the ingress, not by
+            // an access key; `AgentChannelWebhookIngress` fails closed on its own.
+            let isChannelRoute = path.hasPrefix("/channels/")
+            // Webhook events: the URL token selects the event and the event's
+            // secret/signature check runs inside `EventWebhookIngress`.
+            let isEventRoute = path.hasPrefix("/events/")
             let isLoopback = isLoopbackConnection(context)
-            if !publicPaths.contains(path) && !isPluginRoute && !isLoopback {
+
+            // A local harness presenting its agent token is authenticated by
+            // the token, even when loopback trust is off (network exposure),
+            // and confined to the inference + MCP routes.
+            if isPhysicalLoopbackConnection(context),
+                let token = HarnessGrantStore.shared.presentedToken(
+                    bridgeHeader: head.headers.first(name: HarnessGrantStore.headerName),
+                    authorization: head.headers.first(name: "Authorization")
+                ),
+                let grant = HarnessGrantStore.shared.resolve(token)
+            {
+                guard HarnessGrantStore.allowedRoutes.contains(path) else {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: stateRef.value.corsHeaders)
+                    let message = "This agent token can only call the inference and MCP routes."
+                    let errorBody =
+                        #"{"error":{"code":"harness_token_scope","message":"\#(message)","type":"permission_error"}}"#
+                    sendResponse(
+                        context: context,
+                        version: head.version,
+                        status: .forbidden,
+                        headers: headers,
+                        body: errorBody
+                    )
+                    logRequest(
+                        method: method,
+                        path: path,
+                        userAgent: userAgent,
+                        requestBody: nil,
+                        responseBody: errorBody,
+                        responseStatus: 403,
+                        startTime: startTime,
+                        errorMessage: message
+                    )
+                    stateRef.value.requestHead = nil
+                    stateRef.value.requestBodyBuffer = nil
+                    return
+                }
+                stateRef.value.harnessGrant = grant
+            }
+
+            if !publicPaths.contains(path) && !isPluginRoute && !isChannelRoute && !isEventRoute
+                && (!isLoopback || (localKeyRequired && !presentedAppToken))
+                && stateRef.value.harnessGrant == nil
+            {
                 let authHeader = head.headers.first(name: "Authorization") ?? ""
                 let token =
                     authHeader.hasPrefix("Bearer ")
@@ -524,6 +793,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         stateRef.value.authedAudience = audience.lowercased()
                         stateRef.value.authedScopeIsMaster =
                             apiKeyValidator.isMasterScoped(audience: audience)
+                        stateRef.value.callerAccessKeyIsMaster = stateRef.value.authedScopeIsMaster
+                        stateRef.value.authedKeyIsWorkspaceMinted =
+                            !stateRef.value.authedScopeIsMaster
+                            && WorkspaceAgentAccessHost.isWorkspaceMintedKey(nonce: keyNonce)
+                        // A local owner key keeps loopback behavior; a local
+                        // agent-scoped key gets exactly what it gets remotely.
+                        stateRef.value.loopbackTrustWithdrawn =
+                            isLoopback && !stateRef.value.authedScopeIsMaster
                         // Snapshot the attribution into the off-loop-readable box
                         // (read by the possibly-off-loop request log) so inbound
                         // `.httpAPI` traffic is tied to this paired key. Built
@@ -566,6 +843,82 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     stateRef.value.requestBodyBuffer = nil
                     return
                 }
+
+                // Confinement for agent-scoped keys (see
+                // `agentScopedRouteRejection`): route policy by key origin,
+                // plus a cross-agent `X-Osaurus-Agent-Id` check so a key for
+                // agent A can never persist into / act as agent B. Runs after
+                // the key validated so the 403 is distinguishable from a bad key.
+                let rejection =
+                    Self.agentScopedRouteRejection(
+                        method: head.method,
+                        path: path,
+                        authedAudience: stateRef.value.authedAudience,
+                        authedScopeIsMaster: stateRef.value.authedScopeIsMaster,
+                        isWorkspaceMintedKey: stateRef.value.authedKeyIsWorkspaceMinted,
+                        peerInferenceEnabled: peerInferenceEnabled
+                    )
+                    ?? Self.agentHeaderScopeRejection(
+                        headerValue: head.headers.first(name: "X-Osaurus-Agent-Id"),
+                        authedAudience: stateRef.value.authedAudience,
+                        authedScopeIsMaster: stateRef.value.authedScopeIsMaster
+                    )
+                if let rejection {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: stateRef.value.corsHeaders)
+                    let errorBody =
+                        #"{"error":{"code":"\#(rejection.code)","message":"\#(rejection.message)","type":"permission_error"}}"#
+                    sendResponse(
+                        context: context,
+                        version: head.version,
+                        status: .forbidden,
+                        headers: headers,
+                        body: errorBody
+                    )
+                    logRequest(
+                        method: method,
+                        path: path,
+                        userAgent: userAgent,
+                        requestBody: nil,
+                        responseBody: errorBody,
+                        responseStatus: 403,
+                        startTime: startTime,
+                        errorMessage: rejection.message
+                    )
+                    let deniedAudience = stateRef.value.authedAudience ?? ""
+                    let deniedKeyNonce = _inboundConnection.value?.accessKeyId
+                    Task.detached(priority: .utility) {
+                        await WorkspaceAuditLog.shared.recordScopeDenied(
+                            keyNonce: deniedKeyNonce,
+                            audience: deniedAudience,
+                            method: method,
+                            path: path
+                        )
+                    }
+                    stateRef.value.requestHead = nil
+                    stateRef.value.requestBodyBuffer = nil
+                    return
+                }
+
+                // An owner key from a remote caller only ever travels inside
+                // the Secure Channel, reads included: chat history, live run
+                // streams, review queues and secret prompts are as private as
+                // the writes `requiresOwnerChannel` already guards. Except, for one
+                // release, the plain agent list (`legacyPlaintextRead`).
+                if stateRef.value.authedScopeIsMaster, Self.isOwnerChannelRoute(path),
+                    !Self.legacyPlaintextRead(method: head.method, path: path),
+                    sendSecureChannelUpgradeRequiredIfNeeded(
+                        head: head,
+                        context: context,
+                        path: path,
+                        startTime: startTime,
+                        userAgent: userAgent
+                    )
+                {
+                    stateRef.value.requestHead = nil
+                    stateRef.value.requestBodyBuffer = nil
+                    return
+                }
             }
 
             // Loopback callers skip the auth gate entirely, but some
@@ -578,8 +931,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let authHeader = head.headers.first(name: "Authorization") ?? ""
                 if authHeader.hasPrefix("Bearer ") {
                     let token = String(authHeader.dropFirst(7))
-                    if case .valid = apiKeyValidator.validate(rawKey: token) {
+                    if case .valid(_, let audience, _) = apiKeyValidator.validate(rawKey: token) {
                         stateRef.value.callerHasVerifiedAccessKey = true
+                        stateRef.value.callerAccessKeyIsMaster =
+                            apiKeyValidator.isMasterScoped(audience: audience)
                     }
                 }
             }
@@ -712,6 +1067,31 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     isLoopback: isPhysicalLoopbackConnection(context),
                     operation: .apply
                 )
+            } else if head.method == .POST, path == "/admin/import/plan" || path == "/admin/import/apply" {
+                handleImportAdminEndpoint(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent,
+                    method: method,
+                    path: path,
+                    isLoopback: isPhysicalLoopbackConnection(context)
+                )
+            } else if head.method == .GET, path == "/models/picker" {
+                handleModelPickerEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST || head.method == .PUT, path == "/models/options" {
+                handleModelOptionsEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .PUT, path == "/models/favorites" {
+                handleModelFavoriteEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .GET, path == "/credits/balance" {
+                handleCreditsBalanceEndpoint(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent,
+                    method: method,
+                    path: path
+                )
             } else if head.method == .GET, path == "/models" {
                 handleModelsEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .GET, path == "/tags" {
@@ -758,21 +1138,282 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 handleOpenResponses(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/memory/ingest" {
                 handleMemoryIngest(head: head, context: context, startTime: startTime, userAgent: userAgent)
-            } else if head.method == .GET, path == "/pair/challenge" {
-                handlePairChallengeEndpoint(
+            } else if Self.retiredPhonePairingPaths.contains(path), pairingRetiredProvider() {
+                sendJSONBody(
+                    .gone,
+                    Self.retiredPhonePairingBody,
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .GET, path == "/pair/hello" {
+                handlePairHelloEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/pair/code" || path == "/pair/confirm" {
+                handlePairCodeEndpoint(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/pair/unpair" {
+                handlePairUnpairEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/pair-invite" {
+                handlePairInviteEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path == "/secure/session" {
+                handleSecureSessionEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .PUT, path.hasPrefix("/agents/"), path.hasSuffix("/model") {
+                handleSetAgentModelEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .POST, path.hasPrefix("/workspace-agents/"), path.hasSuffix("/run") {
+                handleWorkspaceAgentRunEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .GET, path == "/privacy/reviews" {
+                handleListPrivacyReviewsEndpoint(
                     head: head,
                     context: context,
                     startTime: startTime,
                     userAgent: userAgent
                 )
-            } else if head.method == .POST, path == "/pair" {
-                handlePairEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
-            } else if head.method == .POST, path == "/pair-invite" {
-                handlePairInviteEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
-            } else if head.method == .POST, path == "/secure/session" {
-                handleSecureSessionEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path.hasPrefix("/privacy/reviews/") {
+                handleAnswerPrivacyReviewEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .GET, path == "/config/approvals" {
+                handleListConfigApprovalsEndpoint(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .POST, path.hasPrefix("/config/approvals/") {
+                handleAnswerConfigApprovalEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .GET, path == "/workflows/pending-dialogs" {
+                handleListWorkflowDialogsEndpoint(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .POST, path.hasPrefix("/workflows/runs/"), path.contains("/dialogs/") {
+                handleAnswerWorkflowDialogEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .GET, path.hasPrefix("/workflows/runs/"), !path.contains("/dialogs/") {
+                handleWorkflowRunStatusEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .GET, path == "/computer-use/prompts" || path == "/secrets/prompts" {
+                handleListPhonePromptsEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .POST,
+                path.hasPrefix("/computer-use/prompts/") || path.hasPrefix("/secrets/prompts/")
+            {
+                handleAnswerPhonePromptEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .GET, path == "/approvals" {
+                handleListApprovalsEndpoint(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .POST, path.hasPrefix("/approvals/") {
+                handleAnswerApprovalEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .GET, path == "/workspaces/agents" {
+                handleWorkspaceAgentsEndpoint(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .GET, path == "/projects" {
+                handleListProjectsEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .GET, path == "/sessions" {
+                handleListSessionsEndpoint(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .GET, path.hasPrefix("/sessions/"), path.contains("/images/") {
+                // Before the `/sessions/{id}` catch-all below.
+                handleSessionImageEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .GET, path.hasPrefix("/artifacts/") {
+                handleArtifactFileEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .GET, path.hasPrefix("/sessions/"), path.hasSuffix("/context") {
+                // Before the `/sessions/{id}` catch-all below.
+                handleSessionContextEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .POST, path.hasPrefix("/sessions/"), path.hasSuffix("/truncate") {
+                handleSessionTruncateEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .GET, path.hasPrefix("/images/jobs/"), path.hasSuffix("/events") {
+                handleImageJobEventsEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .GET, path.hasPrefix("/runs/"), path.hasSuffix("/events") {
+                handleRunEventsEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .GET, path.hasPrefix("/conversations/"), path.hasSuffix("/events") {
+                handleConversationEventsEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .POST, path.hasPrefix("/runs/"), path.hasSuffix("/stop") {
+                handleRunStopEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if [.GET, .PATCH, .DELETE].contains(head.method), path.hasPrefix("/sessions/") {
+                handleSessionEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .POST, path == "/agents" {
+                handleCreateAgentEndpoint(
+                    head: head,
+                    context: context,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
             } else if head.method == .GET, path == "/agents" {
                 handleListAgents(head: head, context: context, startTime: startTime, userAgent: userAgent)
+            } else if head.method == .POST, path.hasPrefix("/agents/"), path.hasSuffix("/warm") {
+                handleAgentWarmEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .POST, path.hasPrefix("/agents/"), path.hasSuffix("/tools/preset") {
+                handleAgentToolPresetEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .PATCH || head.method == .DELETE, path.hasPrefix("/agents/"),
+                path.split(separator: "/").count == 2
+            {
+                handleEditAgentEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .PATCH, path.hasPrefix("/agents/"), path.contains("/tools/") {
+                handleUpdateAgentToolEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .GET, path.hasPrefix("/agents/"), path.hasSuffix("/tools") {
+                handleAgentToolsEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if head.method == .GET, path.hasPrefix("/agents/"), path.hasSuffix("/avatar") {
+                handleAgentAvatarEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if path.hasPrefix("/agents/"), Self.isHostedWorkflowPath(path),
+                head.method == .GET || head.method == .POST
+            {
+                handleHostedWorkflowEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
             } else if head.method == .GET, path.hasPrefix("/agents/") {
                 handleGetAgentEndpoint(
                     head: head,
@@ -794,6 +1435,24 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     head: head,
                     context: context,
                     path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if path.hasPrefix("/events/"), let route = EventWebhookIngress.route(for: path) {
+                handleEventWebhookEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    route: route,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            } else if path.hasPrefix("/channels/"), let route = AgentChannelWebhookIngress.route(for: path) {
+                handleChannelWebhookEndpoint(
+                    head: head,
+                    context: context,
+                    path: path,
+                    route: route,
                     startTime: startTime,
                     userAgent: userAgent
                 )
@@ -821,6 +1480,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     startTime: startTime,
                     userAgent: userAgent
                 )
+            } else if head.method == .GET, path == "/systemone/models" {
+                handleDecisionModels(head: head, context: context)
+            } else if head.method == .POST, path == "/systemone" {
+                handleSystemOne(head: head, context: context, startTime: startTime, userAgent: userAgent)
             } else if head.method == .POST, path == "/embeddings" || path == "/embed" {
                 handleEmbeddings(
                     head: head,
@@ -973,26 +1636,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 row["native_mtp_status"] = summary.nativeMTPStatus ?? NSNull()
                 row["native_mtp_reason"] = summary.nativeMTPReason ?? NSNull()
                 row["generation_defaults"] = Self.generationDefaultsJSONObject(
-                    LocalGenerationDefaults.defaults(forModelId: summary.name)
+                    summary.generationDefaults
                 )
                 if let effective = lastEffectiveGenerationSettings[summary.name] {
                     row["last_effective_generation"] = Self.effectiveGenerationSettingsJSONObject(effective)
                 } else {
                     row["last_effective_generation"] = NSNull()
                 }
-                let mlxPress = summary.mlxPressStatus
-                var mlxPressStatus: [String: Any] = [
-                    "enabled": mlxPress.enabled,
-                    "backend": mlxPress.backend.rawValue,
-                    "tiles_under_management": mlxPress.tilesUnderManagement,
-                    "total_routed_bytes": mlxPress.totalRoutedBytes,
-                ]
-                if let coldFraction = mlxPress.coldFraction {
-                    mlxPressStatus["cold_fraction"] = coldFraction
-                } else {
-                    mlxPressStatus["cold_fraction"] = NSNull()
-                }
-                row["mlx_press"] = mlxPressStatus
                 if let active = summary.activeCachePolicy {
                     row["active_cache_policy"] =
                         [
@@ -1238,10 +1888,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             var defaultsByModel: [String: Any] = [:]
             var effectiveByModel: [String: Any] = [:]
             for modelName in lastEffectiveGenerationSettings.keys.sorted() {
-                defaultsByModel[modelName] = Self.generationDefaultsJSONObject(
-                    LocalGenerationDefaults.defaults(forModelId: modelName)
-                )
                 if let effective = lastEffectiveGenerationSettings[modelName] {
+                    defaultsByModel[modelName] = Self.generationDefaultsJSONObject(effective.modelDefaults)
                     effectiveByModel[modelName] = Self.effectiveGenerationSettingsJSONObject(effective)
                 }
             }
@@ -1282,6 +1930,80 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
+    /// `GET /credits/balance` — read-only Osaurus Router credit balance for
+    /// local tools (usage dashboards, menu bar apps). Osaurus signs the router
+    /// request itself, so the caller never touches the wallet key. Loopback
+    /// skips the global auth gate, so `LocalCreditsBalance.isAuthorized` is
+    /// applied here: a verified master key, or the key-less loopback opt-in
+    /// for non-browser callers.
+    private func handleCreditsBalanceEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?,
+        method: String,
+        path: String
+    ) {
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let cors = stateRef.value.corsHeaders
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let version = head.version
+        let logSelf = self
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let logMethod = method
+        let logPath = path
+        let hasVerifiedMasterKey =
+            stateRef.value.callerHasVerifiedAccessKey && stateRef.value.callerAccessKeyIsMaster
+        let requestHasOrigin = head.headers.contains(name: "Origin")
+
+        runRequestTask(priority: .userInitiated) {
+            let response: (status: Int, json: [String: Any])
+            if LocalCreditsBalance.isAuthorized(
+                callerHasVerifiedMasterKey: hasVerifiedMasterKey,
+                allowsUnkeyedLoopbackSpend: OsaurusRouter.allowsUnkeyedLoopbackSpend,
+                requestHasOrigin: requestHasOrigin
+            ) {
+                let result = await OsaurusRouterAccountService.shared.balanceForLocalAPI()
+                response = LocalCreditsBalance.response(for: result)
+            } else {
+                response = (
+                    403,
+                    LocalCreditsBalance.error(
+                        code: "credits_access_not_authorized",
+                        message: LocalCreditsBalance.unauthorizedMessage
+                    )
+                )
+            }
+            let data = try? JSONSerialization.data(withJSONObject: response.json, options: .osaurusCanonical)
+            let body = data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"
+            let headers: [(String, String)] =
+                [("Content-Type", "application/json; charset=utf-8")]
+                + cors
+            let status = HTTPResponseStatus(statusCode: response.status)
+
+            hop {
+                logSelf.sendResponse(
+                    context: ctx.value,
+                    version: version,
+                    status: status,
+                    headers: headers,
+                    body: body
+                )
+            }
+            logSelf.logRequest(
+                method: logMethod,
+                path: logPath,
+                userAgent: logUserAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: response.status,
+                startTime: logStartTime
+            )
+        }
+    }
+
     /// `/admin/runtime-settings` is the automation companion for the Server
     /// Settings panel. GET returns the exact persisted vMLX runtime settings.
     /// PUT accepts a full `VMLXServerRuntimeSettings` JSON document and applies
@@ -1308,6 +2030,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logPath = path
         let parsedBody = head.method == .PUT ? readRequestBody() : nil
 
+        // Who may get here: loopback callers and master-scoped keys from any
+        // origin (unchanged contract — remote automation with the owner's key
+        // keeps working). Agent-scoped keys of either origin never reach this
+        // handler: the auth gate denies `/admin/*` to them (see
+        // `agentScopedRouteRejection`), so a paired peer or a workspace
+        // teammate cannot change how this host runs.
         runRequestTask(priority: .userInitiated) {
             let previous = ServerRuntimeSettingsStore.snapshot()
 
@@ -1400,10 +2128,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
                 return
             }
-            let next =
+            var next =
                 ServerRuntimeSettingsStore.canonicalizedContextAndKVPolicy(
                     requested
                 )
+            // Match persistence before computing effects or returning settings.
+            // Legacy depth requests select Adaptive without a native depth cap.
+            next.mtp = NativeMTPSelectionDefault.adaptiveSelection(next.mtp)
 
             if previous.network != next.network {
                 let body = Self.errorBody(
@@ -1467,28 +2198,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 return
             }
 
+            // Use the Settings lifecycle decisions: an MTP depth/policy edit
+            // invalidates the request snapshot, not the resident weights.
+            // Preserve this endpoint's existing compiled-decode refresh
+            // receipt; a reload still does not replace its required restart.
             let loadedModelRefreshNeeded =
-                previous.cache != next.cache
-                || previous.multimodal != next.multimodal
-                || previous.mtp != next.mtp
-                || previous.memorySafety != next.memorySafety
-                // The tied-head codec and DSV4 activation-QAT choice apply at
-                // model construction, so a change takes effect on the next
-                // load — evicting the resident model makes either toggle live.
-                // Compare
-                // effectivePerformance so a nil<->explicit-default edit
-                // (semantically unchanged) does not force a spurious reload.
-                //
-                // NOTE: the *compiled-decode* lever is different — MLX caches
-                // its compile state at the first model load of the process, so
-                // it can only engage when VMLX_ENABLE_UNSAFE_COMPILE is set
-                // before that first load (i.e. at launch from a persisted
-                // setting). A mid-session reload cannot turn it on; that is
-                // surfaced separately via `compiled_decode_restart_required`.
-                || previous.effectivePerformance != next.effectivePerformance
+                ServerController.loadedModelRuntimeInputsRequireRefresh(previous: previous, next: next)
+                || previous.effectivePerformance.compiledDecode != next.effectivePerformance.compiledDecode
             let runtimeConfigInvalidated =
-                previous.generation != next.generation
-                || previous.concurrency != next.concurrency
+                ServerController.runtimeConfigInputsRequireInvalidate(previous: previous, next: next)
             // Compiled decode is a process-startup lever (see above): a change
             // to it only takes effect after restarting Osaurus, so report that
             // explicitly rather than letting the toggle look live.
@@ -1497,8 +2215,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 != next.effectivePerformance.compiledDecode
 
             ServerRuntimeSettingsStore.save(next)
-            if loadedModelRefreshNeeded {
+            // Same per-model decision as the Settings path: a speculative-only change unloads only the resident
+            // models whose loaded graph does not serve the new selection (`applySpeculativeLoadChange`).
+            if previous.effectivePerformance.compiledDecode == next.effectivePerformance.compiledDecode,
+                ServerController.onlySpeculativeLoadInputsChanged(previous: previous, next: next)
+            {
+                _ = await ModelRuntime.shared.applySpeculativeLoadChange(settings: next)
+                await ModelRuntime.shared.refreshDiskCacheCaps()
+            } else if loadedModelRefreshNeeded {
                 await ModelRuntime.shared.clearAll()
+            } else {
+                await ModelRuntime.shared.refreshDiskCacheCaps()
             }
             if runtimeConfigInvalidated {
                 await ModelRuntime.shared.invalidateConfig()
@@ -1803,7 +2530,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
                 let plan: ConfigPlan
                 do {
-                    plan = try await MainActor.run {
+                    plan = try await MainActor.run { [document] in
                         try ConfigPlanner.plan(document: document, prune: prune)
                     }
                 } catch let issues as ConfigPlanIssues {
@@ -1861,7 +2588,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     return
                 }
 
-                let results = await ConfigApplier.apply(document: document, prune: prune)
+                let results = await ConfigApplier.apply(document: document, prune: prune, caller: .adminAPI)
                 let failed = results.filter { $0.status == .failed }
                 let cancelled = results.filter { $0.status == .cancelled }
                 let started = results.filter { $0.status == .started }
@@ -1903,6 +2630,113 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     private static func configAdminBody(_ object: [String: Any]) -> String {
+        jsonObjectString(object)
+    }
+
+    /// `/admin/import/*` — the running-app side of `osaurus import`.
+    /// `plan` checks a bundle against this Mac without changing anything
+    /// (`{"bundle_path", "operations": [{"action", "kind", "name"}]}` ->
+    /// `{"issues", "warnings"}`); `apply` applies a request the CLI already
+    /// queued (`{"id"}` -> the request's `ImportResult`). Loopback-only on
+    /// the physical address for the same reason as `/admin/config/*`: it
+    /// installs agents and MCP servers.
+    private func handleImportAdminEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?,
+        method: String,
+        path: String,
+        isLoopback: Bool
+    ) {
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let cors = stateRef.value.corsHeaders
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let version = head.version
+        let logSelf = self
+        let parsedBody = readRequestBody()
+
+        func respond(status: HTTPResponseStatus, body: String) {
+            let headers: [(String, String)] =
+                [("Content-Type", "application/json; charset=utf-8")] + cors
+            hop {
+                logSelf.sendResponse(
+                    context: ctx.value, version: version, status: status, headers: headers, body: body)
+            }
+            logSelf.logRequest(
+                method: method,
+                path: path,
+                userAgent: userAgent,
+                requestBody: "[/admin/import body — \(parsedBody.data.count) bytes]",
+                responseBody: body,
+                responseStatus: Int(status.code),
+                startTime: startTime
+            )
+        }
+
+        func respondError(status: HTTPResponseStatus, message: String) {
+            respond(status: status, body: Self.errorBody(.openai(type: "invalid_request_error"), message: message))
+        }
+
+        guard isLoopback else {
+            respondError(
+                status: .forbidden,
+                message: "/admin/import/* is restricted to local (loopback) callers. Run `osaurus import` on this Mac.")
+            return
+        }
+        guard !parsedBody.data.isEmpty, parsedBody.data.count <= 256 * 1024,
+            let request = try? JSONSerialization.jsonObject(with: parsedBody.data) as? [String: Any]
+        else {
+            respondError(status: .badRequest, message: "POST a JSON object body (at most 256 KB).")
+            return
+        }
+
+        runRequestTask(priority: .userInitiated) {
+            if path == "/admin/import/plan" {
+                guard let bundlePath = request["bundle_path"] as? String, !bundlePath.isEmpty else {
+                    respondError(status: .badRequest, message: "`bundle_path` is required.")
+                    return
+                }
+                let operations = ((request["operations"] as? [[String: Any]]) ?? []).compactMap {
+                    raw -> ImportOperation? in
+                    guard let kind = (raw["kind"] as? String).flatMap(BundleItemKind.init(rawValue:)),
+                        let name = raw["name"] as? String
+                    else { return nil }
+                    let action = (raw["action"] as? String).flatMap(ImportAction.init(rawValue:)) ?? .install
+                    return ImportOperation(action: action, kind: kind, name: name, explicit: true)
+                }
+                let checked = await PendingImportProcessor.shared.plan(
+                    bundleAt: URL(fileURLWithPath: bundlePath, isDirectory: true), operations: operations)
+                respond(
+                    status: .ok,
+                    body: Self.jsonObjectString(["issues": checked.issues, "warnings": checked.warnings]))
+                return
+            }
+
+            guard let id = request["id"] as? String, !id.isEmpty else {
+                respondError(status: .badRequest, message: "`id` (the queued request id) is required.")
+                return
+            }
+            guard let result = await PendingImportProcessor.shared.process(requestId: id) else {
+                respondError(
+                    status: .unprocessableEntity,
+                    message: "No queued import request \(id). It may have been cancelled with `osaurus import remove`.")
+                return
+            }
+            guard let data = try? ImportQueue.encoder().encode(result) else {
+                respondError(status: .internalServerError, message: "Could not encode the import result.")
+                await PendingImportProcessor.shared.applyDeferredSettings()
+                return
+            }
+            respond(status: .ok, body: String(decoding: data, as: UTF8.self))
+            await PendingImportProcessor.shared.applyDeferredSettings()
+        }
+    }
+
+    /// A response body from a dictionary, properly escaped whatever the
+    /// strings in it hold.
+    private static func jsonObjectString(_ object: [String: Any]) -> String {
         let data = try? JSONSerialization.data(withJSONObject: object, options: .osaurusCanonical)
         return data.flatMap { String(decoding: $0, as: UTF8.self) } ?? "{}"
     }
@@ -1997,7 +2831,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             "memory_limit": residentCapJSONObject(configuration.memoryLimit),
             "max_resident_bytes": residentCapJSONObject(configuration.maxResidentBytes),
             "use_mmap_safetensors": configuration.useMmapSafetensors,
-            "jang_press_policy": jangPressPolicyJSONObject(configuration.jangPress),
             "native_mtp": configuration.nativeMTP,
             "deepseek_v4_activation_qat":
                 configuration.deepseekV4ActivationQAT as Any? ?? NSNull(),
@@ -2016,17 +2849,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             "paged_kv_block_size": cache.pagedKV.blockSize as Any? ?? NSNull(),
             "paged_kv_max_blocks": cache.pagedKV.maxBlocks as Any? ?? NSNull(),
             "block_disk_enabled": cache.blockDisk.enabled,
-            // The cap is a percent of the disk now, so the stored GB field is
-            // nil on every migrated install. Reporting it raw would show
-            // `null` for a cache that in fact has a real cap. Report the share
-            // the user set AND the gigabytes it resolves to on this machine —
-            // the same figure the coordinator enforces.
             "block_disk_max_size_percent": cache.blockDisk.maxSizePercent as Any? ?? NSNull(),
-            "block_disk_max_size_gb": VMLXServerRuntimeSettings.resolveDiskCacheMaxGB(
-                percent: cache.blockDisk.maxSizePercent,
-                legacyGB: cache.blockDisk.maxSizeGB,
-                directory: ModelRuntime.cacheDiskDirectoryOverride(for: cache)
-                    ?? OsaurusPaths.diskKVCache()),
+            "block_disk_requested_size_gb": cache.blockDisk.maxSizeGB as Any? ?? NSNull(),
+            "block_disk_max_size_gb": ModelRuntime.diskCacheCap(
+                for: cache, directory: ModelRuntime.cacheDiskDirectoryOverride(for: cache)
+                    ?? OsaurusPaths.diskKVCache()).capGB,
             "block_disk_directory": cache.blockDisk.directory as Any? ?? NSNull(),
             "legacy_disk_enabled": cache.legacyDisk.enabled,
             "live_kv_codec": cache.liveKVCodec.rawValue,
@@ -2088,12 +2915,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     private static func memoryStatusJSONObject(_ status: MemoryStatus) -> [String: Any] {
-        [
+        let allocator = MLX.Memory.snapshot()
+        return [
+            "gpu_architecture": MLX.GPU.deviceInfo().architecture,
             "memory_limit": status.memoryLimit,
             "cache_limit": status.cacheLimit,
             "recommended_working_set_bytes": status.recommendedWorkingSetBytes as Any? ?? NSNull(),
             "physical_memory": status.physicalMemory,
             "current_rss": status.currentRSS,
+            // Limits are not occupancy. Keep live allocator counters and
+            // kernel headroom visible for delegation/retention diagnosis.
+            "mlx_active_bytes": allocator.activeMemory,
+            "mlx_cached_bytes": allocator.cacheMemory,
+            "mlx_peak_bytes": allocator.peakMemory,
+            "host_reclaimable_bytes": ChatResidencyHandoff.sampledAvailableMemoryBytes() as Any? ?? NSNull(),
+            "host_memory_pressure": SubagentMemoryPressure.sampled().rawValue,
         ]
     }
 
@@ -2105,17 +2941,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return ["kind": "fraction", "value": fraction]
         case .absolute(let bytes):
             return ["kind": "absolute", "value": bytes]
-        }
-    }
-
-    private static func jangPressPolicyJSONObject(_ policy: JangPressPolicy) -> [String: Any] {
-        switch policy {
-        case .disabled:
-            return ["kind": "disabled"]
-        case .enabled(let coldFraction):
-            return ["kind": "enabled", "cold_fraction": coldFraction]
-        case .auto(let envFallback):
-            return ["kind": "auto", "env_fallback": envFallback]
         }
     }
 
@@ -3128,12 +3953,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     /// Decide the body-byte cap for the request based on its route. Most
-    /// endpoints get the generic configuration limit; `/pair` and
+    /// endpoints get the generic configuration limit; the pairing routes and
     /// `/pair-invite` are tighter because they are unauthenticated and only
     /// ever carry a small JSON envelope.
     private func bodyByteLimit(for head: HTTPRequestHead) -> Int {
         let path = normalize(extractPath(from: head.uri))
-        if path == "/pair" || path == "/pair-invite" || path == "/secure/session" {
+        if path == "/pair/code" || path == "/pair/confirm" || path == "/pair-invite"
+            || path == "/secure/session"
+        {
             return configuration.maxPairingBodyBytes
         }
         return configuration.maxRequestBodyBytes
@@ -3266,9 +4093,39 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     // MARK: - CORS
 
-    /// Best-effort source IP for rate-limiting the pairing endpoints.
+    /// Best-effort source key for rate-limiting the unauthenticated pairing /
+    /// handshake endpoints.
+    ///
+    /// Direct connections key on the socket address. Relay-tunnelled requests
+    /// all arrive from `127.0.0.1` (the relay proxies onto loopback), so keying
+    /// on the socket would put every remote caller in ONE bucket — a single
+    /// abusive peer could lock every teammate out of `/secure/session` and
+    /// `/pair-invite`. For relay traffic the key is derived from the first hop
+    /// of the relay-supplied `X-Forwarded-For` (falling back to a shared
+    /// `relay` bucket), prefixed so it can never collide with a LAN address.
+    /// This is a best-effort fairness measure, not an identity claim: the
+    /// header is only trusted as a bucketing hint, and authentication never
+    /// depends on it.
     private func remoteIP(_ context: ChannelHandlerContext) -> String {
-        context.channel.remoteAddress?.ipAddress ?? "unknown"
+        let socketIP = context.channel.remoteAddress?.ipAddress ?? "unknown"
+        guard stateRef.value.isRelayOrigin else { return socketIP }
+        return Self.relayRateLimitKey(
+            forwardedFor: stateRef.value.requestHead?.headers.first(name: "X-Forwarded-For"),
+            socketIP: socketIP
+        )
+    }
+
+    /// Pure helper behind `remoteIP` for relay-origin requests.
+    static func relayRateLimitKey(forwardedFor: String?, socketIP: String) -> String {
+        let firstHop =
+            forwardedFor?
+            .split(separator: ",")
+            .first
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            ?? ""
+        // Bound the key so a hostile header cannot bloat the limiter's table.
+        let bounded = String(firstHop.prefix(64))
+        return bounded.isEmpty ? "relay:\(socketIP)" : "relay:\(bounded)"
     }
 
     /// Whether the inbound connection is a "trusted local caller" — i.e., a
@@ -3281,7 +4138,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // (see `relayOriginHeaderName`). Such requests never count as a trusted
         // local caller, so they remain subject to the auth gate, CORS origin
         // rules, and the built-in-agent remote block.
-        guard !stateRef.value.isRelayOrigin else { return false }
+        guard !stateRef.value.isRelayOrigin, !stateRef.value.loopbackTrustWithdrawn else { return false }
         return trustLoopback && (context.channel.remoteAddress?.isLoopback ?? false)
     }
 
@@ -3331,6 +4188,307 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         return nil
     }
 
+    /// Route-level confinement for agent-scoped access keys, by key origin.
+    ///
+    /// An agent-scoped key grants access to ONE agent, but historically only
+    /// `/agents/{id}*` consulted the key's audience. Two classes of key exist
+    /// and they get different policies so shipped integrations are not
+    /// disrupted:
+    ///
+    /// **Workspace-minted keys** (Workspaces attestation handshake; strict
+    /// default-deny allowlist — nothing shipped depends on more):
+    /// - `GET /models` — the teammate client probes it for model discovery.
+    /// - `GET /agents/{id}`, `POST /agents/{id}/run`
+    ///   — the per-agent check (`agentScopeRejection`) still applies inside.
+    /// - `POST /chat/completions` only while the owner shares inference
+    ///   (`PeerInferenceSharing`), so a teammate can use this host as a plain
+    ///   OpenAI-compatible backend (Mode 1) on the owner's say-so.
+    /// Detached dispatch and task routes are unavailable to workspace keys.
+    ///
+    /// **Legacy pairing / `AgentInvite` keys** keep their pre-existing surface
+    /// minus server administration (`/admin/*`) — a paired peer must never be
+    /// able to change how this host runs — and minus the inference routes
+    /// (`peerInferenceRouteRejection`) unless the owner shares inference.
+    /// Cross-agent reach is closed separately by `agentHeaderScopeRejection`
+    /// and `DispatchTaskOwnership`, neither of which a same-agent client ever
+    /// trips.
+    ///
+    /// Scope rejections use the same `agent_scope_denied` shape the per-agent
+    /// check uses; an inference route refused because the owner has not opted
+    /// in reports `peer_inference_disabled` so the peer's UI can explain it.
+    /// Master-scoped keys and callers with no recorded audience (loopback
+    /// trust, public routes) are unrestricted. `HEAD` is treated like `GET`.
+    static func agentScopedRouteRejection(
+        method: HTTPMethod,
+        path: String,
+        authedAudience: String?,
+        authedScopeIsMaster: Bool,
+        isWorkspaceMintedKey: Bool,
+        peerInferenceEnabled: Bool
+    ) -> (code: String, message: String)? {
+        guard authedAudience != nil, !authedScopeIsMaster else { return nil }
+        if let inferenceRejection = Self.peerInferenceRouteRejection(
+            method: method, path: path, peerInferenceEnabled: peerInferenceEnabled
+        ) {
+            return inferenceRejection
+        }
+        let allowed =
+            isWorkspaceMintedKey
+            ? Self.workspaceKeyMayReach(method: method, path: path, peerInferenceEnabled: peerInferenceEnabled)
+            : Self.legacyAgentScopedKeyMayReach(method: method, path: path)
+        if allowed { return nil }
+        return (
+            "agent_scope_denied",
+            "This access key is scoped to a single agent and cannot access \(path)."
+        )
+    }
+
+    /// The routes that run this host's models on a caller's behalf — text
+    /// generation, embeddings, and media generation. `path` is normalized (no
+    /// `/v1` / `/api` prefix, no query string). Model *listing* (`/models`,
+    /// `/tags`) is deliberately not here: peers may still call it, and the
+    /// handlers answer with an empty catalog while sharing is off
+    /// (`peerModelCatalogIsHidden`) so the peer client keeps connecting for
+    /// Mode 2 instead of tripping its "peer rejected the connection" path.
+    static func isPeerInferenceRoute(method: HTTPMethod, path: String) -> Bool {
+        guard method == .POST else { return false }
+        let components = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        guard let root = components.first else { return false }
+        switch (root, components.count) {
+        case ("chat", 1), ("completions", 1), ("generate", 1), ("messages", 1), ("responses", 1),
+            ("embeddings", 1), ("embed", 1), ("systemone", 1):
+            return true
+        case ("chat", 2):
+            return components[1] == "completions"
+        case ("audio", 2):
+            return components[1] == "transcriptions"
+        case ("images", 2):
+            return ["generations", "edits", "upscale"].contains(components[1])
+        case ("videos", 2):
+            return ["quote", "generations"].contains(components[1])
+        default:
+            return false
+        }
+    }
+
+    /// Owner opt-in gate for every agent-scoped key (workspace-minted or
+    /// legacy): while the owner has not shared inference, the inference
+    /// routes are refused regardless of key origin. Callers pass the live
+    /// setting so the pure policy stays unit-testable.
+    static func peerInferenceRouteRejection(
+        method: HTTPMethod,
+        path: String,
+        peerInferenceEnabled: Bool
+    ) -> (code: String, message: String)? {
+        guard !peerInferenceEnabled, Self.isPeerInferenceRoute(method: method, path: path) else { return nil }
+        return (
+            "peer_inference_disabled",
+            "This Osaurus does not share its models for inference with paired agents. "
+                + "Ask the owner to enable it in Settings → Sharing → Access → Model Sharing."
+        )
+    }
+
+    /// Whether the model catalog (`/models`, `/tags`) should be answered with
+    /// an empty list: the caller holds an agent-scoped key (a paired peer) and
+    /// the owner has not shared inference. Loopback-trusted callers and
+    /// master-scoped keys always see the real catalog.
+    static func peerModelCatalogIsHidden(
+        authedAudience: String?,
+        authedScopeIsMaster: Bool,
+        peerInferenceEnabled: Bool
+    ) -> Bool {
+        guard authedAudience != nil, !authedScopeIsMaster else { return false }
+        return !peerInferenceEnabled
+    }
+
+    /// Cross-agent header check for agent-scoped keys: when a request names an
+    /// agent via `X-Osaurus-Agent-Id` (chat-completions history/memory
+    /// attribution, `/memory/*`, `/mcp/call`), that agent must be the one the
+    /// key is scoped to. A same-agent client (the relay tunnel stamps the
+    /// tunnel's own agent) is unaffected. The built-in Default agent id is
+    /// ignored here because the handlers already drop it for external callers.
+    /// Malformed values are left to the handlers' existing 4xx paths.
+    static func agentHeaderScopeRejection(
+        headerValue: String?,
+        authedAudience: String?,
+        authedScopeIsMaster: Bool,
+        resolveAddress: (UUID) -> String? = { AgentIdentityRegistry.shared.address(forAgentId: $0) }
+    ) -> (code: String, message: String)? {
+        guard let aud = authedAudience, !authedScopeIsMaster else { return nil }
+        guard let raw = headerValue?.trimmingCharacters(in: .whitespaces), !raw.isEmpty,
+            let agentId = UUID(uuidString: raw), agentId != Agent.defaultId
+        else { return nil }
+        if let target = resolveAddress(agentId), target.lowercased() == aud.lowercased() {
+            return nil
+        }
+        return (
+            "agent_scope_denied",
+            "X-Osaurus-Agent-Id names an agent this access key is not scoped to."
+        )
+    }
+
+    /// Legacy pairing / invite keys: everything they could reach before, minus
+    /// server administration and the owner's account data (`/credits/*`).
+    /// `path` is normalized (no `/v1` / `/api` prefix, no query string).
+    static func legacyAgentScopedKeyMayReach(method: HTTPMethod, path: String) -> Bool {
+        let components = path.split(separator: "/", omittingEmptySubsequences: true)
+        // `/attention` and `/devices` are the owner's own feed and phones;
+        // their handlers check ownership too.
+        let ownerOnly: Set<Substring> = ["admin", "credits", "attention", "devices"]
+        return components.first.map { !ownerOnly.contains($0) } ?? true
+    }
+
+    /// Strict allowlist for workspace-minted keys. `path` is already
+    /// normalized (no `/v1` / `/api` prefix, no query string).
+    /// `peerInferenceEnabled` adds `POST /chat/completions` (the teammate
+    /// client's Mode 1 route) when the owner shares inference.
+    static func workspaceKeyMayReach(
+        method: HTTPMethod,
+        path: String,
+        peerInferenceEnabled: Bool = false
+    ) -> Bool {
+        let effectiveMethod: HTTPMethod = method == .HEAD ? .GET : method
+        let components = path.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
+        guard let root = components.first else { return false }
+        switch root {
+        case "models":
+            return effectiveMethod == .GET && components.count == 1
+        case "chat":
+            return peerInferenceEnabled && effectiveMethod == .POST
+                && components.count == 2 && components[1] == "completions"
+        case "agents":
+            guard components.count >= 2, !components[1].isEmpty else { return false }
+            if components.count == 2 { return effectiveMethod == .GET }
+            if components.count == 3, effectiveMethod == .POST {
+                return components[2] == "run"
+            }
+            if let route = HostedWorkflowRoute(components) {
+                return route.method == effectiveMethod
+            }
+            return false
+        case "runs":
+            // A named run this key started (`/runs/{id}/events`, `/stop`);
+            // the handlers scope the id to the key.
+            guard components.count == 3 else { return false }
+            return (effectiveMethod == .GET && components[2] == "events")
+                || (effectiveMethod == .POST && components[2] == "stop")
+        case "conversations":
+            // This key's conversation mailbox.
+            return effectiveMethod == .GET && components.count == 3 && components[2] == "events"
+        default:
+            return false }
+    }
+
+    static func dispatchSessionKey(_ supplied: String?, audience: String?, keyNonce: String?) -> String? {
+        guard let supplied else {
+                return nil }
+        guard let audience else { return supplied }
+        guard let keyNonce, !keyNonce.isEmpty else { return nil }
+        // Encode a tuple: separators in user input cannot collide with scope.
+        let data = try? JSONEncoder().encode([audience.lowercased(), keyNonce, supplied])
+        return data.map { "credential:" + $0.base64EncodedString() }
+    }
+
+    /// Which access-key audience created each HTTP-dispatched background task,
+    /// so `/tasks/{id}` (status / cancel / clarify) can be confined to the
+    /// key that created the task. Only tasks created by an *agent-scoped* key
+    /// are recorded; master-scoped and loopback callers are unrestricted and
+    /// never recorded. Bounded FIFO so a chatty peer cannot grow it unbounded.
+    final class DispatchTaskOwnership: @unchecked Sendable {
+        static let shared = DispatchTaskOwnership(
+            fileURL: OsaurusPaths.workspaces().appendingPathComponent("dispatch-owners.json")
+        )
+
+        private let lock = NSLock()
+        private struct Owner: Codable {
+            let audience: String
+            let keyNonce: String
+        }
+        private var owners: [UUID: Owner] = [:]
+        private var order: [UUID] = []
+        private let capacity: Int
+        private let fileURL: URL?
+
+        init(capacity: Int = 4096, fileURL: URL? = nil) {
+            self.capacity = max(1, capacity)
+            self.fileURL = fileURL
+            if let fileURL, let data = try? Data(contentsOf: fileURL),
+                let saved = try? JSONDecoder().decode([UUID: Owner].self, from: data)
+            {
+                for id in saved.keys.sorted(by: { $0.uuidString < $1.uuidString }).suffix(self.capacity) {
+                    owners[id] = saved[id]
+                    order.append(id)
+                }
+            }
+        }
+
+        func record(taskId: UUID, audience: String, keyNonce: String) {
+            lock.lock()
+            defer { lock.unlock() }
+            guard !keyNonce.isEmpty else { return }
+            if owners.updateValue(Owner(audience: audience.lowercased(), keyNonce: keyNonce), forKey: taskId) == nil {
+                order.append(taskId)
+                while order.count > capacity {
+                    let evicted = order.removeFirst()
+                    owners.removeValue(forKey: evicted)
+                }
+            }
+            persistLocked()
+        }
+
+        func owner(of taskId: UUID) -> String? {
+            lock.lock()
+            defer { lock.unlock() }
+            return owners[taskId]?.audience
+        }
+
+        /// `nil` when the caller may act on the task. A caller with no
+        /// recorded audience or a master-scoped key is unrestricted; an
+        /// agent-scoped key must have created the task itself.
+        func rejection(
+            taskId: UUID,
+            authedAudience: String?,
+            authedScopeIsMaster: Bool,
+            keyNonce: String? = nil
+        ) -> (code: String, message: String)? {
+            guard let aud = authedAudience?.lowercased(), !authedScopeIsMaster else { return nil }
+            lock.lock()
+            defer { lock.unlock() }
+            guard let keyNonce, !keyNonce.isEmpty,
+                let owner = owners[taskId], owner.audience == aud, owner.keyNonce == keyNonce
+            else {
+                return (
+                    "agent_scope_denied",
+                    "This access key did not create the requested task."
+                )
+            }
+            return nil
+        }
+
+        func removeAll() {
+            lock.lock()
+            defer { lock.unlock() }
+            owners.removeAll()
+            order.removeAll()
+            persistLocked()
+        }
+
+        private func persistLocked() {
+            guard let fileURL else { return }
+            do {
+                try FileManager.default.createDirectory(
+                    at: fileURL.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try JSONEncoder().encode(owners).write(to: fileURL, options: .atomic)
+                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
+            } catch {
+                // A missing persisted owner fails closed after relaunch.
+                NSLog("[Osaurus] Could not persist remote task ownership: %@", String(describing: error))
+            }
+        }
+    }
+
     /// Loopback callers always get `Access-Control-Allow-Origin: *` (issue
     /// #952): a request reaching us via 127.0.0.1 / ::1 is by definition on
     /// the user's machine, so it gets the same trust the auth gate already
@@ -3338,20 +4496,26 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// a literal `"*"` matches everything; otherwise the request `Origin`
     /// header must appear in the list verbatim, in which case it's echoed
     /// back with `Vary: Origin`.
+    ///
+    /// `explicitOriginsOnly` (routes protected by `LocalAPIKeyPolicy`) drops
+    /// both the loopback grant and the `"*"` wildcard: only an origin listed
+    /// by name is echoed.
     private func computeCORSHeaders(
         for head: HTTPRequestHead,
         isPreflight: Bool,
-        isLoopback: Bool
+        isLoopback: Bool,
+        explicitOriginsOnly: Bool = false
     ) -> [(String, String)] {
         let origin = head.headers.first(name: "Origin")
         var headers: [(String, String)] = []
 
-        let allowsAny = isLoopback || configuration.allowedOrigins.contains("*")
+        let allowsAny =
+            !explicitOriginsOnly && (isLoopback || configuration.allowedOrigins.contains("*"))
         if allowsAny {
             headers.append(("Access-Control-Allow-Origin", "*"))
         } else if let origin,
             !origin.contains("\r"), !origin.contains("\n"),
-            configuration.allowedOrigins.contains(origin)
+            LocalAPIKeyPolicy.isExplicitlyAllowedOrigin(origin, allowedOrigins: configuration.allowedOrigins)
         {
             headers.append(("Access-Control-Allow-Origin", origin))
             headers.append(("Vary", "Origin"))
@@ -3467,7 +4631,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             clientTools: request.tools
         )
         let resolvedToolChoice: ToolChoiceOption? = {
-            guard let mergedTools, !mergedTools.isEmpty else { return nil }
+            guard let mergedTools, !mergedTools.isEmpty else { return request.tool_choice }
             return request.tool_choice ?? .auto
         }()
         return enriched.withContext(
@@ -3838,6 +5002,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let id: String
         let name: String
         let description: String
+        /// Background-generated routing summary, present only when the
+        /// user left `description` blank and a summary has been produced.
+        let generated_description: String?
         /// Mascot avatar identifier (e.g. "green") so paired peers can render
         /// the agent's own avatar instead of a generic monogram. nil = no
         /// mascot (client falls back to the name's initial). User-uploaded
@@ -3845,8 +5012,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let avatar: String?
         /// The agent's custom Action Bar (chat quick actions) so a connected
         /// peer can surface the agent's own prompt shortcuts in the empty
-        /// state. Omitted (nil) when the agent uses the built-in defaults, so
-        /// the client falls back to its neutral chat defaults.
+        /// state. Omitted (nil) when the agent uses the built-in chat
+        /// defaults, so the client falls back to its own copy of them. The
+        /// Orchestrator's configure-oriented defaults are sent in full
+        /// (`clientQuickActions(for:)`).
         let chat_quick_actions: [AgentQuickAction]?
         let default_model: String?
         /// Server-resolved model id, known before the first streamed chunk.
@@ -3859,83 +5028,3980 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let memory_entry_count: Int
         let created_at: String
         let updated_at: String
+        /// Crypto address the Secure Channel handshake is signed with. Remote
+        /// clients pin it; nil when the agent has no derived identity yet.
+        let address: String?
+        /// Relay base URL (docs/MOBILE_PROTOCOL.md §6.1) when the agent's
+        /// relay tunnel is enabled; nil = reachable on the LAN only.
+        let relay_url: String?
+        /// True when the agent has a user-supplied avatar image. The bytes are
+        /// never inlined; owner callers fetch `GET /agents/{id}/avatar`.
+        let custom_avatar: Bool?
+        /// The agent's system prompt, on `GET /agents/{id}` and for owner
+        /// callers only — a workspace peer has no business reading it.
+        var system_prompt: String?
+        /// What the phone can change (§13.2): `GET /agents/{id}` for owner
+        /// callers and custom agents only.
+        var settings: PhoneAgentEditing.Settings? = nil
+        /// `connectFeatures`, on `GET /agents/{id}` only, so a paired peer
+        /// that reads just its agent learns them too.
+        var features: [String]? = nil
+        /// The workflows this agent runs for the people it's shared with,
+        /// on `GET /agents/{id}` for callers other than the owner.
+        var hosted_workflows: [HostedWorkflowWire]? = nil
     }
 
     private struct AgentListResponse: Codable {
         let agents: [AgentListItem]
+        /// What this Mac does that an older one doesn't, for a client to
+        /// check before relying on it (docs/MOBILE_PROTOCOL.md §14.5).
+        var features: [String] = HTTPHandler.connectFeatures
     }
 
-    // MARK: - Pair Endpoint
+    /// `session_create`: a run may start a chat with `osaurus_create_session`.
+    /// `host_history`: a run with `session_id` may send only its new message
+    /// with `"osaurus_history": "host"`. `conversation_events`: the caller
+    /// can collect what the owner said with `GET /conversations/{id}/events`.
+    /// `caller_v2`: `osaurus_caller` signatures may cover name and owner.
+    /// `context_usage`: `GET /sessions/{id}/context` prices a chat's next send.
+    /// `voice_call_context`: `osaurus_voice_call` adds nothing to the messages (the phone sends
+    /// its own call instructions), keeps call turns lean and the model warm between them.
+    /// `hosted_workflows`: `GET /agents/{id}` lists the workflows the agent runs for the people it's shared
+    /// with, and `/agents/{id}/workflows/…` runs them (`HostedWorkflowHost`).
+    static let connectFeatures = [
+        "session_create", "host_history", "conversation_events", "caller_v2", "context_usage", "voice_call_context",
+        HostedWorkflowHost.feature,
+    ]
 
-    private struct PairRequest: Codable {
-        let connectorAddress: String
-        let agentId: String
-        let nonce: String
-        let signature: String
-        /// Connector's ephemeral X25519 public key (base64url). When present,
-        /// the connector's signature covers `"<nonce>:<encPub>"` and the
-        /// minted key is returned HPKE-sealed instead of in cleartext.
-        let encPub: String?
+    /// The Action Bar a client shows for `agent`: its own, else for the
+    /// Orchestrator the configure-oriented defaults its Mac chat shows (a
+    /// client only knows the chat defaults). nil = the chat defaults.
+    static func clientQuickActions(for agent: Agent) -> [AgentQuickAction]? {
+        if let own = agent.chatQuickActions { return own }
+        return agent.id == Agent.defaultId ? AgentQuickAction.defaultConfigurationQuickActions : nil
     }
 
-    private struct PairResponse: Codable {
-        let agentAddress: String
-        let apiKey: String
-        let isPermanent: Bool
-        /// Agent-key signature over the challenge nonce + agent address so the
-        /// connector can verify the responder controls the discovered agent
-        /// address (anti-spoofing) and that this response is fresh.
-        let serverSignature: String?
-        /// HPKE-sealed access key (set when the request carried `encPub`;
-        /// `apiKey` is empty in that case so the credential never crosses the
-        /// cleartext LAN hop unprotected).
-        let sealedApiKey: PairingKeyEnvelope.Sealed?
-        /// Secure Channel capability marker: this server requires E2E
-        /// encryption for agent run/dispatch and accepts `/secure/session`
-        /// handshakes. Diagnostic only.
-        let secureChannel: Bool
-    }
+    // MARK: - /pair/code (Osaurus Connect 6-digit pairing)
 
-    /// GET /pair/challenge — issue a single-use, short-lived pairing nonce.
-    /// The connector signs this nonce and presents it to `POST /pair`, so a
-    /// replayed pairing body is rejected (the nonce is consumed on first use).
-    private func handlePairChallengeEndpoint(
+    /// GET /pair/hello — "is there an Osaurus here?" for a phone whose Bonjour
+    /// is blocked: it probes the addresses on its own subnet and pairs with
+    /// whichever answers. Public and LAN-only, and it says nothing a Bonjour
+    /// TXT record does not already say: the Mac's name, the wire version,
+    /// and whether a pairing code is currently showing.
+    private func handlePairHelloEndpoint(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
         startTime: Date,
         userAgent: String?
     ) {
-        guard PairingRateLimiter.shared.allow(ip: remoteIP(context)) else {
+        let path = "/pair/hello"
+        let cors = stateRef.value.corsHeaders
+        MobileConnectLog.write("pair/hello: probed from \(remoteIP(context))")
+        guard !stateRef.value.isRelayOrigin else {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(
+                context: context, version: head.version, status: .forbidden, headers: headers,
+                body: #"{"error":"lan_only"}"#
+            )
+            return
+        }
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let (name, pairing, version) = await MainActor.run {
+                (
+                    Host.current().localizedName ?? "Osaurus",
+                    MobilePairingService.shared.activeCode != nil,
+                    MobilePairingService.wireVersion
+                )
+            }
+            let body =
+                (try? JSONSerialization.data(withJSONObject: [
+                    "v": version, "name": name, "pairing": pairing,
+                ])).map { String(decoding: $0, as: UTF8.self) } ?? #"{"v":1}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: body)
+                self.logRequest(
+                    method: "GET", path: path, userAgent: userAgent, requestBody: nil,
+                    responseBody: body, responseStatus: 200, startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// POST /pair/code — redeem the 6-digit code shown in Settings → Osaurus
+    /// Connect for a master-scoped access key and the agent roster, HPKE-sealed
+    /// to the phone's ephemeral key (docs/MOBILE_PROTOCOL.md §11). LAN only:
+    /// relay-origin requests are refused so the code can't be guessed from
+    /// the internet. Wrong codes get one uniform `invalid_code` answer; the
+    /// code itself dies after `PairingCode.maxFailedAttempts` wrong guesses.
+    private func handlePairCodeEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let cors = stateRef.value.corsHeaders
+
+        func reply(status: HTTPResponseStatus, body: String, logBody: String? = nil) {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
+            // Never log the code, the device id, or the sealed key.
+            logRequest(
+                method: "POST",
+                path: path,
+                userAgent: userAgent,
+                requestBody: "<redacted>",
+                responseBody: logBody ?? body,
+                responseStatus: Int(status.code),
+                startTime: startTime
+            )
+        }
+
+        guard !stateRef.value.isRelayOrigin else {
+            MobileConnectLog.write("pair/code: refused a relay-origin request (LAN only)")
+            reply(
+                status: .forbidden,
+                body: #"{"error":"lan_only","message":"Pair on the same network as this Mac."}"#
+            )
+            return
+        }
+        let pairingIP = remoteIP(context)
+        MobileConnectLog.write("pair/code: request from \(pairingIP)")
+        guard PairingRateLimiter.shared.allow(ip: pairingIP) else {
             sendPairingRateLimited(
                 head: head,
                 context: context,
-                path: "/pair/challenge",
-                method: "GET",
+                path: path,
+                method: "POST",
                 startTime: startTime,
                 userAgent: userAgent
             )
             return
         }
-        let nonce = PairingChallengeStore.shared.issue()
+
+        var data = Data()
+        if var body = stateRef.value.requestBodyBuffer {
+            data = Data(body.readBytes(length: body.readableBytes) ?? [])
+        }
+        // v1 sends the code and a key to seal to; v2 (SPAKE2) never sends
+        // the code, and confirms in a second step on `/pair/confirm`.
+        struct Version: Decodable { let v: Int }
+        let decoder = JSONDecoder()
+        let redeem: @MainActor @Sendable () -> MobilePairingService.RedeemOutcome
+        if path == "/pair/confirm", let request = try? decoder.decode(MobilePairConfirmRequest.self, from: data) {
+            redeem = { MobilePairingService.shared.confirmExchange(request) }
+        } else if path == "/pair/code", (try? decoder.decode(Version.self, from: data))?.v == PairingSPAKE2.version,
+            let request = try? decoder.decode(MobilePairStartRequest.self, from: data)
+        {
+            redeem = { MobilePairingService.shared.startExchange(request) }
+        } else if path == "/pair/code", let request = try? decoder.decode(MobilePairRequest.self, from: data) {
+            redeem = { MobilePairingService.shared.redeem(request) }
+        } else {
+            reply(status: .badRequest, body: #"{"error":"bad_request","message":"Invalid pairing request"}"#)
+            return
+        }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let outcome = await MainActor.run { redeem() }
+            hop {
+                let context = ctx.value
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                let status: HTTPResponseStatus
+                let body: String
+                var logBody: String?
+                switch outcome {
+                case .paired(let response, _):
+                    MobileConnectLog.write("pair/code: paired a phone from \(pairingIP)")
+                    status = .ok
+                    body =
+                        (try? JSONEncoder().encode(response)).map { String(decoding: $0, as: UTF8.self) }
+                        ?? #"{"error":"encoding_failed"}"#
+                    logBody = #"{"v":1,"sealed":"<redacted>"}"#
+                case .answered(let answer, let redacted):
+                    MobileConnectLog.write("\(path): answered a v2 pairing step from \(pairingIP)")
+                    status = .ok
+                    body = answer
+                    logBody = redacted
+                case .invalidCode:
+                    MobileConnectLog.write("pair/code: wrong or expired code from \(pairingIP)")
+                    PairingRateLimiter.shared.penalize(ip: pairingIP)
+                    status = .unauthorized
+                    body = #"{"error":"invalid_code","message":"That code is wrong or has expired."}"#
+                case .badRequest(let message):
+                    MobileConnectLog.write("pair/code: bad request from \(pairingIP): \(message)")
+                    status = .badRequest
+                    let encoded =
+                        (try? JSONEncoder().encode(["error": "bad_request", "message": message]))
+                        .map { String(decoding: $0, as: UTF8.self) } ?? #"{"error":"bad_request"}"#
+                    body = encoded
+                }
+                self.sendResponse(
+                    context: context,
+                    version: head.version,
+                    status: status,
+                    headers: headers,
+                    body: body
+                )
+                self.logRequest(
+                    method: "POST",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: "<redacted>",
+                    responseBody: logBody ?? body,
+                    responseStatus: Int(status.code),
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// POST /pair/unpair — the paired phone unpairs itself (revokes its own
+    /// key and clears Settings → Mobile). Authenticated by the auth
+    /// gate; only the key minted for the current paired device is accepted.
+    private func handlePairUnpairEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let path = "/pair/unpair"
+        let cors = stateRef.value.corsHeaders
+        let keyNonce = inboundConnectionInfo()?.accessKeyId
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let unpaired: Bool
+            if let keyNonce {
+                unpaired = await MainActor.run { MobilePairingService.shared.unpairIfCaller(keyNonce: keyNonce) }
+            } else {
+                unpaired = false
+            }
+            let status: HTTPResponseStatus = unpaired ? .ok : .forbidden
+            let body =
+                unpaired
+                ? #"{"ok":true}"#
+                : #"{"error":"not_paired_device","message":"Only the iPhone that paired can unpair itself."}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: status,
+                    headers: headers,
+                    body: body
+                )
+                self.logRequest(
+                    method: "POST",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: body,
+                    responseStatus: Int(status.code),
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    // MARK: - Owner model picker (Osaurus Connect)
+
+    /// One chat model as the Mac's composer picker shows it.
+    struct PickerModelDTO: Encodable {
+        let id: String
+        let name: String
+        /// Tab / section title: "Local", "Apple Foundation", or the provider name.
+        let provider: String
+        /// `foundation | local | remote`
+        let source: String
+        let vision: Bool
+        let thinking: Bool
+        let params: String?
+        let quantization: String?
+        /// False for local bundles the picker greys out (non-MLX format).
+        let available: Bool
+        let description: String?
+        /// The picker tab holding this model (`local`, `remote-<uuid>`) and its
+        /// title (`Local`, the provider name).
+        let tab: String
+        let tabTitle: String
+        /// Key in the Mac's favourites list (source key + id).
+        let favoriteKey: String
+        /// Context window in tokens, for the context-limit filter.
+        let contextLength: Int?
+        /// Router price in micro-USD per million tokens, for the price sort.
+        let inputPrice: Int64?
+        let outputPrice: Int64?
+        /// Where an externally discovered local bundle came from ("LM
+        /// Studio"), for the Local tab's source filter.
+        let externalSource: String?
+        /// `chat` or `image`. Image models answer through `/images/generations`,
+        /// never a chat run; `edits` says `/images/edits` takes a source image.
+        let kind: String
+        let edits: Bool
+        /// For `kind: image` only: what the Mac's composer offers for this
+        /// model (size, steps, CFG, seed, strength, negative prompt), so the
+        /// phone can show the same controls (MOBILE_PROTOCOL.md §12.5).
+        let image: PickerImageDTO?
+        /// For a cloud image model only: its target, the choices its catalog
+        /// offers and its starting price, for the phone's controls and its
+        /// spend confirmation (MOBILE_PROTOCOL.md §12.5).
+        let cloud: PickerCloudImageDTO?
+        /// For a cloud chat model: how the Privacy Filter treats a run on it,
+        /// `review` (asks before sending) or `auto` (redacts unasked); absent
+        /// when it doesn't run, so a voice call can ask the user first
+        /// (MOBILE_PROTOCOL.md §6.5).
+        let privacy: String?
+
+        enum CodingKeys: String, CodingKey {
+            case id, name, provider, source, vision, thinking, params, quantization, available, description, tab
+            case kind, edits
+            case image
+            case cloud
+            case privacy
+            case tabTitle = "tab_title"
+            case favoriteKey = "favorite_key"
+            case contextLength = "context_length"
+            case inputPrice = "input_price"
+            case outputPrice = "output_price"
+            case externalSource = "external_source"
+        }
+    }
+
+    /// A cloud image model: where `/images/generations` sends it (`target`),
+    /// the catalog's choices, and the cheapest price, in USD and as the
+    /// Mac's own "From … credits" label. Billable: the phone confirms before
+    /// it sends `allow_remote_media_spend`.
+    struct PickerCloudImageDTO: Encodable {
+        struct Target: Encodable {
+            let backend: String
+            let providerId: String?
+            let model: String
+
+            enum CodingKeys: String, CodingKey {
+                case backend, model
+                case providerId = "provider_id"
+            }
+        }
+
+        let target: Target
+        let aspectRatios: [String]
+        let defaultAspectRatio: String?
+        let resolutions: [String]
+        let defaultResolution: String?
+        let qualities: [String]
+        let defaultQuality: String?
+        let defaultSteps: Int?
+        let maxSteps: Int?
+        let promptCharacterLimit: Int?
+        let formats: [String]
+        let maxCount: Int
+        let minPriceUSD: Double?
+        let priceLabel: String?
+        let privacy: String?
+
+        enum CodingKeys: String, CodingKey {
+            case target, resolutions, qualities, formats, privacy
+            case aspectRatios = "aspect_ratios"
+            case defaultAspectRatio = "default_aspect_ratio"
+            case defaultResolution = "default_resolution"
+            case defaultQuality = "default_quality"
+            case defaultSteps = "default_steps"
+            case maxSteps = "max_steps"
+            case promptCharacterLimit = "prompt_character_limit"
+            case maxCount = "max_count"
+            case minPriceUSD = "min_price_usd"
+            case priceLabel = "price_label"
+        }
+
+        init?(_ item: ModelPickerItem) {
+            guard let media = item.mediaModel, media.kind == .image, media.isAvailable else { return nil }
+            switch media.target.backend {
+            case .local: return nil
+            case .remoteProvider(let id):
+                target = Target(backend: "remote_provider", providerId: id.uuidString, model: media.target.modelID)
+            case .osaurusCloud:
+                target = Target(backend: "osaurus_cloud", providerId: nil, model: media.target.modelID)
+            }
+            let c = media.constraints
+            aspectRatios = c.aspectRatios
+            defaultAspectRatio = c.defaultAspectRatio
+            resolutions = c.resolutions
+            defaultResolution = c.defaultResolution
+            qualities = c.qualities
+            defaultQuality = c.defaultQuality
+            defaultSteps = c.defaultSteps
+            maxSteps = c.maxSteps
+            promptCharacterLimit = c.promptCharacterLimit
+            formats = ImageOutputFormat.allCases.map(\.rawValue)
+            maxCount = 4
+            minPriceUSD = media.pricing?.minimumUSD
+            priceLabel = minPriceUSD.map { "From \(OsaurusRouter.formatUSDAsCredits($0))" }
+            privacy = media.privacy
+        }
+    }
+
+    /// Image controls for one model: the `/images/models` capabilities,
+    /// defaults and limits, plus the ranges the composer clamps to on send.
+    struct PickerImageDTO: Encodable {
+        let capabilities: ImageCapabilitiesDTO
+        let defaults: ImageDefaultsDTO
+        let limits: ImageLimitsDTO
+        let maxGuidance: Double
+
+        enum CodingKeys: String, CodingKey {
+            case capabilities, defaults, limits
+            case maxGuidance = "max_guidance"
+        }
+
+        init?(_ item: ModelPickerItem) {
+            guard item.isPhoneImageModel, let caps = item.imageCapabilities else { return nil }
+            capabilities = ImageCapabilitiesDTO(
+                text_to_image: caps.textToImage,
+                image_edit: caps.imageEdit,
+                upscale: caps.upscale,
+                negative_prompt: caps.negativePrompt,
+                edit_negative_prompt: caps.editNegativePrompt,
+                edit_strength: caps.editStrength,
+                mask: caps.mask,
+                multiple_source_images: caps.multipleSourceImages,
+                lora: caps.lora
+            )
+            defaults = ImageDefaultsDTO(
+                steps: item.imageDefaultSteps,
+                guidance: item.imageDefaultGuidance.map { Double($0) }
+            )
+            limits = ImageHTTPParameterBuilder.limits(canonicalName: item.imageCanonicalName,
+                capabilities: caps, runtime: item.imageRequestLimits)
+            maxGuidance = 20
+        }
+    }
+
+    /// Whether the caller owns this Mac: loopback, or a master-scoped key
+    /// (e.g. the Osaurus Connect phone). Agent-scoped / workspace keys don't.
+    private func callerOwnsThisMac(_ context: ChannelHandlerContext) -> Bool {
+        isLoopbackConnection(context) || stateRef.value.authedScopeIsMaster
+    }
+
+    /// Whose named runs a caller may follow or stop: the owner's (nil
+    /// nonce), or — for a teammate / invite-link peer on the Secure Channel —
+    /// only those named under their own access key. Nil: neither.
+    private func detachedRunScope(_ context: ChannelHandlerContext) -> DetachedRunScope? {
+        if callerOwnsThisMac(context) { return DetachedRunScope(keyNonce: nil) }
+        guard stateRef.value.isSecureChannel, let nonce = inboundConnectionInfo()?.accessKeyId else { return nil }
+        return DetachedRunScope(keyNonce: nonce)
+    }
+
+    private struct DetachedRunScope {
+        let keyNonce: String?
+    }
+
+    private func sendOwnerOnlyForbidden(head: HTTPRequestHead, context: ChannelHandlerContext, path: String, startTime: Date, userAgent: String?) {
         var headers = [("Content-Type", "application/json; charset=utf-8")]
         headers.append(contentsOf: stateRef.value.corsHeaders)
-        let body = #"{"nonce":"\#(nonce)"}"#
-        sendResponse(
-            context: context,
-            version: head.version,
-            status: .ok,
-            headers: headers,
-            body: body
-        )
+        let body = #"{"error":"owner_only","message":"Only this Mac's owner can do that."}"#
+        sendResponse(context: context, version: head.version, status: .forbidden, headers: headers, body: body)
         logRequest(
-            method: "GET",
-            path: "/pair/challenge",
+            method: head.method.rawValue,
+            path: path,
             userAgent: userAgent,
             requestBody: nil,
             responseBody: body,
-            responseStatus: 200,
+            responseStatus: 403,
             startTime: startTime
         )
+    }
+
+    /// The picker rows `/models/picker` and the iPhone's Sync model list
+    /// share, in the Mac picker's tab order.
+    static func pickerModels(_ items: [ModelPickerItem], allItems: [ModelPickerItem]) -> [PickerModelDTO] {
+        let privacyConfig = PrivacyFilterStore.snapshot()
+        // Grouped as the Mac picker groups them, so the phone shows the
+        // same tabs in the same order.
+        let tabbed = items.groupedByTab().flatMap { tab in tab.models.map { (tab: tab, item: $0) } }
+        return tabbed.map { entry -> PickerModelDTO in
+            let (tab, item) = entry
+            let source: String
+            switch item.source {
+            case .foundation: source = "foundation"
+            case .local: source = "local"
+            case .remote: source = "remote"
+            case .imageGeneration: source = "image"
+            }
+            let cloud = PickerCloudImageDTO(item)
+            var privacy: String?
+            if case .remote(_, let providerId) = item.source, privacyConfig.isEnabled(forProviderId: providerId) {
+                privacy = privacyConfig.alwaysApproveByDefault ? "auto" : "review"
+            }
+            return PickerModelDTO(
+                id: item.id,
+                name: item.displayName,
+                provider: item.source.displayName,
+                source: source,
+                // Same image gate as the desktop composer, so remote chat
+                // models (isVLM false, no capability metadata) are not
+                // reported as text-only. Image models keep their own flag.
+                vision: cloud == nil && !item.isPhoneImageModel
+                    ? ChatSession.modelSupportsImages(modelId: item.id, pickerItems: allItems)
+                    : item.isVLM,
+                // An image model never thinks, whatever chat profile its name matches.
+                thinking: cloud == nil && !item.isPhoneImageModel
+                    && ModelProfileRegistry.profile(for: item.id)?.thinkingOption != nil,
+                params: item.parameterCount,
+                quantization: item.quantization,
+                available: source != "local" || item.isMLXFormat,
+                description: item.description,
+                tab: tab.key,
+                tabTitle: tab.title,
+                favoriteKey: item.favoriteKey,
+                contextLength: item.contextLength,
+                inputPrice: item.inputPriceMicroPerMTok,
+                outputPrice: item.outputPriceMicroPerMTok,
+                externalSource: item.externalSource,
+                kind: item.isPhoneImageModel || cloud != nil ? "image" : "chat",
+                // Cloud models can't edit over HTTP yet.
+                edits: cloud == nil && item.isImageEditDelegateCandidate,
+                image: PickerImageDTO(item),
+                cloud: cloud,
+                privacy: privacy
+            )
+        }
+    }
+
+    /// GET /models/picker — the chat models the Mac's composer picker lists,
+    /// with display names and capability flags (docs/MOBILE_PROTOCOL.md §12).
+    private func handleModelPickerEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: "/models/picker", startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let cors = stateRef.value.corsHeaders
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            // Chat models, ready on-device image models and available cloud
+            // image models, which the Mac picker also lists (picking one puts
+            // the composer in image mode).
+            // The items as they stand: kept current by every change already,
+            // where a rebuild per request cost the phone seconds a time.
+            let clock = ContinuousClock()
+            let began = clock.now
+            let allItems = await ModelPickerItemCache.shared.currentItems()
+            let gathered = clock.now
+            let items = allItems
+                .filter { $0.isLikelyChatCapable || $0.isPhoneImageModel || PickerCloudImageDTO($0) != nil }
+            let favorites = await MainActor.run { FavoriteModelsStore.shared.favoriteKeys }
+            let models = Self.pickerModels(items, allItems: allItems)
+            // One model at a time: one that can't be encoded (a NaN in its
+            // numbers, say) is left out, and said, rather than the whole list
+            // going out empty, which emptied the phone's picker.
+            let encoder = JSONEncoder.osaurusCanonical()
+            var encoded: [String] = []
+            for model in models {
+                do {
+                    encoded.append(String(decoding: try encoder.encode(model), as: UTF8.self))
+                } catch {
+                    MobileConnectLog.write("models/picker: left out \(model.id): \(error)")
+                }
+            }
+            let favoritesJSON = (try? encoder.encode(favorites)).map { String(decoding: $0, as: UTF8.self) } ?? "[]"
+            let json = #"{"favorites":"# + favoritesJSON + #","models":["# + encoded.joined(separator: ",") + "]}"
+            let sentCount = encoded.count
+            let ms = { (from: ContinuousClock.Instant, to: ContinuousClock.Instant) in
+                Int(from.duration(to: to) / .milliseconds(1))
+            }
+            MobileConnectLog.write(
+                "models/picker: sent \(sentCount) of \(models.count) models, \(json.utf8.count) bytes; "
+                    + "items \(ms(began, gathered)) ms, rest \(ms(gathered, clock.now)) ms"
+            )
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
+                self.logRequest(
+                    method: "GET",
+                    path: "/models/picker",
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: "{\"models\":[\(sentCount) of \(models.count) items]}",
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    private struct SetAgentModelRequest: Decodable {
+        /// Model id from `/models/picker`; null/empty resets to the default.
+        let model: String?
+    }
+
+    /// PUT /agents/{id}/model — set an agent's default model, exactly what
+    /// picking a model in the Mac composer does (`updateDefaultModel`).
+    private func handleSetAgentModelEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        func reply(_ status: HTTPResponseStatus, _ body: String) {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
+            logRequest(
+                method: "PUT",
+                path: path,
+                userAgent: userAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: Int(status.code),
+                startTime: startTime
+            )
+        }
+
+        let components = path.split(separator: "/")
+        guard components.count == 3, components[0] == "agents",
+            let agentId = UUID(uuidString: String(components[1]))
+                ?? AgentIdentityRegistry.shared.agentId(forAddress: String(components[1]))
+        else {
+            reply(.badRequest, #"{"error":"invalid_agent_id"}"#)
+            return
+        }
+        var data = Data()
+        if var body = stateRef.value.requestBodyBuffer {
+            data = Data(body.readBytes(length: body.readableBytes) ?? [])
+        }
+        guard let request = try? JSONDecoder().decode(SetAgentModelRequest.self, from: data) else {
+            reply(.badRequest, #"{"error":"bad_request","message":"Expected {\"model\": \"…\"}"}"#)
+            return
+        }
+        let model = request.model?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalized = (model?.isEmpty ?? true) ? nil : model
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let outcome: (HTTPResponseStatus, String) = await MainActor.run {
+                // The Orchestrator is a built-in the owner may retune: its
+                // model lives in the Orchestrator settings, and
+                // `updateDefaultModel` writes there for `defaultId`. Any
+                // other built-in stays read-only.
+                guard let agent = AgentManager.shared.agent(for: agentId),
+                    !agent.isBuiltIn || agent.id == Agent.defaultId
+                else {
+                    return (.notFound, #"{"error":"agent_not_found"}"#)
+                }
+                AgentManager.shared.updateDefaultModel(for: agentId, model: normalized)
+                let effective = AgentManager.shared.effectiveModel(for: agentId) ?? ""
+                return (.ok, Self.jsonObjectString(["ok": true, "effective_model": effective]))
+            }
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: outcome.0,
+                    headers: headers,
+                    body: outcome.1
+                )
+                self.logRequest(
+                    method: "PUT",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: outcome.1,
+                    responseStatus: Int(outcome.0.code),
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    private struct ModelFavoriteRequest: Decodable {
+        /// `favorite_key` from `/models/picker`.
+        let key: String
+        let favorite: Bool
+    }
+
+    /// PUT /models/favorites — heart or unheart a model in the Mac's
+    /// favourites, as the picker rows' heart does; answers with the list
+    /// (docs/MOBILE_PROTOCOL.md §12.4).
+    private func handleModelFavoriteEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let path = "/models/favorites"
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        var data = Data()
+        if var body = stateRef.value.requestBodyBuffer {
+            data = Data(body.readBytes(length: body.readableBytes) ?? [])
+        }
+        guard let request = try? JSONDecoder().decode(ModelFavoriteRequest.self, from: data),
+            !request.key.isEmpty
+        else {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            let body = #"{"error":"bad_request","message":"Expected {\"key\": \"…\", \"favorite\": true}"}"#
+            sendResponse(context: context, version: head.version, status: .badRequest, headers: headers, body: body)
+            logRequest(
+                method: "PUT",
+                path: path,
+                userAgent: userAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: 400,
+                startTime: startTime
+            )
+            return
+        }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let favorites: [String] = await MainActor.run {
+                let store = FavoriteModelsStore.shared
+                if request.favorite { store.add(request.key) } else { store.remove(request.key) }
+                return store.favoriteKeys
+            }
+            let json =
+                (try? JSONEncoder.osaurusCanonical().encode(["favorites": favorites]))
+                .map { String(decoding: $0, as: UTF8.self) } ?? #"{"favorites":[]}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
+                self.logRequest(
+                    method: "PUT",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: "{\"favorites\":[\(favorites.count) keys]}",
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    private struct ModelOptionsRequest: Decodable {
+        let model: String
+        /// PUT only: an option id from the snapshot, or `thinking`.
+        let option: String?
+        /// PUT only: a segment id or a bool; null resets to the default.
+        let value: ModelOptionValue?
+
+        private enum CodingKeys: String, CodingKey { case model, option, value }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            model = try container.decode(String.self, forKey: .model)
+            option = try container.decodeIfPresent(String.self, forKey: .option)
+            if let flag = try? container.decodeIfPresent(Bool.self, forKey: .value) {
+                value = .bool(flag)
+            } else if let text = try? container.decodeIfPresent(String.self, forKey: .value) {
+                value = .string(text)
+            } else {
+                value = nil
+            }
+        }
+    }
+
+    /// POST /models/options — a model's picker options (Thinking, effort,
+    /// other profile options); PUT /models/options — store one of them, as
+    /// the Mac composer's Model Options rows do. Both answer with the
+    /// model's current options (docs/MOBILE_PROTOCOL.md §12.3).
+    private func handleModelOptionsEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let path = "/models/options"
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
+        let method = head.method == .PUT ? "PUT" : "POST"
+        let cors = stateRef.value.corsHeaders
+        func reply(_ status: HTTPResponseStatus, _ body: String) {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
+            logRequest(
+                method: method,
+                path: path,
+                userAgent: userAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: Int(status.code),
+                startTime: startTime
+            )
+        }
+
+        var data = Data()
+        if var body = stateRef.value.requestBodyBuffer {
+            data = Data(body.readBytes(length: body.readableBytes) ?? [])
+        }
+        guard let request = try? JSONDecoder().decode(ModelOptionsRequest.self, from: data),
+            !request.model.isEmpty,
+            head.method != .PUT || request.option != nil
+        else {
+            reply(.badRequest, #"{"error":"bad_request","message":"Expected {\"model\": \"…\"}"}"#)
+            return
+        }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let isWrite = head.method == .PUT
+        runRequestTask(priority: .userInitiated) {
+            // An image model has no chat options: a name that matches a chat
+            // profile (Thinking and all) mustn't lend it any. Its controls are
+            // the picker's `image` block.
+            let write = isWrite ? request.option.map { (option: $0, value: request.value) } : nil
+            let outcome: (HTTPResponseStatus, String)
+            do {
+                let snapshot = try await ModelOptionsSnapshot.answer(model: request.model, write: write)
+                if let json = try? JSONEncoder.osaurusCanonical().encode(snapshot) {
+                    outcome = (.ok, String(decoding: json, as: UTF8.self))
+                } else {
+                    outcome = (.internalServerError, #"{"error":"encoding_failed"}"#)
+                }
+            } catch ModelOptionsSnapshot.ApplyError.unknownOption {
+                outcome = (.notFound, #"{"error":"unknown_option"}"#)
+            } catch {
+                outcome = (.badRequest, #"{"error":"invalid_value"}"#)
+            }
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: outcome.0,
+                    headers: headers,
+                    body: outcome.1
+                )
+                self.logRequest(
+                    method: method,
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: outcome.1,
+                    responseStatus: Int(outcome.0.code),
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// GET /agents/{id}/avatar — the agent's user-supplied avatar image
+    /// bytes. Owner-only (the image is host content), and only for agents
+    /// whose metadata says `custom_avatar` (docs/MOBILE_PROTOCOL.md §13).
+    private func handleAgentAvatarEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let components = path.split(separator: "/")
+        guard components.count == 3, components[0] == "agents",
+            let agentId = UUID(uuidString: String(components[1]))
+                ?? AgentIdentityRegistry.shared.agentId(forAddress: String(components[1]))
+        else {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .badRequest,
+                headers: headers,
+                body: #"{"error":"invalid_agent_id"}"#
+            )
+            return
+        }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let url = await MainActor.run { AgentManager.shared.agent(for: agentId)?.customAvatarURL }
+            guard let url, let data = try? Data(contentsOf: url) else {
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .notFound,
+                        headers: headers,
+                        body: #"{"error":"no_custom_avatar"}"#
+                    )
+                    self.logRequest(
+                        method: "GET",
+                        path: path,
+                        userAgent: userAgent,
+                        requestBody: nil,
+                        responseBody: #"{"error":"no_custom_avatar"}"#,
+                        responseStatus: 404,
+                        startTime: startTime
+                    )
+                }
+                return
+            }
+            let contentType = Self.imageContentType(forPathExtension: url.pathExtension)
+            hop {
+                let context = ctx.value
+                var head2 = HTTPResponseHead(version: head.version, status: .ok)
+                var headers = HTTPHeaders()
+                headers.add(name: "Content-Type", value: contentType)
+                headers.add(name: "Content-Length", value: String(data.count))
+                headers.add(name: "Cache-Control", value: "no-store")
+                for (name, value) in cors { headers.add(name: name, value: value) }
+                head2.headers = headers
+                var buffer = context.channel.allocator.buffer(capacity: data.count)
+                buffer.writeBytes(data)
+                context.write(NIOAny(HTTPServerResponsePart.head(head2)), promise: nil)
+                context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?)), promise: nil)
+                self.logRequest(
+                    method: "GET",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: "<\(data.count) bytes \(contentType)>",
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    static func imageContentType(forPathExtension ext: String) -> String {
+        switch ext.lowercased() {
+        case "png": return "image/png"
+        case "gif": return "image/gif"
+        case "heic": return "image/heic"
+        case "webp": return "image/webp"
+        case "tiff", "tif": return "image/tiff"
+        default: return "image/jpeg"
+        }
+    }
+
+    /// One tool of `GET /agents/{id}/tools`.
+    struct AgentToolDTO: Encodable {
+        let name: String
+        let description: String
+        let enabled: Bool
+        /// `auto | ask | deny`
+        let policy: String
+        /// False when running it would raise an approval card on the Mac, or
+        /// the surface blocks it outright — a remote client can't answer that
+        /// card yet, so those tools are not safe to rely on from the phone.
+        let remote_safe: Bool
+        /// Ungranted requirements / missing system permissions, when any.
+        let blocked_by: [String]?
+        /// Always loaded, not picked per agent: it follows the agent's own
+        /// switches (§14.12).
+        let built_in: Bool
+        /// The agent has it on: in its own tool list, or built in.
+        let agent_enabled: Bool
+    }
+
+    private struct AgentToolsResponse: Encodable {
+        let tools: [AgentToolDTO]
+    }
+
+    /// GET /agents/{id}/tools — the tools this Mac exposes, with the
+    /// permission state a remote client needs (docs/MOBILE_PROTOCOL.md §14.4).
+    private func handleAgentToolsEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        // The agent the catalog is for: which of its tools it has on.
+        let agentId = path.split(separator: "/").dropFirst().first.flatMap { UUID(uuidString: String($0)) }
+        runRequestTask(priority: .userInitiated) {
+            let tools: [AgentToolDTO] = await MainActor.run {
+                let agent = agentId.flatMap { AgentManager.shared.agent(for: $0) }
+                return ToolRegistry.shared.listTools().map { Self.agentToolDTO(for: $0, agent: agent) }
+            }
+            let json =
+                (try? JSONEncoder.osaurusCanonical().encode(AgentToolsResponse(tools: tools)))
+                .map { String(decoding: $0, as: UTF8.self) } ?? #"{"tools":[]}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
+                self.logRequest(
+                    method: "GET",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: "{\"tools\":[\(tools.count)]}",
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    private struct AgentToolPatchRequest: Decodable {
+        let enabled: Bool?
+        let policy: String?
+        let agent_enabled: Bool?
+    }
+
+    /// A §14.7 body: `enabled` and `policy` are Mac-wide, `agentEnabled` is
+    /// the agent's own choice (§14.12).
+    struct ToolPatch: Equatable {
+        let enabled: Bool?
+        let policy: ToolPermissionPolicy?
+        let agentEnabled: Bool?
+    }
+
+    /// Parses a §14.7 body. Nil when it carries no field, or when any field
+    /// it does carry is invalid (a policy that is not `auto` / `ask` /
+    /// `deny`, a switch that is not a boolean), so nothing is half-applied.
+    static func toolPatch(from data: Data) -> ToolPatch? {
+        guard let request = try? JSONDecoder().decode(AgentToolPatchRequest.self, from: data),
+            request.enabled != nil || request.policy != nil || request.agent_enabled != nil
+        else { return nil }
+        var policy: ToolPermissionPolicy?
+        if let raw = request.policy {
+            guard let parsed = ToolPermissionPolicy(rawValue: raw) else { return nil }
+            policy = parsed
+        }
+        return ToolPatch(enabled: request.enabled, policy: policy, agentEnabled: request.agent_enabled)
+    }
+
+    /// One row of the tool catalog, shared by the GET and the PATCH reply.
+    @MainActor
+    static func agentToolDTO(for entry: ToolRegistry.ToolEntry, agent: Agent?) -> AgentToolDTO {
+        let registry = ToolRegistry.shared
+        let info = registry.policyInfo(for: entry.name)
+        let policy = info?.effectivePolicy ?? .auto
+        let missingGrants = (info?.grantsByRequirement ?? [:])
+            .filter { !$0.value }
+            .map(\.key)
+        let missingSystem = (info?.systemPermissionStates ?? [:])
+            .filter { !$0.value }
+            .map(\.key.rawValue)
+        let blocked = (missingGrants + missingSystem).sorted()
+        let deniedHere = ToolRegistry.isDeniedForCurrentSurface(entry.name)
+        return AgentToolDTO(
+            name: entry.name,
+            description: entry.description,
+            enabled: entry.enabled,
+            policy: policy.rawValue,
+            remote_safe: policy == .auto && blocked.isEmpty && !deniedHere && entry.enabled,
+            blocked_by: blocked.isEmpty ? nil : blocked,
+            built_in: PhoneAgentEditing.isBuiltInTool(entry.name),
+            agent_enabled: agent.map { PhoneAgentEditing.agentHasTool(entry.name, agent: $0) } ?? true
+        )
+    }
+
+    /// PATCH /agents/{id} changes a custom agent's settings, DELETE /agents/{id}
+    /// deletes it (docs/MOBILE_PROTOCOL.md §13.3–§13.4). Owner-only.
+    private func handleEditAgentEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let method = head.method.rawValue
+        let components = path.split(separator: "/")
+        guard components.count == 2, let agentId = UUID(uuidString: String(components[1])) else {
+            sendAgentEditResponse(
+                context: context,
+                head: head,
+                cors: cors,
+                status: .badRequest,
+                json: #"{"error":"invalid_agent_id"}"#,
+                path: path,
+                userAgent: userAgent,
+                startTime: startTime
+            )
+            return
+        }
+        var body = Data()
+        if var buffer = stateRef.value.requestBodyBuffer {
+            body = Data(buffer.readBytes(length: buffer.readableBytes) ?? [])
+        }
+        let isDelete = head.method == .DELETE
+        // The agent this request came in through, which it must not delete.
+        let connectedThrough = stateRef.value.secureChannelAgentAddress
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let outcome: (status: HTTPResponseStatus, json: String)
+            do {
+                if isDelete {
+                    let deleted = try await PhoneAgentEditing.delete(agentId, connectedThrough: connectedThrough)
+                    outcome =
+                        deleted
+                        ? (.ok, #"{"ok":true}"#)
+                        : (
+                            .internalServerError,
+                            Self.jsonObjectString(["error": "delete_failed", "message": "Couldn't delete the agent."])
+                        )
+                } else {
+                    let patch = try PhoneAgentEditing.patch(from: body)
+                    try await PhoneAgentEditing.apply(patch, to: agentId)
+                    outcome = (.ok, #"{"ok":true}"#)
+                }
+            } catch let error as PhoneAgentEditing.EditError {
+                outcome = Self.agentEditFailure(error)
+            } catch {
+                // The sandbox boots after the reply (`waitForSandbox: false`),
+                // so anything here really failed.
+                outcome = (
+                    .internalServerError,
+                    Self.jsonObjectString(["error": "edit_failed", "message": error.localizedDescription])
+                )
+            }
+            hop {
+                self.sendAgentEditResponse(
+                    context: ctx.value,
+                    head: head,
+                    cors: cors,
+                    status: outcome.status,
+                    json: outcome.json,
+                    path: path,
+                    userAgent: userAgent,
+                    startTime: startTime,
+                    method: method
+                )
+            }
+        }
+    }
+
+    /// POST /agents/{id}/tools/preset: `{"preset":"all" | "essential" | "none"}`,
+    /// the Tools window's presets (docs/MOBILE_PROTOCOL.md §14.12). Answers
+    /// with the agent's tool catalog, as §14.4.
+    private func handleAgentToolPresetEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let components = path.split(separator: "/")
+        var body = Data()
+        if var buffer = stateRef.value.requestBodyBuffer {
+            body = Data(buffer.readBytes(length: buffer.readableBytes) ?? [])
+        }
+        struct PresetRequest: Decodable { let preset: String }
+        guard components.count == 4, let agentId = UUID(uuidString: String(components[1])),
+            let raw = try? JSONDecoder().decode(PresetRequest.self, from: body),
+            let preset = PhoneAgentEditing.ToolPreset(rawValue: raw.preset)
+        else {
+            sendAgentEditResponse(
+                context: context,
+                head: head,
+                cors: cors,
+                status: .badRequest,
+                json: #"{"error":"bad_request","message":"Expected {preset: all, essential or none}"}"#,
+                path: path,
+                userAgent: userAgent,
+                startTime: startTime
+            )
+            return
+        }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let outcome: (status: HTTPResponseStatus, json: String) = await MainActor.run {
+                do {
+                    try PhoneAgentEditing.apply(preset, to: agentId)
+                } catch let error as PhoneAgentEditing.EditError {
+                    return Self.agentEditFailure(error)
+                } catch {
+                    return Self.agentEditFailure(.notEditable)
+                }
+                let agent = AgentManager.shared.agent(for: agentId)
+                let tools = ToolRegistry.shared.listTools().map { Self.agentToolDTO(for: $0, agent: agent) }
+                let json =
+                    (try? JSONEncoder.osaurusCanonical().encode(AgentToolsResponse(tools: tools)))
+                    .map { String(decoding: $0, as: UTF8.self) } ?? #"{"tools":[]}"#
+                return (.ok, json)
+            }
+            hop {
+                self.sendAgentEditResponse(
+                    context: ctx.value,
+                    head: head,
+                    cors: cors,
+                    status: outcome.status,
+                    json: outcome.json,
+                    path: path,
+                    userAgent: userAgent,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// POST /agents/{id}/warm with `{"model": "…"}` (optional; the agent's
+    /// own model without it): loads that local model as the owner's phone
+    /// call connects, so its first turn doesn't wait on the load, and keeps
+    /// it loaded as a call's turn does (MOBILE_PROTOCOL §6.5). Answers once
+    /// loaded: `{"loaded":true,"already":false}`; a cloud model has nothing
+    /// to load, `{"loaded":false}`. Owner-only and over the Secure Channel
+    /// only, as it changes what the Mac holds in memory.
+    private func handleAgentWarmEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let components = path.split(separator: "/")
+        var body = Data()
+        if var buffer = stateRef.value.requestBodyBuffer {
+            body = Data(buffer.readBytes(length: buffer.readableBytes) ?? [])
+        }
+        struct WarmRequest: Decodable { let model: String? }
+        let requested = body.isEmpty ? nil : (try? JSONDecoder().decode(WarmRequest.self, from: body))?.model
+        guard components.count == 3, let agentId = UUID(uuidString: String(components[1])) else {
+            sendAgentWarmResponse(
+                context: context,
+                head: head,
+                cors: cors,
+                status: .badRequest,
+                json: #"{"error":"bad_request","message":"Expected /agents/{id}/warm"}"#,
+                path: path,
+                userAgent: userAgent,
+                startTime: startTime
+            )
+            return
+        }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            // An agent with no model set has nothing to warm: that is no
+            // missing agent, so it answers as for a cloud model.
+            let (exists, model): (Bool, String?) = await MainActor.run {
+                guard AgentManager.shared.agent(for: agentId) != nil else { return (false, nil) }
+                let model =
+                    requested.flatMap { $0.isEmpty ? nil : $0 } ?? AgentManager.shared.effectiveModel(for: agentId)
+                return (true, model)
+            }
+            let outcome: (status: HTTPResponseStatus, json: String)
+            if !exists {
+                outcome = (.notFound, #"{"error":"agent_not_found"}"#)
+            } else if let model {
+                do {
+                    switch try await ModelRuntime.shared.warmForVoiceCall(name: model) {
+                    case nil: outcome = (.ok, #"{"loaded":false}"#)
+                    case let already?: outcome = (.ok, #"{"loaded":true,"already":\#(already)}"#)
+                    }
+                } catch {
+                    outcome = (.internalServerError, #"{"error":"load_failed"}"#)
+                }
+            } else {
+                outcome = (.ok, #"{"loaded":false}"#)
+            }
+            hop {
+                self.sendAgentWarmResponse(
+                    context: ctx.value,
+                    head: head,
+                    cors: cors,
+                    status: outcome.status,
+                    json: outcome.json,
+                    path: path,
+                    userAgent: userAgent,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    private func sendAgentWarmResponse(
+        context: ChannelHandlerContext,
+        head: HTTPRequestHead,
+        cors: [(String, String)],
+        status: HTTPResponseStatus,
+        json: String,
+        path: String,
+        userAgent: String?,
+        startTime: Date
+    ) {
+        var headers = [("Content-Type", "application/json; charset=utf-8")]
+        headers.append(contentsOf: cors)
+        sendResponse(context: context, version: head.version, status: status, headers: headers, body: json)
+        logRequest(
+            method: "POST",
+            path: path,
+            userAgent: userAgent,
+            requestBody: nil,
+            responseBody: json,
+            responseStatus: Int(status.code),
+            startTime: startTime
+        )
+    }
+
+    private static func agentEditFailure(
+        _ error: PhoneAgentEditing.EditError
+    ) -> (status: HTTPResponseStatus, json: String) {
+        let reply = error.reply
+        return (
+            HTTPResponseStatus(statusCode: reply.status),
+            jsonObjectString(["error": reply.code, "message": reply.message])
+        )
+    }
+
+    private func sendAgentEditResponse(
+        context: ChannelHandlerContext,
+        head: HTTPRequestHead,
+        cors: [(String, String)],
+        status: HTTPResponseStatus,
+        json: String,
+        path: String,
+        userAgent: String?,
+        startTime: Date,
+        method: String? = nil
+    ) {
+        var headers = [("Content-Type", "application/json; charset=utf-8")]
+        headers.append(contentsOf: cors)
+        sendResponse(context: context, version: head.version, status: status, headers: headers, body: json)
+        logRequest(
+            method: method ?? head.method.rawValue,
+            path: path,
+            userAgent: userAgent,
+            requestBody: nil,
+            responseBody: json,
+            responseStatus: Int(status.code),
+            startTime: startTime
+        )
+    }
+
+    /// PATCH /agents/{id}/tools/{name} — turn a tool on or off, or change its
+    /// permission behaviour, the way the Mac's Tools catalog does
+    /// (docs/MOBILE_PROTOCOL.md §14.4). Tool settings are global on the Mac,
+    /// so the agent id only scopes the route.
+    private func handleUpdateAgentToolEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        func reply(_ status: HTTPResponseStatus, _ body: String) {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
+            logRequest(
+                method: "PATCH",
+                path: path,
+                userAgent: userAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: Int(status.code),
+                startTime: startTime
+            )
+        }
+
+        let components = path.split(separator: "/")
+        guard components.count == 4, components[0] == "agents", components[2] == "tools",
+            let toolName = String(components[3]).removingPercentEncoding, !toolName.isEmpty
+        else {
+            reply(.badRequest, #"{"error":"invalid_tool"}"#)
+            return
+        }
+        var data = Data()
+        if var body = stateRef.value.requestBodyBuffer {
+            data = Data(body.readBytes(length: body.readableBytes) ?? [])
+        }
+        guard let patch = Self.toolPatch(from: data) else {
+            reply(
+                .badRequest,
+                #"{"error":"bad_request","message":"Expected {enabled?, agent_enabled?, policy?}"}"#
+            )
+            return
+        }
+        let policy = patch.policy
+        let enabled = patch.enabled
+        let agentEnabled = patch.agentEnabled
+        let agentId = UUID(uuidString: String(components[1]))
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let outcome: (HTTPResponseStatus, String) = await MainActor.run {
+                let registry = ToolRegistry.shared
+                guard registry.isRegistered(toolName) else {
+                    return (.notFound, #"{"error":"tool_not_found"}"#)
+                }
+                if let agentEnabled {
+                    guard let agentId else { return (.badRequest, #"{"error":"invalid_agent_id"}"#) }
+                    do {
+                        try PhoneAgentEditing.setTool(toolName, enabled: agentEnabled, for: agentId)
+                    } catch {
+                        let failure = Self.agentEditFailure(
+                            error as? PhoneAgentEditing.EditError ?? .notEditable
+                        )
+                        return (failure.status, failure.json)
+                    }
+                }
+                // Only after the agent's own change, which can still be refused
+                // and changes nothing when it is: a refusal must leave the
+                // Mac-wide settings untouched too.
+                if let enabled { registry.setEnabled(enabled, for: toolName) }
+                if let policy { registry.setPolicy(policy, for: toolName) }
+                guard let entry = registry.listTools().first(where: { $0.name == toolName }) else {
+                    return (.notFound, #"{"error":"tool_not_found"}"#)
+                }
+                let agent = agentId.flatMap { AgentManager.shared.agent(for: $0) }
+                let dto = Self.agentToolDTO(for: entry, agent: agent)
+                let json =
+                    (try? JSONEncoder.osaurusCanonical().encode(dto))
+                    .map { String(decoding: $0, as: UTF8.self) } ?? #"{"ok":true}"#
+                return (.ok, json)
+            }
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: outcome.0,
+                    headers: headers,
+                    body: outcome.1
+                )
+                self.logRequest(
+                    method: "PATCH",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: outcome.1,
+                    responseStatus: Int(outcome.0.code),
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// POST /workspace-agents/{workspaceId}/{address}/run — run a teammate's
+    /// shared agent (docs/MOBILE_PROTOCOL.md §15.2). The run happens on THEIR
+    /// Mac: this one only holds the workspace membership, prepares the relay
+    /// pairing, and pipes the answer back to the phone as the same SSE chunks
+    /// `/agents/{id}/run` emits. Owner-only — workspace membership is the
+    /// user's, not an agent's.
+    private func handleWorkspaceAgentRunEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        func reject(_ status: HTTPResponseStatus, _ body: String) {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
+            logRequest(
+                method: "POST",
+                path: path,
+                userAgent: userAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: Int(status.code),
+                startTime: startTime
+            )
+        }
+
+        let components = path.split(separator: "/")
+        guard components.count == 4, components[3] == "run",
+            let workspaceId = String(components[1]).removingPercentEncoding, !workspaceId.isEmpty,
+            let address = String(components[2]).removingPercentEncoding, !address.isEmpty
+        else {
+            reject(.badRequest, #"{"error":"invalid_workspace_agent"}"#)
+            return
+        }
+        var data = Data()
+        if var body = stateRef.value.requestBodyBuffer {
+            data = Data(body.readBytes(length: body.readableBytes) ?? [])
+        }
+        guard let request = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data),
+            !request.messages.isEmpty
+        else {
+            reject(.badRequest, #"{"error":"bad_request","message":"Expected {messages:[…]}"}"#)
+            return
+        }
+
+        let ref = WorkspaceAgentRef(workspaceId: workspaceId, agentAddress: address)
+        let messages = request.messages
+        let parameters = GenerationParameters(
+            temperature: request.temperature,
+            maxTokens: request.resolvedMaxTokens ?? 4096,
+            maxTokensExplicit: request.resolvedMaxTokens != nil,
+            topPOverride: request.top_p,
+            topKOverride: request.top_k,
+            templateKwargs: request.chat_template_kwargs
+        )
+        let stopSequences = request.stop ?? []
+
+        let loop = context.eventLoop
+        let writer = SSEResponseWriter()
+        let writerBound = NIOLoopBound(writer, eventLoop: loop)
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let logSelf = self
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+        let responseId = Self.shortId(prefix: "chatcmpl-", length: 12)
+        let created = Int(Date().timeIntervalSince1970)
+
+        runRequestTask(priority: .userInitiated) {
+            let displayName = await MainActor.run { AgentTargetResolver.displayName(for: ref) }
+            // The SSE writer emits a response head every time it is asked to,
+            // so the failure path must know whether one already went out.
+            var headersSent = false
+            do {
+                // Refuses up front on an offline host, a lapsed key or an
+                // agent that is no longer shared, rather than failing midway.
+                let prepared = try await WorkspaceAgentRunClient.shared.prepare(ref)
+                let providerId = prepared.providerId
+                let resolved: RemoteProviderService? = await MainActor.run {
+                    RemoteProviderManager.shared.service(for: providerId)
+                }
+                guard let service = resolved else {
+                    throw WorkspaceAgentRunError.connectFailed("no provider service")
+                }
+                let model = prepared.effectiveModel ?? request.model
+                let stream = try await service.streamDeltas(
+                    messages: messages,
+                    parameters: parameters,
+                    requestedModel: prepared.effectiveModel,
+                    stopSequences: stopSequences
+                )
+                hop {
+                    writerBound.value.writeHeaders(ctx.value, extraHeaders: cors)
+                    writerBound.value.writeRole(
+                        "assistant",
+                        model: model,
+                        responseId: responseId,
+                        created: created,
+                        context: ctx.value
+                    )
+                }
+                headersSent = true
+                for try await delta in stream {
+                    hop {
+                        writerBound.value.writeContent(
+                            delta,
+                            model: model,
+                            responseId: responseId,
+                            created: created,
+                            context: ctx.value
+                        )
+                    }
+                }
+                hop {
+                    writerBound.value.writeFinish(
+                        model,
+                        responseId: responseId,
+                        created: created,
+                        context: ctx.value
+                    )
+                    writerBound.value.writeEnd(ctx.value)
+                    logSelf.logRequest(
+                        method: "POST",
+                        path: path,
+                        userAgent: logUserAgent,
+                        requestBody: nil,
+                        responseBody: "[stream]",
+                        responseStatus: 200,
+                        startTime: logStartTime
+                    )
+                }
+            } catch {
+                let message = await MainActor.run {
+                    WorkspaceAgentRunClient.message(for: error, agentName: displayName)
+                }
+                let needsHeaders = !headersSent
+                hop {
+                    // A refusal before the first chunk still owes the client a
+                    // response head; after it, the error chunk is all that is
+                    // left to say.
+                    if needsHeaders { writerBound.value.writeHeaders(ctx.value, extraHeaders: cors) }
+                    writerBound.value.writeError(message, context: ctx.value)
+                    writerBound.value.writeEnd(ctx.value)
+                    logSelf.logRequest(
+                        method: "POST",
+                        path: path,
+                        userAgent: logUserAgent,
+                        requestBody: nil,
+                        responseBody: message,
+                        responseStatus: 200,
+                        startTime: logStartTime
+                    )
+                }
+            }
+        }
+    }
+
+    private struct CreateAgentRequest: Decodable {
+        let name: String
+        let description: String?
+        let system_prompt: String?
+        let model: String?
+    }
+
+    /// POST /agents — create an agent from the phone
+    /// (docs/MOBILE_PROTOCOL.md §17). Owner-only: a new agent is a new
+    /// identity on this Mac. The reply is the agent in the `GET /agents/{id}`
+    /// shape so the client can open a chat with it straight away.
+    private func handleCreateAgentEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(
+                head: head,
+                context: context,
+                path: "/agents",
+                startTime: startTime,
+                userAgent: userAgent
+            )
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: "/agents", startTime: startTime, userAgent: userAgent) {
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        func reply(_ status: HTTPResponseStatus, _ body: String) {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
+            logRequest(
+                method: "POST",
+                path: "/agents",
+                userAgent: userAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: Int(status.code),
+                startTime: startTime
+            )
+        }
+
+        var data = Data()
+        if var body = stateRef.value.requestBodyBuffer {
+            data = Data(body.readBytes(length: body.readableBytes) ?? [])
+        }
+        guard let request = try? JSONDecoder().decode(CreateAgentRequest.self, from: data) else {
+            reply(.badRequest, #"{"error":"bad_request","message":"Expected {name, description?, system_prompt?, model?}"}"#)
+            return
+        }
+        let name = request.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            reply(.badRequest, #"{"error":"bad_request","message":"name must not be empty"}"#)
+            return
+        }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let description = request.description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let systemPrompt = request.system_prompt?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let model = request.model?.trimmingCharacters(in: .whitespacesAndNewlines)
+        runRequestTask(priority: .userInitiated) {
+            // Encoded, not interpolated: a name can hold any character, and a
+            // control one left raw made a 201 the phone could not decode.
+            let outcome: (status: HTTPResponseStatus, json: String) = await MainActor.run {
+                do {
+                    let agent = try AgentManager.shared.createFromPhone(
+                        name: String(name.prefix(80)),
+                        description: description,
+                        systemPrompt: systemPrompt,
+                        defaultModel: (model?.isEmpty ?? true) ? nil : model
+                    )
+                    return (.created, Self.jsonObjectString(["id": agent.id.uuidString, "name": agent.name]))
+                } catch {
+                    // Every agent needs a description the Orchestrator can route
+                    // by (`AgentDescriptionPolicy`: one line, 160 characters at
+                    // most); the policy's own message says which rule failed.
+                    return (
+                        .badRequest,
+                        Self.jsonObjectString([
+                            "error": "invalid_description", "message": error.localizedDescription,
+                        ])
+                    )
+                }
+            }
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: outcome.status,
+                    headers: headers,
+                    body: outcome.json
+                )
+                self.logRequest(
+                    method: "POST",
+                    path: "/agents",
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: outcome.json,
+                    responseStatus: Int(outcome.status.code),
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// One pending redaction review of `GET /privacy/reviews`.
+    private struct PrivacyReviewDTO: Encodable {
+        let id: String
+        let session_id: String
+        let items: [Item]
+
+        struct Item: Encodable {
+            let id: String
+            /// `person | email | phone | address | url | date | accountNumber | secret`
+            let category: String
+            /// The detected text, so the user can see exactly what would
+            /// otherwise reach the provider.
+            let original: String
+            /// What replaces it when redacted, e.g. `[PERSON_1]`.
+            let placeholder: String
+        }
+    }
+
+    private struct PrivacyReviewsResponse: Encodable {
+        let reviews: [PrivacyReviewDTO]
+    }
+
+    private struct PrivacyReviewDecisionRequest: Decodable {
+        /// `redact` sends the request with the listed items replaced by their
+        /// placeholders; `cancel` abandons the send.
+        let decision: String
+        /// Item ids to redact. Omitted means all of them.
+        let redact: [String]?
+    }
+
+    /// GET /privacy/reviews — redaction reviews this Mac is holding a send on
+    /// (docs/MOBILE_PROTOCOL.md §19.1). Owner-only: the payload is the PII
+    /// itself, and it travels only inside the Secure Channel to the user's own
+    /// phone.
+    private func handleListPrivacyReviewsEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(
+                head: head,
+                context: context,
+                path: "/privacy/reviews",
+                startTime: startTime,
+                userAgent: userAgent
+            )
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let reviews: [PrivacyReviewDTO] = await MainActor.run {
+                PrivacyReviewService.shared.remoteReviews.map { review in
+                    PrivacyReviewDTO(
+                        id: review.id.uuidString,
+                        session_id: review.sessionId,
+                        items: review.items.map {
+                            PrivacyReviewDTO.Item(
+                                id: $0.id.uuidString,
+                                category: $0.category,
+                                original: $0.original,
+                                placeholder: $0.placeholder
+                            )
+                        }
+                    )
+                }
+            }
+            let json =
+                (try? JSONEncoder.osaurusCanonical().encode(PrivacyReviewsResponse(reviews: reviews)))
+                .map { String(decoding: $0, as: UTF8.self) } ?? #"{"reviews":[]}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
+                self.logRequest(
+                    method: "GET",
+                    path: "/privacy/reviews",
+                    userAgent: userAgent,
+                    // Never log the detections themselves.
+                    requestBody: nil,
+                    responseBody: "{\"reviews\":[\(reviews.count)]}",
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// POST /privacy/reviews/{id} — answer one review (§19.2). Owner-only.
+    private func handleAnswerPrivacyReviewEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        func reply(_ status: HTTPResponseStatus, _ body: String) {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
+            logRequest(
+                method: "POST",
+                path: path,
+                userAgent: userAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: Int(status.code),
+                startTime: startTime
+            )
+        }
+
+        let components = path.split(separator: "/")
+        guard components.count == 3, let reviewId = UUID(uuidString: String(components[2])) else {
+            reply(.badRequest, #"{"error":"invalid_review_id"}"#)
+            return
+        }
+        var data = Data()
+        if var body = stateRef.value.requestBodyBuffer {
+            data = Data(body.readBytes(length: body.readableBytes) ?? [])
+        }
+        guard let request = try? JSONDecoder().decode(PrivacyReviewDecisionRequest.self, from: data),
+            request.decision == "redact" || request.decision == "cancel"
+        else {
+            reply(
+                .badRequest,
+                #"{"error":"bad_request","message":"Expected {decision: redact | cancel, redact?: [id]}"}"#
+            )
+            return
+        }
+        let cancels = request.decision == "cancel"
+        let redactIds = request.redact?.compactMap { UUID(uuidString: $0) }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let answered = await MainActor.run { () -> Bool in
+                let service = PrivacyReviewService.shared
+                if cancels { return service.cancelRemotely(id: reviewId) }
+                // No list means "redact everything", the safe default and
+                // what the Mac's sheet starts with.
+                guard let redactIds else {
+                    let all =
+                        service.remoteReviews.first { $0.id == reviewId }?.items.map(\.id) ?? []
+                    return service.resolveRemotely(id: reviewId, redactedIds: Set(all))
+                }
+                return service.resolveRemotely(id: reviewId, redactedIds: Set(redactIds))
+            }
+            let status: HTTPResponseStatus = answered ? .ok : .notFound
+            let json = answered ? #"{"ok":true}"# : #"{"error":"review_not_pending"}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: status,
+                    headers: headers,
+                    body: json
+                )
+                self.logRequest(
+                    method: "POST",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: json,
+                    responseStatus: Int(status.code),
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// GET /config/approvals — configuration plans a run from the paired
+    /// phone is waiting on (docs/MOBILE_PROTOCOL.md §16.3). Owner-only:
+    /// approving one reconfigures this Mac.
+    private func handleListConfigApprovalsEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(
+                head: head,
+                context: context,
+                path: "/config/approvals",
+                startTime: startTime,
+                userAgent: userAgent
+            )
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let data = await MainActor.run { ConfigApprovalQueue.shared.pairedPhoneListJSON() }
+            let json = String(decoding: data, as: UTF8.self)
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
+                self.logRequest(
+                    method: "GET",
+                    path: "/config/approvals",
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: json,
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    private struct ConfigApprovalDecisionRequest: Decodable {
+        let decision: String
+    }
+
+    /// POST /config/approvals/{id} — `{"decision":"apply" | "cancel"}` (§16.3).
+    /// Owner-only.
+    private func handleAnswerConfigApprovalEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        func reply(_ status: HTTPResponseStatus, _ body: String) {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
+            logRequest(
+                method: "POST",
+                path: path,
+                userAgent: userAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: Int(status.code),
+                startTime: startTime
+            )
+        }
+
+        let components = path.split(separator: "/")
+        guard components.count == 3, let approvalId = UUID(uuidString: String(components[2])) else {
+            reply(.badRequest, #"{"error":"invalid_approval_id"}"#)
+            return
+        }
+        var data = Data()
+        if var body = stateRef.value.requestBodyBuffer {
+            data = Data(body.readBytes(length: body.readableBytes) ?? [])
+        }
+        guard let request = try? JSONDecoder().decode(ConfigApprovalDecisionRequest.self, from: data),
+            request.decision == "apply" || request.decision == "cancel"
+        else {
+            reply(.badRequest, #"{"error":"bad_request","message":"Expected {decision: apply | cancel}"}"#)
+            return
+        }
+        let apply = request.decision == "apply"
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let answered = await MainActor.run {
+                ConfigApprovalQueue.shared.resolveFromPairedPhone(id: approvalId, apply: apply)
+            }
+            let status: HTTPResponseStatus = answered ? .ok : .notFound
+            let json = answered ? #"{"ok":true}"# : #"{"error":"approval_not_pending"}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: status, headers: headers, body: json)
+                self.logRequest(
+                    method: "POST",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: json,
+                    responseStatus: Int(status.code),
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// GET /workflows/pending-dialogs — workflow dialog nodes waiting on the
+    /// user, so a relay client can answer them. Owner-only: answers feed
+    /// workflows that act on this Mac. Unlike other reads this carries
+    /// form content (titles, messages, prefilled values), so the secure
+    /// channel is required for remote callers even though it is a GET.
+    private func handleListWorkflowDialogsEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let path = "/workflows/pending-dialogs"
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if sendSecureChannelUpgradeRequiredIfNeeded(
+            head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+        {
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let data = await MainActor.run { DialogCoordinator.shared.remoteListJSON() }
+            let json = String(decoding: data, as: UTF8.self)
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
+                self.logRequest(
+                    method: "GET",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: json,
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// `/agents/{id}/workflows/{workflowId}/run` (POST),
+    /// `/agents/{id}/workflows/runs/{ticket}` (GET) and
+    /// `/agents/{id}/workflows/runs/{ticket}/cancel` (POST).
+    struct HostedWorkflowRoute: Equatable {
+        enum Action: Equatable {
+            case run(workflowID: UUID)
+            case status(ticket: UUID)
+            case cancel(ticket: UUID)
+        }
+
+        let agent: String
+        let action: Action
+
+        var method: HTTPMethod {
+            if case .status = action { return .GET }
+            return .POST
+        }
+
+        init?(_ components: [String]) {
+            guard components.count >= 5, components[0] == "agents", components[2] == "workflows" else { return nil }
+            agent = components[1]
+            if components.count == 5, components[4] == "run", let id = UUID(uuidString: components[3]) {
+                action = .run(workflowID: id)
+            } else if components.count == 5, components[3] == "runs", let ticket = UUID(uuidString: components[4]) {
+                action = .status(ticket: ticket)
+            } else if components.count == 6, components[3] == "runs", components[5] == "cancel",
+                let ticket = UUID(uuidString: components[4])
+            {
+                action = .cancel(ticket: ticket)
+            } else {
+                return nil
+            }
+        }
+    }
+
+    static func isHostedWorkflowPath(_ path: String) -> Bool {
+        HostedWorkflowRoute(path.split(separator: "/").map(String.init)) != nil
+    }
+
+    private struct HostedWorkflowRunRequest: Decodable {
+        let input: JSONValue?
+    }
+
+    /// A teammate (or invite-link guest) runs one of the workflows a
+    /// shared agent offers them (`HostedWorkflowHost`). Authenticated
+    /// remote callers only, over the Secure Channel; the owner runs their
+    /// workflows locally.
+    private func handleHostedWorkflowEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        if sendSecureChannelUpgradeRequiredIfNeeded(
+            head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+        {
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let requestBody: String? = stateRef.value.requestBodyBuffer.map { buffer in
+            var copy = buffer
+            return copy.readString(length: copy.readableBytes) ?? ""
+        }
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let method = head.method.rawValue
+        let reply: (HTTPResponseStatus, String) -> Void = { status, body in
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: status, headers: headers, body: body)
+                self.logRequest(
+                    method: method, path: path, userAgent: userAgent, requestBody: requestBody, responseBody: body,
+                    responseStatus: Int(status.code), startTime: startTime)
+            }
+        }
+        guard let route = HostedWorkflowRoute(path.split(separator: "/").map(String.init)),
+            route.method == head.method
+        else {
+            reply(.badRequest, #"{"error":"invalid_path","message":"Expected /agents/{id}/workflows/{workflowId}/run"}"#)
+            return
+        }
+        guard !callerOwnsThisMac(context) else {
+            reply(
+                .forbidden,
+                #"{"error":"owner_runs_locally","message":"Run your own workflows from Workflows on this Mac."}"#)
+            return
+        }
+        let agentId = UUID(uuidString: route.agent) ?? AgentIdentityRegistry.shared.agentId(forAddress: route.agent)
+        guard let agentId else {
+            reply(.badRequest, #"{"error":"invalid_agent_id","message":"Invalid agent UUID in path"}"#)
+            return
+        }
+        if let rejection = agentScopeRejection(forAgentId: agentId) {
+            reply(.forbidden, #"{"error":"\#(rejection.code)","message":"\#(rejection.message)"}"#)
+            return
+        }
+        guard let nonce = inboundConnectionInfo()?.accessKeyId else {
+            reply(.unauthorized, #"{"error":"unauthorized","message":"An access key is required."}"#)
+            return
+        }
+        let audience = inboundConnectionInfo()?.audience
+        runRequestTask(priority: .userInitiated) {
+            guard let caller = await HostedWorkflowHost.caller(keyNonce: nonce, audience: audience) else {
+                reply(
+                    .forbidden,
+                    #"{"error":"workspace_access","message":"Workspace access could not be verified."}"#)
+                return
+            }
+            switch route.action {
+            case .run(let workflowID):
+                let body = requestBody.flatMap { $0.isEmpty ? nil : $0 } ?? "{}"
+                guard let decoded = try? JSONDecoder().decode(HostedWorkflowRunRequest.self, from: Data(body.utf8))
+                else {
+                    reply(.badRequest, #"{"error":"invalid_input","message":"Expected {\"input\": {...}}"}"#)
+                    return
+                }
+                let input = decoded.input ?? .object([:])
+                let began = await MainActor.run {
+                    HostedWorkflowHost.begin(agentId: agentId, workflowID: workflowID, input: input, caller: caller)
+                }
+                switch began {
+                case .failure(let refusal):
+                    reply(HTTPResponseStatus(statusCode: refusal.status), refusal.json)
+                case .success(let ticket):
+                    let status = HostedWorkflowStatus(ticket: ticket, phase: .awaitingOwner)
+                    reply(.accepted, Self.encodeHostedStatus(status))
+                }
+            case .status(let ticket):
+                let status = await MainActor.run {
+                    HostedWorkflowRuns.shared.status(ticket, agentId: agentId, callerKey: caller.key)
+                }
+                if let status {
+                    reply(.ok, Self.encodeHostedStatus(status))
+                } else {
+                    reply(.notFound, #"{"error":"run_not_found","message":"No such run for you."}"#)
+                }
+            case .cancel(let ticket):
+                let cancelled = await MainActor.run {
+                    HostedWorkflowRuns.shared.cancel(ticket, agentId: agentId, callerKey: caller.key)
+                }
+                if cancelled {
+                    reply(.ok, #"{"ok":true}"#)
+                } else {
+                    reply(.notFound, #"{"error":"run_not_found","message":"No such run for you."}"#)
+                }
+            }
+        }
+    }
+
+    static func encodeHostedStatus(_ status: HostedWorkflowStatus) -> String {
+        (try? JSONEncoder.osaurusCanonical().encode(status)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+    }
+
+    /// GET /workflows/runs/{runId} — the state of one workflow run in the
+    /// shape a `run_workflow` tool call returns (status, output, error),
+    /// plus the form it is waiting on. This is how a headless caller whose
+    /// call returned `awaiting_user` collects the result once the form is
+    /// answered. Owner-only and secure channel: it carries run output.
+    private func handleWorkflowRunStatusEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if sendSecureChannelUpgradeRequiredIfNeeded(
+            head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+        {
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        func reply(_ status: HTTPResponseStatus, _ body: String) {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
+            logRequest(
+                method: "GET", path: path, userAgent: userAgent, requestBody: nil, responseBody: body,
+                responseStatus: Int(status.code), startTime: startTime)
+        }
+        let components = path.split(separator: "/").map(String.init)
+        guard components.count == 3, components[0] == "workflows", components[1] == "runs",
+            let runID = UUID(uuidString: components[2])
+        else {
+            reply(.badRequest, #"{"error":"invalid_path","message":"Expected /workflows/runs/{runId}"}"#)
+            return
+        }
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let data = await MainActor.run { DialogCoordinator.shared.remoteRunJSON(runID: runID) }
+            let status: HTTPResponseStatus = data == nil ? .notFound : .ok
+            let json = data.map { String(decoding: $0, as: UTF8.self) } ?? #"{"error":"run_not_found"}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: status, headers: headers, body: json)
+                self.logRequest(
+                    method: "GET", path: path, userAgent: userAgent, requestBody: nil, responseBody: json,
+                    responseStatus: Int(status.code), startTime: startTime)
+            }
+        }
+    }
+
+    private struct WorkflowDialogAnswerRequest: Decodable {
+        let values: [String: JSONValue]?
+        let dismiss: Bool?
+    }
+
+    /// POST /workflows/runs/{runId}/dialogs/{nodeId} — `{"values": {...}}` to
+    /// answer, `{"dismiss": true}` to dismiss. Owner-only.
+    private func handleAnswerWorkflowDialogEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        func reply(_ status: HTTPResponseStatus, _ body: String) {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
+            logRequest(
+                method: "POST",
+                path: path,
+                userAgent: userAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: Int(status.code),
+                startTime: startTime
+            )
+        }
+
+        let components = path.split(separator: "/").map(String.init)
+        guard components.count == 5, components[0] == "workflows", components[1] == "runs",
+            components[3] == "dialogs", let runID = UUID(uuidString: components[2]), !components[4].isEmpty
+        else {
+            reply(.badRequest, #"{"error":"invalid_path","message":"Expected /workflows/runs/{runId}/dialogs/{nodeId}"}"#)
+            return
+        }
+        let nodeID = components[4].removingPercentEncoding ?? components[4]
+        var data = Data()
+        if var body = stateRef.value.requestBodyBuffer {
+            data = Data(body.readBytes(length: body.readableBytes) ?? [])
+        }
+        guard let request = try? JSONDecoder().decode(WorkflowDialogAnswerRequest.self, from: data),
+            request.values != nil || request.dismiss == true
+        else {
+            reply(.badRequest, #"{"error":"bad_request","message":"Expected {values: {...}} or {dismiss: true}"}"#)
+            return
+        }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let result = await MainActor.run {
+                DialogCoordinator.shared.answerFromRemote(
+                    runID: runID, nodeID: nodeID, values: request.values, dismiss: request.dismiss == true)
+            }
+            let status: HTTPResponseStatus
+            let json: String
+            switch result {
+            case .success:
+                status = .ok
+                json = #"{"ok":true}"#
+            case .failure(.notFound):
+                status = .notFound
+                json = #"{"error":"dialog_not_pending"}"#
+            case .failure(.notCurrent):
+                status = .conflict
+                json = #"{"error":"dialog_queued","message":"Another dialog from this workflow is waiting first."}"#
+            case .failure(.invalid(let issues)):
+                status = .unprocessableEntity
+                json = JSONValue.object([
+                    "error": .string("invalid_answer"),
+                    "issues": .array(issues.map(JSONValue.string)),
+                ]).compactJSONString
+            }
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: status, headers: headers, body: json)
+                self.logRequest(
+                    method: "POST",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: json,
+                    responseStatus: Int(status.code),
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// The 6-digit phone pairing routes. Once an iPhone has joined Sync
+    /// (`MobileConnectMigration.isRetired`), an older iPhone app that still
+    /// calls them is told to update instead of getting a bare 404.
+    static let retiredPhonePairingPaths: Set<String> = ["/pair/hello", "/pair/code", "/pair/confirm", "/pair/unpair"]
+    static let retiredPhonePairingBody =
+        #"{"error":"update_required","message":"Update Osaurus for iPhone, then add your iPhone in Sharing → Devices on your Mac."}"#
+
+    private func sendJSONBody(
+        _ status: HTTPResponseStatus,
+        _ body: String,
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?,
+        loggedBody: String? = nil
+    ) {
+        var headers = [("Content-Type", "application/json; charset=utf-8")]
+        headers.append(contentsOf: stateRef.value.corsHeaders)
+        sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
+        logRequest(
+            method: head.method.rawValue,
+            path: path,
+            userAgent: userAgent,
+            requestBody: nil,
+            responseBody: loggedBody ?? body,
+            responseStatus: Int(status.code),
+            startTime: startTime
+        )
+    }
+
+    /// GET /conversations/{session_id}/events?after=N — messages the agent's
+    /// owner posted into a caller's hosted conversation after sequence N
+    /// (docs/MOBILE_PROTOCOL.md §21.4). Scoped to the caller's own access
+    /// key; the owner has no mailbox and gets an empty list.
+    private func handleConversationEventsEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard let scope = detachedRunScope(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let components = path.split(separator: "/")
+        guard components.count == 3, components[2] == "events", !components[1].isEmpty else {
+            sendJSONBody(
+                .notFound, #"{"error":"conversation_not_found"}"#, head: head, context: context, path: path,
+                startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let sessionId = String(components[1]).removingPercentEncoding ?? String(components[1])
+        let after = Self.queryItems(from: head.uri)["after"].flatMap { Int($0) } ?? 0
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            var callerKey: String?
+            if let nonce = scope.keyNonce {
+                let record = await WorkspaceAgentAccessHost.shared.workspaceKeyRecord(forKeyNonce: nonce)
+                callerKey = record?.wallet ?? nonce
+            }
+            let (json, count): (String, Int) = await MainActor.run { [callerKey] in
+                let collection =
+                    callerKey.map {
+                        ConversationMailbox.shared.collect(callerKey: $0, sessionId: sessionId, after: after)
+                    } ?? ConversationMailbox.Collection(messages: [], reset: false, lastSeq: 0)
+                let messages = collection.messages
+                struct Payload: Encodable {
+                    let messages: [ParticipantMessage.Wire]
+                    let next: Int
+                    /// The cursor was ahead of this Mac's log: start again
+                    /// from `next`.
+                    let reset: Bool?
+                }
+                let next = collection.reset ? collection.lastSeq : (messages.last?.seq ?? max(0, after))
+                let payload = Payload(
+                    messages: messages.map(\.wire), next: next, reset: collection.reset ? true : nil)
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.sortedKeys]
+                let json =
+                    (try? encoder.encode(payload)).map { String(decoding: $0, as: UTF8.self) }
+                    ?? #"{"messages":[],"next":0}"#
+                return (json, messages.count)
+            }
+            hop {
+                self.sendJSONBody(
+                    .ok, json, head: head, context: ctx.value, path: path, startTime: startTime,
+                    userAgent: userAgent, loggedBody: "{\"messages\":[\(count)]}")
+            }
+        }
+    }
+
+    /// GET /computer-use/prompts and GET /secrets/prompts — the confirm,
+    /// cloud-vision consent and secret cards a run from the paired phone is
+    /// waiting on (docs/MOBILE_PROTOCOL.md §16.4, §16.5). Owner-only.
+    private func handleListPhonePromptsEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let isSecrets = path == "/secrets/prompts"
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let data = await MainActor.run {
+                isSecrets
+                    ? RemoteSecretPromptQueue.shared.listJSON()
+                    : ComputerUsePromptQueue.shared.pairedPhoneListJSON()
+            }
+            let json = String(decoding: data, as: UTF8.self)
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
+                self.logRequest(
+                    method: "GET",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: json,
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    private struct PhonePromptAnswerRequest: Decodable {
+        /// Computer use: `approve | deny | approve_rest`; cloud-vision consent:
+        /// `allow_once | allow_always | deny`; secrets: `cancel` or absent.
+        let decision: String?
+        /// Secrets only: the value to store.
+        let value: String?
+    }
+
+    /// POST /computer-use/prompts/{id} and POST /secrets/prompts/{id} (§16.4,
+    /// §16.5). Owner-only. The request body is never logged: for a secret it
+    /// is the secret.
+    private func handleAnswerPhonePromptEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        func reply(_ status: HTTPResponseStatus, _ body: String) {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
+            logRequest(
+                method: "POST",
+                path: path,
+                userAgent: userAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: Int(status.code),
+                startTime: startTime
+            )
+        }
+
+        let components = path.split(separator: "/")
+        guard components.count == 3, let promptId = UUID(uuidString: String(components[2])) else {
+            reply(.badRequest, #"{"error":"invalid_prompt_id"}"#)
+            return
+        }
+        let isSecrets = components[0] == "secrets"
+        var data = Data()
+        if var body = stateRef.value.requestBodyBuffer {
+            data = Data(body.readBytes(length: body.readableBytes) ?? [])
+        }
+        guard let request = try? JSONDecoder().decode(PhonePromptAnswerRequest.self, from: data) else {
+            reply(.badRequest, #"{"error":"bad_request"}"#)
+            return
+        }
+        // A secret is stored only when one is sent and the phone did not
+        // cancel; anything else cancels the prompt.
+        let secretValue: String? =
+            request.decision == "cancel" ? nil : request.value.flatMap { $0.isEmpty ? nil : $0 }
+        if !isSecrets && request.decision == nil {
+            reply(.badRequest, #"{"error":"bad_request","message":"Expected {decision}"}"#)
+            return
+        }
+        let decision = request.decision ?? ""
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let outcome: ComputerUsePromptQueue.PairedPhoneAnswer = await MainActor.run {
+                if isSecrets {
+                    return RemoteSecretPromptQueue.shared.resolve(id: promptId, value: secretValue)
+                        ? .answered : .notPending
+                }
+                return ComputerUsePromptQueue.shared.resolveFromPairedPhone(id: promptId, decision: decision)
+            }
+            // A decision that doesn't fit the card is the phone's mistake, not
+            // a gone card: 400 keeps it from dropping a card still waiting.
+            let status: HTTPResponseStatus
+            let json: String
+            switch outcome {
+            case .answered:
+                status = .ok
+                json = #"{"ok":true}"#
+            case .notPending:
+                status = .notFound
+                json = #"{"error":"prompt_not_pending"}"#
+            case .invalidDecision:
+                status = .badRequest
+                json = #"{"error":"invalid_decision"}"#
+            }
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: status, headers: headers, body: json)
+                self.logRequest(
+                    method: "POST",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: json,
+                    responseStatus: Int(status.code),
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// One pending approval card of `GET /approvals`.
+    private struct ApprovalDTO: Encodable {
+        let id: String
+        let tool: String
+        let description: String
+        /// The call's arguments, as the Mac's own card shows them.
+        let arguments: String
+        /// `sandboxVM | nativeHost | remoteServer`, or null when the card is
+        /// not about running a tool somewhere.
+        let surface: String?
+        /// Whether `allow_for_run` is one of the answers.
+        let offers_run_lease: Bool
+        /// True for the card on screen; the rest are queued behind it.
+        let presented: Bool
+    }
+
+    private struct ApprovalsResponse: Encodable {
+        let approvals: [ApprovalDTO]
+    }
+
+    private struct ApprovalDecisionRequest: Decodable {
+        let decision: String
+    }
+
+    /// GET /approvals — the cards this Mac is waiting on
+    /// (docs/MOBILE_PROTOCOL.md §16.1). Owner-only: answering a card is
+    /// consent to run something on this Mac.
+    private func handleListApprovalsEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(
+                head: head,
+                context: context,
+                path: "/approvals",
+                startTime: startTime,
+                userAgent: userAgent
+            )
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let approvals: [ApprovalDTO] = await MainActor.run {
+                ToolPermissionPromptService.remotePrompts.map { prompt in
+                    ApprovalDTO(
+                        id: prompt.id.uuidString,
+                        tool: prompt.toolName,
+                        description: prompt.description,
+                        arguments: prompt.argumentsJSON,
+                        surface: prompt.surface,
+                        offers_run_lease: prompt.offersRunLease,
+                        presented: prompt.isPresented
+                    )
+                }
+            }
+            let json =
+                (try? JSONEncoder.osaurusCanonical().encode(ApprovalsResponse(approvals: approvals)))
+                .map { String(decoding: $0, as: UTF8.self) } ?? #"{"approvals":[]}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
+                self.logRequest(
+                    method: "GET",
+                    path: "/approvals",
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: "{\"approvals\":[\(approvals.count)]}",
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// POST /approvals/{id} — answer one card (§16.2). Owner-only.
+    private func handleAnswerApprovalEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        func reply(_ status: HTTPResponseStatus, _ body: String) {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
+            logRequest(
+                method: "POST",
+                path: path,
+                userAgent: userAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: Int(status.code),
+                startTime: startTime
+            )
+        }
+
+        let components = path.split(separator: "/")
+        guard components.count == 2, let promptId = UUID(uuidString: String(components[1])) else {
+            reply(.badRequest, #"{"error":"invalid_approval_id"}"#)
+            return
+        }
+        var data = Data()
+        if var body = stateRef.value.requestBodyBuffer {
+            data = Data(body.readBytes(length: body.readableBytes) ?? [])
+        }
+        guard let request = try? JSONDecoder().decode(ApprovalDecisionRequest.self, from: data),
+            let outcome = Self.promptResolution(for: request.decision)
+        else {
+            reply(
+                .badRequest,
+                #"{"error":"bad_request","message":"Expected {decision: deny | allow_once | allow_for_run | always_allow}"}"#
+            )
+            return
+        }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let answered = await MainActor.run {
+                ToolPermissionPromptService.resolveRemotely(id: promptId, outcome: outcome)
+            }
+            // A card that is gone was already answered on the Mac, or its run
+            // ended — say so rather than pretending the decision landed.
+            let status: HTTPResponseStatus = answered ? .ok : .notFound
+            let json = answered ? #"{"ok":true}"# : #"{"error":"approval_not_pending"}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: status,
+                    headers: headers,
+                    body: json
+                )
+                self.logRequest(
+                    method: "POST",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: json,
+                    responseStatus: Int(status.code),
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// The §16.2 decision vocabulary. Nil for anything else.
+    static func promptResolution(
+        for decision: String
+    ) -> ToolPermissionPromptService.PromptResolution? {
+        switch decision {
+        case "deny": return .denied
+        case "allow_once": return .allowOnce
+        case "allow_for_run": return .allowForRun
+        case "always_allow": return .alwaysAllow
+        default: return nil
+        }
+    }
+
+    /// One shared agent of `GET /workspaces/agents`.
+    struct WorkspaceAgentDTO: Encodable {
+        /// Lowercased agent address — the id everything workspace-side uses.
+        let address: String
+        let name: String
+        let description: String?
+        /// The teammate sharing it, in the Mac's friendly form.
+        let owner: String?
+        /// `online | offline | unknown` — never render `unknown` as offline,
+        /// it means the relay could not be reached.
+        let presence: String
+        let last_seen: String?
+        /// True when this Mac hosts the agent: run it locally instead.
+        let hosted_here: Bool
+    }
+
+    private struct WorkspaceRosterDTO: Encodable {
+        let id: String
+        let name: String
+        let agents: [WorkspaceAgentDTO]
+    }
+
+    private struct WorkspaceRostersResponse: Encodable {
+        let workspaces: [WorkspaceRosterDTO]
+    }
+
+    /// GET /workspaces/agents — the teammates' agents shared into the
+    /// workspaces this Mac has joined (docs/MOBILE_PROTOCOL.md §15).
+    /// Owner-only: workspace membership is the user's, not an agent's.
+    private func handleWorkspaceAgentsEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(
+                head: head,
+                context: context,
+                path: "/workspaces/agents",
+                startTime: startTime,
+                userAgent: userAgent
+            )
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let workspaces: [WorkspaceRosterDTO] = await MainActor.run {
+                let store = WorkspaceRosterStore.shared
+                return store.rosters.map { roster in
+                    WorkspaceRosterDTO(
+                        id: roster.workspace.id,
+                        name: roster.workspace.name,
+                        agents: roster.agents.map { agent in
+                            let presence: String
+                            switch WorkspaceRosterStore.presence(for: agent) {
+                            case .online: presence = "online"
+                            case .offline: presence = "offline"
+                            case .unknown: presence = "unknown"
+                            }
+                            return WorkspaceAgentDTO(
+                                address: agent.agentAddress.lowercased(),
+                                name: agent.displayName ?? String(agent.agentAddress.prefix(10)),
+                                description: agent.description,
+                                owner: agent.owner?.friendlyName,
+                                presence: presence,
+                                last_seen: agent.lastSeen,
+                                hosted_here: store.isHostedHere(address: agent.agentAddress)
+                            )
+                        }
+                    )
+                }
+            }
+            let json =
+                (try? JSONEncoder.osaurusCanonical().encode(WorkspaceRostersResponse(workspaces: workspaces)))
+                .map { String(decoding: $0, as: UTF8.self) } ?? #"{"workspaces":[]}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
+                self.logRequest(
+                    method: "GET",
+                    path: "/workspaces/agents",
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: "{\"workspaces\":[\(workspaces.count)]}",
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    private struct ProjectDTO: Encodable {
+        let id: String
+        let name: String
+    }
+
+    private struct ProjectsResponse: Encodable {
+        let projects: [ProjectDTO]
+        /// Installed plugins, for the history's plugin filter.
+        let plugins: [ProjectDTO]
+        /// Joined router workspaces, for the history's workspace filter.
+        let workspaces: [ProjectDTO]
+    }
+
+    /// GET /projects — the user's chat projects, for the history filter
+    /// (docs/MOBILE_PROTOCOL.md §14.6). Owner-only.
+    private func handleListProjectsEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: "/projects", startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let filters = await MainActor.run { SyncManageFeed.historyFilters() }
+            func dto(_ filter: SyncDeviceFeedContract.HistoryFilter) -> ProjectDTO {
+                ProjectDTO(id: filter.id, name: filter.name)
+            }
+            let projects = filters.projects.map(dto)
+            let plugins = filters.plugins.map(dto)
+            let workspaces = filters.workspaces.map(dto)
+            let json =
+                (try? JSONEncoder.osaurusCanonical().encode(ProjectsResponse(projects: projects, plugins: plugins, workspaces: workspaces)))
+                .map { String(decoding: $0, as: UTF8.self) } ?? #"{"projects":[]}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
+                self.logRequest(
+                    method: "GET",
+                    path: "/projects",
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: json,
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    // MARK: - Chat sessions (Osaurus Connect)
+
+    /// One row of `GET /sessions`: everything the phone's history list needs
+    /// without loading turns.
+    struct SessionSummaryDTO: Encodable {
+        let id: String
+        let title: String
+        let created_at: String
+        let updated_at: String
+        let agent_id: String?
+        let selected_model: String?
+        let source: String
+        let archived: Bool
+        let pinned: Bool
+        /// `mac` for the user's own chats, `ios` for ones this phone started,
+        /// otherwise the source (api, channel, …) — drives the row icon.
+        let origin: String
+        /// `vision | voice | code | search` badges the Mac shows.
+        let capabilities: [String]
+        /// Project this chat belongs to, when any.
+        let project_id: String?
+        /// Plugin that started this chat (`source == "plugin"`).
+        let plugin_id: String?
+        /// Router workspace this chat was served for, when any.
+        let workspace_id: String?
+    }
+
+    private struct SessionsResponse: Encodable {
+        let sessions: [SessionSummaryDTO]
+    }
+
+    /// One turn of `GET /sessions/{id}`, shaped like the Mac's own chat
+    /// blocks so a client renders it identically.
+    struct SessionTurnDTO: Encodable {
+        struct ToolCallDTO: Encodable {
+            let call_id: String
+            let name: String
+            let arguments: String?
+            let result: String?
+            let duration_ms: Int?
+        }
+        let id: String
+        let role: String
+        let content: String
+        let thinking: String?
+        let thinking_duration_ms: Int?
+        /// A document attached to a user turn: what the model was given,
+        /// so a client can show and open it.
+        struct AttachmentDTO: Encodable {
+            let filename: String
+            let file_size: Int
+            let content: String
+        }
+        /// An image attached to a turn. Listed, not inlined: a few camera
+        /// photos would make the whole chat megabytes to open. The bytes are
+        /// at `GET /sessions/{id}/turns/{turn id}/images/{index}`.
+        struct ImageDTO: Encodable {
+            let index: Int
+            let byte_count: Int
+        }
+        let tool_calls: [ToolCallDTO]?
+        let attachment_count: Int
+        let attachments: [AttachmentDTO]?
+        let images: [ImageDTO]?
+        let created_at: String?
+        let completed_at: String?
+        /// The footer's "Worked for" span, to the millisecond: the keypress
+        /// that opened the run (a run's first assistant turn only) and the
+        /// moment the run ended (`completedAt ?? lastOutputAt`).
+        let requested_at: String?
+        let ended_at: String?
+        let token_count: Int?
+    }
+
+    struct SessionDetailDTO: Encodable {
+        let id: String
+        let title: String
+        let created_at: String
+        let updated_at: String
+        let agent_id: String?
+        let selected_model: String?
+        let source: String
+        let archived: Bool
+        let pinned: Bool
+        let turns: [SessionTurnDTO]
+    }
+
+    private struct SessionPatchRequest: Decodable {
+        let title: String?
+        let archived: Bool?
+        let pinned: Bool?
+    }
+
+    private struct SessionTruncateRequest: Decodable {
+        let from_turn_id: String
+    }
+
+    /// Formatting-only use of a shared formatter: `ISO8601DateFormatter` is
+    /// documented as thread-safe for formatting, and this one is never
+    /// reconfigured after creation.
+    nonisolated(unsafe) private static let sessionDateFormatter = ISO8601DateFormatter()
+    nonisolated(unsafe) private static let sessionPreciseDateFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    /// GET /sessions[?agent_id=&limit=&archived=] — the Mac's chat history
+    /// (docs/MOBILE_PROTOCOL.md §14). Owner-only: these are the user's chats.
+    private func handleListSessionsEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: "/sessions", startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let query = Self.queryItems(from: head.uri)
+        let agentFilter = query["agent_id"].flatMap { UUID(uuidString: $0) }
+        // Archived only, a lens as on the Mac (§14.1); without it, none.
+        let archivedOnly = query["archived"] == "true"
+        let pinnedOnly = query["pinned"] == "true"
+        // `mac`, `ios`, or a SessionSource raw value (http, channel, …).
+        let originFilter = query["origin"].flatMap { $0.isEmpty ? nil : $0 }
+        let projectFilter = query["project_id"].flatMap { UUID(uuidString: $0) }
+        let pluginFilter = query["plugin_id"].flatMap { $0.isEmpty ? nil : $0 }
+        let workspaceFilter = query["workspace_id"].flatMap { $0.isEmpty ? nil : $0 }
+        let search = (query["q"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        // Multi-select AND, as on the Mac: a chat must have every capability asked for.
+        let requiredCapabilities: Set<SessionCapability> = Set(
+            (query["capabilities"] ?? "")
+                .split(separator: ",")
+                .compactMap { SessionCapability(rawValue: String($0)) }
+        )
+        let limit = query["limit"].flatMap(Int.init).map { max(1, min($0, 500)) } ?? 200
+
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let sessions = await MainActor.run { ChatSessionStore.loadAll() }
+            // Like the Mac's history search: title match, or the message
+            // bodies contain the query (a DB scan off the main actor).
+            let contentMatches: Set<UUID> =
+                search.isEmpty ? [] : await ChatSessionStore.sessionIds(withContentContaining: search)
+            let phoneSessions: Set<UUID> = await MainActor.run {
+                Set(sessions.filter { RemoteSessionContinuation.isFromPairedPhone($0) }.map(\.id))
+            }
+            // One predicate rather than a chain of `.filter`s: the chain grew
+            // long enough that the type checker gave up on it.
+            func matches(_ session: ChatSessionData) -> Bool {
+                if session.archived != archivedOnly { return false }
+                if pinnedOnly && !session.pinned { return false }
+                if let agentFilter, session.agentId != agentFilter { return false }
+                if let originFilter {
+                    let origin: String =
+                        phoneSessions.contains(session.id)
+                        ? "ios" : (session.source == .chat ? "mac" : session.runtimeSource.rawValue)
+                    if origin != originFilter { return false }
+                }
+                if !requiredCapabilities.isSubset(of: session.capabilities) { return false }
+                if let projectFilter, session.projectId != projectFilter { return false }
+                if let pluginFilter {
+                    if session.source != .plugin || session.sourcePluginId != pluginFilter { return false }
+                }
+                if let workspaceFilter, session.workspace?.workspaceId != workspaceFilter { return false }
+                if !search.isEmpty {
+                    if !session.title.lowercased().contains(search)
+                        && !contentMatches.contains(session.id)
+                    {
+                        return false
+                    }
+                }
+                return true
+            }
+            let rows: [SessionSummaryDTO] =
+                sessions
+                .lazy
+                .filter(matches)
+                .prefix(limit)
+                .map { Self.summary(for: $0, fromPhone: phoneSessions.contains($0.id)) }
+            let json =
+                (try? JSONEncoder.osaurusCanonical().encode(SessionsResponse(sessions: rows)))
+                .map { String(decoding: $0, as: UTF8.self) } ?? #"{"sessions":[]}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
+                self.logRequest(
+                    method: "GET",
+                    path: "/sessions",
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: "{\"sessions\":[\(rows.count) rows]}",
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// POST /sessions/{id}/truncate: drops a turn and everything after it,
+    /// so a paired phone can retry a reply in a Mac chat
+    /// (docs/MOBILE_PROTOCOL.md §14.8).
+    private func handleSessionTruncateEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let components = path.split(separator: "/")
+        guard components.count == 3, let sessionId = UUID(uuidString: String(components[1])) else {
+            sendTruncateResponse(
+                context: context,
+                head: head,
+                cors: cors,
+                status: .badRequest,
+                json: #"{"error":"invalid_session_id"}"#,
+                path: path,
+                userAgent: userAgent,
+                startTime: startTime
+            )
+            return
+        }
+        var body = Data()
+        if var buffer = stateRef.value.requestBodyBuffer {
+            body = Data(buffer.readBytes(length: buffer.readableBytes) ?? [])
+        }
+        guard let request = try? JSONDecoder().decode(SessionTruncateRequest.self, from: body),
+            let turnId = UUID(uuidString: request.from_turn_id)
+        else {
+            sendTruncateResponse(
+                context: context,
+                head: head,
+                cors: cors,
+                status: .badRequest,
+                json: #"{"error":"bad_request","message":"Expected {from_turn_id}"}"#,
+                path: path,
+                userAgent: userAgent,
+                startTime: startTime
+            )
+            return
+        }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let outcome = await MainActor.run {
+                RemoteSessionContinuation.truncate(sessionId, fromTurnId: turnId)
+            }
+            let status: HTTPResponseStatus
+            let json: String
+            switch outcome {
+            case .removed(let count):
+                status = .ok
+                json = #"{"ok":true,"removed":\#(count)}"#
+            case .sessionNotFound:
+                status = .notFound
+                json = #"{"error":"session_not_found"}"#
+            case .turnNotFound:
+                status = .notFound
+                json = #"{"error":"turn_not_found"}"#
+            case .busy:
+                status = .conflict
+                json = #"{"error":"session_busy"}"#
+            }
+            hop {
+                self.sendTruncateResponse(
+                    context: ctx.value,
+                    head: head,
+                    cors: cors,
+                    status: status,
+                    json: json,
+                    path: path,
+                    userAgent: userAgent,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// GET /sessions/{id}/context?agent_id=…&model=… — the composer's context
+    /// ring for a phone chat (MOBILE_PROTOCOL §14.13). A session the Mac has
+    /// no history for yet is priced as empty: the prompt, tools and memory.
+    private func handleSessionContextEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let components = path.split(separator: "/")
+        let query = Self.queryItems(from: head.uri)
+        guard components.count == 3, let sessionId = UUID(uuidString: String(components[1])),
+            let agentId = query["agent_id"].flatMap({ UUID(uuidString: $0) })
+        else {
+            sendSessionContextResponse(
+                context: context,
+                head: head,
+                cors: cors,
+                status: .badRequest,
+                json: #"{"error":"bad_request","message":"Expected /sessions/{id}/context?agent_id="}"#,
+                path: path,
+                userAgent: userAgent,
+                startTime: startTime
+            )
+            return
+        }
+        let model = query["model"].flatMap { $0.isEmpty ? nil : $0 }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let usage = await PhoneContextUsage.compute(sessionId: sessionId, agentId: agentId, model: model)
+            let json =
+                (try? JSONEncoder().encode(usage)).map { String(decoding: $0, as: UTF8.self) }
+                ?? #"{"error":"encoding_failed"}"#
+            hop {
+                self.sendSessionContextResponse(
+                    context: ctx.value,
+                    head: head,
+                    cors: cors,
+                    status: .ok,
+                    json: json,
+                    path: path,
+                    userAgent: userAgent,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    private func sendSessionContextResponse(
+        context: ChannelHandlerContext,
+        head: HTTPRequestHead,
+        cors: [(String, String)],
+        status: HTTPResponseStatus,
+        json: String,
+        path: String,
+        userAgent: String?,
+        startTime: Date
+    ) {
+        var headers = [("Content-Type", "application/json; charset=utf-8")]
+        headers.append(contentsOf: cors)
+        sendResponse(context: context, version: head.version, status: status, headers: headers, body: json)
+        logRequest(
+            method: "GET",
+            path: path,
+            userAgent: userAgent,
+            requestBody: nil,
+            responseBody: json,
+            responseStatus: Int(status.code),
+            startTime: startTime
+        )
+    }
+
+    private func sendTruncateResponse(
+        context: ChannelHandlerContext,
+        head: HTTPRequestHead,
+        cors: [(String, String)],
+        status: HTTPResponseStatus,
+        json: String,
+        path: String,
+        userAgent: String?,
+        startTime: Date
+    ) {
+        var headers = [("Content-Type", "application/json; charset=utf-8")]
+        headers.append(contentsOf: cors)
+        sendResponse(context: context, version: head.version, status: status, headers: headers, body: json)
+        logRequest(
+            method: "POST",
+            path: path,
+            userAgent: userAgent,
+            requestBody: nil,
+            responseBody: json,
+            responseStatus: Int(status.code),
+            startTime: startTime
+        )
+    }
+
+    /// GET, PATCH and DELETE /sessions/{id}.
+    private func handleSessionEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent) {
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let components = path.split(separator: "/")
+        guard components.count == 2, let sessionId = UUID(uuidString: String(components[1])) else {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .badRequest,
+                headers: headers,
+                body: #"{"error":"invalid_session_id"}"#
+            )
+            return
+        }
+
+        if head.method == .DELETE {
+            let loop = context.eventLoop
+            let ctx = NIOLoopBound(context, eventLoop: loop)
+            let hop = Self.makeHop(channel: context.channel, loop: loop)
+            runRequestTask(priority: .userInitiated) {
+                let deleted = await MainActor.run { RemoteSessionContinuation.delete(sessionId) }
+                let status: HTTPResponseStatus = deleted ? .ok : .notFound
+                let json = deleted ? #"{"ok":true}"# : #"{"error":"session_not_found"}"#
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: status,
+                        headers: headers,
+                        body: json
+                    )
+                    self.logRequest(
+                        method: "DELETE",
+                        path: path,
+                        userAgent: userAgent,
+                        requestBody: nil,
+                        responseBody: json,
+                        responseStatus: Int(status.code),
+                        startTime: startTime
+                    )
+                }
+            }
+            return
+        }
+
+        var body = Data()
+        if var buffer = stateRef.value.requestBodyBuffer {
+            body = Data(buffer.readBytes(length: buffer.readableBytes) ?? [])
+        }
+        let isPatch = head.method == .PATCH
+        let patch = isPatch ? try? JSONDecoder().decode(SessionPatchRequest.self, from: body) : nil
+        if isPatch, patch == nil {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .badRequest,
+                headers: headers,
+                body: #"{"error":"bad_request","message":"Expected {title?, archived?, pinned?}"}"#
+            )
+            return
+        }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            if let patch {
+                // Any chat `GET /sessions` lists, including one not in the
+                // sidebar's in-memory list yet.
+                let inMemory = await MainActor.run { ChatSessionsManager.shared.session(for: sessionId) != nil }
+                let exists: Bool
+                if inMemory {
+                    exists = true
+                } else {
+                    exists = await ChatSessionStore.loadAsync(id: sessionId) != nil
+                }
+                // Through the manager, as the sidebar does: targeted column
+                // updates (a full save of the metadata-only copy would wipe the
+                // transcript), plus the in-memory list and any live instance.
+                // Then every window's open copy, which the sidebar callbacks
+                // would otherwise sync — else its next save puts the old values back.
+                let applied: Bool = await MainActor.run {
+                    guard exists else { return false }
+                    let manager = ChatSessionsManager.shared
+                    // Parenthesised so `map` runs on the optional, not on the
+                    // string's characters.
+                    let title = (patch.title?.trimmingCharacters(in: .whitespacesAndNewlines))
+                        .map { String($0.prefix(200)) }
+                    if let title, !title.isEmpty {
+                        manager.rename(id: sessionId, title: title)
+                    }
+                    if let archived = patch.archived {
+                        manager.setArchived(id: sessionId, archived: archived)
+                    }
+                    if let pinned = patch.pinned {
+                        manager.setPinned(id: sessionId, pinned: pinned)
+                    }
+                    ChatWindowManager.shared.syncOpenSessions(id: sessionId) { session in
+                        if let title, !title.isEmpty { session.title = title }
+                        if let archived = patch.archived { session.archived = archived }
+                        if let pinned = patch.pinned { session.pinned = pinned }
+                    }
+                    return true
+                }
+                let status: HTTPResponseStatus = applied ? .ok : .notFound
+                let json = applied ? #"{"ok":true}"# : #"{"error":"session_not_found"}"#
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: status,
+                        headers: headers,
+                        body: json
+                    )
+                    self.logRequest(
+                        method: "PATCH",
+                        path: path,
+                        userAgent: userAgent,
+                        requestBody: nil,
+                        responseBody: json,
+                        responseStatus: Int(status.code),
+                        startTime: startTime
+                    )
+                }
+                return
+            }
+
+            guard let session = await ChatSessionStore.loadAsync(id: sessionId) else {
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .notFound,
+                        headers: headers,
+                        body: #"{"error":"session_not_found"}"#
+                    )
+                }
+                return
+            }
+            let detail = Self.detail(for: session)
+            let json =
+                (try? JSONEncoder.osaurusCanonical().encode(detail))
+                .map { String(decoding: $0, as: UTF8.self) } ?? #"{"error":"encoding_failed"}"#
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
+                self.logRequest(
+                    method: "GET",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: "{\"turns\":\(detail.turns.count)}",
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    // MARK: Session DTO mapping
+
+    static func summary(for session: ChatSessionData, fromPhone: Bool = false) -> SessionSummaryDTO {
+        SessionSummaryDTO(
+            id: session.id.uuidString,
+            title: session.title,
+            created_at: sessionDateFormatter.string(from: session.createdAt),
+            updated_at: sessionDateFormatter.string(from: session.updatedAt),
+            agent_id: session.agentId?.uuidString,
+            selected_model: session.selectedModel,
+            source: session.source.rawValue,
+            archived: session.archived,
+            pinned: session.pinned,
+            origin: fromPhone ? "ios" : (session.source == .chat ? "mac" : session.runtimeSource.rawValue),
+            capabilities: session.capabilities.map(\.rawValue).sorted(),
+            project_id: session.projectId?.uuidString,
+            plugin_id: session.source == .plugin ? session.sourcePluginId : nil,
+            workspace_id: session.workspace.map(\.workspaceId).flatMap { $0.isEmpty ? nil : $0 }
+        )
+    }
+
+    static func detail(for session: ChatSessionData) -> SessionDetailDTO {
+        SessionDetailDTO(
+            id: session.id.uuidString,
+            title: session.title,
+            created_at: sessionDateFormatter.string(from: session.createdAt),
+            updated_at: sessionDateFormatter.string(from: session.updatedAt),
+            agent_id: session.agentId?.uuidString,
+            selected_model: session.selectedModel,
+            source: session.source.rawValue,
+            archived: session.archived,
+            pinned: session.pinned,
+            turns: session.turns.compactMap(Self.turn(for:))
+        )
+    }
+
+    /// Maps one stored turn. Tool-result turns are folded into the assistant
+    /// turn that called them, so a client sees the Mac's block layout.
+    static func turn(for turn: ChatTurnData) -> SessionTurnDTO? {
+        guard turn.role != .tool else { return nil }
+        let calls: [SessionTurnDTO.ToolCallDTO]? = turn.toolCalls?.map { call in
+            SessionTurnDTO.ToolCallDTO(
+                call_id: call.id,
+                name: call.function.name,
+                arguments: call.function.arguments,
+                result: turn.toolResults[call.id],
+                duration_ms: turn.toolCallDurations[call.id].map { Int(($0 * 1000).rounded()) }
+            )
+        }
+        // Documents travel with their text (spilled ones are read back from
+        // the blob store); a phone away from the Mac can then open them.
+        let documents: [SessionTurnDTO.AttachmentDTO] = turn.attachments.compactMap { attachment in
+            guard attachment.isDocument, let filename = attachment.filename,
+                let content = attachment.loadDocumentContent()
+            else { return nil }
+            let size: Int
+            switch attachment.kind {
+            case .document(_, _, let fileSize), .documentRef(_, _, let fileSize): size = fileSize
+            default: size = content.utf8.count
+            }
+            return SessionTurnDTO.AttachmentDTO(filename: filename, file_size: size, content: content)
+        }
+        // Images by position among the turn's images (attachments, then
+        // generated ones), the index the image endpoint takes.
+        let images = SessionTurnImages.entries(for: turn).enumerated().map { index, image in
+            SessionTurnDTO.ImageDTO(index: index, byte_count: image.byteCount)
+        }
+        return SessionTurnDTO(
+            id: turn.id.uuidString,
+            role: turn.role.rawValue,
+            content: turn.content,
+            thinking: turn.thinking.isEmpty ? nil : turn.thinking,
+            thinking_duration_ms: turn.thinkingDuration.map { Int(($0 * 1000).rounded()) },
+            tool_calls: (calls?.isEmpty ?? true) ? nil : calls,
+            attachment_count: turn.attachments.count,
+            attachments: documents.isEmpty ? nil : documents,
+            images: images.isEmpty ? nil : images,
+            created_at: turn.createdAt.map(sessionDateFormatter.string(from:)),
+            completed_at: turn.completedAt.map(sessionDateFormatter.string(from:)),
+            requested_at: turn.requestedAt.map(sessionPreciseDateFormatter.string(from:)),
+            ended_at: (turn.completedAt ?? turn.lastOutputAt).map(sessionPreciseDateFormatter.string(from:)),
+            token_count: turn.generationTokenCount
+        )
+    }
+
+    /// GET /sessions/{id}/turns/{turn id}/images/{index} — one image a turn
+    /// carries, as listed in `GET /sessions/{id}` (`images[].index`).
+    /// Owner-only, like the chat it belongs to. Spilled images are read back
+    /// from the blob store.
+    private func handleSessionImageEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let components = path.split(separator: "/")
+        guard components.count == 6, components[0] == "sessions", components[2] == "turns",
+            components[4] == "images",
+            let sessionId = UUID(uuidString: String(components[1])),
+            let turnId = UUID(uuidString: String(components[3])),
+            let index = Int(components[5]), index >= 0
+        else {
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: cors)
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .badRequest,
+                headers: headers,
+                body: #"{"error":"invalid_image_path"}"#
+            )
+            return
+        }
+
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let images = await ChatSessionStore.loadAsync(id: sessionId)?
+                .turns.first { $0.id == turnId }
+                .map(SessionTurnImages.entries(for:))
+            guard let images, images.indices.contains(index), let data = images[index].load() else {
+                hop {
+                    let body = #"{"error":"image_not_found"}"#
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .notFound,
+                        headers: headers,
+                        body: body
+                    )
+                    self.logRequest(
+                        method: "GET",
+                        path: path,
+                        userAgent: userAgent,
+                        requestBody: nil,
+                        responseBody: body,
+                        responseStatus: 404,
+                        startTime: startTime
+                    )
+                }
+                return
+            }
+            let contentType = Self.imageContentType(forData: data)
+            hop {
+                let context = ctx.value
+                var head2 = HTTPResponseHead(version: head.version, status: .ok)
+                var headers = HTTPHeaders()
+                headers.add(name: "Content-Type", value: contentType)
+                headers.add(name: "Content-Length", value: String(data.count))
+                headers.add(name: "Cache-Control", value: "no-store")
+                for (name, value) in cors { headers.add(name: name, value: value) }
+                head2.headers = headers
+                var buffer = context.channel.allocator.buffer(capacity: data.count)
+                buffer.writeBytes(data)
+                context.write(NIOAny(HTTPServerResponsePart.head(head2)), promise: nil)
+                context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?)), promise: nil)
+                self.logRequest(
+                    method: "GET",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: "<\(data.count) bytes \(contentType)>",
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// GET /artifacts/{context id}/{filename} — a file an agent shared
+    /// (`share_artifact`, the `image` tool), as its tool result names it
+    /// (`context_id`, `filename`). Owner-only, and over the Secure Channel
+    /// only even though it is a read: a shared file can be anything the
+    /// agent saw. Nothing outside `~/.osaurus/artifacts/` is ever served
+    /// (docs/MOBILE_PROTOCOL.md §14.12).
+    /// The largest file `GET /artifacts/…` sends (§14.12).
+    static let maxArtifactFileBytes = 100 * 1024 * 1024
+
+    private func handleArtifactFileEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if sendSecureChannelUpgradeRequiredIfNeeded(
+            head: head,
+            context: context,
+            path: path,
+            startTime: startTime,
+            userAgent: userAgent
+        ) {
+            return
+        }
+        let cors = stateRef.value.corsHeaders
+        let components = path.split(separator: "/").map { String($0).removingPercentEncoding ?? String($0) }
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            let file =
+                components.count == 3 && components[0] == "artifacts"
+                ? SessionTurnImages.artifactFile(contextId: components[1], filename: components[2]) : nil
+            // Any file can be shared now, and the body goes out whole (the
+            // phone reads it whole too): past the cap it is refused rather
+            // than held in memory twice over.
+            let size = file.flatMap { try? $0.resourceValues(forKeys: [.fileSizeKey]).fileSize } ?? 0
+            if size > Self.maxArtifactFileBytes {
+                hop {
+                    let body = #"{"error":"artifact_too_large"}"#
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .payloadTooLarge,
+                        headers: headers,
+                        body: body
+                    )
+                    self.logRequest(
+                        method: "GET",
+                        path: path,
+                        userAgent: userAgent,
+                        requestBody: nil,
+                        responseBody: body,
+                        responseStatus: 413,
+                        startTime: startTime
+                    )
+                }
+                return
+            }
+            guard let file, let data = try? Data(contentsOf: file, options: .mappedIfSafe) else {
+                hop {
+                    let body = #"{"error":"artifact_not_found"}"#
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .notFound,
+                        headers: headers,
+                        body: body
+                    )
+                    self.logRequest(
+                        method: "GET",
+                        path: path,
+                        userAgent: userAgent,
+                        requestBody: nil,
+                        responseBody: body,
+                        responseStatus: 404,
+                        startTime: startTime
+                    )
+                }
+                return
+            }
+            let contentType = SharedArtifact.mimeType(from: file.lastPathComponent)
+            hop {
+                let context = ctx.value
+                var head2 = HTTPResponseHead(version: head.version, status: .ok)
+                var headers = HTTPHeaders()
+                headers.add(name: "Content-Type", value: contentType)
+                headers.add(name: "Content-Length", value: String(data.count))
+                headers.add(name: "Cache-Control", value: "no-store")
+                for (name, value) in cors { headers.add(name: name, value: value) }
+                head2.headers = headers
+                var buffer = context.channel.allocator.buffer(capacity: data.count)
+                buffer.writeBytes(data)
+                context.write(NIOAny(HTTPServerResponsePart.head(head2)), promise: nil)
+                context.write(NIOAny(HTTPServerResponsePart.body(.byteBuffer(buffer))), promise: nil)
+                context.writeAndFlush(NIOAny(HTTPServerResponsePart.end(nil as HTTPHeaders?)), promise: nil)
+                self.logRequest(
+                    method: "GET",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: nil,
+                    responseBody: "<\(data.count) bytes \(contentType)>",
+                    responseStatus: 200,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// The image type from its first bytes: attachments carry no filename.
+    static func imageContentType(forData data: Data) -> String {
+        let bytes = [UInt8](data.prefix(12))
+        if bytes.starts(with: [0xFF, 0xD8, 0xFF]) { return "image/jpeg" }
+        if bytes.starts(with: [0x89, 0x50, 0x4E, 0x47]) { return "image/png" }
+        if bytes.starts(with: [0x47, 0x49, 0x46]) { return "image/gif" }
+        if bytes.count >= 12, bytes[0 ..< 4] == [0x52, 0x49, 0x46, 0x46], bytes[8 ..< 12] == [0x57, 0x45, 0x42, 0x50] {
+            return "image/webp"
+        }
+        if bytes.count >= 12, bytes[4 ..< 8] == [0x66, 0x74, 0x79, 0x70] { return "image/heic" }
+        return "application/octet-stream"
+    }
+
+    /// Parses `?a=b&c=d` from a request URI.
+    static func queryItems(from uri: String) -> [String: String] {
+        guard let range = uri.firstIndex(of: "?") else { return [:] }
+        var result: [String: String] = [:]
+        for pair in uri[uri.index(after: range)...].split(separator: "&") {
+            let parts = pair.split(separator: "=", maxSplits: 1)
+            guard let name = parts.first else { continue }
+            let value = parts.count > 1 ? String(parts[1]) : ""
+            result[String(name)] = value.removingPercentEncoding ?? value
+        }
+        return result
     }
 
     // MARK: - Secure Channel (E2E encryption)
@@ -3945,13 +9011,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// the encrypted envelope) but rate-limited like the pairing endpoints.
     /// Signs the transcript with the target agent's key so the client can
     /// verify it is talking to the agent address it pinned at pairing.
+    /// Handshakes get their own budget: a phone opens one per agent and route
+    /// and again every hour, which must neither lock out its own pairing nor
+    /// be locked out by someone spamming pairing codes.
+    static let secureSessionRateLimiter = PairingRateLimiter(window: 60, maxPerWindow: 30, denialCooldown: 10)
+
     private func handleSecureSessionEndpoint(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
         startTime: Date,
         userAgent: String?
     ) {
-        guard PairingRateLimiter.shared.allow(ip: remoteIP(context)) else {
+        guard Self.secureSessionRateLimiter.allow(ip: remoteIP(context)) else {
             sendPairingRateLimited(
                 head: head,
                 context: context,
@@ -4018,26 +9089,47 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         runRequestTask(priority: .userInitiated) {
             // Resolve the agent the client expects to talk to. Any agent with
             // a derived identity can hold sessions; access control happens on
-            // the inner request's Bearer, not here.
+            // the inner request's Bearer, not here. The Mac's own connect
+            // identity also answers, so a phone paired to a Mac with only the
+            // built-in agent still has a channel (`MobileConnectIdentity`).
             let wanted = hello.agentAddress.lowercased()
             let agents = await MainActor.run { AgentManager.shared.agents }
-            guard
-                let agent = agents.first(where: { $0.agentAddress?.lowercased() == wanted }),
-                let agentIndex = agent.agentIndex
-            else {
-                reply(status: .notFound, body: #"{"error":"Unknown agent address"}"#, code: 404)
-                return
+            let agentKeyPath = agents.first(where: { $0.agentAddress?.lowercased() == wanted })?.agentKeyPath
+            if agentKeyPath == nil {
+                switch MobileConnectIdentity.matches(wanted) {
+                case true?:
+                    break
+                case false?:
+                    reply(status: .notFound, body: #"{"error":"Unknown agent address"}"#, code: 404)
+                    return
+                case nil:
+                    // The Keychain can't be read now: worth a retry, and not
+                    // the 404 that makes a phone drop its pin.
+                    reply(
+                        status: .serviceUnavailable,
+                        body: #"{"error":"Secure channel identity unavailable, try again"}"#,
+                        code: 503
+                    )
+                    return
+                }
             }
 
             let result: (session: SecureChannelSession, serverHello: SecureChannel.ServerHello)
             do {
                 result = try SecureChannel.establishServerSession(hello: hello) { transcript in
+                    guard let agentKeyPath else {
+                        let signature = try MobileConnectIdentity.withPrivateKey {
+                            try signSecureChannelPayload(transcript, privateKey: $0)
+                        }
+                        guard let signature else { throw OsaurusIdentityError.keychainReadFailed }
+                        return signature
+                    }
                     let signContext = LAContext()
                     signContext.touchIDAuthenticationAllowableReuseDuration = 300
                     signContext.interactionNotAllowed = true
                     var masterKeyData = try MasterKey.getPrivateKey(context: signContext)
                     defer { masterKeyData.zeroOut() }
-                    var childKey = AgentKey.derive(masterKey: masterKeyData, index: agentIndex)
+                    var childKey = AgentKey.derive(masterKey: masterKeyData, path: agentKeyPath)
                     defer { childKey.zeroOut() }
                     return try signSecureChannelPayload(transcript, privateKey: childKey)
                 }
@@ -4120,6 +9212,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             )
             return nil
         }
+        stateRef.value.secureChannelAgentAddress = session.agentAddress
 
         let plaintext: Data
         let requestSeq: UInt64
@@ -4142,7 +9235,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
         guard let inner = try? JSONDecoder().decode(SecureChannel.InnerRequest.self, from: plaintext),
             inner.path.hasPrefix("/"),
-            !inner.path.hasPrefix("/secure/")
+            // On the path as routed: `/v1/secure/call` normalises to
+            // `/secure/call`, so checking the raw path alone lets one nest.
+            !Self.isSecureChannelPath(normalize(extractPath(from: inner.path)))
         else {
             reject(status: .badRequest, code: "secure_malformed", message: "Malformed inner request")
             return nil
@@ -4199,6 +9294,65 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         return (newHead, normalize(extractPath(from: inner.path)))
     }
 
+    /// The same gate for an owner route that changes something (anything but
+    /// GET): an agent's prompt, tools or sandbox, an approval, a chat. With
+    /// a master-scoped key these reach as far as a run does, so a sniffed or
+    /// leaked pairing key must not work them over plaintext. Reads stay
+    /// open, so GET-only routes don't call it. Called per route rather than
+    /// once in the dispatcher: a master key also drives the OpenAI-style
+    /// API (`/chat/completions` and the like) from other machines, which
+    /// must keep working over plain HTTP. Sends the 426 and returns `true`
+    /// when the request is refused.
+    private func requiresOwnerChannel(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) -> Bool {
+        guard head.method != .GET, head.method != .HEAD else { return false }
+        return sendSecureChannelUpgradeRequiredIfNeeded(
+            head: head,
+            context: context,
+            path: path,
+            startTime: startTime,
+            userAgent: userAgent
+        )
+    }
+
+    /// Routes a remote owner key may only reach through the Secure Channel,
+    /// whatever the method: what runs things (dispatched tasks) or reads what
+    /// is private (chats, prompts, memory, credit). The OpenAI-style media and
+    /// model routes (`/chat/completions`, `/models`, `/images/*`, `/videos/*`)
+    /// stay plaintext for third-party SDKs, and so does `/mcp/*`: MCP hosts
+    /// (Claude Desktop and the like) can't speak the Secure Channel, and their
+    /// tools are confined by the external deny list and key scope instead.
+    static let ownerChannelRoutes = [
+        "/agents", "/models/picker", "/models/favorites", "/models/options", "/privacy", "/config/approvals",
+        "/computer-use", "/secrets", "/approvals", "/pair/unpair",
+        "/workspaces", "/workspace-agents", "/projects", "/sessions",
+        "/runs", "/artifacts", "/images/jobs", "/tasks", "/memory/ingest",
+        "/credits/balance",
+    ]
+
+    static func isSecureChannelPath(_ path: String) -> Bool {
+        path == "/secure" || path.hasPrefix("/secure/")
+    }
+
+    /// `GET /agents` stays readable in plaintext for one release: phones up
+    /// to 1.0(5) with nothing pinned fetch it that way to learn the address
+    /// they then open the channel with, and would otherwise be stuck until
+    /// they pair again. It carries no prompts or secrets; current phones
+    /// fetch it inside the channel and never pin from a plaintext copy.
+    /// Goes with v1 pairing (MOBILE_PROTOCOL.md §11.3).
+    static func legacyPlaintextRead(method: HTTPMethod, path: String) -> Bool {
+        method == .GET && path == "/agents"
+    }
+
+    static func isOwnerChannelRoute(_ path: String) -> Bool {
+        ownerChannelRoutes.contains { path == $0 || path.hasPrefix($0 + "/") }
+    }
+
     /// Hard-require gate for `/agents/{id}/run` and `/agents/{id}/dispatch`:
     /// any non-loopback caller (including relay-origin traffic) must arrive
     /// through the Secure Channel. Sends `426 Upgrade Required` and returns
@@ -4214,6 +9368,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     ) -> Bool {
         if stateRef.value.isSecureChannel { return false }
         if isLoopbackConnection(context) { return false }
+        // Plaintext over physical loopback never leaves this Mac.
+        if stateRef.value.loopbackTrustWithdrawn, isPhysicalLoopbackConnection(context) { return false }
 
         var headers = [("Content-Type", "application/json; charset=utf-8")]
         headers.append(contentsOf: stateRef.value.corsHeaders)
@@ -4268,315 +9424,24 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         )
     }
 
-    /// POST /pair — unauthenticated endpoint for cryptographic Bonjour pairing.
-    private func handlePairEndpoint(
-        head: HTTPRequestHead,
-        context: ChannelHandlerContext,
-        startTime: Date,
-        userAgent: String?
-    ) {
-        let pairingIP = remoteIP(context)
-        guard PairingRateLimiter.shared.allow(ip: pairingIP) else {
-            sendPairingRateLimited(
-                head: head,
-                context: context,
-                path: "/pair",
-                method: "POST",
-                startTime: startTime,
-                userAgent: userAgent
-            )
-            return
-        }
-        let data: Data
-        let requestBodyString: String?
-        if let body = stateRef.value.requestBodyBuffer {
-            var bodyCopy = body
-            let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
-            data = Data(bytes)
-            requestBodyString = String(decoding: data, as: UTF8.self)
-        } else {
-            data = Data()
-            requestBodyString = nil
-        }
-
-        guard let req = try? JSONDecoder().decode(PairRequest.self, from: data) else {
-            var headers = [("Content-Type", "application/json; charset=utf-8")]
-            headers.append(contentsOf: stateRef.value.corsHeaders)
-            let body = #"{"error":"Invalid pairing request"}"#
-            sendResponse(context: context, version: head.version, status: .badRequest, headers: headers, body: body)
-            logRequest(
-                method: "POST",
-                path: "/pair",
-                userAgent: userAgent,
-                requestBody: requestBodyString,
-                responseBody: body,
-                responseStatus: 400,
-                startTime: startTime
-            )
-            return
-        }
-
-        let cors = stateRef.value.corsHeaders
-        let loop = context.eventLoop
-        let ctx = NIOLoopBound(context, eventLoop: loop)
-        let hop = Self.makeHop(channel: context.channel, loop: loop)
-        let logSelf = self
-        let logStartTime = startTime
-        let logUserAgent = userAgent
-        let logRequestBody = requestBodyString
-        // Strip port from Host header (e.g. "device.local:1337" → "device.local")
-        let pairingHost =
-            (head.headers.first(name: "Host") ?? "unknown")
-            .components(separatedBy: ":").first ?? "unknown"
-
-        // Shared error-reply shape (mirrors `handlePairInviteEndpoint`).
-        func reply(status: HTTPResponseStatus, body: String, code: Int) {
-            hop {
-                var headers = [("Content-Type", "application/json; charset=utf-8")]
-                headers.append(contentsOf: cors)
-                self.sendResponse(
-                    context: ctx.value,
-                    version: head.version,
-                    status: status,
-                    headers: headers,
-                    body: body
-                )
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/pair",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseBody: body,
-                    responseStatus: code,
-                    startTime: logStartTime
-                )
-            }
-        }
-
-        runRequestTask(priority: .userInitiated) {
-            // 1. Verify the connector's signature over the nonce. When the
-            //    connector supplied an ephemeral encryption key, the signature
-            //    covers it too, so a MITM cannot swap in their own key without
-            //    also changing the connector address shown in the approval
-            //    prompt.
-            let signedPayload: Data
-            if let encPub = req.encPub, !encPub.isEmpty {
-                signedPayload = Data("\(req.nonce):\(encPub)".utf8)
-            } else {
-                signedPayload = Data(req.nonce.utf8)
-            }
-            let hexSig = req.signature.hasPrefix("0x") ? String(req.signature.dropFirst(2)) : req.signature
-            guard let sigBytes = Data(hexEncoded: hexSig),
-                let recovered = try? recoverAddress(
-                    payload: signedPayload,
-                    signature: sigBytes,
-                    domainPrefix: "Osaurus Signed Pairing"
-                ),
-                recovered == req.connectorAddress
-            else {
-                reply(status: .unauthorized, body: #"{"error":"Signature verification failed"}"#, code: 401)
-                return
-            }
-
-            // 1b. Consume the server-issued challenge nonce. The connector must
-            //     have fetched it from `GET /pair/challenge`; a sniffed/replayed
-            //     `/pair` body fails here because the nonce is single-use and
-            //     short-lived. Done after the (cheap) signature check so an
-            //     attacker with a bad signature can't burn a valid nonce.
-            guard PairingChallengeStore.shared.consume(req.nonce) else {
-                reply(
-                    status: .unauthorized,
-                    body: #"{"error":"Pairing challenge expired or invalid"}"#,
-                    code: 401
-                )
-                return
-            }
-
-            // 2. Resolve the target agent.
-            let agents = await MainActor.run { AgentManager.shared.agents }
-            guard let agentUUID = UUID(uuidString: req.agentId),
-                let agent = agents.first(where: { $0.id == agentUUID && $0.bonjourEnabled }),
-                let agentAddress = agent.agentAddress
-            else {
-                reply(
-                    status: .notFound,
-                    body: #"{"error":"Agent not found or not available for pairing"}"#,
-                    code: 404
-                )
-                return
-            }
-
-            // 3. Show the approval popup on the advertiser's device.
-            let approval = await PairingPromptService.requestApproval(
-                connectorAddress: req.connectorAddress,
-                agentName: agent.name
-            )
-
-            let isPermanent: Bool
-            switch approval {
-            case .approved(let permanent):
-                isPermanent = permanent
-            case .busy:
-                // Another approval prompt is already on screen. Tell the
-                // connector to retry instead of denying or queueing.
-                reply(
-                    status: .tooManyRequests,
-                    body: #"{"error":"Another pairing request is in progress. Try again shortly."}"#,
-                    code: 429
-                )
-                return
-            case .denied:
-                // Back off a peer whose request was explicitly denied.
-                PairingRateLimiter.shared.penalize(ip: pairingIP)
-                reply(status: .forbidden, body: #"{"error":"Pairing denied"}"#, code: 403)
-                return
-            }
-
-            // 4. Generate an *agent-scoped* osk-v1 API key. The token's `aud`
-            //    is the agent's address, so it cannot be presented to other
-            //    agents — pre-fix this minted a master-scoped, never-expiring
-            //    key after agent-specific approval, a hidden privilege upgrade.
-            //
-            //    Default to a 90-day expiry; only mint with `.never` when the
-            //    user explicitly opts in via the approval dialog's "Make this
-            //    access permanent" toggle.
-            //
-            //    Generating the key triggers biometric auth to derive the
-            //    agent key from the Master Key.
-            let label = "Paired – \(pairingHost)"
-            guard let agentIndex = agent.agentIndex else {
-                reply(
-                    status: .internalServerError,
-                    body: #"{"error":"Agent is missing a derived key index"}"#,
-                    code: 500
-                )
-                return
-            }
-            let expiration: AccessKeyExpiration = isPermanent ? .never : .days90
-            guard
-                let (fullKey, keyInfo) = try? APIKeyManager.shared.generate(
-                    label: label,
-                    expiration: expiration,
-                    agentIndex: agentIndex
-                )
-            else {
-                reply(
-                    status: .internalServerError,
-                    body: #"{"error":"Failed to generate access key"}"#,
-                    code: 500
-                )
-                return
-            }
-
-            // Temporary keys are revoked and removed from the key list on app exit.
-            if !isPermanent {
-                TemporaryPairedKeyStore.shared.register(keyId: keyInfo.id)
-            }
-
-            // 4b. Sign a server-identity attestation over the challenge nonce
-            //     so the connector can prove this responder controls the
-            //     agent address it discovered over Bonjour. Reuses the master
-            //     key in the same biometric reuse window opened by the mint
-            //     above, so no second prompt is shown.
-            let serverSignature: String? = {
-                let attestContext = LAContext()
-                attestContext.touchIDAuthenticationAllowableReuseDuration = 300
-                attestContext.interactionNotAllowed = true
-                guard var masterKeyData = try? MasterKey.getPrivateKey(context: attestContext) else {
-                    return nil
-                }
-                defer { masterKeyData.zeroOut() }
-                var childKey = AgentKey.derive(masterKey: masterKeyData, index: agentIndex)
-                defer { childKey.zeroOut() }
-                let payload = pairingServerSigningPayload(agentAddress: agentAddress, nonce: req.nonce)
-                guard let sig = try? signPairingServerPayload(payload, privateKey: childKey) else {
-                    return nil
-                }
-                return "0x" + sig.hexEncodedString
-            }()
-
-            // 4c. When the connector provided an ephemeral encryption key,
-            //     HPKE-seal the minted credential so it never crosses the
-            //     cleartext LAN hop in plaintext. Fail closed: if sealing
-            //     fails we do NOT fall back to plaintext.
-            var sealedApiKey: PairingKeyEnvelope.Sealed?
-            var apiKeyForWire = fullKey
-            if let encPub = req.encPub, !encPub.isEmpty {
-                guard
-                    let sealed = try? PairingKeyEnvelope.seal(
-                        secret: fullKey,
-                        recipientPublicKeyBase64url: encPub,
-                        info: PairingKeyEnvelope.info(agentAddress: agentAddress, nonce: req.nonce)
-                    )
-                else {
-                    APIKeyManager.shared.revoke(id: keyInfo.id)
-                    reply(status: .badRequest, body: #"{"error":"Invalid encryption key"}"#, code: 400)
-                    return
-                }
-                sealedApiKey = sealed
-                apiKeyForWire = ""
-            }
-
-            // 5. Return the agent's address, the generated API key, and the permanence flag.
-            let response = PairResponse(
-                agentAddress: agentAddress,
-                apiKey: apiKeyForWire,
-                isPermanent: isPermanent,
-                serverSignature: serverSignature,
-                sealedApiKey: sealedApiKey,
-                secureChannel: true
-            )
-            let json =
-                (try? JSONEncoder.osaurusCanonical().encode(response)).map { String(decoding: $0, as: UTF8.self) }
-                ?? #"{"error":"Encoding failed"}"#
-            // Never log the freshly minted key. The wire response still
-            // contains it; the request log gets a redacted copy with the
-            // same shape so operators can see "this pairing happened" without
-            // recovering the credential from the ring buffer.
-            let redactedResponse = PairResponse(
-                agentAddress: agentAddress,
-                apiKey: "<redacted>",
-                isPermanent: isPermanent,
-                serverSignature: serverSignature,
-                sealedApiKey: nil,
-                secureChannel: true
-            )
-            let redactedJson =
-                (try? JSONEncoder.osaurusCanonical().encode(redactedResponse)).map {
-                    String(decoding: $0, as: UTF8.self)
-                }
-                ?? #"{"agentAddress":"<redacted>","apiKey":"<redacted>"}"#
-
-            hop {
-                var headers = [("Content-Type", "application/json; charset=utf-8")]
-                headers.append(contentsOf: cors)
-                self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/pair",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseBody: redactedJson,
-                    responseStatus: 200,
-                    startTime: logStartTime
-                )
-            }
-        }
-    }
-
     // MARK: - /pair-invite (signed deeplink redemption)
 
     private struct PairInviteResponse: Codable {
         let agentAddress: String
         let agentName: String
         let agentDescription: String?
+        /// Workspaces handshake only: the model the shared agent runs, for
+        /// the teammate's roster badge. Omitted (nil) for invite redemption.
+        let agentModel: String?
         let relayBaseURL: String
         let apiKey: String
         /// HPKE-sealed access key (set when the redeeming client supplied an
         /// `encPub`; `apiKey` is empty in that case so the relay operator —
         /// who terminates TLS — never sees the credential in plaintext).
         let sealedApiKey: PairingKeyEnvelope.Sealed?
-        /// Secure Channel capability marker (see `PairResponse.secureChannel`).
+        /// Secure Channel capability marker: this server requires E2E
+        /// encryption for agent run/dispatch and accepts `/secure/session`
+        /// handshakes. Diagnostic only.
         let secureChannel: Bool
     }
 
@@ -4585,6 +9450,52 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// operating on the canonical `AgentInvite` fields.
     private struct PairInviteRequestExtras: Decodable {
         let encPub: String?
+        /// Optional proof of the redeemer's wallet (`InvitePeerIdentity`).
+        let redeemerAddress: String?
+        let redeemerSignature: String?
+
+        enum CodingKeys: String, CodingKey {
+            case encPub
+            case redeemerAddress = "redeemer_address"
+            case redeemerSignature = "redeemer_signature"
+        }
+    }
+
+    /// Keys in a `/pair-invite` request body whose values are credentials or
+    /// credential-adjacent material and must never land in the request log:
+    /// the router membership attestation (bearer-like for its ~10 min TTL),
+    /// the wallet/invite signatures, the invite's single-use nonce, and the
+    /// redeemer's HPKE public key.
+    static let pairInviteRedactedKeys: Set<String> = [
+        "attestation", "wallet_signature", "sig", "signature", "nonce", "encPub", "enc_pub", "redeemer_signature",
+        // owner_redeem: the device id is a stable per-device identifier.
+        "device_id",
+    ]
+
+    /// Redacted twin of a `/pair-invite` request body for the Insights request
+    /// log. Walks the JSON (recursing into the `team_redeem` envelope) and
+    /// replaces the values of `pairInviteRedactedKeys`. Non-JSON bodies are
+    /// replaced wholesale rather than logged verbatim.
+    static func redactedPairInviteRequestBody(_ data: Data) -> String {
+        guard let object = try? JSONSerialization.jsonObject(with: data) else {
+            return data.isEmpty ? "" : "<redacted: non-JSON body>"
+        }
+        func redact(_ value: Any) -> Any {
+            if let dict = value as? [String: Any] {
+                var out: [String: Any] = [:]
+                for (key, inner) in dict {
+                    out[key] = pairInviteRedactedKeys.contains(key) ? "<redacted>" : redact(inner)
+                }
+                return out
+            }
+            if let array = value as? [Any] { return array.map(redact) }
+            return value
+        }
+        let redacted = redact(object)
+        guard
+            let out = try? JSONSerialization.data(withJSONObject: redacted, options: [.sortedKeys])
+        else { return "<redacted>" }
+        return String(decoding: out, as: UTF8.self)
     }
 
     /// POST /pair-invite — unauthenticated endpoint that swaps a signed
@@ -4601,13 +9512,33 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         startTime: Date,
         userAgent: String?
     ) {
+        // Same per-source budget as `/secure/session`: this route
+        // is public, does signature verification + router round-trips per
+        // call, and mints keys. Unthrottled it is a free CPU / prompt / nonce
+        // sink for anyone who can reach the host or its relay address.
+        let pairingIP = remoteIP(context)
+        guard PairingRateLimiter.shared.allow(ip: pairingIP) else {
+            sendPairingRateLimited(
+                head: head,
+                context: context,
+                path: "/pair-invite",
+                method: "POST",
+                startTime: startTime,
+                userAgent: userAgent
+            )
+            return
+        }
+
         let data: Data
         let requestBodyString: String?
         if let body = stateRef.value.requestBodyBuffer {
             var bodyCopy = body
             let bytes = bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? []
             data = Data(bytes)
-            requestBodyString = String(decoding: data, as: UTF8.self)
+            // The request carries bearer-like material (membership attestation,
+            // wallet signature, invite signature, HPKE public key). Only the
+            // redacted twin ever reaches the Insights request log.
+            requestBodyString = Self.redactedPairInviteRequestBody(data)
         } else {
             data = Data()
             requestBodyString = nil
@@ -4628,6 +9559,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             .trimmingCharacters(in: .whitespaces)
 
         func reply(status: HTTPResponseStatus, body: String, code: Int) {
+            // A failed proof (bad signature, unknown challenge, not shared,
+            // revoked invite) backs the source off.
+            if code == 401 || code == 403 {
+                PairingRateLimiter.shared.penalize(ip: pairingIP)
+            }
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
                 headers.append(contentsOf: cors)
@@ -4650,11 +9586,157 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
         }
 
+        /// Shared "key granted" emission for the workspace and owner
+        /// handshakes: same `PairInviteResponse` shape, same redacted twin
+        /// for the request log — never echo the key.
+        func replyGranted(
+            agentAddress: String,
+            agentName: String,
+            agentDescription: String?,
+            agentModel: String?,
+            apiKeyForWire: String,
+            sealedApiKey: PairingKeyEnvelope.Sealed?
+        ) {
+            func responseBody(apiKey: String, sealed: PairingKeyEnvelope.Sealed?) -> String {
+                let body = PairInviteResponse(
+                    agentAddress: agentAddress,
+                    agentName: agentName,
+                    agentDescription: agentDescription,
+                    agentModel: agentModel,
+                    relayBaseURL: "https://\(agentAddress).agent.osaurus.ai",
+                    apiKey: apiKey,
+                    sealedApiKey: sealed,
+                    secureChannel: true
+                )
+                return (try? JSONEncoder.osaurusCanonical().encode(body))
+                    .map { String(decoding: $0, as: UTF8.self) }
+                    ?? #"{"error":"Encoding failed"}"#
+            }
+            let json = responseBody(apiKey: apiKeyForWire, sealed: sealedApiKey)
+            let redactedJson = responseBody(apiKey: "<redacted>", sealed: nil)
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: .ok,
+                    headers: headers,
+                    body: json
+                )
+                logSelf.logRequest(
+                    method: "POST",
+                    path: "/pair-invite",
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseBody: redactedJson,
+                    responseStatus: 200,
+                    startTime: logStartTime
+                )
+            }
+        }
+
+        func replyRejected(status: Int, message rawMessage: String) {
+            let message = rawMessage
+                .replacingOccurrences(of: "\\", with: "")
+                .replacingOccurrences(of: "\"", with: "'")
+            reply(
+                status: HTTPResponseStatus(statusCode: status),
+                body: #"{"error":"\#(message)"}"#,
+                code: status
+            )
+        }
+
+        // Owner mode: a `{"owner_redeem": …}` envelope is a device holding
+        // the SAME master identity as this host asking for a key to one of
+        // the agents hosted here. Proof is a master-key signature over the
+        // host's nonce; no router, roster, or invite involved.
+        if let envelope = try? JSONDecoder().decode(OwnerPairRedeemEnvelope.self, from: data) {
+            let payload = envelope.ownerRedeem
+            runRequestTask(priority: .userInitiated) {
+                let outcome = await OwnerDeviceAccessHost.shared.handle(payload)
+                switch outcome {
+                case .challenge(let nonce, let expiresIn):
+                    let challenge = OwnerPairChallengeResponse(
+                        ownerChallenge: .init(nonce: nonce, expiresIn: expiresIn)
+                    )
+                    let body =
+                        (try? JSONEncoder.osaurusCanonical().encode(challenge))
+                        .map { String(decoding: $0, as: UTF8.self) }
+                        ?? #"{"error":"Encoding failed"}"#
+                    reply(status: .ok, body: body, code: 200)
+                case .rejected(let rejection):
+                    replyRejected(status: rejection.httpStatus, message: rejection.wireMessage)
+                case .granted(let grant):
+                    replyGranted(
+                        agentAddress: grant.agentAddress,
+                        agentName: grant.agentName,
+                        agentDescription: grant.agentDescription,
+                        agentModel: grant.agentModel,
+                        apiKeyForWire: "",
+                        sealedApiKey: grant.sealedApiKey
+                    )
+                }
+            }
+            return
+        }
+
+        // Workspace mode: a `{"team_redeem": …}` envelope is the membership-
+        // attestation handshake (teammate connecting to a shared agent), not
+        // an invite redemption. Same endpoint so relays need no new route.
+        if let envelope = try? JSONDecoder().decode(WorkspacePairRedeemEnvelope.self, from: data) {
+            let payload = envelope.workspaceRedeem
+            runRequestTask(priority: .userInitiated) {
+                let outcome = await WorkspaceAgentAccessHost.shared.handle(payload)
+                switch outcome {
+                case .challenge(let nonce, let expiresIn):
+                    let challenge = WorkspacePairChallengeResponse(
+                        workspaceChallenge: .init(nonce: nonce, expiresIn: expiresIn)
+                    )
+                    let body =
+                        (try? JSONEncoder.osaurusCanonical().encode(challenge))
+                        .map { String(decoding: $0, as: UTF8.self) }
+                        ?? #"{"error":"Encoding failed"}"#
+                    reply(status: .ok, body: body, code: 200)
+                case .rejected(let rejection):
+                    replyRejected(status: rejection.httpStatus, message: rejection.wireMessage)
+                case .granted(let grant):
+                    replyGranted(
+                        agentAddress: grant.agentAddress,
+                        agentName: grant.agentName,
+                        agentDescription: grant.agentDescription,
+                        agentModel: grant.agentModel,
+                        apiKeyForWire: grant.apiKeyForWire,
+                        sealedApiKey: grant.sealedApiKey
+                    )
+                }
+            }
+            return
+        }
+
         guard let invite = try? JSONDecoder().decode(AgentInvite.self, from: data) else {
             reply(status: .badRequest, body: #"{"error":"Invalid invite payload"}"#, code: 400)
             return
         }
-        let encPub = (try? JSONDecoder().decode(PairInviteRequestExtras.self, from: data))?.encPub
+        let extras = try? JSONDecoder().decode(PairInviteRequestExtras.self, from: data)
+        let encPub = extras?.encPub
+        // A redeemer that proves its wallet is named by it on every run; a
+        // proof that doesn't check out is refused rather than ignored.
+        var redeemerWallet: String?
+        if let address = extras?.redeemerAddress, let signature = extras?.redeemerSignature {
+            guard
+                let verified = InvitePeerIdentity.verifiedWallet(
+                    claimedAddress: address,
+                    signatureHex: signature,
+                    agentAddress: invite.addr,
+                    inviteNonce: invite.nonce
+                )
+            else {
+                reply(status: .unauthorized, body: #"{"error":"Redeemer signature verification failed"}"#, code: 401)
+                return
+            }
+            redeemerWallet = verified
+        }
         guard invite.v == AgentInvite.currentVersion else {
             reply(status: .badRequest, body: #"{"error":"Unsupported invite version"}"#, code: 400)
             return
@@ -4677,7 +9759,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let agents = await MainActor.run { AgentManager.shared.agents }
             guard
                 let agent = agents.first(where: { ($0.agentAddress?.lowercased() ?? "") == invite.addr.lowercased() }),
-                let agentIndex = agent.agentIndex,
+                let agentKeyPath = agent.agentKeyPath,
                 let agentAddress = agent.agentAddress
             else {
                 reply(status: .notFound, body: #"{"error":"Agent address not found on this server"}"#, code: 404)
@@ -4720,7 +9802,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let (fullKey, keyInfo) = try APIKeyManager.shared.generate(
                     label: label,
                     expiration: .year1,
-                    agentIndex: agentIndex
+                    agentKeyPath: agentKeyPath
                 )
                 await MainActor.run {
                     AgentInviteStore.attachAccessKey(
@@ -4728,6 +9810,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         for: agent.id,
                         accessKeyId: keyInfo.id
                     )
+                }
+                if let redeemerWallet {
+                    InvitePeerIdentityStore.record(wallet: redeemerWallet, forKeyNonce: keyInfo.nonce)
                 }
 
                 // HPKE-seal the credential when the redeemer supplied an
@@ -4763,6 +9848,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         agentAddress: agentAddress,
                         agentName: agent.name,
                         agentDescription: agent.description.isEmpty ? nil : agent.description,
+                        agentModel: nil,
                         relayBaseURL: invite.url,
                         apiKey: apiKey,
                         sealedApiKey: sealed,
@@ -4808,6 +9894,267 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
+    /// `POST /events/{token}` and `GET /events/{token}/runs/{run_id}` —
+    /// webhook events. Bearer-exempt; `EventWebhookIngress` checks the
+    /// event's secret or HMAC over the raw body before reading it. Only the
+    /// redacted headers and the body size reach the request log.
+    private func handleEventWebhookEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        route: EventWebhookIngress.Route,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let method = head.method
+        let expectedMethod: HTTPMethod
+        switch route {
+        case .fire: expectedMethod = .POST
+        case .runStatus: expectedMethod = .GET
+        }
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let logSelf = self
+        let logPath: String = {
+            switch route {
+            case .fire: return "/events/{token}"
+            case .runStatus(_, let runId): return "/events/{token}/runs/\(runId.uuidString.lowercased())"
+            }
+        }()
+
+        let notAllowedBody = #"{"error":{"code":"method_not_allowed","message":"Use \#(expectedMethod.rawValue) for this event route.","type":"event_error"}}"#
+        var notAllowedHeaders = [
+            ("Content-Type", "application/json; charset=utf-8"), ("Allow", expectedMethod.rawValue),
+        ]
+        notAllowedHeaders.append(contentsOf: cors)
+        // A provider's setup handshake (Meta `hub.challenge`) is a GET on
+        // the fire URL; every other GET there is refused as before.
+        if case .fire(let token) = route, method == .GET {
+            let request = EventWebhookIngressRequest(
+                method: method.rawValue, headers: [:], query: EventWebhookIngress.query(fromURI: head.uri),
+                body: Data(), sourceAddress: remoteIP(context), uri: head.uri)
+            let refusedHeaders = notAllowedHeaders
+            runRequestTask(priority: .userInitiated) {
+                let response = await EventWebhookIngress.shared.handleFireGet(token: token, request: request)
+                hop {
+                    var headers = refusedHeaders
+                    var status = 405
+                    var body = notAllowedBody
+                    if let response {
+                        headers = [("Content-Type", response.contentType)] + cors
+                        status = response.status
+                        body = response.body
+                    }
+                    self.sendResponse(
+                        context: ctx.value, version: head.version, status: HTTPResponseStatus(statusCode: status),
+                        headers: headers, body: body)
+                    logSelf.logRequest(
+                        method: method.rawValue, path: logPath, userAgent: userAgent, requestBody: nil,
+                        responseBody: response == nil ? body : nil, responseStatus: status, startTime: startTime)
+                }
+            }
+            return
+        }
+        guard method == expectedMethod else {
+            sendResponse(
+                context: context, version: head.version, status: .methodNotAllowed, headers: notAllowedHeaders,
+                body: notAllowedBody)
+            logRequest(
+                method: method.rawValue, path: logPath, userAgent: userAgent, requestBody: nil,
+                responseBody: notAllowedBody, responseStatus: 405, startTime: startTime)
+            return
+        }
+
+        var data = Data()
+        if let body = stateRef.value.requestBodyBuffer {
+            var bodyCopy = body
+            data = Data(bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? [])
+        }
+        var headerMap: [String: String] = [:]
+        for (name, value) in head.headers {
+            headerMap[name] = value
+        }
+        let logRequestBody: String? = {
+            let redacted = AgentChannelWebhookIngress.redactedHeaders(headerMap)
+            let summary: [String: Any] = [
+                "headers": redacted.filter { key, _ in
+                    let lowered = key.lowercased()
+                    return lowered == "content-type" || lowered.hasPrefix("x-osaurus-conversation")
+                        || EventWebhookIngress.dedupeHeaders.contains { $0.lowercased() == lowered }
+                },
+                "body_bytes": data.count,
+            ]
+            return (try? JSONSerialization.data(withJSONObject: summary, options: [.sortedKeys]))
+                .map { String(decoding: $0, as: UTF8.self) }
+        }()
+        let request = EventWebhookIngressRequest(
+            method: method.rawValue,
+            headers: headerMap,
+            query: EventWebhookIngress.query(fromURI: head.uri),
+            body: data,
+            sourceAddress: remoteIP(context),
+            uri: head.uri
+        )
+
+        runRequestTask(priority: .userInitiated) {
+            let response: EventWebhookIngressResponse
+            switch route {
+            case .fire(let token):
+                response = await EventWebhookIngress.shared.handleFire(token: token, request: request)
+            case .runStatus(let token, let runId):
+                response = await EventWebhookIngress.shared.handleRunStatus(token: token, runId: runId)
+            }
+            hop {
+                var headers = [("Content-Type", response.contentType)]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: HTTPResponseStatus(statusCode: response.status),
+                    headers: headers,
+                    body: response.body
+                )
+                logSelf.logRequest(
+                    method: method.rawValue,
+                    path: logPath,
+                    userAgent: userAgent,
+                    requestBody: logRequestBody,
+                    responseBody: response.body,
+                    responseStatus: response.status,
+                    startTime: startTime
+                )
+            }
+        }
+    }
+
+    /// `POST /channels/{kind}/{connection_id}/inbound`,
+    /// `GET /channels/{kind}/{connection_id}/ping`, and
+    /// `GET /channels/{kind}/{connection_id}/tasks/{task_id}` — the Agent
+    /// Channel webhook ingress. Bearer-exempt: the connection's provider secret
+    /// (shared header or HMAC over the raw body) is the authentication, and the
+    /// ingress verifies it before interpreting a single body byte. The shim only
+    /// copies the raw body, captures the transport facts (source IP, loopback,
+    /// Secure Channel) and hops off the event loop; every decision lives in
+    /// `AgentChannelWebhookIngress` so it is unit-testable without NIO.
+    private func handleChannelWebhookEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        route: AgentChannelWebhookIngress.Route,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let method = head.method
+        let expectedMethod: HTTPMethod
+        switch route {
+        case .inbound: expectedMethod = .POST
+        case .ping, .taskPoll: expectedMethod = .GET
+        }
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        let logSelf = self
+        let logStartTime = startTime
+        let logUserAgent = userAgent
+
+        guard method == expectedMethod else {
+            let body = #"{"error":{"code":"method_not_allowed","message":"Use \#(expectedMethod.rawValue) for this channel route.","type":"invalid_request_error"}}"#
+            var headers = [("Content-Type", "application/json; charset=utf-8"), ("Allow", expectedMethod.rawValue)]
+            headers.append(contentsOf: cors)
+            sendResponse(context: context, version: head.version, status: .methodNotAllowed, headers: headers, body: body)
+            logRequest(
+                method: method.rawValue,
+                path: path,
+                userAgent: userAgent,
+                requestBody: nil,
+                responseBody: body,
+                responseStatus: 405,
+                startTime: startTime
+            )
+            return
+        }
+
+        var data = Data()
+        if let body = stateRef.value.requestBodyBuffer {
+            var bodyCopy = body
+            data = Data(bodyCopy.readBytes(length: bodyCopy.readableBytes) ?? [])
+        }
+        var headerMap: [String: String] = [:]
+        for (name, value) in head.headers {
+            headerMap[name] = value
+        }
+        // Only the redacted twin ever reaches the Insights request log: the
+        // verification header IS the credential.
+        let redactedHeaders = AgentChannelWebhookIngress.redactedHeaders(headerMap)
+        let logRequestBody: String? = {
+            var summary: [String: Any] = ["headers": redactedHeaders.filter { key, _ in
+                let lowered = key.lowercased()
+                return lowered.hasPrefix("x-osaurus") || lowered == "content-type" || lowered == "idempotency-key"
+            }]
+            summary["body_bytes"] = data.count
+            return (try? JSONSerialization.data(withJSONObject: summary, options: [.sortedKeys]))
+                .map { String(decoding: $0, as: UTF8.self) }
+        }()
+
+        let ingressRequest = AgentChannelWebhookIngressRequest(
+            kind: {
+                switch route {
+                case .inbound(let kind, _), .ping(let kind, _), .taskPoll(let kind, _, _): return kind
+                }
+            }(),
+            connectionId: {
+                switch route {
+                case .inbound(_, let id), .ping(_, let id), .taskPoll(_, let id, _): return id
+                }
+            }(),
+            headers: headerMap,
+            body: data,
+            sourceAddress: remoteIP(context),
+            // The remote-transport policy is about the physical transport, not
+            // the `trustLoopback` auth policy: the server flips `trustLoopback`
+            // off when it binds 0.0.0.0 (expose-to-network), which must NOT
+            // turn a same-Mac 127.0.0.1 caller into a "remote plaintext" peer.
+            // Relay-origin traffic is still excluded by this predicate.
+            isLoopback: isPhysicalLoopbackConnection(context),
+            isSecureChannel: stateRef.value.isSecureChannel
+        )
+
+        runRequestTask(priority: .userInitiated) {
+            let response: AgentChannelWebhookIngressResponse
+            switch route {
+            case .inbound:
+                response = await AgentChannelWebhookIngress.shared.handleInbound(ingressRequest)
+            case .ping:
+                response = await AgentChannelWebhookIngress.shared.handlePing(ingressRequest)
+            case .taskPoll(_, _, let taskId):
+                response = await AgentChannelWebhookIngress.shared.handleTaskPoll(ingressRequest, taskId: taskId)
+            }
+            hop {
+                var headers = [("Content-Type", "application/json; charset=utf-8")]
+                headers.append(contentsOf: cors)
+                self.sendResponse(
+                    context: ctx.value,
+                    version: head.version,
+                    status: HTTPResponseStatus(statusCode: response.status),
+                    headers: headers,
+                    body: response.body
+                )
+                logSelf.logRequest(
+                    method: method.rawValue,
+                    path: path,
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseBody: response.body,
+                    responseStatus: response.status,
+                    startTime: logStartTime
+                )
+            }
+        }
+    }
+
     private func handleListAgents(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -4822,12 +10169,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logStartTime = startTime
         let logUserAgent = userAgent
 
+        // Read on the event loop, before the detached task.
+        let ownerCaller = callerOwnsThisMac(context)
         runRequestTask(priority: .userInitiated) {
-            // Built-in agents (the Default agent) live only in-app; the
-            // listing endpoint must not advertise them so external clients
-            // can never even attempt to address them.
+            // Built-in agents (the Orchestrator) live in-app and on the user's
+            // own paired phone; the listing must not advertise them to anyone
+            // else, so an external client cannot even attempt to address one.
             let agents = await MainActor.run {
-                AgentManager.shared.agents.filter { !$0.isBuiltIn }
+                AgentManager.shared.agents.filter { ownerCaller || !$0.isBuiltIn }
             }
 
             let db = MemoryDatabase.shared
@@ -4857,17 +10206,32 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     uniquingKeysWith: { first, _ in first }
                 )
             }
+            let relayEnabled = await MainActor.run {
+                Set(agents.map(\.id).filter { RelayTunnelManager.shared.isTunnelEnabled(for: $0) })
+            }
+            // The owner's phone pins the Mac's connect identity under the
+            // built-in agent, which has no address of its own. Without it, a
+            // Mac with no custom agents leaves the phone no Secure Channel.
+            // With one, the phone rides that agent's channel instead, which
+            // the relay can carry too (`MobilePairingService.connectEntry`).
+            let needsConnectIdentity = ownerCaller && !agents.contains { !$0.isBuiltIn && $0.agentAddress != nil }
+            let connectAddress = needsConnectIdentity ? MobileConnectIdentity.address() : nil
+            // Same image gate as the desktop composer, so remote provider
+            // models are not reported as text-only just because they have
+            // no local bundle for `VLMDetection` to read.
+            let pickerItems = await ModelPickerItemCache.shared.currentItems()
             let items = agents.map { agent in
                 let modelId = effectiveModels[agent.id] ?? agent.defaultModel
-                let supportsVision = modelId.map { VLMDetection.isVLM(modelId: $0) } ?? false
+                let supportsVision = modelId.map { ChatSession.modelSupportsImages(modelId: $0, pickerItems: pickerItems) } ?? false
                 let supportsThinking =
                     modelId.flatMap { ModelProfileRegistry.profile(for: $0)?.thinkingOption } != nil
                 return AgentListItem(
                     id: agent.id.uuidString,
                     name: agent.name,
                     description: agent.description,
+                    generated_description: agent.generatedDescription,
                     avatar: agent.avatar,
-                    chat_quick_actions: agent.chatQuickActions,
+                    chat_quick_actions: Self.clientQuickActions(for: agent),
                     default_model: agent.defaultModel,
                     effective_model: modelId,
                     supports_thinking: supportsThinking,
@@ -4875,7 +10239,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     is_built_in: agent.isBuiltIn,
                     memory_entry_count: memoryCounts[agent.id.uuidString] ?? 0,
                     created_at: formatter.string(from: agent.createdAt),
-                    updated_at: formatter.string(from: agent.updatedAt)
+                    updated_at: formatter.string(from: agent.updatedAt),
+                    address: agent.id == Agent.defaultId ? connectAddress : agent.agentAddress?.lowercased(),
+                    relay_url: relayEnabled.contains(agent.id)
+                        ? agent.agentAddress.map(RelayTunnelManager.publicURL(forAddress:)) : nil
+                    ,
+                    custom_avatar: agent.customAvatarURL != nil ? true : nil,
+                    system_prompt: nil
                 )
             }
 
@@ -4951,8 +10321,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
+        // The system prompt is owner-only; read the flag on the event loop.
+        let ownerCaller = callerOwnsThisMac(context)
+
         // Confine agent-scoped keys to their own agent: a key minted by
-        // `/pair` / `/pair-invite` for agent A must not read another agent's
+        // `/pair-invite` for agent A must not read another agent's
         // metadata (name, description, effective_model). Mirrors the
         // `/agents/{id}/run` scope gate. Loopback callers (authedAudience ==
         // nil) and master-scoped keys are unaffected. Read `stateRef` here on
@@ -4973,12 +10346,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
 
         runRequestTask(priority: .userInitiated) {
-            // Built-in agents are not exposed via HTTP — return 404 (not 403)
-            // so external clients learn the id is unreachable but cannot
-            // distinguish "no such agent" from "you are not allowed to see
-            // this one". This matches the listing endpoint's filter behavior.
+            // Built-in agents are reachable only by owner callers — return 404
+            // (not 403) to everyone else, so an external client learns the id
+            // is unreachable but cannot distinguish "no such agent" from "you
+            // are not allowed to see this one". Matches the listing filter.
             guard let agent = await MainActor.run(body: { AgentManager.shared.agent(for: agentId) }),
-                !agent.isBuiltIn
+                ownerCaller || !agent.isBuiltIn
             else {
                 hop {
                     var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -4994,12 +10367,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 return
             }
 
+            let relayOn = await MainActor.run { RelayTunnelManager.shared.isTunnelEnabled(for: agent.id) }
             let formatter = ISO8601DateFormatter()
             let effectiveModelId =
                 await MainActor.run {
                     AgentManager.shared.effectiveModel(for: agent.id)
                 } ?? agent.defaultModel
-            let supportsVision = effectiveModelId.map { VLMDetection.isVLM(modelId: $0) } ?? false
+            let pickerItems = await ModelPickerItemCache.shared.currentItems()
+            let supportsVision = effectiveModelId.map { ChatSession.modelSupportsImages(modelId: $0, pickerItems: pickerItems) } ?? false
             let supportsThinking =
                 effectiveModelId.flatMap { ModelProfileRegistry.profile(for: $0)?.thinkingOption } != nil
             // Same stored-memory count as the `/agents` listing (episodes +
@@ -5011,12 +10386,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 let pinned = (try? db.pinnedFactCount(agentId: agent.id.uuidString)) ?? 0
                 return episodes + pinned
             }()
-            let item = AgentListItem(
+            var item = AgentListItem(
                 id: agent.id.uuidString,
                 name: agent.name,
                 description: agent.description,
+                generated_description: agent.generatedDescription,
                 avatar: agent.avatar,
-                chat_quick_actions: agent.chatQuickActions,
+                chat_quick_actions: Self.clientQuickActions(for: agent),
                 default_model: agent.defaultModel,
                 effective_model: effectiveModelId,
                 supports_thinking: supportsThinking,
@@ -5024,8 +10400,25 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 is_built_in: agent.isBuiltIn,
                 memory_entry_count: memoryEntryCount,
                 created_at: formatter.string(from: agent.createdAt),
-                updated_at: formatter.string(from: agent.updatedAt)
+                updated_at: formatter.string(from: agent.updatedAt),
+                address: agent.agentAddress?.lowercased(),
+                relay_url: relayOn ? agent.agentAddress.map(RelayTunnelManager.publicURL(forAddress:)) : nil
+                ,
+                custom_avatar: agent.customAvatarURL != nil ? true : nil,
+                system_prompt: nil
             )
+            item.features = Self.connectFeatures
+            if !ownerCaller {
+                item.hosted_workflows = await MainActor.run { HostedWorkflowHost.offers(for: agent) }
+            }
+            if ownerCaller {
+                // As the Mac resolves it: the built-in Orchestrator keeps its
+                // prompt in its own store (`default-agent.json`), not on the
+                // agent record, which reads empty for it.
+                let agentId = agent.id
+                item.system_prompt = await MainActor.run { AgentManager.shared.effectiveSystemPrompt(for: agentId) }
+                item.settings = await MainActor.run { PhoneAgentEditing.settings(for: agent) }
+            }
             let json =
                 (try? JSONEncoder.osaurusCanonical().encode(item)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
 
@@ -5052,7 +10445,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
-    /// Resolve a per-agent host workspace folder (`Agent.hostWorkspaceBookmark`)
+    /// Resolve the agent's working folder (`Agent.workingFolderBookmark`)
     /// into a live `FolderContext` and begin security-scoped access. Returns
     /// nil when the agent has no folder configured, the bookmark is
     /// stale/unresolvable (folder moved or deleted), or access can't be
@@ -5063,7 +10456,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         agentId: UUID
     ) async -> (url: URL, context: FolderContext)? {
         let bookmark = await MainActor.run {
-            AgentManager.shared.agent(for: agentId)?.hostWorkspaceBookmark
+            AgentManager.shared.agent(for: agentId)?.workingFolderBookmark
         }
         guard let bookmark,
             let url = FolderContextService.resolveSecurityScopedURL(from: bookmark),
@@ -5138,7 +10531,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // `model`, so inject an empty value when the caller omitted it; the
         // resolver below maps empty/"default" → the agent's effective model.
         let runDecodeData = Self.injectingEmptyModelIfMissing(data)
-        guard let req = try? JSONDecoder().decode(ChatCompletionRequest.self, from: runDecodeData) else {
+        guard var decodedReq = try? JSONDecoder().decode(ChatCompletionRequest.self, from: runDecodeData) else {
             sendResponse(
                 context: context,
                 version: head.version,
@@ -5157,6 +10550,33 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             )
             return
         }
+        // Host-history mode: this Mac's transcript is the conversation, so
+        // the caller contributes its system messages and one new user
+        // message only (docs/MOBILE_PROTOCOL.md §21.3).
+        if decodedReq.osaurus_history == "host", decodedReq.session_id?.isEmpty == false {
+            guard let trimmed = MultiPartyTranscript.hostModeMessages(decodedReq.messages) else {
+                let message = "In host-history mode the last message must be the caller's user message."
+                sendResponse(
+                    context: context,
+                    version: head.version,
+                    status: .badRequest,
+                    headers: [("Content-Type", "application/json; charset=utf-8")],
+                    body: #"{"error":"invalid_host_history","message":"\#(message)"}"#
+                )
+                logRequest(
+                    method: "POST",
+                    path: path,
+                    userAgent: userAgent,
+                    requestBody: requestBodyString,
+                    responseStatus: 400,
+                    startTime: startTime,
+                    errorMessage: message
+                )
+                return
+            }
+            decodedReq.messages = trimmed
+        }
+        let req = decodedReq
 
         // Extract agent identifier: /agents/{id}/run. Accept the local-friendly
         // "default" alias for clients that don't know the built-in UUID yet, a
@@ -5191,12 +10611,26 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // before any enrichment so secrets / system prompts / memory writes
         // for built-ins are unreachable from remote HTTP.
         //
-        // Loopback callers are trusted (same machine, no auth) and are allowed
-        // to reach the built-in agent so the App Intents "Ask Osaurus" surface
-        // can drive the in-app default agent. This exposes the built-in agent's
-        // persona/memory/tools to any localhost process, which is acceptable
-        // under the existing no-auth-loopback model.
-        if !isLoopbackConnection(context),
+        // Owner callers are trusted with the built-in agent (the Orchestrator):
+        // loopback, so the App Intents "Ask Osaurus" surface can drive the
+        // in-app default agent, and the user's own paired phone, which holds a
+        // master-scoped key (docs/MOBILE_PROTOCOL.md §18). Every other HTTP
+        // caller — workspace peers, agent-scoped keys, plaintext — is refused,
+        // so the built-in's persona, memory and tools stay off the open surface.
+        // Read on the event loop: it gates the built-in agent below and, deeper
+        // in the run, whether the Privacy Filter may ask the phone to review.
+        let ownerRun = callerOwnsThisMac(context)
+        // The owner's paired phone: owner scope AND the Secure Channel it
+        // always speaks. Only this caller gets cards relayed (privacy reviews,
+        // tool approvals); a bare loopback script is still owner but has no
+        // one polling for cards, so it keeps failing closed instead of
+        // waiting on an answer that never comes. The phone is identified by
+        // the master key it validates inside the channel, never by loopback:
+        // the Secure Channel handshake does not authenticate the client, so a
+        // local process can open its own session and must not gain the
+        // phone's powers (`osaurus_privacy`, run ids, model options).
+        let remoteReviewer = stateRef.value.authedScopeIsMaster && stateRef.value.isSecureChannel
+        if !ownerRun,
             let rejection = Agent.rejectBuiltInForExternalSurface(agentId, source: "http/agents/run")
         {
             sendResponse(
@@ -5219,7 +10653,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
-        // Confine agent-scoped keys (e.g. minted by `/pair` or `/pair-invite`)
+        // Confine agent-scoped keys (e.g. minted by `/pair-invite`)
         // to their own agent so one paired peer cannot drive every agent.
         if let rejection = agentScopeRejection(forAgentId: agentId) {
             sendResponse(
@@ -5241,6 +10675,40 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
+        // The owner's phone names its run so the reply outlives the connection
+        // (docs/MOBILE_PROTOCOL.md §6.4). The same id while that run is live is
+        // the phone sending the request again on its other route, having heard
+        // nothing back: it follows the running one rather than start a second.
+        // A teammate or invite-link peer may name its run too, so a run
+        // parked on the owner's approval survives their connection dropping;
+        // its id is scoped to their access key.
+        let detachedRun: DetachedPhoneRun?
+        let runScopeNonce: String? =
+            remoteReviewer || isLoopbackConnection(context) ? nil : inboundConnectionInfo()?.accessKeyId
+        if let runId = req.osaurus_run_id, DetachedPhoneRuns.isValidId(runId),
+            remoteReviewer || runScopeNonce != nil
+        {
+            let (run, isNew) = DetachedPhoneRuns.shared.begin(
+                id: DetachedPhoneRuns.scopedId(runId, keyNonce: runScopeNonce)
+            )
+            guard isNew else {
+                MobileConnectLog.hostedRun("run \(runId) sent again while live; following it")
+                streamDetachedRun(
+                    run,
+                    after: 0,
+                    head: head,
+                    context: context,
+                    path: path,
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+                return
+            }
+            detachedRun = run
+        } else {
+            detachedRun = nil
+        }
+
         guard
             let admissionToken = acquireInferenceAdmissionOrReject(
                 context: context,
@@ -5250,16 +10718,27 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 method: "POST",
                 userAgent: userAgent,
                 requestBody: requestBodyString,
-                startTime: startTime
+                startTime: startTime,
+                model: req.model
             )
-        else { return }
+        else {
+            detachedRun?.finish()
+            return
+        }
 
         let cors = stateRef.value.corsHeaders
         let loop = context.eventLoop
         let writer = SSEResponseWriter()
+        writer.recorder = detachedRun
         let writerBound = NIOLoopBound(writer, eventLoop: loop)
         let ctx = NIOLoopBound(context, eventLoop: loop)
-        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        // A detached run keeps writing once the phone is gone: its frames go
+        // to the recorder, and the writes themselves no-op on the dead channel.
+        let hop: (@escaping @Sendable () -> Void) -> Void =
+            detachedRun == nil
+            ? Self.makeHop(channel: context.channel, loop: loop)
+            : { block in loop.inEventLoop ? block() : loop.execute { block() } }
+        let runChannel = context.channel
         let logSelf = self
         let logStartTime = startTime
         let logUserAgent = userAgent
@@ -5277,6 +10756,43 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // cases — and it lets a remote observer watch a file being written, not
         // just the final prose.
         let emitAgentToolTrace = true
+        // Full tool detail (arguments, results, the Mac's own labels and icons)
+        // goes only to callers that own this Mac: loopback, or a master-scoped
+        // key such as the paired phone. Agent-scoped and workspace-minted
+        // callers keep the sanitized trace above.
+        let includeToolDetail = isLoopbackConnection(context) || stateRef.value.authedScopeIsMaster
+        // Read now: the connection's attribution is reset for its next request.
+        let callerKeyNonce = inboundConnectionInfo()?.accessKeyId
+        let toolTimer = AgentToolTraceTimer()
+        @Sendable func startedDetail(_ invocation: ServiceToolInvocation, callId: String) -> AgentToolTraceDetail? {
+            guard includeToolDetail else { return nil }
+            toolTimer.start(callId)
+            return .started(
+                toolName: invocation.toolName,
+                arguments: SecretArgumentScrubber.recordedArguments(
+                    toolName: invocation.toolName,
+                    argumentsJSON: invocation.jsonArguments
+                )
+            )
+        }
+        @Sendable func completedDetail(
+            _ invocation: ServiceToolInvocation,
+            callId: String,
+            result: String,
+            isError: Bool
+        ) -> AgentToolTraceDetail? {
+            guard includeToolDetail else { return nil }
+            return .completed(
+                toolName: invocation.toolName,
+                arguments: SecretArgumentScrubber.recordedArguments(
+                    toolName: invocation.toolName,
+                    argumentsJSON: invocation.jsonArguments
+                ),
+                result: result,
+                isError: isError,
+                duration: toolTimer.finish(callId)
+            )
+        }
         // Host file tools are mounted only for an AUTHENTICATED REMOTE caller
         // (Secure Channel, agent-scoped — enforced by the gates above). A
         // loopback caller is unauthenticated under the no-auth-loopback model,
@@ -5289,6 +10805,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let info = inboundConnectionInfo()
             return info?.accessKeyId ?? info?.audience ?? "peer"
         }()
+        // Nonce of the validated access key (event-loop snapshot). Inside the
+        // run task it resolves to a workspace-minted key record — if this run is a
+        // teammate driving a shared agent — so workspace billing + caller
+        // attribution can be bound for the whole loop.
+        let authedKeyNonce: String? = isAuthenticatedRemote ? inboundConnectionInfo()?.accessKeyId : nil
+        // Agent-address audience the key is scoped to (event-loop snapshot):
+        // stamps the hosted transcript of an invite-link peer's run.
+        let authedKeyAudience: String? = isAuthenticatedRemote ? inboundConnectionInfo()?.audience : nil
+        let workspaceKeyRequired = stateRef.value.authedKeyIsWorkspaceMinted
 
         hop { writerBound.value.writeHeaders(ctx.value, extraHeaders: cors) }
 
@@ -5296,25 +10821,155 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // stream termination handler then cancels its exact ModelRuntime
         // wrapper. Never cancel by model name here: concurrent chat/API work
         // may legitimately share the same resident model.
+        // A detached run is only stopped on request (`onStop` below).
         let disconnected = SendableBool(false)
-        context.channel.closeFuture.whenComplete { _ in
-            disconnected.value = true
+        if detachedRun == nil {
+            context.channel.closeFuture.whenComplete { _ in
+                disconnected.value = true
+            }
         }
         // Billing dedupe base for Router-bound loop steps: header-supplied or
         // synthesized. Each loop iteration derives a per-step key from it.
         let idempotencyBase = Self.httpIdempotencyKey(head: head)
 
-        runRequestTask(priority: .userInitiated) {
+        // SSE keepalive, as on the chat-completions stream. A run can sit
+        // silent for minutes before its first byte — a cold privacy model
+        // loading, or a redaction review waiting on the paired phone — and
+        // the phone's request idles out at 120s. It then replays the run on
+        // its other route, which cancels this one and its pending review.
+        let keepaliveTask = Self.startSSEKeepalive(
+            writer: writerBound,
+            channel: context.channel,
+            loop: loop,
+            ctx: ctx,
+            disconnected: detachedRun == nil ? disconnected : nil
+        )
+        let runTask = runRequestTask(priority: .userInitiated, outlivesConnection: detachedRun != nil) {
+            // However the run ends, a phone following it hears the end.
+            defer { detachedRun?.finish() }
+            defer { keepaliveTask.cancel() }
             defer { admissionToken.release() }
             // HTTP inference bypasses the in-app "generating" dot; drive it for
             // the whole run (incl. remote-peer runs). `defer` balances all exits.
             ServerController.signalGenerationStart()
             defer { ServerController.signalGenerationEnd() }
+
+            // Workspaces shared-agent session: when the caller authenticated with a
+            // workspace-minted key (attestation handshake), every router-billed step
+            // of this run carries the workspace pool + the teammate's current
+            // attestation for `caller` usage attribution. An expired record
+            // resolves to nil — the key validator already rejected expired keys,
+            // and a stale attestation must be omitted, never sent best-effort.
+            // Resolved before the model so a teammate cannot pick the model.
+            let workspaceKeyRecord: WorkspaceAgentAccessHost.WorkspaceKeyRecord? = await {
+                guard let nonce = authedKeyNonce else { return nil }
+                return await WorkspaceAgentAccessHost.shared.workspaceKeyRecord(forKeyNonce: nonce)
+            }()
+
+            do {
+                if workspaceKeyRequired && workspaceKeyRecord == nil { throw WorkspaceRedeemRejection.notShared }
+                if let record = workspaceKeyRecord {
+                    try await WorkspaceAgentAccessHost.shared.validateCurrentAccess(record)
+                }
+            } catch {
+                let message =
+                    error as? WorkspaceRedeemRejection == .workspaceSuspended
+                    ? "This workspace is suspended, so its shared agents are paused until the owner renews it."
+                    : "Workspace access could not be verified. Sending is paused."
+                hop {
+                    writerBound.value.writeError(message, context: ctx.value)
+                    writerBound.value.writeEnd(ctx.value)
+                }
+                return
+            }
+
+            if let harnessError = await MainActor.run(body: {
+                AgentManager.shared.harnessUnsupportedError(for: agentId)
+            }) {
+                let msg = harnessError.localizedDescription
+                hop {
+                    writerBound.value.writeError(msg, context: ctx.value)
+                    writerBound.value.writeEnd(ctx.value)
+                }
+                logSelf.logRequest(
+                    method: "POST",
+                    path: path,
+                    userAgent: logUserAgent,
+                    requestBody: logRequestBody,
+                    responseStatus: 200,
+                    startTime: logStartTime,
+                    errorMessage: msg
+                )
+                return
+            }
+
             // Resolve model: a Mode 2 caller omits `model` (decoded as empty),
             // and older clients send the "default" sentinel. Both resolve to
             // the agent's effective model server-side.
             let model: String
-            if req.model.isEmpty || req.model == "default" {
+            if let workspaceKeyRecord {
+                // A teammate runs the shared agent exactly as its owner
+                // configured it: the model is the owner's choice (and the
+                // owner's / pool's bill), never the caller's. An explicit
+                // different model is refused rather than silently swapped so
+                // the client can surface why.
+                let agentModel = await MainActor.run { AgentManager.shared.effectiveModel(for: agentId) }
+                let requested = req.model
+                if !requested.isEmpty, requested != "default", requested != agentModel {
+                    let msg =
+                        "Shared workspace agents always run the model configured by their owner; remove the `model` override and retry."
+                    RemoteAgentRunLog.serverError(
+                        "run agent=\(agentId.uuidString) REJECTED reqModel=\(requested) error=workspace_model_locked"
+                    )
+                    await WorkspaceAuditLog.shared.recordRunRejected(
+                        record: workspaceKeyRecord,
+                        agentId: agentId,
+                        reason: "model_override",
+                        detail: requested
+                    )
+                    hop {
+                        writerBound.value.writeError(msg, context: ctx.value)
+                        writerBound.value.writeEnd(ctx.value)
+                    }
+                    logSelf.logRequest(
+                        method: "POST",
+                        path: path,
+                        userAgent: logUserAgent,
+                        requestBody: logRequestBody,
+                        responseStatus: 200,
+                        startTime: logStartTime,
+                        errorMessage: msg
+                    )
+                    return
+                }
+                model = agentModel ?? ""
+            } else if let lockedModel = await MainActor.run(body: {
+                AgentManager.shared.lockedModel(for: agentId)
+            }) {
+                let requested = req.model
+                if !requested.isEmpty, requested != "default", requested != lockedModel {
+                    let msg =
+                        "This agent is locked to model '\(lockedModel)'; remove the `model` override and retry."
+                    RemoteAgentRunLog.serverError(
+                        "run agent=\(agentId.uuidString) REJECTED reqModel=\(requested) error=agent_model_locked"
+                    )
+                    hop {
+                        writerBound.value.writeError(msg, context: ctx.value)
+                        writerBound.value.writeEnd(ctx.value)
+                    }
+                    logSelf.logRequest(
+                        method: "POST",
+                        path: path,
+                        userAgent: logUserAgent,
+                        requestBody: logRequestBody,
+                        responseStatus: 200,
+                        startTime: logStartTime,
+                        errorMessage: msg
+                    )
+                    return
+                }
+                model = lockedModel
+            } else if req.model.isEmpty || req.model == "default" {
                 let agentModel = await MainActor.run { AgentManager.shared.effectiveModel(for: agentId) }
                 if let agentModel {
                     model = agentModel
@@ -5363,6 +11018,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
                 return
             }
+            // Admission reserved against `req.model`, which an agent run
+            // usually omits; re-reserve for the model it will actually load.
+            if model != req.model { admissionToken.reserveForeground(model: model) }
             RemoteAgentRunLog.server(
                 "run start agent=\(agentId.uuidString) model=\(model) reqModel=\(req.model.isEmpty ? "<omitted>" : req.model)"
             )
@@ -5439,7 +11097,95 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 modelOverride: model
             )
             var messages = enrichedReq.messages
-            let tools = enrichedReq.tools ?? []
+            // Osaurus Connect: continuing one of the Mac's own chats. Its
+            // stored turns become the context, and the turns this run adds
+            // are appended back to it below (docs/MOBILE_PROTOCOL.md §14.5).
+            let continuedSessionId: UUID? = await {
+                guard includeToolDetail,  // owner caller (loopback / master key)
+                    let raw = req.osaurus_session_id,
+                    let id = UUID(uuidString: raw)
+                else { return nil }
+                if await MainActor.run(body: { RemoteSessionContinuation.isContinuable(id) }) {
+                    await RemoteSessionContinuation.adoptHostedPhoneChat(id)
+                    return id
+                }
+                // A chat the phone starts with this run: the Mac keeps it from
+                // the first message, so it stays one chat however the phone's
+                // copy and the Mac's differ (tool steps, an interrupted reply).
+                guard req.osaurus_create_session == true,
+                    await MainActor.run(body: { RemoteSessionContinuation.isPairedPhoneKey(callerKeyNonce) })
+                else { return nil }
+                let started = await RemoteSessionContinuation.startPhoneChat(
+                    id,
+                    agentId: agentId,
+                    messages: req.messages
+                )
+                return started ? id : nil
+            }()
+            // Index of the first message this run adds to that chat (its own
+            // request messages and everything the loop appends).
+            let persistFrom = SendableInt(0)
+            if let continuedSessionId {
+                let history = await RemoteSessionContinuation.history(for: continuedSessionId)
+                // Keep the composed system prompt first, then the stored
+                // conversation, then this request's new messages.
+                let systemCount = messages.prefix(while: { $0.role == "system" }).count
+                messages.insert(contentsOf: history, at: systemCount)
+                persistFrom.value = systemCount + history.count
+                // The chat to bring forward when the user is back at the Mac.
+                // Its composer waits for this run (see `isPhoneReplying`).
+                await MainActor.run {
+                    PhoneChatHandoff.shared.notePhoneRun(sessionId: continuedSessionId, keyNonce: callerKeyNonce)
+                    RemoteSessionContinuation.beginPhoneRun(continuedSessionId)
+                }
+            }
+            // A turn of the owner's phone call (docs/MOBILE_PROTOCOL.md §6.5).
+            // The phone sends its own call instructions as a fixed system
+            // message, so nothing is added to the messages here: a note on the
+            // latest user message was gone when that message was replayed on
+            // the next turn, and a local model read the last exchange again.
+            // The flag keeps call turns lean (`isVoiceCall`) and the model
+            // warm between them.
+            let voiceCall = includeToolDetail && req.osaurus_voice_call == true
+            // Append this run's turns to the continued chat when the request
+            // ends, however it ends (finished, errored, client gone).
+            defer {
+                if let continuedSessionId {
+                    let start = min(persistFrom.value, messages.count)
+                    let turns = Array(messages[start...])
+                    let appended = turns.filter { $0.role != "system" }
+                    let runModel = model
+                    Task { @MainActor in
+                        if !appended.isEmpty {
+                            await RemoteSessionContinuation.append(
+                                appended,
+                                to: continuedSessionId,
+                                model: runModel,
+                                voiceCall: voiceCall
+                            )
+                            PhoneChatHandoff.shared.notePhoneRun(
+                                sessionId: continuedSessionId,
+                                keyNonce: callerKeyNonce
+                            )
+                        }
+                        // After its turns are in, so a send the Mac held goes after them.
+                        RemoteSessionContinuation.endPhoneRun(continuedSessionId)
+                    }
+                }
+            }
+
+            // The owner's paired phone sets Thinking and Reasoning Effort
+            // through the same per-model store as the Mac composer's picker
+            // (§12.3), so its runs carry those choices as the Mac's own chat
+            // does. Other callers keep ChatEngine's no-GUI-preferences rule.
+            var loadedModelOptions: [String: ModelOptionValue]?
+            if remoteReviewer, workspaceKeyRecord == nil, !model.isEmpty {
+                _ = await LocalReasoningCapability.resolveForDispatch(modelId: model)
+                loadedModelOptions = await MainActor.run { ModelOptionsStore.shared.loadOptions(for: model) }
+            }
+            let storedModelOptions = loadedModelOptions
+
+            let baseTools = enrichedReq.tools ?? []
             let resolvedToolChoice = enrichedReq.tool_choice
 
             // Honor the agent's configured sampling when the request omits it,
@@ -5464,10 +11210,264 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // ends; otherwise every HTTP spawn leaks an undrained bucket
             // plus orphaned files in the artifact store.
             defer { SpawnArtifactCollector.discard(sessionId: requestId) }
+
+            // Workspace billing context for the whole loop (record resolved
+            // above, before model selection).
+            let workspaceBilling: OsaurusRouterWorkspaceContext? = workspaceKeyRecord.map { record in
+                OsaurusRouterWorkspaceContext(
+                    workspaceId: record.workspaceId,
+                    agentAddress: record.agentAddressLower,
+                    callerAttestation: record.attestationToken
+                )
+            }
+            // Host-side shared-agent run: every authenticated remote caller —
+            // a workspace teammate (workspace-minted key) or an invite-link
+            // peer (agent-scoped key) — is hosted as a session-backed
+            // background task: a live read-only tab of the shared agent
+            // ("Alice → Research Agent" with step + Stop), a History row from
+            // the first turn, retained across relaunch until dismissed.
+            // Not a run continuing one of the Mac's chats (§14.5): that chat
+            // takes its turns, and a hosted row beside it, keyed by this
+            // request alone, split every phone turn into a chat of its own.
+            let inboundRun: InboundSharedRun? = await {
+                guard isAuthenticatedRemote, continuedSessionId == nil, let nonce = authedKeyNonce else { return nil }
+                var context: WorkspaceSessionContext
+                if let record = workspaceKeyRecord {
+                    let person = await WorkspaceCallerNameResolver.shared.person(
+                        workspaceId: record.workspaceId,
+                        accountId: record.accountId,
+                        wallet: record.wallet
+                    )
+                    context = WorkspaceSessionContext(
+                        workspaceId: record.workspaceId,
+                        agentAddress: record.agentAddressLower,
+                        callerWallet: record.wallet,
+                        callerName: person?.legacyName,
+                        callerHandle: person?.handle
+                    )
+                } else {
+                    // Invite-link peer: no workspace (empty id), identified by
+                    // the paired key's nonce and labelled with the key's label
+                    // the owner chose when sharing. A redeemer that proved
+                    // its wallet is named by it.
+                    let label = APIKeyManager.shared.listKeys().first { $0.nonce == nonce }?.label
+                    let provenWallet = InvitePeerIdentityStore.wallet(forKeyNonce: nonce)
+                    var handle: String?
+                    if let provenWallet { handle = await WalletHandles.resolver.handle(forWallet: provenWallet) }
+                    context = WorkspaceSessionContext(
+                        workspaceId: "",
+                        agentAddress: authedKeyAudience ?? "",
+                        callerWallet: nonce,
+                        callerName: (label?.isEmpty == false) ? label : nil,
+                        callerHandle: handle,
+                        callerAddress: provenWallet
+                    )
+                }
+                if let declaration = req.osaurus_caller, !context.agentAddress.isEmpty,
+                    let sessionId = req.session_id, !sessionId.isEmpty,
+                    let verification = declaration.verification(
+                        targetAgentAddress: context.agentAddress, sessionId: sessionId)
+                {
+                    let roster = await MainActor.run {
+                        WorkspaceRosterStore.shared.agent(forAddress: declaration.agent_address)
+                    }
+                    context = declaration.applying(
+                        to: context,
+                        rosterOwnerHandle: roster?.owner?.osaurusId,
+                        rosterAgentName: roster?.displayName,
+                        verification: verification
+                    )
+                }
+                let callerKey = (context.callerWallet ?? nonce).lowercased()
+                let externalKey = "\(callerKey):\(req.session_id ?? requestId)"
+                // Host-side Stop: flag the run cancelled, then end the SSE
+                // response on the channel's loop. `writeEnd` closes the channel,
+                // whose close future cancels the exact request task.
+                let stopRecord = workspaceKeyRecord
+                let stop: @Sendable () -> Void = {
+                    disconnected.value = true
+                    if let record = stopRecord {
+                        Task.detached(priority: .utility) {
+                            await WorkspaceAuditLog.shared.recordRunStopped(
+                                record: record,
+                                agentId: agentId,
+                                runKey: requestId
+                            )
+                        }
+                    }
+                    let block: @Sendable () -> Void = {
+                        guard runChannel.isActive else { return }
+                        writerBound.value.writeError(
+                            "The host stopped this conversation. Check the agent’s availability and workspace access before retrying.",
+                            context: ctx.value
+                        )
+                        writerBound.value.writeEnd(ctx.value)
+                    }
+                    if loop.inEventLoop { block() } else { loop.execute(block) }
+                }
+                let requestMessages = req.messages
+                MobileConnectLog.hostedRun(
+                    "run \(requestId) agent=\(agentId) messages=\(requestMessages.count) "
+                        + "osaurus_session_id=\(req.osaurus_session_id ?? "none") "
+                        + "session_id=\(req.session_id ?? "none")"
+                )
+                let hostHistory = req.osaurus_history == "host" && req.session_id?.isEmpty == false
+                let callerSessionId = req.session_id ?? requestId
+                let start = await MainActor.run {
+                    let start = InboundSharedRunBridge.shared.beginRun(
+                        runKey: requestId,
+                        agentId: agentId,
+                        context: context,
+                        externalKey: externalKey,
+                        requestMessages: requestMessages,
+                        hostHistory: hostHistory,
+                        stop: stop
+                    )
+                    ConversationMailbox.shared.bind(
+                        taskId: start.handle.taskId, callerKey: callerKey, sessionId: callerSessionId)
+                    InboundSharedRunBridge.shared.attachParticipantSink(start.handle) { message in
+                        let write: @Sendable () -> Void = {
+                            guard runChannel.isActive else { return }
+                            writerBound.value.writeParticipantMessage(
+                                message, model: model, responseId: responseId, created: created, context: ctx.value)
+                        }
+                        if loop.inEventLoop { write() } else { loop.execute(write) }
+                    }
+                    return start
+                }
+                let handle = start.handle
+                if let record = workspaceKeyRecord {
+                    await WorkspaceAuditLog.shared.recordRunStarted(
+                        record: record,
+                        agentId: agentId,
+                        runKey: requestId,
+                        model: model,
+                        callerName: context.callerName
+                    )
+                }
+                return InboundSharedRun(
+                    context: context, handle: handle, externalKey: externalKey, priorTurns: start.priorTurns)
+            }()
+            // Multi-party context: in host-history mode the hosted transcript
+            // is the conversation; otherwise the owner's turns (which the
+            // caller never replays) go back in where they were said.
+            if let inboundRun {
+                let multiParty = MultiPartyTranscript.isMultiParty(inboundRun.priorTurns)
+                // The caller's own words are wrapped as a participant's once
+                // someone else has spoken, so text shaped like an owner line
+                // stays the caller's.
+                messages = MultiPartyTranscript.wrappingCallerMessages(
+                    messages, originals: req.messages, author: inboundRun.context.caller, multiParty: multiParty)
+                if req.osaurus_history == "host", req.session_id?.isEmpty == false {
+                    let systemCount = messages.prefix(while: { $0.role == "system" }).count
+                    messages.insert(
+                        contentsOf: MultiPartyTranscript.history(inboundRun.priorTurns), at: systemCount)
+                } else {
+                    messages = MultiPartyTranscript.splice(
+                        MultiPartyTranscript.hostInserts(inboundRun.priorTurns),
+                        into: messages,
+                        callerTurnCount: ChatHistoryWriter.turns(from: req.messages).count
+                    )
+                }
+            }
+            let accessMonitor: Task<Void, Never>? = workspaceKeyRecord.map { record in
+                Task {
+                    while !Task.isCancelled && !disconnected.value {
+                        do {
+                            try await Task.sleep(for: .seconds(1))
+                            try Task.checkCancellation()
+                            try await WorkspaceAgentAccessHost.shared.validateCurrentAccess(record)
+                        } catch {
+                            guard !Task.isCancelled else { return }
+                            disconnected.value = true
+                            if let inboundRun {
+                                await MainActor.run {
+                                    InboundSharedRunBridge.shared.stopRequested(runKey: inboundRun.handle.runKey)
+                                }
+                            }
+                            return
+                        }
+                    }
+                }
+            }
+            defer { accessMonitor?.cancel() }
+            let inboundOutcome = InboundSharedRun.Outcome()
+            // Hosted run: `share_artifact` results are processed into the
+            // hosted session's store and travel back to the requester on the
+            // final `osaurus_artifacts` chunk (small files only). Plain API
+            // callers keep the raw marker contract.
+            let artifactRelay: RemoteRunArtifactRelay? = inboundRun.map { run in
+                RemoteRunArtifactRelay(
+                    contextId: run.handle.taskId.uuidString,
+                    executionMode: executionMode
+                )
+            }
+            // Messages the host has already mirrored into the hosted
+            // transcript; the loop hooks flush anything appended past this.
+            let mirroredCount = SendableInt(messages.count)
+            let mirrorNewMessages: @Sendable ([ChatMessage]) async -> Void = { current in
+                guard let inboundRun else { return }
+                let start = mirroredCount.value
+                guard current.count > start else { return }
+                let fresh = Array(current[start...])
+                mirroredCount.value = current.count
+                await MainActor.run {
+                    InboundSharedRunBridge.shared.appendMessages(inboundRun.handle, fresh)
+                }
+            }
+            defer {
+                if let inboundRun {
+                    let success = inboundOutcome.success
+                    let summary = inboundOutcome.summary
+                    let toolNames = inboundOutcome.toolNames
+                    let toolErrors = inboundOutcome.toolErrorCount
+                    let handle = inboundRun.handle
+                    let finalMessages = messages
+                    Task { @MainActor in
+                        // Flush any tail the hooks didn't (fallback text
+                        // appended after the last step), then close the run.
+                        let start = mirroredCount.value
+                        if finalMessages.count > start {
+                            InboundSharedRunBridge.shared.appendMessages(
+                                handle,
+                                Array(finalMessages[start...])
+                            )
+                        }
+                        InboundSharedRunBridge.shared.finish(
+                            handle,
+                            success: success,
+                            summary: summary
+                        )
+                    }
+                    if let record = workspaceKeyRecord {
+                        Task.detached(priority: .utility) {
+                            await WorkspaceAuditLog.shared.recordRunFinished(
+                                record: record,
+                                agentId: agentId,
+                                runKey: requestId,
+                                model: model,
+                                success: success,
+                                summary: summary,
+                                toolNames: toolNames,
+                                toolErrorCount: toolErrors
+                            )
+                        }
+                    }
+                }
+            }
             // Per-request harness state. The agent-run endpoint is stateless
             // across requests by design (see the divergence note above), so a
             // per-request instance is correct — there is no prior listing to
             // survive. Provides within-request dedupe + post-listing nudge.
+            // A teammate or another person's agent driving an agent set to
+            // ask its owner may also put a question to the owner.
+            let tools: [Tool] = await MainActor.run {
+                guard inboundRun != nil, !remoteReviewer,
+                    AgentManager.shared.agent(for: agentId)?.sharedToolApproval?.mode == .askOwner,
+                    !baseTools.contains(where: { $0.function.name == AskOwnerTool.toolName })
+                else { return baseTools }
+                return baseTools + ToolRegistry.shared.specs(forTools: [AskOwnerTool.toolName])
+            }
             let taskState = AgentTaskState()
             // Dynamic-tool classification for the same-name run advisory: a
             // value snapshot because the registry is MainActor-bound and this
@@ -5522,7 +11522,37 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // The loop invokes its hooks serially, so these plain vars are
             // race-free — same capture pattern as `responseContent` above.
             var loggedResponseText = ""
+            // Whether the step generating now (its text is `responseContent`)
+            // is still unrecorded: it isn't once it records the final answer
+            // or its tool calls, or is classified as a step to discard. A run
+            // that ends any other way (stopped, failed, out of length) keeps
+            // it as the reply, as the Mac's own Stop does: the phone already
+            // shows it, and a chat it continues must hold the same turns for
+            // its retry and edit to find the prompt. Its reasoning too, which
+            // the phone shows as the reply's thinking.
+            var stepUnsaved = false
+            var unsavedStepReasoning = ""
+            func keepUnsavedStepText() {
+                guard stepUnsaved else { return }
+                stepUnsaved = false
+                let text = StringCleaning.stoppedReplyText(responseContent)
+                let reasoning = unsavedStepReasoning
+                unsavedStepReasoning = ""
+                let blank = { (s: String) in s.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                guard !blank(text) || !blank(reasoning) else { return }
+                messages.append(
+                    ChatMessage(
+                        role: "assistant",
+                        content: text,
+                        tool_calls: nil,
+                        tool_call_id: nil,
+                        reasoning_content: blank(reasoning) ? nil : reasoning
+                    )
+                )
+            }
             var loggedToolCalls: [ToolCallLog] = []
+            var runUsage = AgentRunUsage()
+            var batchHistory = ResponsesToolBatchHistory()
 
             // Set when a successful `complete`/`clarify` intercept ends the
             // run — the post-loop tail streams this text (the parsed summary
@@ -5535,8 +11565,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // `clarify` flags `endRun` so the driver exits `.endedBySurface`.
             func interceptAware(
                 _ inv: ServiceToolInvocation,
-                _ execution: AgentLoopToolExecution
+                _ execution: AgentLoopToolExecution,
+                callID: String
             ) -> AgentLoopToolExecution {
+                batchHistory.record(callID: callID, result: execution.result)
                 guard
                     AgentToolLoop.isSuccessfulIntercept(
                         toolName: inv.toolName,
@@ -5566,15 +11598,29 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 isCancelled: {
                     // Client hung up between iterations — stop the agent loop.
                     // The close hook already cancelled the model's generation.
-                    disconnected.value
+                    // A host-side Stop on an inbound shared-agent run trips the
+                    // same flag via the bridge's stop closure.
+                    disconnected.value || (inboundRun?.handle.token.isInterrupted ?? false)
                 },
                 buildMessages: { notices in
+                    // The owner spoke in the hosted conversation since the
+                    // last step: already in the transcript, now in context.
+                    if let inboundRun {
+                        await mirrorNewMessages(messages)
+                        let injected = await MainActor.run {
+                            InboundSharedRunBridge.shared.drainInjections(inboundRun.handle)
+                        }
+                        if !injected.isEmpty {
+                            messages.append(contentsOf: injected)
+                            mirroredCount.value = messages.count
+                        }
+                    }
                     // Canonical notice contract (shared with chat/plugin):
                     // trim with the system prefix kept byte-stable, then
                     // append driver-staged notices TRANSIENTLY — they ride
                     // exactly one iteration and never persist into
                     // `messages`.
-                    AgentLoopBudget.composeIterationMessages(
+                    return AgentLoopBudget.composeIterationMessages(
                         messages,
                         notices: notices,
                         manager: budgetManager,
@@ -5586,162 +11632,147 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     // `<tools>` block) byte-stable across every iteration so the
                     // post-tool finalization step extends the calling step's KV
                     // prefix instead of re-prefilling from scratch.
-                    var iterationReq = ChatCompletionRequest(
-                        model: model,
-                        messages: msgs,
-                        temperature: effectiveTemperature,
-                        max_tokens: effectiveMaxTokens,
-                        stream: true,
-                        top_p: req.top_p,
-                        top_k: req.top_k,
-                        min_p: req.min_p,
-                        frequency_penalty: req.frequency_penalty,
-                        presence_penalty: req.presence_penalty,
-                        stop: req.stop,
-                        n: nil,
-                        tools: tools.isEmpty ? nil : tools,
-                        tool_choice: resolvedToolChoice,
-                        session_id: req.session_id,
-                        seed: req.seed,
-                        response_format: req.response_format,
-                        stream_options: req.stream_options
-                    )
+                    var iterationReq = ResponsesInferenceRequest(chatCompletion: enrichedReq)
+                    iterationReq.model = model
+                    iterationReq.input = msgs
+                    iterationReq.generation.temperature = effectiveTemperature
+                    iterationReq.generation.maxOutputTokens = effectiveMaxTokens
+                    iterationReq.tools = tools.isEmpty ? nil : tools
+                    iterationReq.toolChoice = resolvedToolChoice
+                    // A continued chat is keyed as the Mac's own window
+                    // keys it, so the Privacy Filter remembers its
+                    // redactions across steps and turns (and shares them
+                    // with the Mac). Without a key it started afresh on
+                    // every model call: the phone, which sends none for
+                    // a Mac chat, was asked again each step, and earlier
+                    // turns went out unredacted. With no key at all, the
+                    // run's own: its steps at least share one memory.
+                    iterationReq.sessionID = continuedSessionId?.uuidString ?? req.session_id ?? requestId
+                    if let storedModelOptions, req.enable_thinking == nil, req.reasoning_effort == nil {
+                        iterationReq.context.modelOptions = storedModelOptions
+                    }
                     if let enable = req.enable_thinking {
-                        var opts = iterationReq.modelOptions ?? [:]
+                        var opts = iterationReq.context.modelOptions ?? [:]
                         opts["disableThinking"] = .bool(!enable)
-                        iterationReq.modelOptions = opts
-                        iterationReq.enable_thinking = enable
+                        iterationReq.context.modelOptions = opts
+                        iterationReq.generation.enableThinking = enable
                     }
-                    iterationReq.reasoning_effort = req.reasoning_effort
-                    // Label the turn agent-driven for `message_sent` telemetry.
-                    // Only the first iteration (trailing `user` message) actually
-                    // emits; later tool-result iterations are skipped by the
-                    // engine's de-dup rule.
-                    iterationReq.isAgentRequest = true
-                    // Per-step Router billing dedupe: the message count is
-                    // stable per logical step (tool loops append messages
-                    // between steps), so a re-POST of the same step reuses its
-                    // key. The count alone is not collision-safe — compaction
-                    // can shrink the array back to a count an earlier step
-                    // used, and a client retry re-derives the same counts over
-                    // nondeterministic model/tool output — so the body
-                    // fingerprint suffix keys any changed body as a distinct
-                    // request instead of a router IDEMPOTENCY_CONFLICT (409).
-                    iterationReq.idempotencyKey =
-                        "\(idempotencyBase)-s\(msgs.count)-"
+                    iterationReq.generation.reasoningEffort = req.reasoning_effort
+                    iterationReq.context.isAgentRequest = true
+                    iterationReq.context.idempotencyKey = "\(idempotencyBase)-s\(msgs.count)-"
                         + AgentToolLoop.stepIdempotencyFingerprint(messages: msgs)
-
                     responseContent = ""
+                    stepUnsaved = true
+                    unsavedStepReasoning = ""
                     var contentCoalescer = Self.StreamDeltaCoalescer(
-                        interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
-                    )
-
-                    do {
-                        let stream = try await chatEngine.streamChat(request: iterationReq)
+                        interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval)
+                    if let inboundRun {
+                        Task { @MainActor in InboundSharedRunBridge.shared.step(inboundRun.handle, "Thinking…") }
+                    }
+                    var inboundStepMarkedWriting = false
+                    var accumulator = ResponsesGenerationAccumulator()
+                    // A local model not in memory loads before the stream
+                    // starts: say so, so the phone shows why it waits.
+                    let loadsModel = await ModelRuntime.shared.needsLoad(model)
+                    if loadsModel {
+                        hop {
+                            writerBound.value.writeModelLoad(
+                                "loading",
+                                model: model,
+                                responseId: responseId,
+                                created: created,
+                                context: ctx.value
+                            )
+                        }
+                    }
+                    let stream = try await chatEngine.streamResponses(request: iterationReq)
+                    if loadsModel {
+                        hop {
+                            writerBound.value.writeModelLoad(
+                                "ready",
+                                model: model,
+                                responseId: responseId,
+                                created: created,
+                                context: ctx.value
+                            )
+                        }
+                    }
+                    generation: for try await event in stream {
+                        try Task.checkCancellation()
                         if disconnected.value { throw CancellationError() }
-                        for try await delta in stream {
-                            if disconnected.value { throw CancellationError() }
-                            // Reasoning sentinel must be decoded BEFORE the
-                            // generic `isSentinel` filter; emit it on the
-                            // OpenAI extended `reasoning_content` channel
-                            // and do NOT mix it into `responseContent`.
-                            if let reasoning = StreamingReasoningHint.decode(delta) {
-                                if let pending = contentCoalescer.flush() {
-                                    hop {
-                                        writerBound.value.writeContent(
-                                            pending,
-                                            model: model,
-                                            responseId: responseId,
-                                            created: created,
-                                            context: ctx.value
-                                        )
-                                    }
-                                }
-                                hop {
-                                    writerBound.value.writeReasoning(
-                                        reasoning,
-                                        model: model,
-                                        responseId: responseId,
-                                        created: created,
-                                        context: ctx.value
-                                    )
-                                }
-                                continue
+                        try accumulator.consume(event)
+                        switch event {
+                        case .billing(let billing):
+                            if workspaceBilling != nil {
+                                hop { writerBound.value.writeRouterSummary(billing, context: ctx.value) }
                             }
-                            if StreamingStatsHint.decode(delta) != nil { continue }
-                            if StreamingToolHint.isSentinel(delta) { continue }
-                            responseContent += delta
-                            loggedResponseText += delta
-                            if let chunk = contentCoalescer.append(delta) {
-                                hop {
-                                    writerBound.value.writeContent(
-                                        chunk,
-                                        model: model,
-                                        responseId: responseId,
-                                        created: created,
-                                        context: ctx.value
-                                    )
-                                }
+                        case .reasoningDelta(let reasoning):
+                            unsavedStepReasoning += reasoning
+                            if let inboundRun {
+                                await MainActor.run { InboundSharedRunBridge.shared.streamDelta(inboundRun.handle, reasoning: reasoning) }
                             }
+                            if let pending = contentCoalescer.flush() {
+                                hop { writerBound.value.writeContent(pending, model: model, responseId: responseId, created: created, context: ctx.value) }
+                            }
+                            hop { writerBound.value.writeReasoning(reasoning, model: model, responseId: responseId, created: created, context: ctx.value) }
+                        case .outputTextDelta(let text):
+                            responseContent += text
+                            loggedResponseText += text
+                            if let inboundRun {
+                                await MainActor.run { InboundSharedRunBridge.shared.streamDelta(inboundRun.handle, content: text) }
+                            }
+                            if let inboundRun, !inboundStepMarkedWriting {
+                                inboundStepMarkedWriting = true
+                                Task { @MainActor in InboundSharedRunBridge.shared.step(inboundRun.handle, "Writing…") }
+                            }
+                            if let chunk = contentCoalescer.append(text) {
+                                hop { writerBound.value.writeContent(chunk, model: model, responseId: responseId, created: created, context: ctx.value) }
+                            }
+                        case .prefillProgress(let progress):
+                            hop { writerBound.value.writePrefillProgress(progress, model: model, responseId: responseId,
+                                created: created, context: ctx.value) }
+                        case .responseCompleted: break generation
+                        default: break
                         }
-                        if let pending = contentCoalescer.flush() {
-                            hop {
-                                writerBound.value.writeContent(
-                                    pending,
-                                    model: model,
-                                    responseId: responseId,
-                                    created: created,
-                                    context: ctx.value
-                                )
-                            }
-                        }
-                    } catch let invs as ServiceToolInvocations {
-                        // Local models can emit multiple tool calls in a single
-                        // completion; ServiceToolInvocations carries the batch.
-                        // Text can still be pending in the coalescer when the tool call
-                        // arrives (tool calls surface by throw, so the loop's own flush
-                        // never runs). Deliver it before the tool frames or the visible
-                        // answer ends mid-word.
-                        if let pending = contentCoalescer.flush() {
-                            hop {
-                                writerBound.value.writeContent(
-                                    pending,
-                                    model: model,
-                                    responseId: responseId,
-                                    created: created,
-                                    context: ctx.value
-                                )
-                            }
-                        }
-                        return .toolCalls(invs.invocations)
-                    } catch let inv as ServiceToolInvocation {
-                        // Text can still be pending in the coalescer when the tool call
-                        // arrives (tool calls surface by throw, so the loop's own flush
-                        // never runs). Deliver it before the tool frames or the visible
-                        // answer ends mid-word.
-                        if let pending = contentCoalescer.flush() {
-                            hop {
-                                writerBound.value.writeContent(
-                                    pending,
-                                    model: model,
-                                    responseId: responseId,
-                                    created: created,
-                                    context: ctx.value
-                                )
-                            }
-                        }
-                        return .toolCalls([inv])
                     }
-
-                    // Empty turn (0-token / EOS-first, no tool call): don't
-                    // record a blank assistant message or end the run on
-                    // silence — let the driver nudge-and-retry, then fall back.
-                    if responseContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        return .emptyResponse
+                    if let pending = contentCoalescer.flush() {
+                        hop { writerBound.value.writeContent(pending, model: model, responseId: responseId, created: created, context: ctx.value) }
                     }
-                    // Final text response — done
-                    messages.append(ChatMessage(role: "assistant", content: responseContent))
-                    return .finalResponse
+                    let response = try accumulator.result()
+                    runUsage.append(promptTokens: response.inputTokenCount, completionTokens: response.completion.tokenCount,
+                        tokensPerSecond: response.completion.tokensPerSecond,
+                        cachedPromptTokens: response.completion.cachedInputTokenCount)
+                    switch response.completion.status {
+                    case .cancelled:
+                        throw NSError(domain: "OsaurusUpstreamCancellation", code: 499,
+                            userInfo: [NSLocalizedDescriptionKey: "The upstream model or provider cancelled generation."])
+                    case .incomplete:
+                        if response.completion.stopReason == "length" { return .lengthExhausted }
+                        throw ResponsesGenerationResult.CollectionError.incomplete(response.completion.stopReason)
+                    case .completed: break
+                    }
+                    let calls = response.completion.dispatchableFunctionCalls
+                    let assistant = SecretArgumentScrubber.recordedAssistantMessage(try response.completedAssistantInput())
+                    if !calls.isEmpty {
+                        try batchHistory.begin(assistant)
+                        stepUnsaved = false
+                        return .toolCalls(calls.map { ServiceToolInvocation(toolName: $0.name,
+                            jsonArguments: $0.arguments, toolCallId: $0.callID, geminiThoughtSignature: $0.geminiThoughtSignature) })
+                    }
+                    let step = AgentLoopModelStep.classifyTerminal(
+                        contentIsBlank: response.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                        thinkingIsBlank: response.reasoning.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                        stopReason: response.completion.stopReason, unclosedReasoning: response.completion.unclosedReasoning,
+                        requiresVisibleFinalResponse: true, toolsWereOffered: !tools.isEmpty, content: response.text)
+                    // Recorded as the answer, or a step the loop discards
+                    // (blank, thinking only, retried): either way not a reply
+                    // to keep if the run ends before the next step.
+                    stepUnsaved = false
+                    if case .finalResponse = step {
+                        messages.append(assistant)
+                        await mirrorNewMessages(messages)
+                    }
+                    return step
                 },
                 executeTool: { inv, callId in
                     // Single-call fallback; the batch executor below is the
@@ -5765,7 +11796,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             ),
                             isError: true
                         )
-                    return interceptAware(inv, execution)
+                    return interceptAware(inv, execution, callID: callId)
                 },
                 executeBatch: { calls in
                     await ChatExecutionContext.$isExternalSurface.withValue(true) {
@@ -5778,12 +11809,22 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         if AgentToolLoop.containsIntercept(calls) {
                             var executions: [AgentLoopToolExecution] = []
                             for call in calls {
+                                if let inboundRun {
+                                    let name = call.invocation.toolName
+                                    Task { @MainActor in
+                                        InboundSharedRunBridge.shared.toolStarted(
+                                            inboundRun.handle,
+                                            toolName: name
+                                        )
+                                    }
+                                }
                                 if emitAgentToolTrace {
                                     hop {
                                         writerBound.value.writeAgentToolTrace(
                                             phase: "started",
                                             toolName: call.invocation.toolName,
                                             callId: call.callId,
+                                            detail: startedDetail(call.invocation, callId: call.callId),
                                             model: model,
                                             responseId: responseId,
                                             created: created,
@@ -5797,7 +11838,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                         sessionId: requestId,
                                         agentId: agentId
                                     ).first ?? AgentLoopToolExecution(result: "")
-                                let execution = interceptAware(call.invocation, single)
+                                let execution = interceptAware(call.invocation, single, callID: call.callId)
                                 if emitAgentToolTrace {
                                     RemoteAgentRunLog.server(
                                         "tool completed agent=\(agentId.uuidString) name=\(call.invocation.toolName) "
@@ -5810,6 +11851,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                             callId: call.callId,
                                             isError: execution.isError,
                                             endRun: execution.endRun,
+                                            detail: completedDetail(
+                                                call.invocation,
+                                                callId: call.callId,
+                                                result: execution.result,
+                                                isError: execution.isError
+                                            ),
                                             model: model,
                                             responseId: responseId,
                                             created: created,
@@ -5822,6 +11869,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             }
                             return executions
                         }
+                        if let inboundRun {
+                            let names = calls.map { $0.invocation.toolName }
+                            Task { @MainActor in
+                                for name in names {
+                                    InboundSharedRunBridge.shared.toolStarted(
+                                        inboundRun.handle,
+                                        toolName: name
+                                    )
+                                }
+                            }
+                        }
                         if emitAgentToolTrace {
                             for call in calls {
                                 RemoteAgentRunLog.server(
@@ -5832,6 +11890,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                         phase: "started",
                                         toolName: call.invocation.toolName,
                                         callId: call.callId,
+                                        detail: startedDetail(call.invocation, callId: call.callId),
                                         model: model,
                                         responseId: responseId,
                                         created: created,
@@ -5853,8 +11912,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
                 },
                 onBatchComplete: { outcomes in
-                    var assistantToolCalls: [ToolCall] = []
-                    var toolResultsByCallId: [(String, String)] = []
+                    if let inboundRun {
+                        let finished = outcomes.map { ($0.invocation.toolName, $0.wasError) }
+                        inboundOutcome.recordTools(finished.map { (name: $0.0, isError: $0.1) })
+                        Task { @MainActor in
+                            for (name, isError) in finished {
+                                InboundSharedRunBridge.shared.toolFinished(
+                                    inboundRun.handle,
+                                    toolName: name,
+                                    isError: isError
+                                )
+                            }
+                        }
+                    }
                     for outcome in outcomes {
                         if emitAgentToolTrace {
                             RemoteAgentRunLog.server(
@@ -5868,6 +11938,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                                     callId: outcome.callId,
                                     isError: outcome.wasError,
                                     endRun: false,
+                                    detail: completedDetail(
+                                        outcome.invocation,
+                                        callId: outcome.callId,
+                                        result: outcome.result,
+                                        isError: outcome.wasError
+                                    ),
                                     model: model,
                                     responseId: responseId,
                                     created: created,
@@ -5878,13 +11954,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         // History + host logs use the recorded (secret-safe)
                         // argument view; ToolRegistry.execute still saw the
                         // original via the batch executor above.
-                        assistantToolCalls.append(
-                            SecretArgumentScrubber.recordedToolCall(
-                                id: outcome.callId,
-                                invocation: outcome.invocation
-                            )
-                        )
-                        toolResultsByCallId.append((outcome.callId, outcome.result))
+                        let recordedResult: String
+                        if let artifactRelay, outcome.invocation.toolName == "share_artifact",
+                            !outcome.wasError
+                        {
+                            recordedResult = artifactRelay.intercept(rawResult: outcome.result)
+                        } else {
+                            recordedResult = outcome.result
+                        }
+                        batchHistory.record(callID: outcome.callId, result: recordedResult)
                         // Host-only tool detail (args + result). Args are the
                         // recorded view so sandbox_secret_set values never
                         // re-enter Insights / agent-run logs. The peer still
@@ -5902,19 +11980,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         )
                     }
 
-                    messages.append(
-                        ChatMessage(
-                            role: "assistant",
-                            content: responseContent.isEmpty ? nil : responseContent,
-                            tool_calls: assistantToolCalls,
-                            tool_call_id: nil
-                        )
-                    )
-                    for (callId, result) in toolResultsByCallId {
-                        messages.append(
-                            ChatMessage(role: "tool", content: result, tool_calls: nil, tool_call_id: callId)
-                        )
-                    }
+                    if let commit = batchHistory.complete([]) { messages.append(contentsOf: commit.messages) }
+                    await mirrorNewMessages(messages)
                 },
                 emitFallbackText: { text in
                     // Empty-turn recovery exhausted: stream a visible fallback
@@ -5922,6 +11989,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     if text == AgentToolLoop.emptyToolTaskFallback {
                         messages.append(ChatMessage(role: "assistant", content: text))
                         loggedResponseText += text
+                        await mirrorNewMessages(messages)
                         return
                     }
                     hop {
@@ -5935,6 +12003,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     }
                     messages.append(ChatMessage(role: "assistant", content: text))
                     loggedResponseText += text
+                    await mirrorNewMessages(messages)
                 }
             )
 
@@ -5947,37 +12016,116 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // the parallel batch executor inherit the task-locals.
                 // `currentFolderRoot` scopes the folder tools + undo +
                 // change checkpoints to THIS run's granted folder.
-                let runResult = try await ChatExecutionContext.$currentFolderRoot
-                    .withValue(hostFolder?.url) {
-                        try await ChatExecutionContext.$authenticatedHostFolderRoot
-                            .withValue(hostFolder?.url) {
-                                try await AgentToolLoop.run(
-                                    policy: AgentLoopPolicy(
-                                        maxIterations: maxIterations,
-                                        stopOnToolRejection: false,
-                                        dedupeNoticeEnabled: false,
-                                        maxDataMovementSteps: min(16, maxIterations)
-                                    ),
-                                    state: taskState,
-                                    hooks: hooks
+                // The owner's phone call may turn the Privacy Filter off, or
+                // its review to auto-accept, for its own turns (§6.5).
+                let callPrivacy = remoteReviewer ? req.osaurus_privacy.flatMap(VoiceCallPrivacy.init(rawValue:)) : nil
+                // Who is driving the run when it isn't the owner, and — for a
+                // shared agent set to Ask Me — how its `.ask` tools reach the
+                // owner (docs/AGENT_ATTENTION.md).
+                let participant: Participant? =
+                    remoteReviewer ? nil : inboundRun.map { Participant.caller(from: $0.context) }
+                let ownerRoute: OwnerApprovalRoute? = await MainActor.run {
+                    guard let inboundRun, let participant,
+                        let agent = AgentManager.shared.agent(for: agentId),
+                        let policy = agent.sharedToolApproval, policy.mode == .askOwner
+                    else { return nil }
+                    let handle = inboundRun.handle
+                    let modelName = model
+                    return OwnerApprovalRoute(
+                        agentId: agentId,
+                        agentName: agent.name,
+                        agentAddress: agent.agentAddress,
+                        caller: participant,
+                        workspaceId: inboundRun.context.workspaceId.isEmpty ? nil : inboundRun.context.workspaceId,
+                        hostedSessionId: handle.taskId,
+                        conversationKey: "\(inboundRun.externalKey)|\(agentId.uuidString)",
+                        timeout: policy.effectiveTimeout,
+                        onStatus: { status in
+                            let write: @Sendable () -> Void = {
+                                writerBound.value.writeOwnerApproval(
+                                    status,
+                                    model: modelName,
+                                    responseId: responseId,
+                                    created: created,
+                                    context: ctx.value
                                 )
                             }
+                            if loop.inEventLoop { write() } else { loop.execute(write) }
+                            Task { @MainActor in
+                                InboundSharedRunBridge.shared.step(
+                                    handle,
+                                    status.phase != "waiting"
+                                        ? L("Running…")
+                                        : status.name == AskOwnerTool.toolName
+                                            ? L("Waiting for your answer")
+                                            : L("Waiting for you to approve \(status.name)")
+                                )
+                            }
+                        }
+                    )
+                }
+                let runResult = try await ChatExecutionContext.$currentParticipant
+                    .withValue(participant) {
+                    try await ChatExecutionContext.$ownerApprovalRoute
+                    .withValue(ownerRoute) {
+                    try await ChatExecutionContext.$isVoiceCall
+                    .withValue(voiceCall) {
+                    try await ChatExecutionContext.$voiceCallPrivacy
+                    .withValue(callPrivacy) {
+                    try await ChatExecutionContext.$hasRemoteReviewer
+                    .withValue(remoteReviewer) {
+                    try await ChatExecutionContext.$workspaceBillingContext
+                    .withValue(workspaceBilling) {
+                        try await ChatExecutionContext.$currentFolderRoot
+                            .withValue(hostFolder?.url) {
+                                try await ChatExecutionContext.$authenticatedHostFolderRoot
+                                    .withValue(hostFolder?.url) {
+                                        try await AgentToolLoop.run(
+                                            policy: AgentLoopPolicy(
+                                                maxIterations: maxIterations,
+                                                stopOnToolRejection: false,
+                                                dedupeNoticeEnabled: false,
+                                                maxDataMovementSteps: min(16, maxIterations)
+                                            ),
+                                            state: taskState,
+                                            hooks: hooks
+                                        )
+                                    }
+                            }
+                    }
+                    }
+                    }
+                    }
+                    }
                     }
                 exitState = runResult.exit
                 RemoteAgentRunLog.server(
                     "run loop done agent=\(agentId.uuidString) model=\(model) exit=\(String(describing: exitState))"
                 )
+                inboundOutcome.record(exit: exitState, cancelled: disconnected.value)
             } catch {
+                if let commit = batchHistory.finish(runExit: "error") {
+                    messages.append(contentsOf: commit.messages)
+                    await mirrorNewMessages(messages)
+                }
+                keepUnsavedStepText()
+                inboundOutcome.record(error: error, cancelled: disconnected.value)
                 await releaseHostFolder()
-                RemoteAgentRunLog.serverError(
-                    "run loop FAILED agent=\(agentId.uuidString) model=\(model) error=\(error.localizedDescription)"
-                )
+                // Stopped, or a send the user declined in a privacy review,
+                // is how a run is meant to end then: no error to log.
+                if error is CancellationError {
+                    RemoteAgentRunLog.server("run loop cancelled agent=\(agentId.uuidString) model=\(model)")
+                } else {
+                    RemoteAgentRunLog.serverError(
+                        "run loop FAILED agent=\(agentId.uuidString) model=\(model) error=\(error.localizedDescription)"
+                    )
+                }
                 // SSE response head was already written as 200 — the
                 // failure surfaces as an in-band SSE error chunk. Log
                 // the actual on-wire status (200) so dashboards don't
                 // mis-attribute a delivered stream as a 500.
                 hop {
-                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                    writerBound.value.writeErrorFromThrown(error, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
                 logSelf.logRequest(
@@ -5993,6 +12141,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
                 return
             }
+            if let commit = batchHistory.finish(runExit: String(describing: exitState)) {
+                messages.append(contentsOf: commit.messages)
+                await mirrorNewMessages(messages)
+            }
+            // Stop can end the stream quietly, the loop then exiting cancelled;
+            // a reply cut off by its length limit ends here too.
+            keepUnsavedStepText()
             // Tools have finished executing (the loop is done); release the
             // host folder before streaming the tail so the gate isn't held
             // across the final prose write. Runs exactly once per request —
@@ -6094,8 +12249,26 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 }
                 loggedResponseText += text
             }
+            let finalUsage = runUsage
+            let includeUsage = req.stream_options?.include_usage == true
+            let returnedArtifacts = artifactRelay?.payload() ?? []
             hop {
+                if !returnedArtifacts.isEmpty {
+                    writerBound.value.writeArtifactsChunk(
+                        returnedArtifacts,
+                        model: model, responseId: responseId, created: created, context: ctx.value
+                    )
+                }
                 writerBound.value.writeFinish(model, responseId: responseId, created: created, context: ctx.value)
+                if includeUsage && finalUsage.hasCompleteTokenCounts {
+                    writerBound.value.writeUsageChunk(
+                        promptTokens: finalUsage.promptTokens,
+                        completionTokens: finalUsage.completionTokens,
+                        tokensPerSecond: finalUsage.tokensPerSecond,
+                        cachedPromptTokens: finalUsage.cachedPromptTokens,
+                        model: model, responseId: responseId, created: created, context: ctx.value
+                    )
+                }
                 writerBound.value.writeEnd(ctx.value)
             }
             logSelf.logRequest(
@@ -6110,6 +12283,230 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 toolCalls: loggedToolCalls.isEmpty ? nil : loggedToolCalls
             )
         }
+        // Stopped from the phone (§6.4): as if the client had hung up.
+        detachedRun?.onStop {
+            disconnected.value = true
+            runTask.cancel()
+        }
+    }
+
+    // MARK: - Phone runs that outlive their connection (§6.4)
+
+    /// GET /runs/{id}/events?after=N — rejoin a phone run: the frames after
+    /// the first N, then the rest live. Owner-only.
+    /// GET /images/jobs/{id}/events?after=N — rejoin a phone's image job
+    /// (docs/MOBILE_PROTOCOL.md §12.5): the events after the first N, the
+    /// newest preview, then the rest live. Owner-only; gated to the Secure
+    /// Channel with the other owner routes.
+    private func handleImageJobEventsEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard callerOwnsThisMac(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let components = path.split(separator: "/")
+        guard components.count == 4, components[3] == "events",
+            let job = DetachedPhoneRuns.images.run(id: String(components[2]))
+        else {
+            sendRunJSON(
+                .notFound,
+                #"{"error":"job_not_found"}"#,
+                head: head,
+                context: context,
+                path: path,
+                startTime: startTime,
+                userAgent: userAgent
+            )
+            return
+        }
+        let after = Self.queryItems(from: head.uri)["after"].flatMap { Int($0) } ?? 0
+        streamDetachedRun(
+            job,
+            after: after,
+            head: head,
+            context: context,
+            path: path,
+            startTime: startTime,
+            userAgent: userAgent
+        )
+    }
+
+    private func handleRunEventsEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard let scope = detachedRunScope(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let components = path.split(separator: "/")
+        guard components.count == 3, components[2] == "events",
+            let run = DetachedPhoneRuns.shared.run(
+                id: DetachedPhoneRuns.scopedId(String(components[1]), keyNonce: scope.keyNonce))
+        else {
+            sendRunJSON(
+                .notFound,
+                #"{"error":"run_not_found"}"#,
+                head: head,
+                context: context,
+                path: path,
+                startTime: startTime,
+                userAgent: userAgent
+            )
+            return
+        }
+        let after = Self.queryItems(from: head.uri)["after"].flatMap { Int($0) } ?? 0
+        streamDetachedRun(
+            run,
+            after: after,
+            head: head,
+            context: context,
+            path: path,
+            startTime: startTime,
+            userAgent: userAgent
+        )
+    }
+
+    /// POST /runs/{id}/stop — the phone's Stop, now that its connection
+    /// closing no longer stops the run. Owner-only.
+    private func handleRunStopEndpoint(
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        guard let scope = detachedRunScope(context) else {
+            sendOwnerOnlyForbidden(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+            return
+        }
+        if scope.keyNonce == nil,
+            requiresOwnerChannel(head: head, context: context, path: path, startTime: startTime, userAgent: userAgent)
+        {
+            return
+        }
+        let components = path.split(separator: "/")
+        guard components.count == 3, components[2] == "stop",
+            let run = DetachedPhoneRuns.shared.run(
+                id: DetachedPhoneRuns.scopedId(String(components[1]), keyNonce: scope.keyNonce))
+        else {
+            sendRunJSON(
+                .notFound,
+                #"{"error":"run_not_found"}"#,
+                head: head,
+                context: context,
+                path: path,
+                startTime: startTime,
+                userAgent: userAgent
+            )
+            return
+        }
+        let wasRunning = run.stop()
+        MobileConnectLog.hostedRun("run \(run.id) stop from the phone (was running=\(wasRunning))")
+        sendRunJSON(
+            .ok,
+            wasRunning ? #"{"ok":true}"# : #"{"ok":true,"finished":true}"#,
+            head: head,
+            context: context,
+            path: path,
+            startTime: startTime,
+            userAgent: userAgent
+        )
+    }
+
+    /// Streams a phone run's frames after the first `after`, then follows it
+    /// live to its end. The run carries on if this connection drops too.
+    private func streamDetachedRun(
+        _ run: DetachedPhoneRun,
+        after: Int,
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        let loop = context.eventLoop
+        let channel = context.channel
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let writer = SSEResponseWriter()
+        let writerBound = NIOLoopBound(writer, eventLoop: loop)
+        // Deliveries can arrive on the run's own loop; each hops here, in order.
+        let follower = DetachedPhoneRun.Follower(
+            frames: { frames in
+                loop.execute {
+                    guard channel.isActive else { return }
+                    var buffer = channel.allocator.buffer(capacity: frames.reduce(0) { $0 + $1.utf8.count })
+                    for frame in frames { buffer.writeString(frame) }
+                    SSEResponseWriter.writeBackpressureAware(.body(.byteBuffer(buffer)), context: ctx.value)
+                }
+            },
+            end: {
+                loop.execute {
+                    guard channel.isActive else { return }
+                    writerBound.value.writeEnd(ctx.value)
+                }
+            }
+        )
+        // Nothing is delivered for `.gone`, and anything delivered now is
+        // queued behind this call, so the head below still goes out first.
+        guard case .following(let token) = run.follow(after: after, follower) else {
+            sendRunJSON(
+                .gone,
+                #"{"error":"run_gone","message":"This run can no longer be replayed."}"#,
+                head: head,
+                context: context,
+                path: path,
+                startTime: startTime,
+                userAgent: userAgent
+            )
+            return
+        }
+        MobileConnectLog.hostedRun("run \(run.id) followed from frame \(after) of \(run.frameCount)")
+        writer.writeHeaders(context, extraHeaders: stateRef.value.corsHeaders)
+        let keepalive = Self.startSSEKeepalive(writer: writerBound, channel: channel, loop: loop, ctx: ctx)
+        channel.closeFuture.whenComplete { _ in
+            keepalive.cancel()
+            run.unfollow(token)
+        }
+        logRequest(
+            method: head.method.rawValue,
+            path: path,
+            userAgent: userAgent,
+            requestBody: nil,
+            responseStatus: 200,
+            startTime: startTime
+        )
+    }
+
+    private func sendRunJSON(
+        _ status: HTTPResponseStatus,
+        _ body: String,
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) {
+        var headers = [("Content-Type", "application/json; charset=utf-8")]
+        headers.append(contentsOf: stateRef.value.corsHeaders)
+        sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
+        logRequest(
+            method: head.method.rawValue,
+            path: path,
+            userAgent: userAgent,
+            requestBody: nil,
+            responseBody: body,
+            responseStatus: Int(status.code),
+            startTime: startTime
+        )
     }
 
     // MARK: - Dispatch & Task Endpoints
@@ -6186,8 +12583,49 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         // below runs in a detached task that must not touch `stateRef`.
         let authedAudience = stateRef.value.authedAudience
         let authedScopeIsMaster = stateRef.value.authedScopeIsMaster
+        let authedKeyNonce: String? = isLoopback ? nil : inboundConnectionInfo()?.accessKeyId
 
         runRequestTask(priority: .userInitiated) {
+            // Workspace-minted keys are refused here: a detached dispatch has
+            // no way to carry the workspace pool / caller attestation into
+            // every router-billed step, nor to mirror the run for the owner's
+            // Stop button — so it would run unbilled-to-pool and unattributed.
+            // Teammate clients drive shared agents over `/agents/{id}/run`.
+            if let nonce = authedKeyNonce,
+                let record = await WorkspaceAgentAccessHost.shared.workspaceKeyRecord(forKeyNonce: nonce)
+            {
+                let message =
+                    "Shared workspace agents cannot be dispatched as background tasks; use /agents/{id}/run."
+                let bodyJSON = #"{"error":"workspace_dispatch_unsupported","message":"\#(message)"}"#
+                await WorkspaceAuditLog.shared.recordScopeDenied(
+                    keyNonce: nonce,
+                    audience: record.agentAddressLower,
+                    method: "POST",
+                    path: path
+                )
+                hop {
+                    var headers = [("Content-Type", "application/json; charset=utf-8")]
+                    headers.append(contentsOf: cors)
+                    self.sendResponse(
+                        context: ctx.value,
+                        version: head.version,
+                        status: .forbidden,
+                        headers: headers,
+                        body: bodyJSON
+                    )
+                    logSelf.logRequest(
+                        method: "POST",
+                        path: path,
+                        userAgent: logUserAgent,
+                        requestBody: requestBodyString,
+                        responseStatus: 403,
+                        startTime: logStartTime,
+                        errorMessage: message
+                    )
+                }
+                return
+            }
+
             // Resolve identifier: try UUID first, then crypto address
             guard let agentId = await MainActor.run(body: { AgentManager.shared.resolveAgentId(agentIdentifier) })
             else {
@@ -6303,9 +12741,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             let title = json["title"] as? String
             let requestId = UUID()
-            let externalSessionKey =
+            let suppliedSessionKey =
                 json["external_session_key"] as? String
                 ?? json["session_id"] as? String
+            // A caller-controlled reattachment key must never resolve another
+            // credential's task before ownership is recorded below.
+            let externalSessionKey = Self.dispatchSessionKey(
+                suppliedSessionKey,
+                audience: authedScopeIsMaster ? nil : authedAudience,
+                keyNonce: authedKeyNonce
+            )
 
             let request = DispatchRequest(
                 id: requestId,
@@ -6321,10 +12766,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let handle: DispatchHandle?
             if Self.shouldBindExternalSurfaceForDispatch(isLoopback: isLoopback) {
                 handle = await ChatExecutionContext.$isExternalSurface.withValue(true) {
-                    await TaskDispatcher.shared.dispatch(request)
+                    await BackgroundTaskManager.shared.dispatchChat(request)
                 }
             } else {
-                handle = await TaskDispatcher.shared.dispatch(request)
+                handle = await BackgroundTaskManager.shared.dispatchChat(request)
             }
             let responseBody: String
             let status: HTTPResponseStatus
@@ -6334,6 +12779,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // matches an existing session the dispatcher reattaches and
                 // reports the existing session's id rather than `requestId`.
                 let resolvedId = handle.id.uuidString
+                // Agent-scoped keys may only poll / cancel the tasks they
+                // created (see `DispatchTaskOwnership`).
+                if let authedAudience, !authedScopeIsMaster, let authedKeyNonce {
+                    DispatchTaskOwnership.shared.record(taskId: handle.id, audience: authedAudience,
+                        keyNonce: authedKeyNonce
+                    )
+                }
                 let pollUrl = "/v1/tasks/\(resolvedId)"
                 let resp: [String: Any] = ["id": resolvedId, "status": "running", "poll_url": pollUrl]
                 responseBody =
@@ -6370,6 +12822,59 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
+    /// Confine agent-scoped keys to the background tasks they created. Sends a
+    /// 403 and returns `true` when the caller may not act on `taskId`. Must run
+    /// on the event loop (reads `stateRef`).
+    private func sendTaskOwnershipRejectionIfNeeded(
+        taskId: UUID,
+        head: HTTPRequestHead,
+        context: ChannelHandlerContext,
+        path: String,
+        startTime: Date,
+        userAgent: String?
+    ) -> Bool {
+        guard
+            let rejection = DispatchTaskOwnership.shared.rejection(
+                taskId: taskId,
+                authedAudience: stateRef.value.authedAudience,
+                authedScopeIsMaster: stateRef.value.authedScopeIsMaster,
+                keyNonce: inboundConnectionInfo()?.accessKeyId
+            )
+        else { return false }
+        var headers = [("Content-Type", "application/json; charset=utf-8")]
+        headers.append(contentsOf: stateRef.value.corsHeaders)
+        let body = #"{"error":"\#(rejection.code)","message":"\#(rejection.message)"}"#
+        sendResponse(
+            context: context,
+            version: head.version,
+            status: .forbidden,
+            headers: headers,
+            body: body
+        )
+        logRequest(
+            method: head.method.rawValue,
+            path: path,
+            userAgent: userAgent,
+            requestBody: nil,
+            responseBody: body,
+            responseStatus: 403,
+            startTime: startTime,
+            errorMessage: rejection.message
+        )
+        let deniedAudience = stateRef.value.authedAudience ?? ""
+        let deniedKeyNonce = inboundConnectionInfo()?.accessKeyId
+        let method = head.method.rawValue
+        Task.detached(priority: .utility) {
+            await WorkspaceAuditLog.shared.recordScopeDenied(
+                keyNonce: deniedKeyNonce,
+                audience: deniedAudience,
+                method: method,
+                path: path
+            )
+        }
+        return true
+    }
+
     /// GET /tasks/{task_id} — poll task status
     private func handleTaskStatusEndpoint(
         head: HTTPRequestHead,
@@ -6402,6 +12907,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     body: #"{"error":"invalid_task_id","message":"Invalid task UUID in path"}"#
                 )
             }
+            return
+        }
+
+        if sendTaskOwnershipRejectionIfNeeded(
+            taskId: taskId,
+            head: head,
+            context: context,
+            path: path,
+            startTime: startTime,
+            userAgent: userAgent
+        ) {
             return
         }
 
@@ -6471,10 +12987,28 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
+        if sendTaskOwnershipRejectionIfNeeded(
+            taskId: taskId,
+            head: head,
+            context: context,
+            path: path,
+            startTime: startTime,
+            userAgent: userAgent
+        ) {
+            return
+        }
+        let cancelKeyNonce = inboundConnectionInfo()?.accessKeyId
+        let cancelAudience = stateRef.value.authedAudience
+
         runRequestTask(priority: .userInitiated) {
             await MainActor.run {
                 BackgroundTaskManager.shared.cancelTask(taskId)
             }
+            await WorkspaceAuditLog.shared.recordTaskCancelled(
+                taskId: taskId,
+                keyNonce: cancelKeyNonce,
+                audience: cancelAudience
+            )
 
             hop {
                 self.sendResponse(
@@ -6544,6 +13078,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
+        if sendTaskOwnershipRejectionIfNeeded(
+            taskId: taskId,
+            head: head,
+            context: context,
+            path: path,
+            startTime: startTime,
+            userAgent: userAgent
+        ) {
+            return
+        }
+
         runRequestTask(priority: .userInitiated) {
             guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                 let response = json["response"] as? String
@@ -6595,6 +13140,63 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     // MARK: - Embeddings
 
+    private func handleDecisionModels(head: HTTPRequestHead, context: ChannelHandlerContext) {
+        let hidden = Self.peerModelCatalogIsHidden(authedAudience: stateRef.value.authedAudience,
+            authedScopeIsMaster: stateRef.value.authedScopeIsMaster, peerInferenceEnabled: peerInferenceEnabled)
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask {
+            let models: [JSONValue] = hidden ? [] : ModelManager.discoverLocalModels().filter {
+                $0.isDecision && ModelExposureStore.shared.isExposed(
+                    id: DecisionService.exposureID(for: $0.id), kind: .local)
+            }.map { model in
+                .object(["id": .string(model.id), "object": .string("model"),
+                    "capabilities": .array([.string("decision")]), "generates_text": .bool(false)])
+            }
+            let payload = JSONValue.object(["object": .string("list"), "data": .array(models)])
+            let body = String(decoding: (try? JSONEncoder().encode(payload)) ?? Data(), as: UTF8.self)
+            hop { self.sendResponse(context: ctx.value, version: head.version, status: .ok,
+                headers: [("Content-Type", "application/json; charset=utf-8")] + cors, body: body) }
+        }
+    }
+
+    private func handleSystemOne(head: HTTPRequestHead, context: ChannelHandlerContext,
+        startTime: Date, userAgent: String?) {
+        var buffer = stateRef.value.requestBodyBuffer
+        let count = buffer?.readableBytes ?? 0
+        let data = Data(buffer?.readBytes(length: count) ?? [])
+        let cors = stateRef.value.corsHeaders
+        let loop = context.eventLoop
+        let ctx = NIOLoopBound(context, eventLoop: loop)
+        let hop = Self.makeHop(channel: context.channel, loop: loop)
+        runRequestTask(priority: .userInitiated) {
+            do {
+                let result = try await DecisionService.shared.respond(data: data)
+                let body = String(decoding: result, as: UTF8.self)
+                hop {
+                    self.sendResponse(context: ctx.value, version: head.version, status: .ok,
+                        headers: [("Content-Type", "application/json; charset=utf-8")] + cors, body: body)
+                }
+                self.logRequest(method: "POST", path: "/systemone", userAgent: userAgent,
+                    requestBody: nil, responseBody: body,
+                    responseStatus: 200, startTime: startTime)
+            } catch {
+                let payload = JSONValue.object(["error": .object(["type": .string("decision_error"),
+                    "message": .string(error.localizedDescription)])])
+                let body = String(decoding: (try? JSONEncoder().encode(payload)) ?? Data(), as: UTF8.self)
+                hop {
+                    self.sendResponse(context: ctx.value, version: head.version, status: .badRequest,
+                        headers: [("Content-Type", "application/json; charset=utf-8")] + cors, body: body)
+                }
+                self.logRequest(method: "POST", path: "/systemone", userAgent: userAgent,
+                    requestBody: nil, responseBody: body, responseStatus: 400, startTime: startTime,
+                    errorMessage: error.localizedDescription)
+            }
+        }
+    }
+
     private func handleEmbeddings(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -6636,6 +13238,37 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 responseStatus: 400,
                 startTime: startTime,
                 errorMessage: "Invalid request body"
+            )
+            return
+        }
+
+        do {
+            try EmbeddingService.validateAPIModel(request.model)
+        } catch {
+            let message = error.localizedDescription
+            let unavailable: Bool
+            if case EmbeddingService.APIModelError.unavailable = error { unavailable = true } else { unavailable = false }
+            let payload: [String: Any] = ollamaFormat
+                ? ["error": message]
+                : ["error": [
+                    "message": message,
+                    "type": unavailable ? "server_error" : "invalid_request_error",
+                    "param": "model",
+                    "code": unavailable ? "embedding_model_unavailable" : "unsupported_embedding_model",
+                ]]
+            // Model IDs are caller-controlled; encode rather than interpolate
+            // so quotes, newlines and backslashes remain valid JSON.
+            let json = (try? JSONSerialization.data(withJSONObject: payload))
+                .map { String(decoding: $0, as: UTF8.self) }
+                ?? #"{"error":"Unsupported embedding model"}"#
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: stateRef.value.corsHeaders)
+            let status: HTTPResponseStatus = unavailable ? .serviceUnavailable : .badRequest
+            sendResponse(context: context, version: head.version, status: status, headers: headers, body: json)
+            logRequest(
+                method: "POST", path: logPath, userAgent: userAgent,
+                requestBody: requestBodyString, responseBody: json, responseStatus: Int(status.code),
+                startTime: startTime, errorMessage: message
             )
             return
         }
@@ -6693,13 +13326,26 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     requestBody: logRequestBody,
                     responseBody: json,
                     responseStatus: 200,
-                    startTime: logStartTime
+                    startTime: logStartTime,
+                    model: EmbeddingService.modelName,
+                    details: Self.embeddingActivityDetails(texts: texts, dimensions: embeddings.first?.count)
                 )
             } catch {
-                let errorJson =
+                // Memory Safety refusals and load failures are the selected
+                // model being unavailable, not a malformed request.
+                let isProfileError = error is EmbeddingProfileError
+                let status: HTTPResponseStatus = isProfileError ? .serviceUnavailable : .internalServerError
+                let payload: [String: Any] =
                     ollamaFormat
-                    ? #"{"error":"\#(error.localizedDescription)"}"#
-                    : #"{"error":{"message":"\#(error.localizedDescription)","type":"server_error","code":"embedding_failed"}}"#
+                    ? ["error": error.localizedDescription]
+                    : ["error": [
+                        "message": error.localizedDescription,
+                        "type": "server_error",
+                        "code": isProfileError ? "embedding_model_unavailable" : "embedding_failed",
+                    ]]
+                let errorJson = (try? JSONSerialization.data(withJSONObject: payload))
+                    .map { String(decoding: $0, as: UTF8.self) }
+                    ?? #"{"error":"Embedding failed"}"#
 
                 hop {
                     var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -6707,7 +13353,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     self.sendResponse(
                         context: ctx.value,
                         version: head.version,
-                        status: .internalServerError,
+                        status: status,
                         headers: headers,
                         body: errorJson
                     )
@@ -6718,9 +13364,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     userAgent: logUserAgent,
                     requestBody: logRequestBody,
                     responseBody: errorJson,
-                    responseStatus: 500,
+                    responseStatus: Int(status.code),
                     startTime: logStartTime,
-                    errorMessage: error.localizedDescription
+                    model: EmbeddingService.modelName,
+                    errorMessage: error.localizedDescription,
+                    details: Self.embeddingActivityDetails(texts: texts, dimensions: nil)
                 )
             }
         }
@@ -6881,14 +13529,18 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// Build the per-image result object honoring `response_format`.
     private static func imageResult(for image: GeneratedImage, responseFormat: String) -> ImageResultDTO {
         if responseFormat == "b64_json", let data = try? Data(contentsOf: image.url) {
-            return ImageResultDTO(url: nil, b64_json: data.base64EncodedString(), seed: image.seed)
+            return ImageResultDTO(url: nil, b64_json: data.base64EncodedString(), seed: image.seed, effective_parameters: image.effectiveParameters)
         }
-        return ImageResultDTO(url: image.url.absoluteString, b64_json: nil, seed: image.seed)
+        return ImageResultDTO(url: image.url.absoluteString, b64_json: nil, seed: image.seed, effective_parameters: image.effectiveParameters)
     }
 
-    private static func imageErrorStatus(message: String, hfAuth: Bool) -> HTTPResponseStatus {
+    static func imageErrorStatus(message: String, hfAuth: Bool) -> HTTPResponseStatus {
         if hfAuth { return HTTPResponseStatus(statusCode: 402) }
         let m = message.lowercased()
+        // The bridge's explicit request classification outranks explanatory
+        // text such as "strength ... is not implemented" in its detail.
+        if m.hasPrefix("invalid request:") { return .badRequest }
+        if m == "image generation cancelled" { return .conflict }
         if m.contains("not found") { return .notFound }
         if m.contains("incomplete") { return .conflict }
         if m.contains("not implemented") { return .notImplemented }
@@ -6927,6 +13579,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         image_edit: m.capabilities.imageEdit,
                         upscale: m.capabilities.upscale,
                         negative_prompt: m.capabilities.negativePrompt,
+                        edit_negative_prompt: m.capabilities.editNegativePrompt,
+                        edit_strength: m.capabilities.editStrength,
                         mask: m.capabilities.mask,
                         multiple_source_images: m.capabilities.multipleSourceImages,
                         lora: m.capabilities.lora
@@ -6935,13 +13589,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         steps: m.defaultSteps,
                         guidance: m.defaultGuidance.map { Double($0) }
                     ),
-                    limits: ImageLimitsDTO(
-                        min_steps: 1,
-                        max_steps: 50,
-                        size_multiple: 16,
-                        max_pixels: 1024 * 1024,
-                        supported_sizes: ["512x512", "768x768", "1024x1024"]
-                    ),
+                    limits: ImageHTTPParameterBuilder.limits(for: m),
                     blocked_reasons: m.blockedReasons
                 )
             }
@@ -7003,7 +13651,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 context: context,
                 status: .badRequest,
                 message:
-                    "No image model specified and no default image generation model is configured (Settings → Agent Delegation).",
+                    "No image model specified and no default image generation model is configured (Settings → Model Defaults → Images & Video).",
                 path: "/images/generations",
                 startTime: startTime,
                 userAgent: userAgent,
@@ -7012,6 +13660,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
         if selectedTarget.backend != .local {
+            do { try ImageHTTPParameterBuilder.validateRemoteBatch(req) }
+            catch {
+                sendImageError(head: head, context: context, status: .badRequest,
+                    message: String(describing: error), path: "/images/generations",
+                    startTime: startTime, userAgent: userAgent, requestBody: loggedBody)
+                return
+            }
             guard req.allow_remote_media_spend == true else {
                 sendImageError(
                     head: head,
@@ -7026,9 +13681,37 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 )
                 return
             }
+            // Into the Mac chat the phone named, as local images are; the same
+            // owner-and-Secure-Channel rule applies.
+            let remoteSession = phoneImageSession(
+            req.osaurus_session_id,
+            startsUnder: req.osaurus_create_session == true ? req.osaurus_agent_id : nil,
+            context: context
+        )
+            if remoteSession != nil,
+                requiresOwnerChannel(
+                    head: head,
+                    context: context,
+                    path: "/images/generations",
+                    startTime: startTime,
+                    userAgent: userAgent
+                )
+            {
+                return
+            }
+            // A billed job above all must not run twice for one dropped phone.
+            let phoneJob = phoneImageJob(req.osaurus_job_id, streaming: req.stream ?? false, context: context)
+            if case .follow(let job) = phoneJob {
+                streamDetachedRun(
+                    job, after: 0, head: head, context: context, path: "/images/generations",
+                    startTime: startTime, userAgent: userAgent)
+                return
+            }
             handleRemoteImageGeneration(
                 request: req,
                 target: selectedTarget,
+                sessionId: remoteSession,
+                detached: phoneJob.started,
                 head: head,
                 context: context,
                 startTime: startTime,
@@ -7038,25 +13721,25 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
         let modelId = selectedTarget.modelID
-        let (w, h) = Self.resolveImageSize(size: req.size, width: req.width, height: req.height)
-        let params = ImageGenerationParameters(
-            model: modelId,
-            prompt: req.prompt,
-            negativePrompt: req.negative_prompt,
-            width: w.map(Self.clampImageDimension),
-            height: h.map(Self.clampImageDimension),
-            steps: req.steps.map(Self.clampImageSteps),
-            guidance: req.guidance.map { Float($0) },
-            seed: req.seed,
-            // Multi-image (`n` > 1) is force-capped to 1: the service generates the
-            // N images sequentially in one job WITHOUT a GPU drain between them, which
-            // reliably trips the MLX `tryCoalescingPreviousComputeCommandEncoder`
-            // assertion (reproduced at n=2). Re-enable once the per-image drain lands
-            // in the multi-image loop.
-            numImages: 1,
-            outputFormat: Self.imageOutputFormat(req.output_format)
+        let continuedSession = phoneImageSession(
+            req.osaurus_session_id,
+            startsUnder: req.osaurus_create_session == true ? req.osaurus_agent_id : nil,
+            context: context
         )
-        let jobID = Self.shortId(prefix: "img")
+        if continuedSession != nil,
+            requiresOwnerChannel(
+                head: head, context: context, path: "/images/generations", startTime: startTime, userAgent: userAgent)
+        {
+            return
+        }
+        let phoneJob = phoneImageJob(req.osaurus_job_id, streaming: req.stream ?? false, context: context)
+        if case .follow(let job) = phoneJob {
+            streamDetachedRun(
+                job, after: 0, head: head, context: context, path: "/images/generations",
+                startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let jobID = phoneJob.started?.id ?? Self.shortId(prefix: "img")
         runImageJob(
             head: head,
             context: context,
@@ -7066,13 +13749,87 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             requestBody: bodyString,
             streaming: req.stream ?? false,
             responseFormat: req.response_format ?? "url",
-            jobID: jobID
-        ) { await ImageGenerationService.shared.generate(params, jobID: jobID) }
+            jobID: jobID,
+            onCompleted: Self.imageSessionAppender(
+                continuedSession, prompt: req.prompt, sourceImages: [], model: modelId),
+            detached: phoneJob.started
+        ) { await ImageGenerationService.shared.generateHTTP(req, modelID: modelId, jobID: jobID) }
+    }
+
+    /// A job the owner's phone named with `osaurus_job_id` over the Secure
+    /// Channel (docs/MOBILE_PROTOCOL.md §12.5): it outlives the connection, and
+    /// the phone rejoins it at `GET /images/jobs/{id}/events`. `follow` is the
+    /// same id while that job is live: the phone sent the request again (its
+    /// other route, having heard nothing), so it follows rather than start a
+    /// second, possibly billed, job.
+    private enum PhoneImageJob {
+        case none
+        case new(DetachedPhoneRun)
+        case follow(DetachedPhoneRun)
+
+        var started: DetachedPhoneRun? {
+            if case .new(let job) = self { return job }
+            return nil
+        }
+    }
+
+    private func phoneImageJob(_ id: String?, streaming: Bool, context: ChannelHandlerContext) -> PhoneImageJob {
+        guard streaming, let id, DetachedPhoneRuns.isValidId(id), callerOwnsThisMac(context),
+            stateRef.value.isSecureChannel
+        else { return .none }
+        let (job, isNew) = DetachedPhoneRuns.images.begin(id: id, followFinished: true)
+        return isNew ? .new(job) : .follow(job)
+    }
+
+    /// The Mac chat an owner's phone named with `osaurus_session_id` on an
+    /// image request (docs/MOBILE_PROTOCOL.md §12.5); nil for anyone else.
+    /// `startsUnder` is the agent of a chat the phone starts with this image
+    /// (§14.5): the exchange then creates it.
+    private func phoneImageSession(
+        _ raw: String?,
+        startsUnder agentRaw: String? = nil,
+        context: ChannelHandlerContext
+    ) -> UUID? {
+        guard let raw, let id = UUID(uuidString: raw), callerOwnsThisMac(context) else { return nil }
+        if let agentRaw, let agentId = UUID(uuidString: agentRaw) {
+            let keyNonce = inboundConnectionInfo()?.accessKeyId
+            Task { @MainActor in
+                RemoteSessionContinuation.notePhoneImageChat(id, agentId: agentId, keyNonce: keyNonce)
+            }
+        }
+        return id
+    }
+
+    /// Appends the finished exchange to `sessionId`, when there is one. In
+    /// the background, as a chat run's turns are: the append waits out a
+    /// reply the Mac is streaming in that chat, which must not hold the
+    /// image back from the phone.
+    private static func imageSessionAppender(
+        _ sessionId: UUID?,
+        prompt: String,
+        sourceImages: [Data],
+        model: String
+    ) -> (@Sendable ([GeneratedImage]) async -> Void)? {
+        guard let sessionId else { return nil }
+        return { images in
+            let urls = images.map(\.url)
+            Task { @MainActor in
+                await RemoteSessionContinuation.appendImageExchange(
+                    prompt: prompt,
+                    sourceImages: sourceImages,
+                    generated: urls,
+                    to: sessionId,
+                    model: model
+                )
+            }
+        }
     }
 
     private func handleRemoteImageGeneration(
         request req: ImageGenerationRequestDTO,
         target: MediaModelTarget,
+        sessionId: UUID? = nil,
+        detached: DetachedPhoneRun? = nil,
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
         startTime: Date,
@@ -7103,12 +13860,85 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let hop = Self.makeHop(channel: context.channel, loop: loop)
+        // Into the Mac chat the phone named, once the images are in.
+        let appendToChat: @Sendable ([URL]) -> Void = { urls in
+            guard let sessionId else { return }
+            let prompt = req.prompt
+            let model = target.modelID
+            Task { @MainActor in
+                await RemoteSessionContinuation.appendImageExchange(
+                    prompt: prompt,
+                    sourceImages: [],
+                    generated: urls,
+                    to: sessionId,
+                    model: model
+                )
+            }
+        }
+        // A provider call doesn't stream, but a client that asked for SSE
+        // (the phone) still gets its answer as SSE: a `completed` or `error`
+        // event once the provider is done.
+        if req.stream == true {
+            let writer = NIOLoopBound(SSEResponseWriter(), eventLoop: loop)
+            writer.value.recorder = detached
+            // Detached: keeps going, and recording, once the phone is gone.
+            let write: (@escaping @Sendable () -> Void) -> Void =
+                detached == nil ? hop : { block in loop.inEventLoop ? block() : loop.execute { block() } }
+            write { writer.value.writeHeaders(ctx.value, extraHeaders: cors) }
+            func emit(_ event: ImageStreamEventDTO) {
+                let json =
+                    (try? JSONEncoder.osaurusCanonical().encode(event))
+                    .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+                write { writer.value.writeRawJSONData(json, context: ctx.value) }
+            }
+            let jobID = detached?.id ?? Self.shortId(prefix: "img")
+            let task = runRequestTask(priority: .userInitiated, outlivesConnection: detached != nil) {
+                // However the task leaves, the stream ends and a detached job
+                // finishes; queued behind the events, as the same hop.
+                defer { write { writer.value.writeEnd(ctx.value) } }
+                var status = 200
+                do {
+                    let generated = try await MediaGenerationCoordinator.shared.generateImage(request)
+                    guard !generated.isEmpty else { throw MediaGenerationError.invalidResponse }
+                    appendToChat(generated.map(\.url))
+                    let results = try generated.map { media in
+                        ImageResultDTO(
+                            url: nil,
+                            b64_json: try Data(contentsOf: media.url).base64EncodedString(),
+                            seed: req.seed ?? 0
+                        )
+                    }
+                    emit(ImageStreamEventDTO(type: "completed", job_id: jobID, images: results))
+                } catch where Task.isCancelled {
+                    // Stopped (`/images/cancel`): said as the local path says it.
+                    status = 499
+                    emit(ImageStreamEventDTO(type: "cancelled", job_id: jobID))
+                } catch {
+                    status = Int(Self.mediaErrorStatus(error).code)
+                    emit(ImageStreamEventDTO(type: "error", job_id: jobID, message: error.localizedDescription))
+                }
+                self.logRequest(
+                    method: "POST",
+                    path: "/images/generations",
+                    userAgent: userAgent,
+                    requestBody: requestBody,
+                    responseBody: "[stream]",
+                    responseStatus: status,
+                    startTime: startTime,
+                    model: target.modelID
+                )
+            }
+            // Stop (`/images/cancel` with the phone's job id) ends the wait.
+            detached?.onStop { task.cancel() }
+            return
+        }
         runRequestTask(priority: .userInitiated) {
             do {
                 let generated = try await MediaGenerationCoordinator.shared.generateImage(request)
                 guard !generated.isEmpty else {
                     throw MediaGenerationError.invalidResponse
                 }
+                appendToChat(generated.map(\.url))
                 let results = try generated.map { media -> ImageResultDTO in
                     if req.response_format == "b64_json" {
                         let bytes = try Data(contentsOf: media.url)
@@ -7150,7 +13980,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     requestBody: requestBody,
                     responseBody: json,
                     responseStatus: 200,
-                    startTime: startTime
+                    startTime: startTime,
+                    model: target.modelID,
+                    details: Self.mediaActivityDetails(
+                        kind: "image", operation: "generate", backend: target.backend,
+                        count: generated.count, width: width, height: height,
+                        aspect: req.aspect_ratio, resolution: req.resolution)
                 )
             } catch {
                 let status = Self.mediaErrorStatus(error)
@@ -7229,7 +14064,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     requestBody: loggedBody,
                     responseBody: json,
                     responseStatus: 200,
-                    startTime: startTime
+                    startTime: startTime,
+                    model: request.target.modelID,
+                    details: Self.mediaActivityDetails(
+                        kind: "video", operation: "quote", backend: request.target.backend,
+                        count: nil, width: nil, height: nil,
+                        aspect: request.aspectRatio, resolution: request.resolution,
+                        extra: ["duration": request.duration, "quote_usd": String(format: "%.4f", quote.usd)])
                 )
             } catch {
                 let status = Self.mediaErrorStatus(error)
@@ -7275,7 +14116,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             )
             return
         }
-        guard dto.allow_remote_media_spend == true else {
+        guard request.target.backend == .local || dto.allow_remote_media_spend == true else {
             sendImageError(
                 head: head,
                 context: context,
@@ -7325,7 +14166,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     requestBody: loggedBody,
                     responseBody: json,
                     responseStatus: 202,
-                    startTime: startTime
+                    startTime: startTime,
+                    model: request.target.modelID,
+                    details: Self.mediaActivityDetails(
+                        kind: "video", operation: "generate", backend: request.target.backend,
+                        count: 1, width: nil, height: nil,
+                        aspect: request.aspectRatio, resolution: request.resolution,
+                        extra: ["duration": request.duration, "job_id": job.id.uuidString])
                 )
             } catch {
                 let status = Self.mediaErrorStatus(error)
@@ -7539,7 +14386,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
         // Prefer the ordered `images` list; fall back to the single `image`.
         let rawSources = req.images ?? [req.image].compactMap { $0 }
-        let sources = rawSources.compactMap { Self.decodeImageInput($0) }
+        // Keep every position until actual bundle metadata chooses its policy.
+        // Older families preserve legacy compactMap; Q21 rejects any bad entry.
+        let decodedSources = rawSources.map { Self.decodeImageInput($0) }
+        let sources = decodedSources.compactMap { $0 }
         guard !sources.isEmpty else {
             sendImageError(
                 head: head,
@@ -7582,7 +14432,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 context: context,
                 status: .badRequest,
                 message:
-                    "No image model specified and no default image edit model is configured (Settings → Agent Delegation).",
+                    "No image model specified and no default image edit model is configured (Settings → Model Defaults → Images & Video).",
                 path: "/images/edits",
                 startTime: startTime,
                 userAgent: userAgent,
@@ -7590,22 +14440,25 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             )
             return
         }
-        let (w, h) = Self.resolveImageSize(size: req.size, width: req.width, height: req.height)
-        let params = ImageEditParameters(
-            model: editModelId,
-            prompt: req.prompt,
-            sourceImages: sources,
-            maskImage: nil,
-            negativePrompt: req.negative_prompt,
-            strength: req.strength.map { Float($0) } ?? 0.75,
-            width: w.map(Self.clampImageDimension),
-            height: h.map(Self.clampImageDimension),
-            steps: req.steps.map(Self.clampImageSteps),
-            guidance: req.guidance.map { Float($0) },
-            seed: req.seed,
-            outputFormat: Self.imageOutputFormat(req.output_format)
+        let continuedSession = phoneImageSession(
+            req.osaurus_session_id,
+            startsUnder: req.osaurus_create_session == true ? req.osaurus_agent_id : nil,
+            context: context
         )
-        let jobID = Self.shortId(prefix: "img")
+        if continuedSession != nil,
+            requiresOwnerChannel(
+                head: head, context: context, path: "/images/edits", startTime: startTime, userAgent: userAgent)
+        {
+            return
+        }
+        let phoneJob = phoneImageJob(req.osaurus_job_id, streaming: req.stream ?? false, context: context)
+        if case .follow(let job) = phoneJob {
+            streamDetachedRun(
+                job, after: 0, head: head, context: context, path: "/images/edits",
+                startTime: startTime, userAgent: userAgent)
+            return
+        }
+        let jobID = phoneJob.started?.id ?? Self.shortId(prefix: "img")
         runImageJob(
             head: head,
             context: context,
@@ -7615,8 +14468,20 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             requestBody: bodyString,
             streaming: req.stream ?? false,
             responseFormat: req.response_format ?? "url",
-            jobID: jobID
-        ) { await ImageGenerationService.shared.edit(params, jobID: jobID) }
+            jobID: jobID,
+            model: editModelId,
+            activityDetails: Self.mediaActivityDetails(
+                kind: "image", operation: "edit", backend: .local,
+                count: nil, width: nil, height: nil,
+                aspect: nil, resolution: nil,
+                extra: ["source_images": String(rawSources.count), "job_id": jobID]),
+            onCompleted: Self.imageSessionAppender(
+                continuedSession, prompt: req.prompt, sourceImages: sources, model: editModelId),
+            detached: phoneJob.started
+        ) {
+            await ImageGenerationService.shared.editHTTP(req, modelID: editModelId,
+                decodedSources: decodedSources, jobID: jobID)
+        }
     }
 
     func handleImageUpscale(
@@ -7641,6 +14506,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             )
             return
         }
+        if let format = req.output_format,
+           !["png", "jpeg", "jpg", "webp"].contains(format.lowercased()) {
+            sendImageError(head: head, context: context, status: .badRequest,
+                message: "Invalid output_format: use png, jpeg, jpg or webp as supported by the model",
+                path: "/images/upscale", startTime: startTime, userAgent: userAgent, requestBody: bodyString)
+            return
+        }
         let params = ImageUpscaleParameters(
             model: req.model,
             sourceImage: source,
@@ -7659,8 +14531,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             requestBody: bodyString,
             streaming: req.stream ?? false,
             responseFormat: req.response_format ?? "url",
-            jobID: jobID
-        ) { await ImageGenerationService.shared.upscale(params, jobID: jobID) }
+            jobID: jobID,
+            model: req.model,
+            activityDetails: Self.mediaActivityDetails(
+                kind: "image", operation: "upscale", backend: .local,
+                count: nil, width: nil, height: nil, aspect: nil, resolution: nil,
+                extra: ["scale": String(params.scale), "job_id": jobID])
+        ) { ImageHTTPPreparedJob(stream: await ImageGenerationService.shared.upscale(params, jobID: jobID)) }
     }
 
     func handleImageCancel(
@@ -7687,9 +14564,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let loop = context.eventLoop
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let hop = Self.makeHop(channel: context.channel, loop: loop)
+        // A phone's job is the owner's: only the owner, through the Secure
+        // Channel as when it started it, may stop it.
+        let phoneJob = DetachedPhoneRuns.images.run(id: req.job_id)
+        let mayStop = phoneJob == nil || (callerOwnsThisMac(context) && stateRef.value.isSecureChannel)
         let logSelf = self
         runRequestTask(priority: .userInitiated) {
-            await ImageGenerationService.shared.cancel(jobID: req.job_id)
+            if mayStop {
+                await ImageGenerationService.shared.cancel(jobID: req.job_id)
+                // A cloud job stops through its own handler.
+                phoneJob?.stop()
+            }
             let json = #"{"type":"cancelled","job_id":"\#(Self.jsonEscape(req.job_id))"}"#
             hop {
                 var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -7720,7 +14605,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         streaming: Bool,
         responseFormat: String,
         jobID: String,
-        build: @escaping @Sendable () async -> AsyncThrowingStream<ImageGenerationEvent, Error>
+        model: String? = nil,
+        activityDetails: [String: String] = [:],
+        onCompleted: (@Sendable ([GeneratedImage]) async -> Void)? = nil,
+        detached: DetachedPhoneRun? = nil,
+        build: @escaping @Sendable () async -> ImageHTTPPreparedJob
     ) {
         let cors = stateRef.value.corsHeaders
         let loop = context.eventLoop
@@ -7733,16 +14622,25 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // NIOLoopBound so it can cross into the `@Sendable` hop closures
             // (same pattern as the chat SSE path).
             let writer = NIOLoopBound(SSEResponseWriter(), eventLoop: loop)
-            hop { writer.value.writeHeaders(ctx.value, extraHeaders: cors) }
+            writer.value.recorder = detached
+            // A detached job keeps writing once the phone is gone: its frames
+            // go to the recorder, and the writes no-op on the dead channel.
+            let write: (@escaping @Sendable () -> Void) -> Void =
+                detached == nil ? hop : { block in loop.inEventLoop ? block() : loop.execute { block() } }
+            write { writer.value.writeHeaders(ctx.value, extraHeaders: cors) }
             func emit(_ event: ImageStreamEventDTO) {
                 let json =
                     (try? JSONEncoder.osaurusCanonical().encode(event))
                     .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
-                hop { writer.value.writeRawJSONData(json, context: ctx.value) }
+                // Previews are whole PNGs: replay keeps only the newest.
+                let transient = event.type == "preview"
+                write { writer.value.writeRawJSONData(json, context: ctx.value, transient: transient) }
             }
-            runRequestTask(priority: .userInitiated) {
+            runRequestTask(priority: .userInitiated, outlivesConnection: detached != nil) {
                 emit(ImageStreamEventDTO(type: "queued", job_id: jobID))
-                let stream = await build()
+                let prepared = await build()
+                let stream = prepared.stream
+                var produced: [GeneratedImage] = []
                 do {
                     for try await event in stream {
                         switch event {
@@ -7762,7 +14660,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         case .preview(let pngData, let step):
                             let uri = "data:image/png;base64," + pngData.base64EncodedString()
                             emit(ImageStreamEventDTO(type: "preview", job_id: jobID, step: step, image: uri))
+                        case .imageCompleted(let image, let index):
+                            produced.append(image)
+                            emit(ImageStreamEventDTO(type: "image_completed", job_id: jobID,
+                                images: [Self.imageResult(for: image, responseFormat: responseFormat)], index: index))
                         case .completed(let images):
+                            produced = images
+                            await onCompleted?(images)
                             let results = images.map { Self.imageResult(for: $0, responseFormat: responseFormat) }
                             emit(ImageStreamEventDTO(type: "completed", job_id: jobID, images: results))
                         case .failed(let message, let hfAuth):
@@ -7781,7 +14685,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         )
                     )
                 }
-                hop { writer.value.writeEnd(ctx.value) }
+                write { writer.value.writeEnd(ctx.value) }
                 logSelf.logRequest(
                     method: "POST",
                     path: path,
@@ -7789,7 +14693,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     requestBody: requestBody,
                     responseBody: "[stream]",
                     responseStatus: 200,
-                    startTime: startTime
+                    startTime: startTime,
+                    model: model,
+                    details: ImageEffectiveParameters.activityDetails(
+                        activityDetails.merging(prepared.activityDetails) { _, actual in actual }, images: produced)
                 )
             }
             return
@@ -7807,6 +14714,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             path: path,
             requestBody: requestBody,
             responseFormat: responseFormat,
+            model: model,
+            activityDetails: activityDetails,
+            onCompleted: onCompleted,
             build: build
         )
     }
@@ -7822,17 +14732,23 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         path: String,
         requestBody: String?,
         responseFormat: String,
-        build: @escaping @Sendable () async -> AsyncThrowingStream<ImageGenerationEvent, Error>
+        model: String? = nil,
+        activityDetails: [String: String] = [:],
+        onCompleted: (@Sendable ([GeneratedImage]) async -> Void)? = nil,
+        build: @escaping @Sendable () async -> ImageHTTPPreparedJob
     ) {
         runRequestTask(priority: .userInitiated) {
             var produced: [GeneratedImage] = []
             var failure: (message: String, hfAuth: Bool)?
-            let stream = await build()
+            let prepared = await build()
+            let stream = prepared.stream
             do {
                 for try await event in stream {
                     switch event {
+                    case .imageCompleted(let image, _): produced.append(image)
                     case .completed(let images): produced = images
                     case .failed(let message, let hfAuth): failure = (message, hfAuth)
+                    case .cancelled: failure = failure ?? ("Image generation cancelled", false)
                     default: break
                     }
                 }
@@ -7842,8 +14758,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             if let failure {
                 let status = Self.imageErrorStatus(message: failure.message, hfAuth: failure.hfAuth)
-                let body =
-                    #"{"error":{"message":"\#(Self.jsonEscape(failure.message))","type":"invalid_request_error"}}"#
+                let response = ImagePartialFailureDTO(
+                    error: .init(message: failure.message, type: "image_generation_error"),
+                    data: produced.map { Self.imageResult(for: $0, responseFormat: responseFormat) })
+                let body = (try? JSONEncoder.osaurusCanonical().encode(response))
+                    .map { String(decoding: $0, as: UTF8.self) }
+                    ?? #"{"error":{"message":"Image generation failed","type":"image_generation_error"}}"#
                 hop {
                     var headers = [("Content-Type", "application/json; charset=utf-8")]
                     headers.append(contentsOf: cors)
@@ -7862,11 +14782,14 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     requestBody: requestBody,
                     responseStatus: Int(status.code),
                     startTime: startTime,
-                    errorMessage: failure.message
+                    model: model,
+                    errorMessage: failure.message,
+                    details: activityDetails.merging(prepared.activityDetails) { _, actual in actual }
                 )
                 return
             }
 
+            await onCompleted?(produced)
             let results = produced.map { Self.imageResult(for: $0, responseFormat: responseFormat) }
             let response = ImagesResponseDTO(created: Int(Date().timeIntervalSince1970), data: results)
             let json =
@@ -7877,6 +14800,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 headers.append(contentsOf: cors)
                 self.sendResponse(context: ctx.value, version: head.version, status: .ok, headers: headers, body: json)
             }
+            var details = ImageEffectiveParameters.activityDetails(
+                activityDetails.merging(prepared.activityDetails) { _, actual in actual }, images: produced)
+            details["count"] = String(produced.count)
             logSelf.logRequest(
                 method: "POST",
                 path: path,
@@ -7884,7 +14810,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 requestBody: requestBody,
                 responseBody: json,
                 responseStatus: 200,
-                startTime: startTime
+                startTime: startTime,
+                model: model,
+                details: details
             )
         }
     }
@@ -8043,7 +14971,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 method: "POST",
                 userAgent: userAgent,
                 requestBody: requestBodyString,
-                startTime: startTime
+                startTime: startTime,
+                model: req.model
             )
         else { return }
 
@@ -8063,7 +14992,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 defer { keepaliveTask.cancel() }
                 defer { admissionToken.release() }
                 var accumulated = ""
-                let finishReason = "stop"
+                var finishReason = "stop"
+                var actualPromptTokens: Int?
+                var actualCompletionTokens: Int?
                 do {
                     let stream = try await MLXService.shared.streamRawCompletion(
                         prompt: prompt,
@@ -8072,13 +15003,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         stopSequences: stop
                     )
                     if disconnected.value { throw CancellationError() }
-                    // `streamRawCompletion` yields only plain generated text
-                    // (reasoning / tool / stats events are dropped upstream in
-                    // `ModelRuntime.streamRawText`), so no sentinel filtering is
-                    // needed here.
                     for try await delta in stream {
                         if disconnected.value { throw CancellationError() }
-                        if delta.isEmpty { continue }
+                        if let count = StreamingInputTokenHint.decode(delta) {
+                            actualPromptTokens = count
+                            continue
+                        }
+                        if let stats = StreamingStatsHint.decode(delta) {
+                            actualPromptTokens = stats.inputTokenCount ?? actualPromptTokens
+                            actualCompletionTokens = stats.tokenCount
+                            finishReason = stats.stopReason ?? finishReason
+                            continue
+                        }
+                        if delta.isEmpty || StreamingToolHint.isSentinel(delta) { continue }
                         accumulated += delta
                         let chunk = CompletionResponseDTO(
                             id: responseId,
@@ -8093,15 +15030,31 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         }
                     }
                 } catch {
-                    hop { writerBound.value.writeError(error.localizedDescription, context: ctx.value) }
+                    hop {
+                        writerBound.value.writeErrorFromThrown(error, context: ctx.value)
+                        writerBound.value.writeEnd(ctx.value)
+                    }
+                    logSelf.logRequest(
+                        method: "POST", path: "/completions", userAgent: logUserAgent,
+                        requestBody: logRequestBody, responseStatus: 200, startTime: startTime,
+                        model: model, finishReason: .error, errorMessage: error.localizedDescription
+                    )
+                    return
                 }
+                let resolvedPromptTokens = actualPromptTokens ?? promptTokens
+                let resolvedCompletionTokens = actualCompletionTokens ?? TokenEstimator.estimate(accumulated)
                 let final = CompletionResponseDTO(
                     id: responseId,
                     object: "text_completion",
                     created: created,
                     model: model,
                     choices: [CompletionChoiceDTO(text: "", index: 0, finish_reason: finishReason)],
-                    usage: nil
+                    usage: req.streamOptions?.include_usage == true
+                        ? CompletionUsageDTO(
+                            prompt_tokens: resolvedPromptTokens,
+                            completion_tokens: resolvedCompletionTokens,
+                            total_tokens: resolvedPromptTokens + resolvedCompletionTokens
+                        ) : nil
                 )
                 hop {
                     if let json = Self.encodeCompletionJSON(final) {
@@ -8117,8 +15070,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     responseStatus: 200,
                     startTime: startTime,
                     model: model,
-                    tokensInput: promptTokens,
-                    tokensOutput: TokenEstimator.estimate(accumulated),
+                    tokensInput: resolvedPromptTokens,
+                    tokensOutput: resolvedCompletionTokens,
+                    inputTokenSource: actualPromptTokens == nil ? .estimated : .reported,
+                    outputTokenSource: actualCompletionTokens == nil ? .estimated : .reported,
                     temperature: req.temperature,
                     maxTokens: req.resolvedMaxTokens
                 )
@@ -8137,20 +15092,34 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     stopSequences: stop
                 )
                 var text = ""
+                var actualPromptTokens: Int?
+                var actualCompletionTokens: Int?
+                var finishReason = "stop"
                 for try await delta in stream {
-                    text += delta
+                    if let count = StreamingInputTokenHint.decode(delta) {
+                        actualPromptTokens = count
+                        continue
+                    }
+                    if let stats = StreamingStatsHint.decode(delta) {
+                        actualPromptTokens = stats.inputTokenCount ?? actualPromptTokens
+                        actualCompletionTokens = stats.tokenCount
+                        finishReason = stats.stopReason ?? finishReason
+                        continue
+                    }
+                    if !StreamingToolHint.isSentinel(delta) { text += delta }
                 }
-                let completionTokens = TokenEstimator.estimate(text)
+                let resolvedPromptTokens = actualPromptTokens ?? promptTokens
+                let completionTokens = actualCompletionTokens ?? TokenEstimator.estimate(text)
                 let response = CompletionResponseDTO(
                     id: responseId,
                     object: "text_completion",
                     created: created,
                     model: model,
-                    choices: [CompletionChoiceDTO(text: text, index: 0, finish_reason: "stop")],
+                    choices: [CompletionChoiceDTO(text: text, index: 0, finish_reason: finishReason)],
                     usage: CompletionUsageDTO(
-                        prompt_tokens: promptTokens,
+                        prompt_tokens: resolvedPromptTokens,
                         completion_tokens: completionTokens,
-                        total_tokens: promptTokens + completionTokens
+                        total_tokens: resolvedPromptTokens + completionTokens
                     )
                 )
                 let body = Self.encodeCompletionJSON(response) ?? "{}"
@@ -8175,11 +15144,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     responseStatus: 200,
                     startTime: startTime,
                     model: model,
-                    tokensInput: promptTokens,
+                    tokensInput: resolvedPromptTokens,
                     tokensOutput: completionTokens,
+                    inputTokenSource: actualPromptTokens == nil ? .estimated : .reported,
+                    outputTokenSource: actualCompletionTokens == nil ? .estimated : .reported,
                     temperature: req.temperature,
                     maxTokens: req.resolvedMaxTokens,
-                    finishReason: .stop
+                    finishReason: RequestLog.FinishReason(rawValue: finishReason) ?? .stop
                 )
             } catch {
                 let message = error.localizedDescription
@@ -8267,10 +15238,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         method: String,
         userAgent: String?,
         requestBody: String?,
-        startTime: Date
+        startTime: Date,
+        model: String?
     ) -> HTTPInferenceAdmission.Token? {
         let limit = Self.httpInferenceAdmissionLimit()
         if let token = HTTPInferenceAdmission.shared.tryAcquireToken(limit: limit) {
+            token.reserveForeground(model: model)
             return token
         }
         let body = Self.errorBody(
@@ -8317,6 +15290,26 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         return "http-\(UUID().uuidString)"
     }
 
+    /// Choice admission uses the same side-effect-free canonical gate as the
+    /// engine, before any streaming headers or inference slot are committed.
+    private func rejectInvalidHTTPToolChoice(
+        _ request: ResponsesInferenceRequest, head: HTTPRequestHead,
+        context: ChannelHandlerContext, flavor: HTTPErrorFlavor,
+        path: String, startTime: Date, userAgent: String?, requestBody: String?
+    ) -> Bool {
+        do { try ResponsesToolChoiceContract.preflight(request); return false }
+        catch {
+            let status = Self.localRuntimeHTTPStatus(for: error)
+            sendResponse(context: context, version: head.version, status: status,
+                headers: [("Content-Type", "application/json; charset=utf-8")] + stateRef.value.corsHeaders,
+                body: Self.errorBody(flavor, message: error.localizedDescription))
+            logRequest(method: "POST", path: path, userAgent: userAgent, requestBody: requestBody,
+                responseStatus: Int(status.code), startTime: startTime, model: request.model,
+                finishReason: .error, errorMessage: error.localizedDescription)
+            return true
+        }
+    }
+
     private func handleChatCompletions(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -8335,8 +15328,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             requestBodyString = nil
         }
 
-        guard var req = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
-            let body = Self.errorBody(.openai(type: "invalid_request_error"), message: "Invalid request format")
+        if let reason = RequestValidator.rawResponseSchemaReason(data, responses: false) {
+            sendResponse(context: context, version: head.version, status: .badRequest,
+                headers: [("Content-Type", "application/json; charset=utf-8")],
+                body: Self.errorBody(.openai(type: "invalid_request_error"), message: reason))
+            return
+        }
+
+        var req: ChatCompletionRequest
+        do {
+            req = try JSONDecoder().decode(ChatCompletionRequest.self, from: data)
+        } catch {
+            let message = RequestValidator.chatRequestDecodingMessage(for: error)
+            let body = Self.errorBody(.openai(type: "invalid_request_error"), message: message)
             sendResponse(
                 context: context,
                 version: head.version,
@@ -8351,7 +15355,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 requestBody: requestBodyString,
                 responseStatus: 400,
                 startTime: startTime,
-                errorMessage: "Invalid request format"
+                errorMessage: message
             )
             return
         }
@@ -8382,6 +15386,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             )
             return
         }
+
+        if rejectInvalidHTTPToolChoice(ResponsesInferenceRequest(chatCompletion: req), head: head,
+            context: context, flavor: .openai(type: "invalid_request_error"), path: "/chat/completions",
+            startTime: startTime, userAgent: userAgent, requestBody: requestBodyString) { return }
 
         let accept = head.headers.first(name: "Accept") ?? ""
         let wantsSSE = (req.stream ?? false) || accept.contains("text/event-stream")
@@ -8465,6 +15473,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             )
             return
         }
+        let foregroundReservation = ForegroundReservationCenter.shared.reserve(
+            owner: "http:\(UUID().uuidString)", kind: .api, model: model)
 
         if wantsSSE {
             let writer = SSEResponseWriter()
@@ -8505,6 +15515,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             runRequestTask(priority: .userInitiated) {
                 defer { keepaliveTask.cancel() }
                 defer { HTTPInferenceAdmission.shared.release() }
+                defer { ForegroundReservationCenter.shared.release(foregroundReservation) }
                 // Same menu-bar "generating" dot for host-side server inference
                 // (incl. remote Mode-1 chat completions over the Secure Channel).
                 ServerController.signalGenerationStart()
@@ -8528,371 +15539,117 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 var contentCoalescer = Self.StreamDeltaCoalescer(
                     interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
                 )
+                var accumulatedContent = ""
+                var accumulatedReasoning = ""
                 do {
                     httpTrace.mark("http_task_start")
-                    let chatEngine = self.chatEngine
                     let enrichedReq = req
                     httpTrace.mark("http_context_passthrough_done")
                     httpTrace.set("http_enriched_message_count", enrichedReq.messages.count)
-
-                    // Compute prefix evidence from the exact request sent to
-                    // the OpenAI-compatible server path. Agent context is
-                    // intentionally not injected here; the app chat and
-                    // /agents/{id}/run paths own composed context.
-                    let prefixHash: String = {
-                        let sysContent = enrichedReq.messages.first(where: { $0.role == "system" })?.content ?? ""
-                        return ModelRuntime.computePrefixHash(
-                            systemContent: sysContent,
-                            tools: enrichedReq.tools ?? []
-                        )
-                    }()
-                    hop {
-                        writerBound.value.writeRole(
-                            "assistant",
-                            model: model,
-                            responseId: responseId,
-                            created: created,
-                            prefixHash: prefixHash,
-                            context: ctx.value
-                        )
-                    }
+                    let prefixHash = ModelRuntime.computePrefixHash(
+                        systemContent: enrichedReq.messages.first(where: { $0.role == "system" })?.content ?? "",
+                        tools: enrichedReq.tools ?? [])
+                    hop { writerBound.value.writeRole("assistant", model: model, responseId: responseId,
+                        created: created, prefixHash: prefixHash, context: ctx.value) }
                     httpTrace.mark("http_sse_role_written")
-
-                    httpTrace.mark("http_stream_chat_start")
+                    httpTrace.mark("http_stream_responses_start")
                     try Task.checkCancellation()
-                    let stream = try await chatEngine.streamChat(request: enrichedReq)
-                    httpTrace.mark("http_stream_chat_ready")
-                    if disconnected.value { throw CancellationError() }
-                    var accumulatedContent = ""
-                    var accumulatedReasoning = ""
-                    var authoritativeCompletionTokens: Int?
-                    var authoritativeTokensPerSecond: Double?
-                    var streamFinishReason = "stop"
-                    for try await delta in stream {
+                    let stream = try await self.chatEngine.streamResponses(request: ResponsesInferenceRequest(chatCompletion: enrichedReq))
+                    httpTrace.mark("http_stream_responses_ready")
+                    var accumulator = ResponsesGenerationAccumulator()
+                    generation: for try await event in stream {
                         try Task.checkCancellation()
                         if disconnected.value { throw CancellationError() }
-                        if let reasoning = StreamingReasoningHint.decode(delta) {
+                        try accumulator.consume(event)
+                        switch event {
+                        case .reasoningDelta(let reasoning):
                             httpTrace.markFirstSemanticDelta("reasoning")
                             markSemanticDeltaIfConnected()
                             accumulatedReasoning += reasoning
                             if let pending = contentCoalescer.flush() {
-                                hop {
-                                    writerBound.value.writeContent(
-                                        pending,
-                                        model: model,
-                                        responseId: responseId,
-                                        created: created,
-                                        context: ctx.value
-                                    )
-                                }
+                                hop { writerBound.value.writeContent(pending, model: model, responseId: responseId, created: created, context: ctx.value) }
                             }
-                            hop {
-                                writerBound.value.writeReasoning(
-                                    reasoning,
-                                    model: model,
-                                    responseId: responseId,
-                                    created: created,
-                                    context: ctx.value
-                                )
+                            hop { writerBound.value.writeReasoning(reasoning, model: model, responseId: responseId, created: created, context: ctx.value) }
+                        case .prefillProgress(let progress):
+                            hop { writerBound.value.writePrefillProgress(progress, model: model, responseId: responseId, created: created, context: ctx.value) }
+                        case .outputTextDelta(let text):
+                            httpTrace.markFirstSemanticDelta("content")
+                            markSemanticDeltaIfConnected()
+                            accumulatedContent += text
+                            if let chunk = contentCoalescer.append(text) {
+                                hop { writerBound.value.writeContent(chunk, model: model, responseId: responseId, created: created, context: ctx.value) }
                             }
-                            continue
+                        case .responseCompleted: break generation
+                        default: break
                         }
-                        if let progress = StreamingPrefillProgressHint.decode(delta) {
-                            hop {
-                                writerBound.value.writePrefillProgress(
-                                    progress,
-                                    model: model,
-                                    responseId: responseId,
-                                    created: created,
-                                    context: ctx.value
-                                )
-                            }
-                            continue
-                        }
-                        if let stats = StreamingStatsHint.decode(delta) {
-                            authoritativeCompletionTokens = stats.tokenCount
-                            authoritativeTokensPerSecond = stats.tokensPerSecond
-                            if let stopReason = stats.stopReason {
-                                streamFinishReason = stopReason
-                            }
-                            continue
-                        }
-                        if StreamingToolHint.isSentinel(delta) { continue }
-                        httpTrace.markFirstSemanticDelta("content")
-                        markSemanticDeltaIfConnected()
-                        accumulatedContent += delta
-                        if let chunk = contentCoalescer.append(delta) {
-                            hop {
-                                writerBound.value.writeContent(
-                                    chunk,
-                                    model: model,
-                                    responseId: responseId,
-                                    created: created,
-                                    context: ctx.value
-                                )
-                            }
-                        }
-                        if disconnected.value { throw CancellationError() }
                     }
                     if disconnected.value { throw CancellationError() }
                     if let pending = contentCoalescer.flush() {
-                        hop {
-                            writerBound.value.writeContent(
-                                pending,
-                                model: model,
-                                responseId: responseId,
-                                created: created,
-                                context: ctx.value
-                            )
+                        hop { writerBound.value.writeContent(pending, model: model, responseId: responseId, created: created, context: ctx.value) }
+                    }
+                    let response = try accumulator.result()
+                    let completion = response.completion
+                    switch completion.status {
+                    case .cancelled:
+                        throw NSError(domain: "OsaurusUpstreamCancellation", code: 499,
+                            userInfo: [NSLocalizedDescriptionKey: "The upstream model or provider cancelled generation."])
+                    case .incomplete:
+                        guard completion.stopReason == "length" else {
+                            throw ResponsesGenerationResult.CollectionError.incomplete(completion.stopReason)
+                        }
+                    case .completed: break
+                    }
+                    let calls = completion.dispatchableFunctionCalls
+                    if case .completed = completion.status {
+                        let assistant = try response.completedAssistantInput()
+                        if let error = Self.emptyToolTaskCompletionError(requestMessages: enrichedReq.messages, responseMessage: assistant) { throw error }
+                        if persistOnSuccess {
+                            ChatHistoryWriter.persistInBackground(source: .http, sourcePluginId: nil,
+                                agentId: resolvedAgentUUID, externalKey: externalSessionKey,
+                                finalMessages: priorMessages + [assistant], model: model)
                         }
                     }
-                    let terminalMessage = ChatMessage(
-                        role: "assistant",
-                        content: accumulatedContent,
-                        tool_calls: nil,
-                        tool_call_id: nil,
-                        reasoning_content: accumulatedReasoning.isEmpty ? nil : accumulatedReasoning
-                    )
-                    if let error = Self.emptyToolTaskCompletionError(
-                        requestMessages: enrichedReq.messages,
-                        responseMessage: terminalMessage
-                    ) {
-                        let message = error.localizedDescription
-                        hop {
-                            writerBound.value.writeError(message, context: ctx.value)
-                            writerBound.value.writeEnd(ctx.value)
-                        }
-                        httpTrace.mark("http_sse_error_written")
-                        httpTrace.emit(finishReason: "error", responseStatus: 200, errorMessage: message)
-                        logSelf.logRequest(
-                            method: "POST",
-                            path: "/chat/completions",
-                            userAgent: logUserAgent,
-                            requestBody: logRequestBody,
-                            responseStatus: 200,
-                            startTime: logStartTime,
-                            model: logModel,
-                            temperature: logTemperature,
-                            maxTokens: logMaxTokens,
-                            finishReason: .error,
-                            errorMessage: message
-                        )
-                        return
-                    }
+                    let finish = Self.openResponsesFinishReason(completion).rawValue
                     let includeUsage = req.stream_options?.include_usage == true
-                    let promptTokens = Self.estimatePromptTokens(enrichedReq.messages)
-                    let completionTokens =
-                        authoritativeCompletionTokens ?? TokenEstimator.estimate(accumulatedContent)
-                    httpTrace.set("http_prompt_tokens_estimate", promptTokens)
-                    httpTrace.set("http_completion_tokens", completionTokens)
-                    let finalStreamFinishReason = streamFinishReason
-                    let finalTokensPerSecond = authoritativeTokensPerSecond
+                    let usage = response.reportedChatUsage
+                    let generationMetrics = response.reportedGenerationMetrics
+                    if let count = response.inputTokenCount { httpTrace.set("http_prompt_tokens", count) }
+                    if let count = completion.tokenCount { httpTrace.set("http_completion_tokens", count) }
+                    if !calls.isEmpty { markSemanticDeltaIfConnected(); httpTrace.markFirstSemanticDelta("tool_calls") }
                     hop {
-                        writerBound.value.writeFinishWithReason(
-                            finalStreamFinishReason,
-                            model: model,
-                            responseId: responseId,
-                            created: created,
-                            context: ctx.value
-                        )
+                        for (index, call) in calls.enumerated() {
+                            self.writeOpenAIToolCallSSE(ServiceToolInvocation(toolName: call.name, jsonArguments: call.arguments,
+                                toolCallId: call.callID, geminiThoughtSignature: call.geminiThoughtSignature), index: index,
+                                writer: writerBound.value, model: model, responseId: responseId, created: created, context: ctx.value)
+                        }
+                        writerBound.value.writeFinishWithReason(finish, model: model, responseId: responseId, created: created, context: ctx.value)
                         if includeUsage {
-                            writerBound.value.writeUsageChunk(
-                                promptTokens: promptTokens,
-                                completionTokens: completionTokens,
-                                tokensPerSecond: finalTokensPerSecond,
-                                model: model,
-                                responseId: responseId,
-                                created: created,
-                                context: ctx.value
-                            )
+                            writerBound.value.writeGenerationMetrics(generationMetrics, model: model,
+                                responseId: responseId, created: created, context: ctx.value)
+                        }
+                        if includeUsage, let usage {
+                            writerBound.value.writeUsageChunk(promptTokens: usage.prompt_tokens, completionTokens: usage.completion_tokens,
+                                tokensPerSecond: usage.tokens_per_second, cachedPromptTokens: usage.cachedPromptTokens,
+                                model: model, responseId: responseId, created: created, context: ctx.value)
                         }
                         writerBound.value.writeEnd(ctx.value)
                     }
                     httpTrace.mark("http_sse_finish_written")
-                    httpTrace.emit(finishReason: finalStreamFinishReason, responseStatus: 200)
-                    if persistOnSuccess {
-                        var finalMessages = priorMessages
-                        if !accumulatedContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            finalMessages.append(
-                                ChatMessage(role: "assistant", content: accumulatedContent)
-                            )
-                        }
-                        ChatHistoryWriter.persistInBackground(
-                            source: .http,
-                            sourcePluginId: nil,
-                            agentId: resolvedAgentUUID,
-                            externalKey: externalSessionKey,
-                            finalMessages: finalMessages,
-                            model: model
-                        )
-                    }
-                    logSelf.logRequest(
-                        method: "POST",
-                        path: "/chat/completions",
-                        userAgent: logUserAgent,
-                        requestBody: logRequestBody,
-                        responseStatus: 200,
-                        startTime: logStartTime,
-                        model: logModel,
-                        temperature: logTemperature,
-                        maxTokens: logMaxTokens,
-                        finishReason: RequestLog.FinishReason(rawValue: finalStreamFinishReason) ?? .stop
-                    )
-                } catch let invs as ServiceToolInvocations {
-                    // Text can still be pending in the coalescer when the tool call
-                    // arrives (tool calls surface by throw, so the loop's own flush
-                    // never runs). Deliver it before the tool frames or the visible
-                    // answer ends mid-word.
-                    if let pending = contentCoalescer.flush() {
-                        hop {
-                            writerBound.value.writeContent(
-                                pending,
-                                model: model,
-                                responseId: responseId,
-                                created: created,
-                                context: ctx.value
-                            )
-                        }
-                    }
-                    // Multi-tool MLX completion: emit one tool_call delta
-                    // per invocation, sharing one finish_reason="tool_calls".
-                    // OpenAI clients deduplicate by `index`.
-                    httpTrace.markFirstSemanticDelta("tool_calls")
-                    markSemanticDeltaIfConnected()
-                    httpTrace.set("http_tool_call_count", invs.invocations.count)
-                    let includeUsage = req.stream_options?.include_usage == true
-                    // Use `req.messages` here (not `enrichedReq.messages`)
-                    // because the enriched value is scoped to the `do` block
-                    // and unavailable in this catch — at worst we under-
-                    // count by the agent system-prompt fragment.
-                    let promptTokens = Self.estimatePromptTokens(req.messages)
-                    let requestTools = req.tools
-                    hop {
-                        for (idx, inv) in invs.invocations.enumerated() {
-                            self.writeOpenAIToolCallSSE(
-                                inv,
-                                index: idx,
-                                writer: writerBound.value,
-                                model: model,
-                                responseId: responseId,
-                                created: created,
-                                context: ctx.value,
-                                tools: requestTools
-                            )
-                        }
-                        writerBound.value.writeFinishWithReason(
-                            "tool_calls",
-                            model: model,
-                            responseId: responseId,
-                            created: created,
-                            context: ctx.value
-                        )
-                        if includeUsage {
-                            writerBound.value.writeUsageChunk(
-                                promptTokens: promptTokens,
-                                completionTokens: 0,
-                                model: model,
-                                responseId: responseId,
-                                created: created,
-                                context: ctx.value
-                            )
-                        }
-                        writerBound.value.writeEnd(ctx.value)
-                    }
-                    httpTrace.mark("http_sse_tool_calls_written")
-                    httpTrace.emit(finishReason: "tool_calls", responseStatus: 200)
-                    let toolLogs = invs.invocations.map {
-                        ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments)
-                    }
-                    logSelf.logRequest(
-                        method: "POST",
-                        path: "/chat/completions",
-                        userAgent: logUserAgent,
-                        requestBody: logRequestBody,
-                        responseStatus: 200,
-                        startTime: logStartTime,
-                        model: logModel,
-                        toolCalls: toolLogs,
-                        temperature: logTemperature,
-                        maxTokens: logMaxTokens,
-                        finishReason: .toolCalls
-                    )
-                } catch let inv as ServiceToolInvocation {
-                    // Text can still be pending in the coalescer when the tool call
-                    // arrives (tool calls surface by throw, so the loop's own flush
-                    // never runs). Deliver it before the tool frames or the visible
-                    // answer ends mid-word.
-                    if let pending = contentCoalescer.flush() {
-                        hop {
-                            writerBound.value.writeContent(
-                                pending,
-                                model: model,
-                                responseId: responseId,
-                                created: created,
-                                context: ctx.value
-                            )
-                        }
-                    }
-                    // Single tool invocation — same emission as above.
-                    httpTrace.markFirstSemanticDelta("tool_calls")
-                    markSemanticDeltaIfConnected()
-                    httpTrace.set("http_tool_call_count", 1)
-                    let includeUsage = req.stream_options?.include_usage == true
-                    let promptTokens = Self.estimatePromptTokens(req.messages)
-                    let requestTools = req.tools
-                    hop {
-                        self.writeOpenAIToolCallSSE(
-                            inv,
-                            index: 0,
-                            writer: writerBound.value,
-                            model: model,
-                            responseId: responseId,
-                            created: created,
-                            context: ctx.value,
-                            tools: requestTools
-                        )
-                        writerBound.value.writeFinishWithReason(
-                            "tool_calls",
-                            model: model,
-                            responseId: responseId,
-                            created: created,
-                            context: ctx.value
-                        )
-                        if includeUsage {
-                            writerBound.value.writeUsageChunk(
-                                promptTokens: promptTokens,
-                                completionTokens: 0,
-                                model: model,
-                                responseId: responseId,
-                                created: created,
-                                context: ctx.value
-                            )
-                        }
-                        writerBound.value.writeEnd(ctx.value)
-                    }
-                    httpTrace.mark("http_sse_tool_calls_written")
-                    httpTrace.emit(finishReason: "tool_calls", responseStatus: 200)
-                    let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
-                    logSelf.logRequest(
-                        method: "POST",
-                        path: "/chat/completions",
-                        userAgent: logUserAgent,
-                        requestBody: logRequestBody,
-                        responseStatus: 200,
-                        startTime: logStartTime,
-                        model: logModel,
-                        toolCalls: [toolLog],
-                        temperature: logTemperature,
-                        maxTokens: logMaxTokens,
-                        finishReason: .toolCalls
-                    )
+                    httpTrace.emit(finishReason: finish, responseStatus: 200)
+                    logSelf.logRequest(method: "POST", path: "/chat/completions", userAgent: logUserAgent,
+                        requestBody: logRequestBody, responseStatus: 200, startTime: logStartTime, model: logModel,
+                        tokensInput: response.inputTokenCount, tokensOutput: completion.tokenCount,
+                        inputTokenSource: .reported, outputTokenSource: .reported,
+                        toolCalls: calls.map { ToolCallLog(name: $0.name, arguments: $0.arguments) },
+                        temperature: logTemperature, maxTokens: logMaxTokens,
+                        finishReason: Self.openResponsesFinishReason(completion))
                 } catch {
                     // SSE response head was already written as 200 — the
                     // failure surfaces as an in-band SSE error chunk. Log
                     // the actual on-wire status (200) so dashboards don't
                     // mis-attribute a delivered stream as a 500.
                     hop {
-                        writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                        writerBound.value.writeErrorFromThrown(error, context: ctx.value)
                         writerBound.value.writeEnd(ctx.value)
                     }
                     httpTrace.mark("http_sse_error_written")
@@ -8932,6 +15689,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let responseFinished = SendableBool(false)
             runRequestTask(priority: .userInitiated) {
                 defer { HTTPInferenceAdmission.shared.release() }
+                defer { ForegroundReservationCenter.shared.release(foregroundReservation) }
                 // Same menu-bar "generating" dot (non-streaming path).
                 ServerController.signalGenerationStart()
                 defer { ServerController.signalGenerationEnd() }
@@ -8943,37 +15701,23 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     httpTrace.set("http_enriched_message_count", enrichedReq.messages.count)
                     httpTrace.mark("http_complete_chat_start")
                     try Task.checkCancellation()
-                    var resp = try await chatEngine.completeChat(request: enrichedReq)
+                    let response = try await chatEngine.completeResponse(request: ResponsesInferenceRequest(chatCompletion: enrichedReq))
                     try Task.checkCancellation()
-                    httpTrace.mark("http_complete_chat_done")
-                    // Compute prefix evidence from the exact request sent to
-                    // the OpenAI-compatible server path. Agent context is
-                    // intentionally not injected here; the app chat and
-                    // /agents/{id}/run paths own composed context.
+                    httpTrace.mark("http_complete_responses_done")
                     let sysContent = enrichedReq.messages.first(where: { $0.role == "system" })?.content ?? ""
-                    resp.prefix_hash = ModelRuntime.computePrefixHash(
-                        systemContent: sysContent,
-                        tools: enrichedReq.tools ?? []
-                    )
-                    if let error = Self.emptyToolTaskCompletionError(
-                        requestMessages: enrichedReq.messages,
-                        responseMessage: resp.choices.first?.message
-                    ) {
-                        throw error
+                    let prefixHash = ModelRuntime.computePrefixHash(systemContent: sysContent, tools: enrichedReq.tools ?? [])
+                    if case .completed = response.completion.status {
+                        let assistant = try response.completedAssistantInput()
+                        if let error = Self.emptyToolTaskCompletionError(requestMessages: enrichedReq.messages, responseMessage: assistant) {
+                            throw error
+                        }
+                        if persistOnSuccess {
+                            ChatHistoryWriter.persistInBackground(source: .http, sourcePluginId: nil,
+                                agentId: resolvedAgentUUID, externalKey: externalSessionKey,
+                                finalMessages: priorMessages + [assistant], model: model)
+                        }
                     }
-                    if persistOnSuccess, let assistantMsg = resp.choices.first?.message {
-                        var finalMessages = priorMessages
-                        finalMessages.append(assistantMsg)
-                        ChatHistoryWriter.persistInBackground(
-                            source: .http,
-                            sourcePluginId: nil,
-                            agentId: resolvedAgentUUID,
-                            externalKey: externalSessionKey,
-                            finalMessages: finalMessages,
-                            model: model
-                        )
-                    }
-                    let body = try Self.chatCompletionResponseBody(resp)
+                    let body = try response.chatCompletionsHTTPBody(model: model, prefixHash: prefixHash)
                     var headers: [(String, String)] = [("Content-Type", "application/json")]
                     headers.append(contentsOf: cors)
                     let headersCopy = headers
@@ -8995,21 +15739,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                             ctx.value.close(promise: nil)
                         }
                     }
-                    // Extract token counts and finish reason from response
-                    let tokensIn = resp.usage.prompt_tokens
-                    let tokensOut = resp.usage.completion_tokens
-                    let finishReasonString = resp.choices.first?.finish_reason ?? "stop"
-                    let finishReason: RequestLog.FinishReason = {
-                        switch finishReasonString {
-                        case "stop": return .stop
-                        case "length": return .length
-                        case "tool_calls": return .toolCalls
-                        default: return .stop
-                        }
-                    }()
+                    let tokensIn = response.inputTokenCount
+                    let tokensOut = response.completion.tokenCount
+                    let finishReason = Self.openResponsesFinishReason(response.completion)
+                    let finishReasonString = finishReason.rawValue
                     httpTrace.markFirstSemanticDelta("completion")
-                    httpTrace.set("http_prompt_tokens", tokensIn)
-                    httpTrace.set("http_completion_tokens", tokensOut)
+                    if let tokensIn { httpTrace.set("http_prompt_tokens", tokensIn) }
+                    if let tokensOut { httpTrace.set("http_completion_tokens", tokensOut) }
                     httpTrace.mark("http_json_response_written")
                     httpTrace.emit(finishReason: finishReasonString, responseStatus: 200)
                     logSelf.logRequest(
@@ -9023,6 +15759,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                         model: logModel,
                         tokensInput: tokensIn,
                         tokensOutput: tokensOut,
+                        inputTokenSource: .reported, outputTokenSource: .reported,
                         temperature: logTemperature,
                         maxTokens: logMaxTokens,
                         finishReason: finishReason
@@ -9089,6 +15826,56 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
+    /// Explicit Ollama wire aliases. Preserve earlier thinking for template
+    /// prefix fidelity and carry real images through the ordinary media path.
+    static func decodeOllamaChatRequest(_ data: Data) throws -> ChatCompletionRequest {
+        guard var object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw NSError(domain: "OsaurusOllamaRequest", code: 400)
+        }
+        if let options = object["options"] as? [String: Any] {
+            for (source, target) in ["num_predict": "max_tokens", "temperature": "temperature",
+                "top_p": "top_p", "top_k": "top_k", "min_p": "min_p", "seed": "seed", "stop": "stop"]
+            where object[target] == nil {
+                object[target] = options[source]
+            }
+        }
+        if object["enable_thinking"] == nil {
+            if let flag = object["think"] as? NSNumber, CFGetTypeID(flag) == CFBooleanGetTypeID() {
+                object["enable_thinking"] = flag.boolValue
+            } else if let effort = object["think"] as? String { object["reasoning_effort"] = effort }
+            else if let value = object["think"], !(value is NSNull) {
+                throw NSError(domain: "OsaurusOllamaRequest", code: 400,
+                    userInfo: [NSLocalizedDescriptionKey: "Ollama think must be a boolean, model-defined effort string, or null."])
+            }
+        }
+        if var messages = object["messages"] as? [[String: Any]] {
+            for index in messages.indices {
+                if messages[index]["reasoning_content"] == nil, let thinking = messages[index]["thinking"] as? String {
+                    messages[index]["reasoning_content"] = thinking
+                }
+                if let images = messages[index]["images"] as? [String], !images.isEmpty {
+                    var parts = messages[index]["content"] as? [[String: Any]] ?? []
+                    if let text = messages[index]["content"] as? String { parts.insert(["type": "text", "text": text], at: 0) }
+                    for encoded in images {
+                        guard let bytes = Data(base64Encoded: encoded),
+                            let source = CGImageSourceCreateWithData(bytes as CFData, nil),
+                            let identifier = CGImageSourceGetType(source),
+                            let mime = UTType(identifier as String)?.preferredMIMEType
+                        else {
+                            throw NSError(domain: "OsaurusOllamaRequest", code: 400,
+                                userInfo: [NSLocalizedDescriptionKey: "An Ollama images entry is not a supported base64 image."])
+                        }
+                        parts.append(["type": "image_url", "image_url": ["url": "data:\(mime);base64,\(encoded)"]])
+                    }
+                    messages[index]["content"] = parts
+                }
+            }
+            object["messages"] = messages
+        }
+        return try JSONDecoder().decode(ChatCompletionRequest.self,
+            from: JSONSerialization.data(withJSONObject: object, options: .osaurusCanonical))
+    }
+
     private func handleChatNDJSON(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -9107,7 +15894,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             requestBodyString = nil
         }
 
-        guard var decodedReq = try? JSONDecoder().decode(ChatCompletionRequest.self, from: data) else {
+        guard var decodedReq = try? Self.decodeOllamaChatRequest(data) else {
             sendResponse(
                 context: context,
                 version: head.version,
@@ -9129,6 +15916,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         decodedReq.idempotencyKey = Self.httpIdempotencyKey(head: head)
         let req = decodedReq
 
+        if rejectInvalidHTTPToolChoice(ResponsesInferenceRequest(chatCompletion: req), head: head,
+            context: context, flavor: .ollama(type: "invalid_request_error"), path: "/chat",
+            startTime: startTime, userAgent: userAgent, requestBody: requestBodyString) { return }
+
         guard
             let admissionToken = acquireInferenceAdmissionOrReject(
                 context: context,
@@ -9138,7 +15929,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 method: "POST",
                 userAgent: userAgent,
                 requestBody: requestBodyString,
-                startTime: startTime
+                startTime: startTime,
+                model: req.model
             )
         else { return }
 
@@ -9198,141 +15990,57 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             do {
                 let chatEngine = self.chatEngine
                 try Task.checkCancellation()
-                let stream = try await chatEngine.streamChat(request: req)
-                if disconnected.value { throw CancellationError() }
-                for try await delta in stream {
+                let stream = try await chatEngine.streamResponses(request: ResponsesInferenceRequest(chatCompletion: req))
+                var accumulator = ResponsesGenerationAccumulator()
+                generation: for try await event in stream {
                     try Task.checkCancellation()
                     if disconnected.value { throw CancellationError() }
-                    // Ollama-style NDJSON has no `reasoning` / `thinking`
-                    // field today — `StreamingReasoningHint`, along with
-                    // `StreamingToolHint` / `StreamingStatsHint`, is
-                    // intentionally dropped here so it doesn't leak as
-                    // assistant content. Add a `thinking` field on the
-                    // NDJSON response shape (and decode reasoning here
-                    // first) when an upstream client requests it.
-                    if StreamingReasoningHint.decode(delta) != nil { continue }
-                    if StreamingStatsHint.decode(delta) != nil { continue }
-                    if StreamingToolHint.isSentinel(delta) { continue }
-                    if let chunk = contentCoalescer.append(delta) {
+                    try accumulator.consume(event)
+                    switch event {
+                    case .reasoningDelta(let text):
                         markSemanticDeltaIfChannelActive()
-                        hop {
-                            writerBound.value.writeContent(
-                                chunk,
-                                model: req.model,
-                                responseId: "",
-                                created: Int(Date().timeIntervalSince1970),
-                                context: ctx.value
-                            )
+                        hop { writerBound.value.writeThinking(text, model: req.model, context: ctx.value) }
+                    case .outputTextDelta(let text):
+                        if let chunk = contentCoalescer.append(text) {
+                            markSemanticDeltaIfChannelActive()
+                            hop { writerBound.value.writeContent(chunk, model: req.model, responseId: "", created: Int(Date().timeIntervalSince1970), context: ctx.value) }
                         }
+                    case .responseCompleted: break generation
+                    default: break
                     }
                 }
                 if let pending = contentCoalescer.flush() {
-                    hop {
-                        writerBound.value.writeContent(
-                            pending,
-                            model: req.model,
-                            responseId: "",
-                            created: Int(Date().timeIntervalSince1970),
-                            context: ctx.value
-                        )
-                    }
+                    hop { writerBound.value.writeContent(pending, model: req.model, responseId: "", created: Int(Date().timeIntervalSince1970), context: ctx.value) }
                 }
+                let response = try accumulator.result()
+                let finish = Self.openResponsesFinishReason(response.completion)
+                guard finish != .cancelled, finish != .error else {
+                    throw ResponsesGenerationResult.CollectionError.incomplete(response.completion.stopReason)
+                }
+                let calls = response.completion.dispatchableFunctionCalls.map {
+                    ServiceToolInvocation(toolName: $0.name, jsonArguments: $0.arguments, toolCallId: $0.callID,
+                        geminiThoughtSignature: $0.geminiThoughtSignature)
+                }
+                let input = response.inputTokenCount, output = response.completion.tokenCount
                 hop {
-                    writerBound.value.writeFinish(
-                        req.model,
-                        responseId: "",
-                        created: Int(Date().timeIntervalSince1970),
-                        context: ctx.value
-                    )
+                    if let input { writerBound.value.setInputTokens(input) }
+                    if let output { writerBound.value.setOutputTokens(output) }
+                    writerBound.value.setDoneReason(finish == .length ? "length" : "stop")
+                    if !calls.isEmpty { writerBound.value.writeToolCalls(calls, model: req.model, context: ctx.value) }
+                    else { writerBound.value.writeFinish(req.model, responseId: "", created: Int(Date().timeIntervalSince1970), context: ctx.value) }
                     writerBound.value.writeEnd(ctx.value)
                 }
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/chat",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseStatus: 200,
-                    startTime: logStartTime,
-                    model: logModel,
-                    temperature: logTemperature,
-                    maxTokens: logMaxTokens,
-                    finishReason: .stop
-                )
-            } catch let invs as ServiceToolInvocations {
-                // Text can still be pending in the coalescer when the tool call
-                // arrives (tool calls surface by throw, so the loop's own flush
-                // never runs). Deliver it before the tool frames or the visible
-                // answer ends mid-word.
-                if let pending = contentCoalescer.flush() {
-                    hop {
-                        writerBound.value.writeContent(
-                            pending,
-                            model: req.model,
-                            responseId: "",
-                            created: Int(Date().timeIntervalSince1970),
-                            context: ctx.value
-                        )
-                    }
-                }
-                hop {
-                    writerBound.value.writeToolCalls(invs.invocations, model: req.model, context: ctx.value)
-                    writerBound.value.writeEnd(ctx.value)
-                }
-                let toolLogs = invs.invocations.map {
-                    ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments)
-                }
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/chat",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseStatus: 200,
-                    startTime: logStartTime,
-                    model: logModel,
-                    toolCalls: toolLogs,
-                    temperature: logTemperature,
-                    maxTokens: logMaxTokens,
-                    finishReason: .toolCalls
-                )
-            } catch let inv as ServiceToolInvocation {
-                // Text can still be pending in the coalescer when the tool call
-                // arrives (tool calls surface by throw, so the loop's own flush
-                // never runs). Deliver it before the tool frames or the visible
-                // answer ends mid-word.
-                if let pending = contentCoalescer.flush() {
-                    hop {
-                        writerBound.value.writeContent(
-                            pending,
-                            model: req.model,
-                            responseId: "",
-                            created: Int(Date().timeIntervalSince1970),
-                            context: ctx.value
-                        )
-                    }
-                }
-                hop {
-                    writerBound.value.writeToolCalls([inv], model: req.model, context: ctx.value)
-                    writerBound.value.writeEnd(ctx.value)
-                }
-                let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/chat",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseStatus: 200,
-                    startTime: logStartTime,
-                    model: logModel,
-                    toolCalls: [toolLog],
-                    temperature: logTemperature,
-                    maxTokens: logMaxTokens,
-                    finishReason: .toolCalls
-                )
+                logSelf.logRequest(method: "POST", path: "/chat", userAgent: logUserAgent,
+                    requestBody: logRequestBody, responseStatus: 200, startTime: logStartTime, model: logModel,
+                    tokensInput: input, tokensOutput: output,
+                    inputTokenSource: .reported, outputTokenSource: .reported,
+                    toolCalls: calls.map { ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments) },
+                    temperature: logTemperature, maxTokens: logMaxTokens, finishReason: finish)
             } catch {
                 // NDJSON response head was already 200 — surface as in-band
                 // NDJSON error chunk and log actual on-wire status.
                 hop {
-                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                    writerBound.value.writeErrorFromThrown(error, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
                 logSelf.logRequest(
@@ -9370,13 +16078,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             defer { admissionToken.release() }
             do {
                 try Task.checkCancellation()
-                let response = try await self.chatEngine.completeChat(request: request)
-                let message = response.choices.first?.message
+                let response = try await self.chatEngine.completeResponse(request: ResponsesInferenceRequest(chatCompletion: request))
+                let message = try response.compatibilityAssistantMessage()
                 let body = Self.ollamaChatJSON(
                     model: request.model,
-                    content: message?.content ?? "",
-                    toolCalls: message?.tool_calls,
-                    done: true
+                    content: message.content ?? "",
+                    toolCalls: message.tool_calls,
+                    done: true,
+                    usage: response.reportedChatUsage,
+                    thinking: response.reasoning,
+                    doneReason: Self.openResponsesFinishReason(response.completion) == .length ? "length" : "stop"
                 )
                 let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
                 hop {
@@ -9397,67 +16108,12 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     responseStatus: 200,
                     startTime: startTime,
                     model: request.model,
-                    tokensInput: response.usage.prompt_tokens,
-                    tokensOutput: response.usage.completion_tokens,
+                    tokensInput: response.inputTokenCount,
+                    tokensOutput: response.completion.tokenCount,
+                    inputTokenSource: .reported, outputTokenSource: .reported,
                     temperature: request.temperature,
                     maxTokens: request.max_tokens,
-                    finishReason: message?.tool_calls?.isEmpty == false ? .toolCalls : .stop
-                )
-            } catch let invs as ServiceToolInvocations {
-                let body = Self.ollamaChatToolCallsJSON(model: request.model, invocations: invs.invocations)
-                let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
-                hop {
-                    logSelf.sendResponse(
-                        context: ctx.value,
-                        version: head.version,
-                        status: .ok,
-                        headers: headers,
-                        body: body
-                    )
-                }
-                let toolLogs = invs.invocations.map {
-                    ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments)
-                }
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/chat",
-                    userAgent: userAgent,
-                    requestBody: requestBodyString,
-                    responseBody: body,
-                    responseStatus: 200,
-                    startTime: startTime,
-                    model: request.model,
-                    toolCalls: toolLogs,
-                    temperature: request.temperature,
-                    maxTokens: request.max_tokens,
-                    finishReason: .toolCalls
-                )
-            } catch let inv as ServiceToolInvocation {
-                let body = Self.ollamaChatToolCallsJSON(model: request.model, invocations: [inv])
-                let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
-                hop {
-                    logSelf.sendResponse(
-                        context: ctx.value,
-                        version: head.version,
-                        status: .ok,
-                        headers: headers,
-                        body: body
-                    )
-                }
-                let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/chat",
-                    userAgent: userAgent,
-                    requestBody: requestBodyString,
-                    responseBody: body,
-                    responseStatus: 200,
-                    startTime: startTime,
-                    model: request.model,
-                    toolCalls: [toolLog],
-                    temperature: request.temperature,
-                    maxTokens: request.max_tokens,
-                    finishReason: .toolCalls
+                    finishReason: message.tool_calls?.isEmpty == false ? .toolCalls : .stop
                 )
             } catch {
                 let body = Self.ollamaGenerateErrorJSON(
@@ -9588,7 +16244,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 method: "POST",
                 userAgent: userAgent,
                 requestBody: requestBodyString,
-                startTime: startTime
+                startTime: startTime,
+                model: ollama.model
             )
         else { return }
 
@@ -9628,60 +16285,48 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             defer { admissionToken.release() }
             do {
                 try Task.checkCancellation()
-                let stream = try await self.chatEngine.streamChat(request: chatRequest)
-                if disconnected.value { throw CancellationError() }
-                var contentCoalescer = Self.StreamDeltaCoalescer(
-                    interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
-                )
-                for try await delta in stream {
+                let stream = try await self.chatEngine.streamResponses(request: ResponsesInferenceRequest(chatCompletion: chatRequest))
+                var accumulator = ResponsesGenerationAccumulator()
+                var contentCoalescer = Self.StreamDeltaCoalescer(interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval)
+                generation: for try await event in stream {
+                    try Task.checkCancellation()
                     if disconnected.value { throw CancellationError() }
-                    if StreamingReasoningHint.decode(delta) != nil { continue }
-                    if StreamingStatsHint.decode(delta) != nil { continue }
-                    if StreamingToolHint.isSentinel(delta) { continue }
-                    if let chunk = contentCoalescer.append(delta) {
-                        hop {
-                            writerBound.value.writeContent(
-                                chunk,
-                                model: chatRequest.model,
-                                created: Int(Date().timeIntervalSince1970),
-                                context: ctx.value
-                            )
+                    try accumulator.consume(event)
+                    switch event {
+                    case .reasoningDelta(let text):
+                        hop { writerBound.value.writeThinking(text, model: chatRequest.model, context: ctx.value) }
+                    case .outputTextDelta(let text):
+                        if let chunk = contentCoalescer.append(text) {
+                            hop { writerBound.value.writeContent(chunk, model: chatRequest.model, created: Int(Date().timeIntervalSince1970), context: ctx.value) }
                         }
+                    case .responseCompleted: break generation
+                    default: break
                     }
                 }
                 if let pending = contentCoalescer.flush() {
-                    hop {
-                        writerBound.value.writeContent(
-                            pending,
-                            model: chatRequest.model,
-                            created: Int(Date().timeIntervalSince1970),
-                            context: ctx.value
-                        )
-                    }
+                    hop { writerBound.value.writeContent(pending, model: chatRequest.model, created: Int(Date().timeIntervalSince1970), context: ctx.value) }
                 }
+                let response = try accumulator.result()
+                let finish = Self.openResponsesFinishReason(response.completion)
+                guard finish != .cancelled, finish != .error, response.completion.functionCalls.isEmpty else {
+                    throw ResponsesGenerationResult.CollectionError.incomplete(response.completion.stopReason)
+                }
+                let input = response.inputTokenCount, output = response.completion.tokenCount
                 hop {
-                    writerBound.value.writeFinish(
-                        chatRequest.model,
-                        created: Int(Date().timeIntervalSince1970),
-                        context: ctx.value
-                    )
+                    if let input { writerBound.value.setInputTokens(input) }
+                    if let output { writerBound.value.setOutputTokens(output) }
+                    writerBound.value.setDoneReason(finish == .length ? "length" : "stop")
+                    writerBound.value.writeFinish(chatRequest.model, created: Int(Date().timeIntervalSince1970), context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/generate",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseStatus: 200,
-                    startTime: logStartTime,
-                    model: logModel,
-                    temperature: logTemperature,
-                    maxTokens: logMaxTokens,
-                    finishReason: .stop
-                )
+                logSelf.logRequest(method: "POST", path: "/generate", userAgent: logUserAgent,
+                    requestBody: logRequestBody, responseStatus: 200, startTime: logStartTime, model: logModel,
+                    tokensInput: input, tokensOutput: output,
+                    inputTokenSource: .reported, outputTokenSource: .reported, temperature: logTemperature,
+                    maxTokens: logMaxTokens, finishReason: finish)
             } catch {
                 hop {
-                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                    writerBound.value.writeErrorFromThrown(error, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
                 logSelf.logRequest(
@@ -9719,12 +16364,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             defer { admissionToken.release() }
             do {
                 try Task.checkCancellation()
-                let response = try await self.chatEngine.completeChat(request: request)
-                let content = response.choices.first?.message.content ?? ""
+                let response = try await self.chatEngine.completeResponse(request: ResponsesInferenceRequest(chatCompletion: request))
+                let content = try response.compatibilityAssistantMessage().content ?? ""
                 let body = Self.ollamaGenerateJSON(
                     model: request.model,
                     response: content,
-                    done: true
+                    done: true,
+                    usage: response.reportedChatUsage,
+                    thinking: response.reasoning,
+                    doneReason: Self.openResponsesFinishReason(response.completion) == .length ? "length" : "stop"
                 )
                 let headers = [("Content-Type", "application/json; charset=utf-8")] + cors
                 hop {
@@ -9745,8 +16393,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     responseStatus: 200,
                     startTime: startTime,
                     model: request.model,
-                    tokensInput: response.usage.prompt_tokens,
-                    tokensOutput: response.usage.completion_tokens,
+                    tokensInput: response.inputTokenCount,
+                    tokensOutput: response.completion.tokenCount,
+                    inputTokenSource: .reported, outputTokenSource: .reported,
                     temperature: request.temperature,
                     maxTokens: request.max_tokens,
                     finishReason: .stop
@@ -9781,13 +16430,20 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
-    private static func ollamaGenerateJSON(model: String, response: String, done: Bool) -> String {
-        let object: [String: Any] = [
+    private static func ollamaGenerateJSON(model: String, response: String, done: Bool, usage: Usage? = nil,
+        thinking: String? = nil, doneReason: String = "stop") -> String {
+        var object: [String: Any] = [
             "model": model,
             "created_at": Date().ISO8601Format(),
             "response": response,
             "done": done,
         ]
+        if let thinking, !thinking.isEmpty { object["thinking"] = thinking }
+        if done { object["done_reason"] = doneReason }
+        if done, let usage {
+            object["prompt_eval_count"] = usage.prompt_tokens
+            object["eval_count"] = usage.completion_tokens
+        }
         guard let data = try? JSONSerialization.data(withJSONObject: object, options: .osaurusCanonical) else {
             return #"{"done":true}"#
         }
@@ -9798,12 +16454,16 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         model: String,
         content: String,
         toolCalls: [ToolCall]? = nil,
-        done: Bool
+        done: Bool,
+        usage: Usage? = nil,
+        thinking: String? = nil,
+        doneReason: String = "stop"
     ) -> String {
         var message: [String: Any] = [
             "role": "assistant",
             "content": content,
         ]
+        if let thinking, !thinking.isEmpty { message["thinking"] = thinking }
         if let toolCalls, !toolCalls.isEmpty {
             message["tool_calls"] = toolCalls.map { call in
                 [
@@ -9814,42 +16474,19 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 ]
             }
         }
-        let object: [String: Any] = [
+        var object: [String: Any] = [
             "model": model,
             "created_at": Date().ISO8601Format(),
             "message": message,
             "done": done,
         ]
+        if done { object["done_reason"] = doneReason }
+        if done, let usage {
+            object["prompt_eval_count"] = usage.prompt_tokens
+            object["eval_count"] = usage.completion_tokens
+        }
         guard let data = try? JSONSerialization.data(withJSONObject: object) else {
             return #"{"message":{"role":"assistant","content":""},"done":true}"#
-        }
-        return String(decoding: data, as: UTF8.self)
-    }
-
-    private static func ollamaChatToolCallsJSON(
-        model: String,
-        invocations: [ServiceToolInvocation]
-    ) -> String {
-        let toolCalls = invocations.map { inv in
-            [
-                "function": [
-                    "name": inv.toolName,
-                    "arguments": ollamaArguments(from: inv.jsonArguments),
-                ]
-            ]
-        }
-        let object: [String: Any] = [
-            "model": model,
-            "created_at": Date().ISO8601Format(),
-            "message": [
-                "role": "assistant",
-                "content": "",
-                "tool_calls": toolCalls,
-            ],
-            "done": true,
-        ]
-        guard let data = try? JSONSerialization.data(withJSONObject: object) else {
-            return #"{"message":{"role":"assistant","content":"","tool_calls":[]},"done":true}"#
         }
         return String(decoding: data, as: UTF8.self)
     }
@@ -9947,7 +16584,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     /// underlying logic lives at module scope so the eval kit can exercise
     /// it without depending on `HTTPHandler` / `ChatCompletionRequest`.
     nonisolated static func unsupportedSamplerReason(_ req: ChatCompletionRequest) -> String? {
-        RequestValidator.unsupportedSamplerReason(
+        RequestValidator.responseFormatReason(req.response_format)
+            ?? RequestValidator.unsupportedSamplerReason(
             n: req.n,
             responseFormatType: req.response_format?.type,
             logprobs: req.logprobs,
@@ -10299,24 +16937,35 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logStartTime = startTime
         let logUserAgent = userAgent
         let logSelf = self
+        // Snapshot on the event loop: a paired peer (agent-scoped key) gets
+        // an empty catalog until the owner shares inference. See
+        // `PeerInferenceSharing`.
+        let hideCatalogFromPeer = Self.peerModelCatalogIsHidden(
+            authedAudience: stateRef.value.authedAudience,
+            authedScopeIsMaster: stateRef.value.authedScopeIsMaster,
+            peerInferenceEnabled: peerInferenceEnabled
+        )
 
         runRequestTask(priority: .userInitiated) {
-            // Get local models (filtered by the per-model exposure settings)
-            let exposure = ModelExposureStore.shared
-            var models = MLXService.getAvailableModels()
-                .filter { exposure.isExposed(id: $0, kind: .local) }
-                .map { OpenAIModel(modelName: $0) }
-            if FoundationModelService.isDefaultModelAvailable(),
-                exposure.isExposed(id: "foundation", kind: .local)
-            {
-                models.insert(OpenAIModel(modelName: "foundation"), at: 0)
-            }
+            var models: [OpenAIModel] = []
+            if !hideCatalogFromPeer {
+                // Get local models (filtered by the per-model exposure settings)
+                let exposure = ModelExposureStore.shared
+                models = MLXService.getAvailableModels()
+                    .filter { exposure.isExposed(id: $0, kind: .local) }
+                    .map { OpenAIModel(modelName: $0) }
+                if FoundationModelService.isDefaultModelAvailable(),
+                    exposure.isExposed(id: "foundation", kind: .local)
+                {
+                    models.insert(OpenAIModel(modelName: "foundation"), at: 0)
+                }
 
-            // Remote provider startup may be blocked on Keychain auth. Keep
-            // local model listing responsive and append remote models only
-            // when the MainActor snapshot is immediately available.
-            let remoteModels = await Self.remoteOpenAIModelsSnapshot()
-            models.append(contentsOf: remoteModels)
+                // Remote provider startup may be blocked on Keychain auth. Keep
+                // local model listing responsive and append remote models only
+                // when the MainActor snapshot is immediately available.
+                let remoteModels = await Self.remoteOpenAIModelsSnapshot()
+                models.append(contentsOf: remoteModels)
+            }
 
             let response = ModelsResponse(data: models)
             let json =
@@ -10359,6 +17008,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logStartTime = startTime
         let logUserAgent = userAgent
         let logSelf = self
+        // Same peer gate as `/models`: paired peers see an empty catalog
+        // until the owner shares inference.
+        let hideCatalogFromPeer = Self.peerModelCatalogIsHidden(
+            authedAudience: stateRef.value.authedAudience,
+            authedScopeIsMaster: stateRef.value.authedScopeIsMaster,
+            peerInferenceEnabled: peerInferenceEnabled
+        )
 
         runRequestTask(priority: .userInitiated) {
             let now = Date().ISO8601Format()
@@ -10366,7 +17022,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             // Get local models (filtered by the per-model exposure settings)
             let exposure = ModelExposureStore.shared
             var models = MLXService.getAvailableModels()
-                .filter { exposure.isExposed(id: $0, kind: .local) }
+                .filter { !hideCatalogFromPeer && exposure.isExposed(id: $0, kind: .local) }
                 .map { name -> OpenAIModel in
                     var m = OpenAIModel(from: name)
                     m.name = name
@@ -10378,7 +17034,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     return m
                 }
 
-            if FoundationModelService.isDefaultModelAvailable(),
+            if !hideCatalogFromPeer,
+                FoundationModelService.isDefaultModelAvailable(),
                 exposure.isExposed(id: "foundation", kind: .local)
             {
                 var fm = OpenAIModel(modelName: "foundation")
@@ -10400,7 +17057,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
             // Keep Ollama tags usable for local models even if remote
             // provider auth is blocked during app startup.
-            let remoteModels = await Self.remoteOpenAIModelsSnapshot()
+            let remoteModels = hideCatalogFromPeer ? [] : await Self.remoteOpenAIModelsSnapshot()
             for var remoteModel in remoteModels {
                 remoteModel.modified_at = now
                 remoteModel.size = 0
@@ -10669,6 +17326,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
     }
 
     // MARK: - Minimal MCP-style endpoints (same port)
+
+    /// The harness token this request carries: the one the auth gate already
+    /// bound, or one presented on the bridge header from a loopback caller
+    /// that loopback trust let past the gate.
+    private func resolvedHarnessGrant(head: HTTPRequestHead) -> HarnessGrant? {
+        if let bound = stateRef.value.harnessGrant { return bound }
+        guard
+            let token = HarnessGrantStore.shared.presentedToken(
+                bridgeHeader: head.headers.first(name: HarnessGrantStore.headerName),
+                authorization: head.headers.first(name: "Authorization")
+            )
+        else { return nil }
+        return HarnessGrantStore.shared.resolve(token)
+    }
+
     private func handleMCPListTools(
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -10683,20 +17355,55 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let logStartTime = startTime
         let logUserAgent = userAgent
         let logSelf = self
+        let harnessGrant = resolvedHarnessGrant(head: head)
+        // Same contract as `/mcp/call`: a revoked token must not fall back to
+        // the unscoped loopback catalog.
+        if harnessGrant == nil, !(head.headers.first(name: HarnessGrantStore.headerName) ?? "").isEmpty {
+            let message = "This agent token is invalid or has been revoked."
+            sendResponse(
+                context: context,
+                version: head.version,
+                status: .unauthorized,
+                headers: [("Content-Type", "application/json; charset=utf-8")] + cors,
+                body: #"{"error":"harness_token_invalid","message":"\#(message)"}"#
+            )
+            logRequest(
+                method: "GET",
+                path: "/mcp/tools",
+                userAgent: userAgent,
+                requestBody: nil,
+                responseStatus: 401,
+                startTime: startTime,
+                errorMessage: message
+            )
+            return
+        }
         runRequestTask(priority: .userInitiated) {
             // External callers never see app-only tool classes; `/mcp/call`
-            // refuses the same deny list too.
+            // refuses the same deny list too. A harness token narrows the
+            // list further to what its agent may call. Workflow tools need a
+            // chat agent bound, which only a live harness token provides.
             let entries = await MainActor.run {
-                ToolRegistry.shared.listTools().filter {
-                    $0.enabled && !ToolRegistry.externallyDeniedToolNames.contains($0.name)
+                ToolRegistry.shared.listTools().filter { entry in
+                    guard entry.enabled, !ToolRegistry.externallyDeniedToolNames.contains(entry.name) else {
+                        return false
+                    }
+                    guard let harnessGrant else {
+                        return !ToolRegistry.shared.requiresAgentContext(entry.name)
+                    }
+                    return HarnessGrantStore.agentPolicyAllows(harnessGrant, toolName: entry.name)
                 }
             }
+            // The Architect reads only what a workflow step can reference,
+            // with the same narrowed schema its built-in loop gets.
+            let architectInspect = harnessGrant?.agentId == Agent.architectId
             let tools = entries.map { e in
+                let narrowed = architectInspect && e.name == "osaurus_inspect"
                 var obj: [String: Any] = [
                     "name": e.name,
-                    "description": e.description,
+                    "description": narrowed ? OsaurusInspectTool.architectDescription : e.description,
                 ]
-                if let params = e.parameters {
+                if let params = narrowed ? OsaurusInspectTool.architectParameters : e.parameters {
                     obj["inputSchema"] = params.anyValue
                 }
                 return obj
@@ -10796,44 +17503,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             }
         }
 
-        struct CallBody: Codable {
+        struct CallBody: Decodable {
             let name: String
-            let arguments: AnyCodable?
-        }
-
-        // Lightweight AnyCodable for arguments passthrough
-        struct AnyCodable: Codable {
-            let value: Any
-            init(from decoder: Decoder) throws {
-                let container = try decoder.singleValueContainer()
-                if let b = try? container.decode(Bool.self) { value = b; return }
-                if let i = try? container.decode(Int.self) { value = i; return }
-                if let d = try? container.decode(Double.self) { value = d; return }
-                if let s = try? container.decode(String.self) { value = s; return }
-                if let arr = try? container.decode([AnyCodable].self) { value = arr.map { $0.value }; return }
-                if let dict = try? container.decode([String: AnyCodable].self) {
-                    value = dict.mapValues { $0.value }
-                    return
-                }
-                value = NSNull()
-            }
-            func encode(to encoder: Encoder) throws {
-                var container = encoder.singleValueContainer()
-                switch value {
-                case let b as Bool: try container.encode(b)
-                case let i as Int: try container.encode(i)
-                case let d as Double: try container.encode(d)
-                case let s as String: try container.encode(s)
-                case let arr as [Any]:
-                    let enc = try JSONSerialization.data(withJSONObject: arr, options: .osaurusCanonical)
-                    try container.encode(String(decoding: enc, as: UTF8.self))
-                case let dict as [String: Any]:
-                    let enc = try JSONSerialization.data(withJSONObject: dict, options: .osaurusCanonical)
-                    try container.encode(String(decoding: enc, as: UTF8.self))
-                default:
-                    try container.encodeNil()
-                }
-            }
+            let arguments: [String: JSONValue]?
         }
 
         guard let req = try? JSONDecoder().decode(CallBody.self, from: data) else {
@@ -10856,14 +17528,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             return
         }
 
-        let argsJSON: String = {
-            if let a = req.arguments?.value,
-                let d = try? JSONSerialization.data(withJSONObject: a, options: .osaurusCanonical)
-            {
-                return String(decoding: d, as: UTF8.self)
-            }
-            return "{}"
-        }()
+        let argsData = try? JSONEncoder.osaurusCanonical().encode(req.arguments ?? [:])
+        let argsJSON = argsData.map { String(decoding: $0, as: UTF8.self) } ?? "{}"
 
         // External deny list: app-only tool classes are never invocable
         // through the MCP bridge (they're also hidden from `/mcp/tools`).
@@ -10896,6 +17562,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let cors = stateRef.value.corsHeaders
         let hop = Self.makeHop(channel: context.channel, loop: loop)
         let toolName = req.name
+        let harnessTokenPresented = !(head.headers.first(name: HarnessGrantStore.headerName) ?? "").isEmpty
+        let harnessGrant = resolvedHarnessGrant(head: head)
         // Capture for logging
         let logStartTime = startTime
         let logUserAgent = userAgent
@@ -10905,9 +17573,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             let toolCallStartTime = Date()
             do {
                 // Validate against schema if available
-                if let schema = await MainActor.run(body: { ToolRegistry.shared.parametersForTool(name: toolName) }) {
+                let (schema, validatedJSON) = await MainActor.run {
+                    (
+                        ToolRegistry.shared.parametersForTool(name: toolName),
+                        ToolRegistry.shared.normalizedArgumentsForTool(name: toolName, argumentsJSON: argsJSON)
+                    )
+                }
+                if let schema {
                     let argsObject: Any =
-                        (try? JSONSerialization.jsonObject(with: Data(argsJSON.utf8))) as? [String: Any] ?? [:]
+                        (try? JSONSerialization.jsonObject(with: Data(validatedJSON.utf8))) as? [String: Any] ?? [:]
                     let res = SchemaValidator.validate(arguments: argsObject, against: schema)
                     if res.isValid == false {
                         let message = res.errorMessage ?? "Invalid arguments"
@@ -10991,55 +17665,87 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
                 // Restore the chat identity the process boundary dropped.
                 //
-                // A bridged Claude Code turn reaches this handler as an ordinary
+                // A harness's tool call reaches this handler as an ordinary
                 // loopback request, so the `@TaskLocal` agent id its in-process
-                // peers rely on is gone. A live grant — minted per turn, handed
-                // only to the child Osaurus spawned, revoked when the turn ends
-                // — is proof of which chat this call belongs to, so the agent it
+                // peers rely on is gone. A live token — minted per harness
+                // process, handed only to that child, revoked when it exits —
+                // is proof of which chat this call belongs to, so the agent it
                 // names is bound for the duration of this execution.
                 //
                 // `isExternalSurface` deliberately stays true: the caller is
                 // still out of process, so every other external restriction
                 // (the deny list above, unattended-prompt refusal) continues to
                 // apply. This grants attribution, not trust.
-                let bridgeGrantToken = head.headers.first(
-                    name: ClaudeCodeBridgeGrantStore.headerName
-                )
-                let bridgeGrant: ClaudeCodeBridgeGrant? = await {
-                    guard let bridgeGrantToken else { return nil }
-                    return await ClaudeCodeBridgeGrantStore.shared.resolve(bridgeGrantToken)
-                }()
+                let bridgeGrant = harnessGrant
 
                 let result: String
-                if bridgeGrantToken != nil, bridgeGrant == nil {
-                    // A caller that opts into bridge attribution must present a
-                    // live token. Falling back to ordinary loopback semantics
-                    // would let expired/revoked grants silently shed scope.
+                if harnessTokenPresented, bridgeGrant == nil {
+                    // A caller that opts into attribution must present a live
+                    // token. Falling back to ordinary loopback semantics would
+                    // let a revoked token silently shed scope.
                     result = ToolEnvelope.failure(
                         kind: .rejected,
-                        message: "This Claude Code bridge grant is invalid or expired.",
+                        message: "This agent token is invalid or has been revoked.",
                         tool: toolName,
                         retryable: false
                     )
-                } else if let bridgeGrant, !bridgeGrant.allowsTool(toolName) {
+                } else if let bridgeGrant, HarnessGrantStore.builtInLoopToolNames.contains(toolName) {
+                    let refusal = await MainActor.run {
+                        AgentManager.shared.harnessUnsupportedError(for: bridgeGrant.agentId)
+                    }
+                    result = ToolEnvelope.failure(
+                        kind: .unavailable,
+                        message: refusal?.localizedDescription
+                            ?? "Tool '\(toolName)' runs Osaurus's own agent loop and can't be called with an agent token.",
+                        tool: toolName,
+                        retryable: false
+                    )
+                } else if let bridgeGrant,
+                    !(await MainActor.run { HarnessGrantStore.agentPolicyAllows(bridgeGrant, toolName: toolName) })
+                {
                     // The stdio proxy also filters this surface, but it is not
-                    // the trust boundary: a child with Bash can make a direct
-                    // loopback request. Enforce the grant's immutable scope at
-                    // the receiving server before binding agent identity.
+                    // the trust boundary: a harness with a shell can make a
+                    // direct loopback request. Enforce the token's scope at the
+                    // receiving server before binding agent identity.
                     result = ToolEnvelope.failure(
                         kind: .rejected,
-                        message: "Tool '\(toolName)' is outside this Claude Code turn's grant.",
+                        message: "Tool '\(toolName)' is outside this agent token's scope.",
+                        tool: toolName,
+                        retryable: false
+                    )
+                } else if bridgeGrant?.agentId == nil,
+                    await MainActor.run(body: { ToolRegistry.shared.requiresAgentContext(toolName) })
+                {
+                    // Workflow tools run against the calling chat's agent;
+                    // with none bound they would fail opaquely mid-run. The
+                    // listing hides them for the same caller.
+                    result = ToolEnvelope.failure(
+                        kind: .rejected,
+                        message:
+                            "Tool '\(toolName)' needs a chat agent and is not available to external callers without a bridge grant.",
                         tool: toolName,
                         retryable: false
                     )
                 } else {
+                    // The chat id is bound in the form chats key their state
+                    // by (`UUID.uuidString`), so the Architect's draft tools
+                    // find the draft of the chat this harness serves.
+                    let chatId = bridgeGrant?.chatId
                     result = try await ChatExecutionContext.$isExternalSurface.withValue(true) {
                         try await ChatExecutionContext.$denyUnapprovedToolPrompts.withValue(true) {
                             try await ChatExecutionContext.$currentAgentId.withValue(bridgeGrant?.agentId) {
-                                try await ToolRegistry.shared.execute(
-                                    name: toolName,
-                                    argumentsJSON: argsJSON
-                                )
+                                try await ChatExecutionContext.$harnessTokenAgentId.withValue(bridgeGrant?.agentId) {
+                                    try await ChatExecutionContext.$harnessChatId.withValue(chatId) {
+                                        try await ChatExecutionContext.$currentSessionId.withValue(
+                                            chatId?.uuidString ?? ChatExecutionContext.currentSessionId
+                                        ) {
+                                            try await ToolRegistry.shared.execute(
+                                                name: toolName,
+                                                argumentsJSON: argsJSON
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -11172,8 +17878,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
 
         // Convert to internal format
-        var internalReq = anthropicReq.toChatCompletionRequest()
-        internalReq.idempotencyKey = Self.httpIdempotencyKey(head: head)
+        var internalReq: ResponsesInferenceRequest
+        do {
+            internalReq = try anthropicReq.toResponsesInferenceRequest()
+            internalReq.context.idempotencyKey = Self.httpIdempotencyKey(head: head)
+        } catch {
+            let response = AnthropicError(message: error.localizedDescription, errorType: "invalid_request_error")
+            let body = (try? JSONEncoder.osaurusCanonical().encode(response)).map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+            sendResponse(context: context, version: head.version, status: .badRequest,
+                headers: [("Content-Type", "application/json; charset=utf-8")] + stateRef.value.corsHeaders, body: body)
+            return
+        }
+
+        if rejectInvalidHTTPToolChoice(internalReq, head: head, context: context,
+            flavor: .anthropic(errorType: "invalid_request_error"), path: "/messages",
+            startTime: startTime, userAgent: userAgent, requestBody: requestBodyString) { return }
 
         // Generate response ID
         let messageId = Self.shortId(prefix: "msg_")
@@ -11191,7 +17910,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 method: "POST",
                 userAgent: userAgent,
                 requestBody: requestBodyString,
-                startTime: startTime
+                startTime: startTime,
+                model: model
             )
         else { return }
 
@@ -11226,7 +17946,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     private func handleAnthropicMessagesStreaming(
         anthropicReq: AnthropicMessagesRequest,
-        internalReq: ChatCompletionRequest,
+        internalReq: ResponsesInferenceRequest,
         messageId: String,
         model: String,
         head: HTTPRequestHead,
@@ -11243,21 +17963,10 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let hop = Self.makeHop(channel: context.channel, loop: loop)
 
-        // Estimate input tokens (rough: 1 token per 4 chars)
-        let inputTokens =
-            anthropicReq.messages.reduce(0) { acc, msg in
-                acc + TokenEstimator.estimate(msg.content.plainText)
-            } + (anthropicReq.system?.plainText.count ?? 0) / TokenEstimator.charsPerToken
-
-        // Send headers and message_start
         hop {
             writerBound.value.writeHeaders(ctx.value, extraHeaders: cors)
-            writerBound.value.writeMessageStart(
-                messageId: messageId,
-                model: model,
-                inputTokens: inputTokens,
-                context: ctx.value
-            )
+            writerBound.value.writeMessageStart(messageId: messageId, model: model, inputTokens: nil,
+                context: ctx.value, deferUntilInput: true)
         }
 
         // Capture for logging
@@ -11292,128 +18001,84 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             do {
                 let chatEngine = self.chatEngine
                 try Task.checkCancellation()
-                let stream = try await chatEngine.streamChat(request: internalReq)
-                if disconnected.value { throw CancellationError() }
-                for try await delta in stream {
+                let stream = try await chatEngine.streamResponses(request: internalReq)
+                var accumulator = ResponsesGenerationAccumulator()
+                var pending: [ResponsesGenerationEvent] = []
+                var hasInputCount = false
+                func emit(_ event: ResponsesGenerationEvent) async throws {
+                    switch event {
+                    case .reasoningDelta(let text):
+                        markSemanticDeltaIfChannelActive()
+                        if let chunk = contentCoalescer.flush() { hop { writerBound.value.writeTextDelta(chunk, context: ctx.value) } }
+                        hop { writerBound.value.writeThinkingDelta(text, context: ctx.value) }
+                    case .anthropicThinkingBlock(let block):
+                        try await loop.submit {
+                            try writerBound.value.writeCompletedThinkingBlock(block, context: ctx.value)
+                        }.get()
+                    case .outputTextDelta(let text):
+                        if let chunk = contentCoalescer.append(text) {
+                            markSemanticDeltaIfChannelActive()
+                            hop { writerBound.value.writeTextDelta(chunk, context: ctx.value) }
+                        }
+                    default: break
+                    }
+                }
+                generation: for try await event in stream {
                     try Task.checkCancellation()
                     if disconnected.value { throw CancellationError() }
-                    // Reasoning sentinel must be decoded BEFORE the
-                    // generic `isSentinel` filter, otherwise it gets
-                    // dropped together with tool/stats hints.
-                    if let reasoning = StreamingReasoningHint.decode(delta) {
-                        markSemanticDeltaIfChannelActive()
-                        if let pending = contentCoalescer.flush() {
-                            hop {
-                                writerBound.value.writeTextDelta(pending, context: ctx.value)
-                            }
-                        }
-                        hop {
-                            writerBound.value.writeThinkingDelta(reasoning, context: ctx.value)
-                        }
-                        continue
-                    }
-                    if let stats = StreamingStatsHint.decode(delta) {
-                        hop {
-                            writerBound.value.setOutputTokens(stats.tokenCount)
-                        }
-                        continue
-                    }
-                    if StreamingToolHint.isSentinel(delta) { continue }
-                    if let chunk = contentCoalescer.append(delta) {
-                        markSemanticDeltaIfChannelActive()
-                        hop {
-                            writerBound.value.writeTextDelta(chunk, context: ctx.value)
-                        }
+                    try accumulator.consume(event)
+                    switch event {
+                    case .inputTokenCount(let count):
+                        hasInputCount = true
+                        hop { writerBound.value.setInputTokens(count, context: ctx.value) }
+                        for buffered in pending { try await emit(buffered) }
+                        pending.removeAll(keepingCapacity: true)
+                    case .outputTextDelta, .reasoningDelta, .anthropicThinkingBlock:
+                        if hasInputCount { try await emit(event) } else { pending.append(event) }
+                    case .responseCompleted: break generation
+                    default: break
                     }
                 }
-                if let pending = contentCoalescer.flush() {
+                let response = try accumulator.result()
+                guard let usage = response.reportedChatUsage else {
+                    throw NSError(domain: "OsaurusProtocolUsage", code: 502,
+                        userInfo: [NSLocalizedDescriptionKey: "Anthropic compatibility requires reported input and output token counts; this model or provider did not report them."])
+                }
+                let finish = Self.openResponsesFinishReason(response.completion)
+                guard finish != .cancelled, finish != .error else {
+                    throw ResponsesGenerationResult.CollectionError.incomplete(response.completion.stopReason)
+                }
+                if !hasInputCount {
+                    let count = usage.prompt_tokens
+                    hop { writerBound.value.setInputTokens(count, context: ctx.value) }
+                    for buffered in pending { try await emit(buffered) }
+                }
+                if let chunk = contentCoalescer.flush() {
                     markSemanticDeltaIfChannelActive()
-                    hop {
-                        writerBound.value.writeTextDelta(pending, context: ctx.value)
-                    }
+                    hop { writerBound.value.writeTextDelta(chunk, context: ctx.value) }
+                }
+                let calls = response.completion.dispatchableFunctionCalls.map {
+                    ServiceToolInvocation(toolName: $0.name, jsonArguments: $0.arguments, toolCallId: $0.callID,
+                        geminiThoughtSignature: $0.geminiThoughtSignature)
                 }
                 hop {
-                    writerBound.value.writeFinish(stopReason: "end_turn", context: ctx.value)
+                    writerBound.value.setInputTokens(usage.prompt_tokens, context: ctx.value)
+                    writerBound.value.setOutputTokens(usage.completion_tokens)
+                    writerBound.value.setCachedInputTokens(usage.cachedPromptTokens)
+                    for call in calls { self.writeAnthropicToolUse(call, writer: writerBound.value, context: ctx.value) }
+                    writerBound.value.writeFinish(stopReason: finish == .length ? "max_tokens" : (calls.isEmpty ? "end_turn" : "tool_use"), context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/messages",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseStatus: 200,
-                    startTime: logStartTime,
-                    model: logModel,
-                    finishReason: .stop
-                )
-            } catch let invs as ServiceToolInvocations {
-                // Text can still be pending in the coalescer when the tool call
-                // arrives (tool calls surface by throw, so the loop's own flush
-                // never runs). Deliver it before the tool frames or the visible
-                // answer ends mid-word.
-                if let pending = contentCoalescer.flush() {
-                    hop {
-                        writerBound.value.writeTextDelta(pending, context: ctx.value)
-                    }
-                }
-                // Multi-tool MLX completion: one `tool_use` content block
-                // per invocation, then a single `tool_use` finish.
-                markSemanticDeltaIfChannelActive()
-                hop {
-                    for inv in invs.invocations {
-                        self.writeAnthropicToolUse(inv, writer: writerBound.value, context: ctx.value)
-                    }
-                    writerBound.value.writeFinish(stopReason: "tool_use", context: ctx.value)
-                    writerBound.value.writeEnd(ctx.value)
-                }
-                let toolLogs = invs.invocations.map {
-                    ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments)
-                }
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/messages",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseStatus: 200,
-                    startTime: logStartTime,
-                    model: logModel,
-                    toolCalls: toolLogs,
-                    finishReason: .toolCalls
-                )
-            } catch let inv as ServiceToolInvocation {
-                // Text can still be pending in the coalescer when the tool call
-                // arrives (tool calls surface by throw, so the loop's own flush
-                // never runs). Deliver it before the tool frames or the visible
-                // answer ends mid-word.
-                if let pending = contentCoalescer.flush() {
-                    hop {
-                        writerBound.value.writeTextDelta(pending, context: ctx.value)
-                    }
-                }
-                // Single tool invocation — same emission path.
-                markSemanticDeltaIfChannelActive()
-                hop {
-                    self.writeAnthropicToolUse(inv, writer: writerBound.value, context: ctx.value)
-                    writerBound.value.writeFinish(stopReason: "tool_use", context: ctx.value)
-                    writerBound.value.writeEnd(ctx.value)
-                }
-                let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/messages",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseStatus: 200,
-                    startTime: logStartTime,
-                    model: logModel,
-                    toolCalls: [toolLog],
-                    finishReason: .toolCalls
-                )
+                logSelf.logRequest(method: "POST", path: "/messages", userAgent: logUserAgent,
+                    requestBody: logRequestBody, responseStatus: 200, startTime: logStartTime, model: logModel,
+                    tokensInput: response.inputTokenCount, tokensOutput: response.completion.tokenCount,
+                    inputTokenSource: .reported, outputTokenSource: .reported,
+                    toolCalls: calls.map { ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments) }, finishReason: finish)
             } catch {
                 // SSE response head was already 200 — surface as in-band
                 // SSE error chunk and log actual on-wire status.
                 hop {
-                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                    writerBound.value.writeErrorFromThrown(error, context: ctx.value)
                     writerBound.value.writeEnd(ctx.value)
                 }
                 logSelf.logRequest(
@@ -11433,7 +18098,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     private func handleAnthropicMessagesNonStreaming(
         anthropicReq: AnthropicMessagesRequest,
-        internalReq: ChatCompletionRequest,
+        internalReq: ResponsesInferenceRequest,
         messageId: String,
         model: String,
         head: HTTPRequestHead,
@@ -11460,59 +18125,40 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             do {
                 let chatEngine = self.chatEngine
                 try Task.checkCancellation()
-                let resp = try await chatEngine.completeChat(request: internalReq)
-
-                // Convert OpenAI response to Anthropic format
-                let content = resp.choices.first?.message.content ?? ""
-                let stopReason: String
-                switch resp.choices.first?.finish_reason {
-                case "stop": stopReason = "end_turn"
-                case "length": stopReason = "max_tokens"
-                case "tool_calls": stopReason = "tool_use"
-                default: stopReason = "end_turn"
+                let response = try await chatEngine.completeResponse(request: internalReq)
+                guard let usage = response.reportedChatUsage else {
+                    throw NSError(domain: "OsaurusProtocolUsage", code: 502,
+                        userInfo: [NSLocalizedDescriptionKey: "Anthropic compatibility requires reported input and output token counts; this model or provider did not report them."])
                 }
-
-                var contentBlocks: [AnthropicResponseContentBlock] = []
-
-                // Check for tool calls
-                if let toolCalls = resp.choices.first?.message.tool_calls, !toolCalls.isEmpty {
-                    // Add any text content first
-                    if !content.isEmpty {
-                        contentBlocks.append(.textBlock(content))
-                    }
-
-                    // Add tool_use blocks
-                    for toolCall in toolCalls {
-                        // Parse arguments JSON to dictionary
-                        var inputDict: [String: AnyCodableValue] = [:]
-                        if let argsData = toolCall.function.arguments.data(using: .utf8),
-                            let parsed = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any]
-                        {
-                            inputDict = parsed.mapValues { AnyCodableValue($0) }
-                        }
-                        contentBlocks.append(
-                            .toolUseBlock(
-                                id: toolCall.id,
-                                name: toolCall.function.name,
-                                input: inputDict
-                            )
-                        )
-                    }
-                } else {
-                    contentBlocks.append(.textBlock(content))
+                let finish = Self.openResponsesFinishReason(response.completion)
+                guard finish != .cancelled, finish != .error else {
+                    throw ResponsesGenerationResult.CollectionError.incomplete(response.completion.stopReason)
                 }
-
-                let anthropicResp = AnthropicMessagesResponse(
-                    id: messageId,
-                    model: model,
-                    content: contentBlocks,
-                    stopReason: stopReason,
-                    usage: AnthropicUsage(
-                        inputTokens: resp.usage.prompt_tokens,
-                        outputTokens: resp.usage.completion_tokens
-                    )
-                )
-
+                var blocks: [AnthropicResponseContentBlock] = []
+                if !response.anthropicThinkingBlocks.isEmpty {
+                    for block in response.anthropicThinkingBlocks {
+                        blocks.append(try JSONDecoder().decode(AnthropicResponseContentBlock.self,
+                            from: JSONEncoder.osaurusCanonical().encode(block)))
+                    }
+                } else if !response.reasoning.isEmpty {
+                    blocks.append(.thinking(.init(thinking: response.reasoning)))
+                }
+                if !response.text.isEmpty { blocks.append(.textBlock(response.text)) }
+                for call in response.completion.dispatchableFunctionCalls {
+                    guard let data = call.arguments.data(using: .utf8),
+                        let arguments = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+                    else {
+                        throw NSError(domain: "OsaurusToolArguments", code: 422,
+                            userInfo: [NSLocalizedDescriptionKey: "The model returned non-object arguments for '\(call.name)'."])
+                    }
+                    blocks.append(.toolUseBlock(id: call.callID, name: call.name,
+                        input: arguments.mapValues { AnyCodableValue($0) }))
+                }
+                if blocks.isEmpty { blocks.append(.textBlock("")) }
+                let anthropicResp = AnthropicMessagesResponse(id: messageId, model: model, content: blocks,
+                    stopReason: finish == .length ? "max_tokens" : (response.completion.functionCalls.isEmpty ? "end_turn" : "tool_use"),
+                    usage: AnthropicUsage(promptTokens: usage.prompt_tokens, outputTokens: usage.completion_tokens,
+                        cachedPromptTokens: usage.cachedPromptTokens))
                 let json = try JSONEncoder.osaurusCanonical().encode(anthropicResp)
                 var headers: [(String, String)] = [("Content-Type", "application/json")]
                 headers.append(contentsOf: cors)
@@ -11545,57 +18191,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     responseStatus: 200,
                     startTime: logStartTime,
                     model: logModel,
-                    tokensInput: resp.usage.prompt_tokens,
-                    tokensOutput: resp.usage.completion_tokens,
-                    finishReason: .stop
-                )
-            } catch let invs as ServiceToolInvocations {
-                // Multi-tool MLX completion: emit one Anthropic
-                // `tool_use` content block per invocation.
-                let blocks: [AnthropicResponseContentBlock] = invs.invocations.map {
-                    Self.makeAnthropicToolUseBlock(from: $0)
-                }
-                let body = Self.anthropicNonStreamingBody(
-                    messageId: messageId,
-                    model: model,
-                    blocks: blocks
-                )
-                Self.writeJSONResponse(body: body, cors: cors, head: head, ctx: ctx, hop: hop)
-                let toolLogs = invs.invocations.map {
-                    ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments)
-                }
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/messages",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseBody: body,
-                    responseStatus: 200,
-                    startTime: logStartTime,
-                    model: logModel,
-                    toolCalls: toolLogs,
-                    finishReason: .toolCalls
-                )
-            } catch let inv as ServiceToolInvocation {
-                // Single tool invocation — same emission with one block.
-                let body = Self.anthropicNonStreamingBody(
-                    messageId: messageId,
-                    model: model,
-                    blocks: [Self.makeAnthropicToolUseBlock(from: inv)]
-                )
-                Self.writeJSONResponse(body: body, cors: cors, head: head, ctx: ctx, hop: hop)
-                let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/messages",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseBody: body,
-                    responseStatus: 200,
-                    startTime: logStartTime,
-                    model: logModel,
-                    toolCalls: [toolLog],
-                    finishReason: .toolCalls
+                    tokensInput: response.inputTokenCount,
+                    tokensOutput: response.completion.tokenCount,
+                    inputTokenSource: .reported, outputTokenSource: .reported,
+                    toolCalls: response.completion.dispatchableFunctionCalls.map { ToolCallLog(name: $0.name, arguments: $0.arguments) },
+                    finishReason: finish
                 )
             } catch {
                 let errorResp = AnthropicError(
@@ -11756,6 +18356,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 // Get SpeechService and transcribe
                 let service = await MainActor.run { SpeechService.shared }
                 let result = try await service.transcribe(audioURL: audioURL)
+                let loadedModel = await MainActor.run { service.loadedModelId }
+                var activityDetails: [String: String] = [
+                    "mode": "file",
+                    "audio_bytes": String(audioData.count),
+                    "transcript_chars": String(result.text.count),
+                ]
+                if let seconds = result.durationSeconds, seconds > 0 {
+                    activityDetails["audio_seconds"] = String(format: "%.1f", seconds)
+                }
 
                 // Format response based on response_format
                 let responseBody: String
@@ -11803,7 +18412,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     responseBody: responseBody,
                     responseStatus: 200,
                     startTime: logStartTime,
-                    model: modelParam
+                    model: loadedModel ?? modelParam,
+                    details: activityDetails
                 )
             } catch {
                 let errorBody = #"{"error":{"message":"\#(error.localizedDescription)","type":"api_error"}}"#
@@ -11826,7 +18436,9 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     responseBody: errorBody,
                     responseStatus: 500,
                     startTime: logStartTime,
-                    errorMessage: error.localizedDescription
+                    model: modelParam,
+                    errorMessage: error.localizedDescription,
+                    details: ["mode": "file", "audio_bytes": String(audioData.count)]
                 )
             }
         }
@@ -11834,77 +18446,36 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     // MARK: - Open Responses API
 
-    private static func applyOpenResponsesContext(
-        to request: ChatCompletionRequest,
+    static func applyOpenResponsesContext(
+        to request: ResponsesInferenceRequest,
         previousResponseId: String?
-    ) -> ChatCompletionRequest {
-        let previous = openResponsesContextStore.transcript(
-            for: previousResponseId,
-            model: request.model
-        )
+    ) throws -> ResponsesInferenceRequest {
+        let previous = try openResponsesContextStore.transcript(for: previousResponseId, model: request.model)
         guard !previous.isEmpty else { return request }
-
         var copy = request
-        let currentSystem = request.messages.filter { $0.role.lowercased() == "system" }
-        let currentNonSystem = request.messages.filter { $0.role.lowercased() != "system" }
-        copy.messages = currentSystem + previous + currentNonSystem
+        // Per-request instructions do not carry over via previous_response_id.
+        let currentSystem = request.input.filter { $0.role.lowercased() == "system" }
+        let currentNonSystem = request.input.filter { $0.role.lowercased() != "system" }
+        copy.input = currentSystem + previous + currentNonSystem
         return copy
     }
 
-    private static func assistantMessages(from response: ChatCompletionResponse) -> [ChatMessage] {
-        response.choices.compactMap { choice in
-            let message = choice.message
-            if let content = message.content, !content.isEmpty {
-                return ChatMessage(
-                    role: "assistant",
-                    content: content,
-                    tool_calls: message.tool_calls,
-                    tool_call_id: nil,
-                    reasoning_content: message.reasoning_content
-                )
-            }
-            if let toolCalls = message.tool_calls, !toolCalls.isEmpty {
-                return ChatMessage(
-                    role: "assistant",
-                    content: nil,
-                    tool_calls: toolCalls,
-                    tool_call_id: nil,
-                    reasoning_content: message.reasoning_content
-                )
-            }
-            return nil
-        }
-    }
-
-    private static func assistantMessage(from invocations: [ServiceToolInvocation]) -> ChatMessage? {
-        let toolCalls = invocations.map { inv in
-            ToolCall(
-                id: inv.toolCallId ?? Self.shortId(prefix: "call_"),
-                type: "function",
-                function: ToolCallFunction(name: inv.toolName, arguments: inv.jsonArguments)
-            )
-        }
-        guard !toolCalls.isEmpty else { return nil }
-        return ChatMessage(
-            role: "assistant",
-            content: nil,
-            tool_calls: toolCalls,
-            tool_call_id: nil
-        )
-    }
-
-    private static func storeOpenResponsesContext(
+    static func storeOpenResponsesContext(
         responseId: String,
         model: String,
-        request: ChatCompletionRequest,
-        assistantMessages: [ChatMessage]
+        request: ResponsesInferenceRequest,
+        assistantMessages: [ChatMessage],
+        perRequestInstructions: String? = nil
     ) {
         guard !assistantMessages.isEmpty else { return }
-        openResponsesContextStore.store(
-            responseId: responseId,
-            model: model,
-            messages: request.messages + assistantMessages
-        )
+        var input = request.input
+        // Exclude only top-level per-request instructions. Explicit system
+        // input Items remain conversation history.
+        if let perRequestInstructions, input.first?.role == "system", input.first?.content == perRequestInstructions {
+            input.removeFirst()
+        }
+        openResponsesContextStore.store(responseId: responseId, model: model,
+            messages: input + assistantMessages)
     }
 
     private func handleOpenResponses(
@@ -11925,11 +18496,26 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             requestBodyString = nil
         }
 
+        if let reason = RequestValidator.rawResponseSchemaReason(data, responses: true) {
+            let errorResponse = OpenResponsesErrorResponse(code: "invalid_request_error", message: reason)
+            let body = (try? JSONEncoder.osaurusCanonical().encode(errorResponse))
+                .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+            sendResponse(context: context, version: head.version, status: .badRequest,
+                headers: [("Content-Type", "application/json; charset=utf-8")], body: body)
+            return
+        }
+
         // Parse Open Responses request
-        guard let openResponsesReq = try? JSONDecoder().decode(OpenResponsesRequest.self, from: data) else {
-            let error = OpenResponsesErrorResponse(code: "invalid_request_error", message: "Invalid request format")
+        let openResponsesReq: OpenResponsesRequest
+        do {
+            openResponsesReq = try JSONDecoder().decode(OpenResponsesRequest.self, from: data)
+        } catch {
+            // Surface the decoding failure so clients can see which field was
+            // rejected instead of a bare "Invalid request format".
+            let message = "Invalid request format: \(SandboxPluginRegisterTool.decodeFailureDetail(error))"
+            let errorResponse = OpenResponsesErrorResponse(code: "invalid_request_error", message: message)
             let errorJson =
-                (try? JSONEncoder.osaurusCanonical().encode(error)).map { String(decoding: $0, as: UTF8.self) }
+                (try? JSONEncoder.osaurusCanonical().encode(errorResponse)).map { String(decoding: $0, as: UTF8.self) }
                 ?? #"{"error":{"type":"error","code":"invalid_request_error","message":"Invalid request format"}}"#
             var headers = [("Content-Type", "application/json; charset=utf-8")]
             headers.append(contentsOf: stateRef.value.corsHeaders)
@@ -11947,7 +18533,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 requestBody: requestBodyString,
                 responseStatus: 400,
                 startTime: startTime,
-                errorMessage: "Invalid request format"
+                errorMessage: message
             )
             return
         }
@@ -11956,13 +18542,36 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let responseId = Self.shortId(prefix: "resp_")
         let model = openResponsesReq.model
 
-        // Convert to internal format, preserving local Responses API
-        // context when clients chain turns with `previous_response_id`.
-        var internalReq = Self.applyOpenResponsesContext(
-            to: openResponsesReq.toChatCompletionRequest(),
-            previousResponseId: openResponsesReq.previous_response_id
-        )
-        internalReq.idempotencyKey = Self.httpIdempotencyKey(head: head)
+        // Project directly into canonical input. Full native assistant Items
+        // and reasoning stay with the template/transport message snapshot.
+        var internalReq: ResponsesInferenceRequest
+        do {
+            internalReq = try Self.applyOpenResponsesContext(
+                to: try openResponsesReq.toResponsesInferenceRequest(),
+                previousResponseId: openResponsesReq.previous_response_id
+            )
+            internalReq.context.idempotencyKey = Self.httpIdempotencyKey(head: head)
+            if let reason = RequestValidator.responseFormatReason(internalReq.generation.outputFormat)
+                ?? RequestValidator.unsupportedSamplerReason(n: nil,
+                    responseFormatType: internalReq.generation.outputFormat?.type)
+            {
+                throw NSError(domain: "OsaurusResponsesRequest", code: 400,
+                    userInfo: [NSLocalizedDescriptionKey: reason])
+            }
+        } catch {
+            let errorResponse = OpenResponsesErrorResponse(code: "invalid_request_error", message: error.localizedDescription)
+            let body = (try? JSONEncoder.osaurusCanonical().encode(errorResponse))
+                .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+            var headers = [("Content-Type", "application/json; charset=utf-8")]
+            headers.append(contentsOf: stateRef.value.corsHeaders)
+            let status: HTTPResponseStatus = (error as NSError).domain == "OsaurusResponsesContext" ? .notFound : .badRequest
+            sendResponse(context: context, version: head.version, status: status, headers: headers, body: body)
+            return
+        }
+
+        if rejectInvalidHTTPToolChoice(internalReq, head: head, context: context,
+            flavor: .openResponses(code: "invalid_request_error"), path: "/responses",
+            startTime: startTime, userAgent: userAgent, requestBody: requestBodyString) { return }
 
         // Determine if streaming
         let wantsStream = openResponsesReq.stream ?? false
@@ -11976,7 +18585,8 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 method: "POST",
                 userAgent: userAgent,
                 requestBody: requestBodyString,
-                startTime: startTime
+                startTime: startTime,
+                model: model
             )
         else { return }
 
@@ -11995,7 +18605,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         } else {
             handleOpenResponsesNonStreaming(
                 internalReq: internalReq,
-                responseId: responseId,
+                perRequestInstructions: openResponsesReq.instructions,
                 model: model,
                 head: head,
                 context: context,
@@ -12009,7 +18619,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     private func handleOpenResponsesStreaming(
         request: OpenResponsesRequest,
-        internalReq: ChatCompletionRequest,
+        internalReq: ResponsesInferenceRequest,
         responseId: String,
         model: String,
         context: ChannelHandlerContext,
@@ -12024,388 +18634,177 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         let writerBound = NIOLoopBound(writer, eventLoop: loop)
         let ctx = NIOLoopBound(context, eventLoop: loop)
         let hop = Self.makeHop(channel: context.channel, loop: loop)
-
-        // Estimate input tokens (rough: 1 token per 4 chars)
-        let inputTokens: Int =
-            {
-                switch request.input {
-                case .text(let text):
-                    return TokenEstimator.estimate(text)
-                case .items(let items):
-                    return items.reduce(0) { acc, item in
-                        switch item {
-                        case .message(let msg):
-                            return acc + TokenEstimator.estimate(msg.content.plainText)
-                        case .functionCall(let call):
-                            return acc + TokenEstimator.estimate(call.arguments)
-                        case .functionCallOutput(let output):
-                            return acc + TokenEstimator.estimate(output.output)
-                        case .reasoning(let reasoning):
-                            return acc + TokenEstimator.estimate(reasoning.encrypted_content ?? "")
-                        case .raw(let raw):
-                            let byteCount =
-                                (try? JSONEncoder.osaurusCanonical().encode(raw).count) ?? 0
-                            return acc + byteCount / TokenEstimator.charsPerToken
-                        }
-                    }
-                }
-            }() + (request.instructions?.count ?? 0) / TokenEstimator.charsPerToken
-
-        let itemId = Self.shortId(prefix: "item_")
-        let reasoningItemId = Self.shortId(prefix: "rs_")
-
-        // Send headers and initial response-level events. Output items
-        // (reasoning / message) are now opened lazily inside the stream
-        // loop so a reasoning item can land BEFORE the message item, which
-        // matches OpenAI Responses semantics for reasoning models.
-        hop {
-            writerBound.value.writeHeaders(ctx.value, extraHeaders: cors)
-            writerBound.value.writeResponseCreated(
-                responseId: responseId,
-                model: model,
-                inputTokens: inputTokens,
-                context: ctx.value
-            )
-            writerBound.value.writeResponseInProgress(context: ctx.value)
-        }
-
-        // Capture for logging
-        let logStartTime = startTime
-        let logUserAgent = userAgent
-        let logRequestBody = requestBodyString
-        let logModel = model
-        let logSelf = self
-
-        // Track whether the message item has been opened across the
-        // streaming and catch closures. A heap box satisfies Sendable for
-        // the concurrent closures that read/mutate the flag.
-        let messageItemOpen = AtomicBoolBox()
-        let outputText = LockedStringAccumulator()
+        // Headers are independent of provider identity. The first semantic
+        // event selects either native proxy lifecycle or portable local output.
+        hop { writerBound.value.writeHeaders(ctx.value, extraHeaders: cors) }
         let disconnected = installStreamingDisconnectHook(context: context)
-
         runRequestTask(priority: .userInitiated) {
             defer { admissionToken.release() }
             let wasResidentBeforeStream = await ModelRuntime.shared.isResident(name: model)
             var emittedSemanticDelta = false
-            func markSemanticDeltaIfChannelActive() {
-                if self._isChannelActive.value {
-                    emittedSemanticDelta = true
-                }
-            }
             defer {
                 if !wasResidentBeforeStream && !emittedSemanticDelta
                     && (!self._isChannelActive.value || Task.isCancelled)
-                {
-                    Task {
-                        await ModelRuntime.shared.unload(name: model)
-                    }
+                { Task { await ModelRuntime.shared.unload(name: model) } }
+            }
+            var nativeProxy = false
+            var nativeTerminal = false
+            var nativeResponseID: String?
+            var portableStarted = false
+            let itemId = "msg_" + responseId
+            let reasoningItemId = "rs_" + responseId
+            let messageItemOpen = AtomicBoolBox()
+            var accumulator = ResponsesGenerationAccumulator()
+            var contentCoalescer = Self.StreamDeltaCoalescer(
+                interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval)
+            func beginPortable() {
+                guard !portableStarted else { return }
+                portableStarted = true
+                hop {
+                    writerBound.value.writeResponseCreated(responseId: responseId, model: model, context: ctx.value)
+                    writerBound.value.writeResponseInProgress(context: ctx.value)
                 }
             }
-            var contentCoalescer = Self.StreamDeltaCoalescer(
-                interval: ServerRuntimeSettingsStore.snapshot().generation.streamInterval
-            )
+            func emitText(_ chunk: String) {
+                guard !chunk.isEmpty else { return }
+                beginPortable()
+                emittedSemanticDelta = self._isChannelActive.value
+                hop {
+                    writerBound.value.writeReasoningItemDone(context: ctx.value)
+                    if !messageItemOpen.value {
+                        messageItemOpen.value = true
+                        writerBound.value.writeMessageItemAdded(itemId: itemId, context: ctx.value)
+                        writerBound.value.writeContentPartAdded(context: ctx.value)
+                    }
+                    writerBound.value.writeTextDelta(chunk, context: ctx.value)
+                }
+            }
             do {
-                let chatEngine = self.chatEngine
                 try Task.checkCancellation()
-                let stream = try await chatEngine.streamChat(request: internalReq)
-                if disconnected.value { throw CancellationError() }
-                for try await delta in stream {
+                let stream = try await self.chatEngine.streamResponses(request: internalReq)
+                generation: for try await event in stream {
                     try Task.checkCancellation()
                     if disconnected.value { throw CancellationError() }
-                    // Reasoning sentinel must be decoded BEFORE the
-                    // generic `isSentinel` filter, otherwise it gets
-                    // dropped together with tool/stats hints.
-                    if let reasoning = StreamingReasoningHint.decode(delta) {
-                        markSemanticDeltaIfChannelActive()
-                        if let pending = contentCoalescer.flush() {
-                            outputText.append(pending)
-                            hop {
-                                // First non-reasoning chunk: close the
-                                // reasoning item (if any) then open the
-                                // message item so the text deltas land on
-                                // the message item.
-                                writerBound.value.writeReasoningItemDone(context: ctx.value)
-                                if !messageItemOpen.value {
-                                    messageItemOpen.value = true
-                                    writerBound.value.writeMessageItemAdded(itemId: itemId, context: ctx.value)
-                                    writerBound.value.writeContentPartAdded(context: ctx.value)
-                                }
-                                writerBound.value.writeTextDelta(pending, context: ctx.value)
+                    try accumulator.consume(event)
+                    switch event {
+                    case .providerEvent(let raw):
+                        guard !portableStarted else {
+                            throw NSError(domain: "OsaurusResponsesProtocol", code: 502,
+                                userInfo: [NSLocalizedDescriptionKey: "Native Responses lifecycle arrived after portable output."])
+                        }
+                        guard case .object(let fields) = raw, case .string(let type) = fields["type"], !type.isEmpty else {
+                            throw NSError(domain: "OsaurusResponsesProtocol", code: 502,
+                                userInfo: [NSLocalizedDescriptionKey: "Native Responses event is missing its type."])
+                        }
+                        nativeProxy = true
+                        if case .object(let response) = fields["response"], case .string(let id) = response["id"] {
+                            if let nativeResponseID, nativeResponseID != id {
+                                throw NSError(domain: "OsaurusResponsesProtocol", code: 502,
+                                    userInfo: [NSLocalizedDescriptionKey: "Native Responses identity changed during the stream."])
                             }
+                            nativeResponseID = id
                         }
+                        nativeTerminal = nativeTerminal || ["response.completed", "response.incomplete",
+                            "response.cancelled", "response.failed", "error"].contains(type)
+                        if type.contains(".delta") { emittedSemanticDelta = self._isChannelActive.value }
                         hop {
-                            writerBound.value.writeReasoningDelta(
-                                reasoning,
-                                itemId: reasoningItemId,
-                                context: ctx.value
-                            )
+                            do { try writerBound.value.writeProviderEvent(raw, context: ctx.value) }
+                            catch { ctx.value.close(promise: nil) }
                         }
-                        continue
+                    case .outputTextDelta(let text):
+                        if !nativeProxy, let chunk = contentCoalescer.append(text) { emitText(chunk) }
+                    case .reasoningDelta(let reasoning):
+                        guard !nativeProxy else { break }
+                        if let pending = contentCoalescer.flush() { emitText(pending) }
+                        beginPortable()
+                        emittedSemanticDelta = self._isChannelActive.value
+                        hop { writerBound.value.writeReasoningDelta(reasoning, itemId: reasoningItemId, context: ctx.value) }
+                    case .prefillProgress(let progress):
+                        guard !nativeProxy else { break }
+                        beginPortable()
+                        hop { writerBound.value.writePrefillProgress(progress, context: ctx.value) }
+                    case .responseCompleted:
+                        break generation
+                    default: break
                     }
-                    if let stats = StreamingStatsHint.decode(delta) {
-                        hop {
-                            writerBound.value.setOutputTokens(stats.tokenCount)
-                        }
-                        continue
+                }
+                let response = try accumulator.result()
+                let storedID = nativeResponseID ?? (nativeProxy ? response.completion.responseID : responseId)
+                if case .completed = response.completion.status {
+                    Self.storeOpenResponsesContext(responseId: storedID, model: model, request: internalReq,
+                        assistantMessages: [try response.completedAssistantInput()], perRequestInstructions: request.instructions)
+                }
+                if nativeProxy {
+                    guard nativeTerminal else {
+                        throw NSError(domain: "OsaurusResponsesProtocol", code: 502,
+                            userInfo: [NSLocalizedDescriptionKey: "Native Responses stream completed without a native terminal event."])
                     }
-                    if StreamingToolHint.isSentinel(delta) { continue }
-                    if let chunk = contentCoalescer.append(delta) {
-                        markSemanticDeltaIfChannelActive()
-                        outputText.append(chunk)
-                        hop {
-                            // First non-reasoning chunk: close the reasoning
-                            // item (if any) then open the message item so the
-                            // text deltas land on the message item.
-                            writerBound.value.writeReasoningItemDone(context: ctx.value)
-                            if !messageItemOpen.value {
-                                messageItemOpen.value = true
-                                writerBound.value.writeMessageItemAdded(itemId: itemId, context: ctx.value)
-                                writerBound.value.writeContentPartAdded(context: ctx.value)
+                    hop { writerBound.value.writeEnd(ctx.value) }
+                } else {
+                    // A late provider Item cannot retroactively replace the
+                    // identity of already streamed local output.
+                    guard response.providerOutputItems.isEmpty, response.reasoningItem == nil else {
+                        throw NSError(domain: "OsaurusResponsesProtocol", code: 502,
+                            userInfo: [NSLocalizedDescriptionKey: "Provider-native Responses Items require an ordered native event lifecycle."])
+                    }
+                    if let pending = contentCoalescer.flush() { emitText(pending) }
+                    beginPortable()
+                    let terminal = response.completion
+                    let inputCount = response.inputTokenCount
+                    let status: OpenResponsesStatus
+                    let itemStatus: OpenResponsesItemStatus
+                    switch terminal.status {
+                    case .completed: status = .completed; itemStatus = .completed
+                    case .incomplete: status = .incomplete; itemStatus = .incomplete
+                    case .cancelled: status = .cancelled; itemStatus = .incomplete
+                    }
+                    emittedSemanticDelta = emittedSemanticDelta || !terminal.functionCalls.isEmpty
+                    hop {
+                        writerBound.value.writeReasoningItemDone(status: itemStatus, context: ctx.value)
+                        if messageItemOpen.value {
+                            writerBound.value.writeTextDone(context: ctx.value)
+                            writerBound.value.writeMessageItemDone(status: itemStatus, context: ctx.value)
+                        }
+                        for call in terminal.functionCalls {
+                            writerBound.value.writeFunctionCallItemAdded(itemId: call.id, callId: call.callID,
+                                name: call.name, context: ctx.value)
+                            Self.forEachStringChunk(call.arguments, size: 512) {
+                                writerBound.value.writeFunctionCallArgumentsDelta(callId: call.callID, delta: $0, context: ctx.value)
                             }
-                            writerBound.value.writeTextDelta(chunk, context: ctx.value)
+                            writerBound.value.writeFunctionCallArgumentsDone(callId: call.callID, context: ctx.value)
+                            writerBound.value.writeFunctionCallItemDone(callId: call.callID, name: call.name,
+                                status: itemStatus, context: ctx.value)
                         }
+                        if let inputCount { writerBound.value.setInputTokens(inputCount) }
+                        if let count = terminal.tokenCount { writerBound.value.setOutputTokens(count) }
+                        if let count = terminal.cachedInputTokenCount { writerBound.value.setCachedInputTokens(count) }
+                        if let rate = terminal.tokensPerSecond { writerBound.value.setTokensPerSecond(rate) }
+                        writerBound.value.writeResponseTerminal(status: status,
+                            incompleteReason: status == .incomplete
+                                ? (terminal.stopReason == "length" ? "max_output_tokens" : terminal.stopReason) : nil,
+                            metadata: internalReq.providerOptions?.metadata, context: ctx.value)
+                        writerBound.value.writeEnd(ctx.value)
                     }
                 }
-                if let pending = contentCoalescer.flush() {
-                    markSemanticDeltaIfChannelActive()
-                    outputText.append(pending)
-                    hop {
-                        // First non-reasoning chunk: close the reasoning
-                        // item (if any) then open the message item so the
-                        // text deltas land on the message item.
-                        writerBound.value.writeReasoningItemDone(context: ctx.value)
-                        if !messageItemOpen.value {
-                            messageItemOpen.value = true
-                            writerBound.value.writeMessageItemAdded(itemId: itemId, context: ctx.value)
-                            writerBound.value.writeContentPartAdded(context: ctx.value)
-                        }
-                        writerBound.value.writeTextDelta(pending, context: ctx.value)
-                    }
-                }
-                hop {
-                    // Close any open reasoning item that never got any
-                    // following content (rare — reasoning-only response).
-                    writerBound.value.writeReasoningItemDone(context: ctx.value)
-                    if messageItemOpen.value {
-                        writerBound.value.writeTextDone(context: ctx.value)
-                        writerBound.value.writeMessageItemDone(context: ctx.value)
-                    }
-                    writerBound.value.writeResponseCompleted(context: ctx.value)
-                    writerBound.value.writeEnd(ctx.value)
-                }
-                let text = outputText.value
-                if !text.isEmpty {
-                    Self.storeOpenResponsesContext(
-                        responseId: responseId,
-                        model: model,
-                        request: internalReq,
-                        assistantMessages: [ChatMessage(role: "assistant", content: text)]
-                    )
-                }
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/responses",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseStatus: 200,
-                    startTime: logStartTime,
-                    model: logModel,
-                    finishReason: .stop
-                )
-            } catch let invs as ServiceToolInvocations {
-                // Text can still be pending in the coalescer when the tool call
-                // arrives (tool calls surface by throw, so the loop's own flush
-                // never runs). Deliver it before the tool frames or the visible
-                // answer ends mid-word.
-                if let pending = contentCoalescer.flush() {
-                    hop {
-                        writerBound.value.writeReasoningItemDone(context: ctx.value)
-                        if !messageItemOpen.value {
-                            messageItemOpen.value = true
-                            writerBound.value.writeMessageItemAdded(itemId: itemId, context: ctx.value)
-                            writerBound.value.writeContentPartAdded(context: ctx.value)
-                        }
-                        writerBound.value.writeTextDelta(pending, context: ctx.value)
-                    }
-                }
-                markSemanticDeltaIfChannelActive()
-                // Multi-tool MLX completion: emit one function_call item
-                // per invocation. Use the lazy `messageItemOpen` flag so
-                // we don't close an item that was never opened.
-                hop {
-                    writerBound.value.writeReasoningItemDone(context: ctx.value)
-                    if messageItemOpen.value {
-                        writerBound.value.writeTextDone(context: ctx.value)
-                        writerBound.value.writeMessageItemDone(context: ctx.value)
-                    }
-                    for inv in invs.invocations {
-                        self.writeOpenResponsesFunctionCall(inv, writer: writerBound.value, context: ctx.value)
-                    }
-                    writerBound.value.writeResponseCompleted(context: ctx.value)
-                    writerBound.value.writeEnd(ctx.value)
-                }
-                if let assistant = Self.assistantMessage(from: invs.invocations) {
-                    Self.storeOpenResponsesContext(
-                        responseId: responseId,
-                        model: model,
-                        request: internalReq,
-                        assistantMessages: [assistant]
-                    )
-                }
-                let toolLogs = invs.invocations.map {
-                    ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments)
-                }
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/responses",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseStatus: 200,
-                    startTime: logStartTime,
-                    model: logModel,
-                    toolCalls: toolLogs,
-                    finishReason: .toolCalls
-                )
-            } catch let inv as ServiceToolInvocation {
-                // Text can still be pending in the coalescer when the tool call
-                // arrives (tool calls surface by throw, so the loop's own flush
-                // never runs). Deliver it before the tool frames or the visible
-                // answer ends mid-word.
-                if let pending = contentCoalescer.flush() {
-                    hop {
-                        writerBound.value.writeReasoningItemDone(context: ctx.value)
-                        if !messageItemOpen.value {
-                            messageItemOpen.value = true
-                            writerBound.value.writeMessageItemAdded(itemId: itemId, context: ctx.value)
-                            writerBound.value.writeContentPartAdded(context: ctx.value)
-                        }
-                        writerBound.value.writeTextDelta(pending, context: ctx.value)
-                    }
-                }
-                markSemanticDeltaIfChannelActive()
-                // Single tool invocation — same flow with one item.
-                hop {
-                    writerBound.value.writeReasoningItemDone(context: ctx.value)
-                    if messageItemOpen.value {
-                        writerBound.value.writeTextDone(context: ctx.value)
-                        writerBound.value.writeMessageItemDone(context: ctx.value)
-                    }
-                    self.writeOpenResponsesFunctionCall(inv, writer: writerBound.value, context: ctx.value)
-                    writerBound.value.writeResponseCompleted(context: ctx.value)
-                    writerBound.value.writeEnd(ctx.value)
-                }
-                if let assistant = Self.assistantMessage(from: [inv]) {
-                    Self.storeOpenResponsesContext(
-                        responseId: responseId,
-                        model: model,
-                        request: internalReq,
-                        assistantMessages: [assistant]
-                    )
-                }
-
-                let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/responses",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseStatus: 200,
-                    startTime: logStartTime,
-                    model: logModel,
-                    toolCalls: [toolLog],
-                    finishReason: .toolCalls
-                )
+                self.logRequest(method: "POST", path: "/responses", userAgent: userAgent,
+                    requestBody: requestBodyString, responseStatus: 200, startTime: startTime, model: model,
+                    tokensInput: response.inputTokenCount, tokensOutput: response.completion.tokenCount,
+                    inputTokenSource: .reported, outputTokenSource: .reported,
+                    toolCalls: response.completion.functionCalls.map { ToolCallLog(name: $0.name, arguments: $0.arguments) },
+                    finishReason: Self.openResponsesFinishReason(response.completion))
             } catch {
-                // SSE response head was already 200 — surface as in-band
-                // SSE error chunk and log actual on-wire status.
+                if !nativeProxy { beginPortable() }
+                let needsError = !nativeTerminal
                 hop {
-                    writerBound.value.writeError(error.localizedDescription, context: ctx.value)
+                    if needsError { writerBound.value.writeErrorFromThrown(error, context: ctx.value) }
                     writerBound.value.writeEnd(ctx.value)
                 }
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/responses",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseStatus: 200,
-                    startTime: logStartTime,
-                    model: logModel,
-                    finishReason: .error,
-                    errorMessage: error.localizedDescription
-                )
+                self.logRequest(method: "POST", path: "/responses", userAgent: userAgent,
+                    requestBody: requestBodyString, responseStatus: 200, startTime: startTime,
+                    model: model, finishReason: error is CancellationError ? .cancelled : .error,
+                    errorMessage: error.localizedDescription)
             }
         }
-    }
-
-    /// Build a complete (non-streaming) OpenResponses body whose `output`
-    /// is one `function_call` item per supplied invocation. Returns the
-    /// JSON body so the caller can also feed it to the request log.
-    private static func openResponsesNonStreamingBody(
-        responseId: String,
-        model: String,
-        invocations: [ServiceToolInvocation]
-    ) -> String {
-        let items: [OpenResponsesOutputItem] = invocations.map { inv in
-            let callId = inv.toolCallId ?? Self.shortId(prefix: "call_")
-            let itemId = Self.shortId(prefix: "item_")
-            return .functionCall(
-                OpenResponsesFunctionCall(
-                    id: itemId,
-                    status: .completed,
-                    callId: callId,
-                    name: inv.toolName,
-                    arguments: inv.jsonArguments
-                )
-            )
-        }
-        let resp = OpenResponsesResponse(
-            id: responseId,
-            createdAt: Int(Date().timeIntervalSince1970),
-            status: .completed,
-            model: model,
-            output: items,
-            usage: OpenResponsesUsage(inputTokens: 0, outputTokens: 0)
-        )
-        return (try? JSONEncoder.osaurusCanonical().encode(resp))
-            .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
-    }
-
-    /// Build an Anthropic `tool_use` block for a single MLX-emitted
-    /// invocation. Used by the non-streaming `/messages` handler.
-    private static func makeAnthropicToolUseBlock(
-        from inv: ServiceToolInvocation
-    ) -> AnthropicResponseContentBlock {
-        let toolId = inv.toolCallId ?? Self.shortId(prefix: "toolu_")
-        var inputDict: [String: AnyCodableValue] = [:]
-        if let argsData = inv.jsonArguments.data(using: .utf8),
-            let parsed = try? JSONSerialization.jsonObject(with: argsData) as? [String: Any]
-        {
-            inputDict = parsed.mapValues { AnyCodableValue($0) }
-        }
-        return AnthropicResponseContentBlock.toolUseBlock(
-            id: toolId,
-            name: inv.toolName,
-            input: inputDict
-        )
-    }
-
-    /// Encode a non-streaming Anthropic Messages response carrying the
-    /// supplied content blocks (text/tool_use). Returns the JSON body so
-    /// the caller can also feed it to the request log.
-    private static func anthropicNonStreamingBody(
-        messageId: String,
-        model: String,
-        blocks: [AnthropicResponseContentBlock]
-    ) -> String {
-        let resp = AnthropicMessagesResponse(
-            id: messageId,
-            model: model,
-            content: blocks,
-            stopReason: "tool_use",
-            usage: AnthropicUsage(inputTokens: 0, outputTokens: 0)
-        )
-        return (try? JSONEncoder.osaurusCanonical().encode(resp))
-            .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
     }
 
     /// Emit a complete Anthropic `tool_use` content block for a single
@@ -12442,17 +18841,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         model: String,
         responseId: String,
         created: Int,
-        context: ChannelHandlerContext,
-        tools: [Tool]? = nil
+        context: ChannelHandlerContext
     ) {
         let callId: String = {
             if let preservedId = inv.toolCallId, !preservedId.isEmpty { return preservedId }
             return Self.shortId(prefix: "call_")
         }()
-        let argumentsJSON = Self.canonicalToolArgumentsJSON(
-            inv.jsonArguments,
-            schema: Self.toolSchema(named: inv.toolName, in: tools)
-        )
+        let argumentsJSON = inv.jsonArguments
         writer.writeToolCallStart(
             callId: callId,
             functionName: inv.toolName,
@@ -12475,44 +18870,17 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         }
     }
 
-    /// Emit a complete OpenResponses function-call output item for a single
-    /// tool invocation: `output_item.added` → chunked
-    /// `function_call_arguments.delta` → `function_call_arguments.done` →
-    /// `output_item.done`. Caller is responsible for any preceding item
-    /// teardown (closing message / reasoning items) and for emitting
-    /// `response.completed` after the last invocation.
-    @inline(__always)
-    private func writeOpenResponsesFunctionCall(
-        _ inv: ServiceToolInvocation,
-        writer: OpenResponsesSSEWriter,
-        context: ChannelHandlerContext
-    ) {
-        let callId = inv.toolCallId ?? Self.shortId(prefix: "call_")
-        let funcItemId = Self.shortId(prefix: "item_")
-        writer.writeFunctionCallItemAdded(
-            itemId: funcItemId,
-            callId: callId,
-            name: inv.toolName,
-            context: context
-        )
-        Self.forEachStringChunk(inv.jsonArguments, size: 512) { chunk in
-            writer.writeFunctionCallArgumentsDelta(
-                callId: callId,
-                delta: chunk,
-                context: context
-            )
+    static func openResponsesFinishReason(_ completion: ResponsesGenerationCompletion) -> RequestLog.FinishReason {
+        switch completion.status {
+        case .cancelled: return .cancelled
+        case .incomplete: return completion.stopReason == "length" ? .length : .error
+        case .completed: return completion.functionCalls.isEmpty ? .stop : .toolCalls
         }
-        writer.writeFunctionCallArgumentsDone(callId: callId, context: context)
-        writer.writeFunctionCallItemDone(
-            callId: callId,
-            name: inv.toolName,
-            context: context
-        )
     }
 
     private func handleOpenResponsesNonStreaming(
-        internalReq: ChatCompletionRequest,
-        responseId: String,
+        internalReq: ResponsesInferenceRequest,
+        perRequestInstructions: String?,
         model: String,
         head: HTTPRequestHead,
         context: ChannelHandlerContext,
@@ -12538,16 +18906,13 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             do {
                 let chatEngine = self.chatEngine
                 try Task.checkCancellation()
-                let resp = try await chatEngine.completeChat(request: internalReq)
-
-                // Convert to Open Responses format
-                let openResponsesResp = resp.toOpenResponsesResponse(responseId: responseId)
-                Self.storeOpenResponsesContext(
-                    responseId: responseId,
-                    model: model,
-                    request: internalReq,
-                    assistantMessages: Self.assistantMessages(from: resp)
-                )
+                let response = try await chatEngine.completeResponse(request: internalReq)
+                let actualResponseID = response.completion.responseID
+                let openResponsesResp = response.openResponsesResponse(responseID: actualResponseID, model: model, metadata: internalReq.providerOptions?.metadata)
+                if case .completed = response.completion.status {
+                    Self.storeOpenResponsesContext(responseId: actualResponseID, model: model, request: internalReq,
+                        assistantMessages: [try response.completedAssistantInput()], perRequestInstructions: perRequestInstructions)
+                }
 
                 let json = try JSONEncoder.osaurusCanonical().encode(openResponsesResp)
                 var headers: [(String, String)] = [("Content-Type", "application/json")]
@@ -12581,67 +18946,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     responseStatus: 200,
                     startTime: logStartTime,
                     model: logModel,
-                    tokensInput: resp.usage.prompt_tokens,
-                    tokensOutput: resp.usage.completion_tokens,
-                    finishReason: .stop
-                )
-            } catch let invs as ServiceToolInvocations {
-                let body = Self.openResponsesNonStreamingBody(
-                    responseId: responseId,
-                    model: model,
-                    invocations: invs.invocations
-                )
-                if let assistant = Self.assistantMessage(from: invs.invocations) {
-                    Self.storeOpenResponsesContext(
-                        responseId: responseId,
-                        model: model,
-                        request: internalReq,
-                        assistantMessages: [assistant]
-                    )
-                }
-                Self.writeJSONResponse(body: body, cors: cors, head: head, ctx: ctx, hop: hop)
-                let toolLogs = invs.invocations.map {
-                    ToolCallLog(name: $0.toolName, arguments: $0.jsonArguments)
-                }
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/responses",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseBody: body,
-                    responseStatus: 200,
-                    startTime: logStartTime,
-                    model: logModel,
-                    toolCalls: toolLogs,
-                    finishReason: .toolCalls
-                )
-            } catch let inv as ServiceToolInvocation {
-                let body = Self.openResponsesNonStreamingBody(
-                    responseId: responseId,
-                    model: model,
-                    invocations: [inv]
-                )
-                if let assistant = Self.assistantMessage(from: [inv]) {
-                    Self.storeOpenResponsesContext(
-                        responseId: responseId,
-                        model: model,
-                        request: internalReq,
-                        assistantMessages: [assistant]
-                    )
-                }
-                Self.writeJSONResponse(body: body, cors: cors, head: head, ctx: ctx, hop: hop)
-                let toolLog = ToolCallLog(name: inv.toolName, arguments: inv.jsonArguments)
-                logSelf.logRequest(
-                    method: "POST",
-                    path: "/responses",
-                    userAgent: logUserAgent,
-                    requestBody: logRequestBody,
-                    responseBody: body,
-                    responseStatus: 200,
-                    startTime: logStartTime,
-                    model: logModel,
-                    toolCalls: [toolLog],
-                    finishReason: .toolCalls
+                    tokensInput: response.inputTokenCount,
+                    tokensOutput: response.completion.tokenCount,
+                    inputTokenSource: .reported, outputTokenSource: .reported,
+                    toolCalls: response.completion.functionCalls.map { ToolCallLog(name: $0.name, arguments: $0.arguments) },
+                    finishReason: Self.openResponsesFinishReason(response.completion)
                 )
             } catch {
                 let errorResp = OpenResponsesErrorResponse(
@@ -12806,143 +19115,6 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
 
     // MARK: - Request Logging
 
-    /// Encode an OpenAI chat-completions response and verify the bytes before
-    /// putting them on the wire. Tool-call arguments are model-authored JSON
-    /// strings and can contain nested backslash/quote sequences; if Codable
-    /// ever produces bytes a client parser rejects, fall back to a
-    /// JSONSerialization envelope that treats those arguments as opaque
-    /// strings and escapes them at the transport boundary.
-    private static func chatCompletionResponseBody(_ response: ChatCompletionResponse) throws -> String {
-        let encoded = try JSONEncoder.osaurusCanonical().encode(response)
-        if (try? JSONSerialization.jsonObject(with: encoded)) != nil {
-            return String(decoding: encoded, as: UTF8.self)
-        }
-
-        let data = try JSONSerialization.data(
-            withJSONObject: chatCompletionResponseJSONObject(response),
-            options: .osaurusCanonical
-        )
-        return String(decoding: data, as: UTF8.self)
-    }
-
-    private static func chatCompletionResponseJSONObject(_ response: ChatCompletionResponse) -> [String: Any] {
-        var usage: [String: Any] = [
-            "prompt_tokens": response.usage.prompt_tokens,
-            "completion_tokens": response.usage.completion_tokens,
-            "total_tokens": response.usage.total_tokens,
-        ]
-        if let tokensPerSecond = response.usage.tokens_per_second {
-            usage["tokens_per_second"] = tokensPerSecond
-        }
-
-        var object: [String: Any] = [
-            "id": response.id,
-            "object": response.object,
-            "created": response.created,
-            "model": response.model,
-            "choices": response.choices.map(chatChoiceJSONObject(_:)),
-            "usage": usage,
-        ]
-        if let fingerprint = response.system_fingerprint {
-            object["system_fingerprint"] = fingerprint
-        }
-        if let prefixHash = response.prefix_hash {
-            object["prefix_hash"] = prefixHash
-        }
-        return object
-    }
-
-    private static func chatChoiceJSONObject(_ choice: ChatChoice) -> [String: Any] {
-        [
-            "index": choice.index,
-            "finish_reason": choice.finish_reason,
-            "message": chatMessageJSONObject(choice.message),
-        ]
-    }
-
-    private static func chatMessageJSONObject(_ message: ChatMessage) -> [String: Any] {
-        var object: [String: Any] = ["role": message.role]
-        if let content = message.content {
-            object["content"] = content
-        }
-        if let toolCalls = message.tool_calls {
-            object["tool_calls"] = toolCalls.map(toolCallJSONObject(_:))
-        }
-        if let toolCallId = message.tool_call_id {
-            object["tool_call_id"] = toolCallId
-        }
-        if let reasoning = message.reasoning_content {
-            object["reasoning_content"] = reasoning
-        }
-        return object
-    }
-
-    private static func toolCallJSONObject(_ call: ToolCall) -> [String: Any] {
-        var object: [String: Any] = [
-            "id": call.id,
-            "type": call.type,
-            "function": [
-                "name": call.function.name,
-                "arguments": canonicalToolArgumentsJSON(call.function.arguments),
-            ],
-        ]
-        if let signature = call.geminiThoughtSignature {
-            object["geminiThoughtSignature"] = signature
-        }
-        return object
-    }
-
-    private static func canonicalToolArgumentsJSON(_ json: String, schema: JSONValue? = nil) -> String {
-        let candidates = [
-            json,
-            json.replacingOccurrences(of: #"\""#, with: #"""#),
-        ]
-        guard
-            let object = candidates.lazy.compactMap({ candidate -> Any? in
-                guard let data = candidate.data(using: .utf8) else { return nil }
-                return try? JSONSerialization.jsonObject(with: data)
-            }).first
-        else {
-            return json
-        }
-        let normalized = normalizeNestedJSONStringValues(object)
-        let coerced: Any
-        if let schema {
-            let candidate = SchemaValidator.coerceArguments(normalized, against: schema)
-            let result = SchemaValidator.validate(arguments: candidate, against: schema)
-            coerced = result.isValid ? candidate : normalized
-        } else {
-            coerced = normalized
-        }
-        guard JSONSerialization.isValidJSONObject(coerced),
-            let encoded = try? JSONSerialization.data(withJSONObject: coerced, options: .osaurusCanonical),
-            let string = String(data: encoded, encoding: .utf8)
-        else {
-            return json
-        }
-        return string
-    }
-
-    private static func normalizeNestedJSONStringValues(_ value: Any) -> Any {
-        if let dictionary = value as? [String: Any] {
-            return dictionary.mapValues(normalizeNestedJSONStringValues(_:))
-        }
-        if let array = value as? [Any] {
-            return array.map(normalizeNestedJSONStringValues(_:))
-        }
-        if let string = value as? String,
-            let nestedData = string.data(using: .utf8),
-            let nested = try? JSONSerialization.jsonObject(with: nestedData)
-        {
-            return normalizeNestedJSONStringValues(nested)
-        }
-        return value
-    }
-
-    private static func toolSchema(named name: String, in tools: [Tool]?) -> JSONValue? {
-        tools?.first(where: { $0.function.name == name })?.function.parameters
-    }
-
     /// Log a completed request to InsightsService
     private func logRequest(
         method: String,
@@ -12955,35 +19127,51 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         model: String? = nil,
         tokensInput: Int? = nil,
         tokensOutput: Int? = nil,
+        inputTokenSource: RequestLog.TokenCountSource? = nil,
+        outputTokenSource: RequestLog.TokenCountSource? = nil,
         toolCalls: [ToolCallLog]? = nil,
         temperature: Float? = nil,
         maxTokens: Int? = nil,
         finishReason: RequestLog.FinishReason? = nil,
-        errorMessage: String? = nil
+        errorMessage: String? = nil,
+        details: [String: String]? = nil
     ) {
+        // What travelled sealed end to end stays out of the log: a Secure
+        // Channel call keeps only the size of its bodies.
+        // Off the event loop (a request's task), its own snapshot: the
+        // connection's flag may belong to a later request by now.
+        let sealed = HTTPCallerContext.current?.isSecureChannel ?? _isSecureChannel.value
+        func redacted(_ body: String?) -> String? {
+            guard sealed, let body else { return body }
+            return "[sealed, \(body.utf8.count) bytes]"
+        }
         let durationMs = Date().timeIntervalSince(startTime) * 1000
         InsightsService.logAsync(
             method: method,
             path: path,
+            clientIP: _clientIP.value,
             userAgent: userAgent,
-            requestBody: requestBody,
-            responseBody: responseBody,
+            requestBody: redacted(requestBody),
+            responseBody: redacted(responseBody),
             responseStatus: responseStatus,
             durationMs: durationMs,
             model: model,
             tokensInput: tokensInput,
             tokensOutput: tokensOutput,
+            inputTokenSource: inputTokenSource,
+            outputTokenSource: outputTokenSource,
             temperature: temperature,
             maxTokens: maxTokens,
             toolCalls: toolCalls,
             finishReason: finishReason,
             errorMessage: errorMessage,
-            connection: inboundConnectionInfo()
+            connection: inboundConnectionInfo(),
+            details: details
         )
     }
 
     /// Attribution metadata for an inbound request, built by the auth gate and
-    /// read through the off-loop-safe box. Lets the host's Remote Connections
+    /// read through the off-loop-safe box. Lets the host's Guests list
     /// view tie `.httpAPI` traffic to a specific paired access key (by nonce)
     /// and shows the transport (Secure Channel vs direct) in Insights. Returns
     /// nil for loopback / public routes that carried no token.

@@ -74,7 +74,7 @@ struct RequestValidationTests {
         #expect(HTTPHandler.unsupportedSamplerReason(req) == nil)
     }
 
-    @Test func responseFormatJSONSchemaIsRejected() {
+    @Test func responseFormatJSONSchemaWithoutPayloadIsRejected() {
         let req = makeRequest(responseFormatType: "json_schema")
         let reason = HTTPHandler.unsupportedSamplerReason(req)
         #expect(reason != nil)

@@ -86,20 +86,24 @@ final class SandboxPluginTool: OsaurusTool, @unchecked Sendable {
 
         // Captured separately from the full env so post-exec scrubbing
         // only matches actual secret values, never PARAM_* arguments.
-        let secrets = secretEnvironment(agentId: agentId)
-        let env = buildExecEnvironment(secrets: secrets, from: args)
+        let credentialAgent = CredentialResolver.credentialAgent(fallback: UUID(uuidString: agentId))
+        let credentials = secretEnvironment(agentId: credentialAgent)
+        let env = buildExecEnvironment(secrets: credentials, from: args)
+        let secrets = CredentialResolver.scrubValues(from: credentials, agentId: credentialAgent)
 
         let result: ContainerExecResult
         do {
-            result = try await SandboxManager.shared.execAsAgent(
-                agentName,
-                command: runCommand,
-                pluginName: plugin.id,
-                env: env,
-                timeout: 30,
-                streamToLogs: true,
-                logSource: plugin.id
-            )
+            result = try await SandboxLogScrubbing.$secrets.withValue(secrets) {
+                try await SandboxManager.shared.execAsAgent(
+                    agentName,
+                    command: runCommand,
+                    pluginName: plugin.id,
+                    env: env,
+                    timeout: 30,
+                    streamToLogs: true,
+                    logSource: plugin.id
+                )
+            }
         } catch {
             return ToolEnvelope.fromError(error, tool: name)
         }
@@ -225,9 +229,13 @@ final class SandboxPluginTool: OsaurusTool, @unchecked Sendable {
 
     /// The agent + plugin secrets injected into the exec env. Kept as a
     /// separate dict so the post-exec scrubber knows the exact values.
-    private func secretEnvironment(agentId: String) -> [String: String] {
-        guard let uuid = UUID(uuidString: agentId) else { return [:] }
-        return AgentSecretsKeychain.mergedSecretsEnvironment(agentId: uuid, pluginId: plugin.id)
+    private func secretEnvironment(agentId: UUID?) -> [String: String] {
+        CredentialResolver.sandboxPluginEnvironment(
+            agentId: agentId,
+            pluginId: plugin.id,
+            pluginName: plugin.name,
+            declared: plugin.secrets ?? []
+        )
     }
 
     private func buildExecEnvironment(
@@ -240,7 +248,7 @@ final class SandboxPluginTool: OsaurusTool, @unchecked Sendable {
         return env
     }
 
-    private func buildParamVars(from args: [String: Any]) -> [String: String] {
+    func buildParamVars(from args: [String: Any]) -> [String: String] {
         var env: [String: String] = [:]
         for (key, value) in args {
             let envKey = "PARAM_\(key.uppercased())"
@@ -250,7 +258,10 @@ final class SandboxPluginTool: OsaurusTool, @unchecked Sendable {
                 env[envKey] = num.stringValue
             } else if let bool = value as? Bool {
                 env[envKey] = bool ? "true" : "false"
-            } else if let data = try? JSONSerialization.data(withJSONObject: value, options: .osaurusCanonical),
+            } else if let data = try? JSONSerialization.data(
+                withJSONObject: value,
+                options: [.osaurusCanonical, .fragmentsAllowed]
+            ),
                 let str = String(data: data, encoding: .utf8)
             {
                 env[envKey] = str

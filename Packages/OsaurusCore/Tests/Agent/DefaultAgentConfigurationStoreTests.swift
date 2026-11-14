@@ -81,6 +81,25 @@ struct DefaultAgentConfigurationStoreTests {
         #expect(decoded.autonomousExec == nil)
         #expect(decoded.toolSelectionMode == nil)
         #expect(decoded.manualToolNames == nil)
+        #expect(decoded.avatar == nil)
+        #expect(decoded.customAvatarFilename == nil)
+    }
+
+    @Test
+    @MainActor
+    func savedAvatar_rendersOnTheOrchestrator_andResetRestoresTheGreenDino() async throws {
+        try await StoragePathsTestLock.shared.run {
+            try await Self.withTempOverride {
+                var configured = DefaultAgentConfigurationStore.load()
+                configured.avatar = "orange"
+                DefaultAgentConfigurationStore.save(configured)
+                #expect(Agent.default.avatar == "orange")
+
+                DefaultAgentConfigurationStore.resetCacheForTests()
+                #expect(Agent.default.avatar == Agent.defaultAgentStockAvatar)
+                #expect(DefaultAgentConfigurationStore.load().avatar == "orange")
+            }
+        }
     }
 
     /// Legacy `manualSkillNames` keys must decode as ignored extra data —

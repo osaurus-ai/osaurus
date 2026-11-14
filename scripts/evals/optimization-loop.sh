@@ -23,7 +23,7 @@ set -uo pipefail
 #                  default stays resolvable). Pass a full repo id to pin a local
 #                  model, e.g. MODELS="foundation mlx-community/Qwen3.5-4B-OptiQ-4bit".
 #                  Add a remote frontier with e.g.
-#                  MODELS="foundation auto xai/grok-4.3" (requires XAI_API_KEY).
+#                  MODELS="foundation auto xai/grok-4.7" (requires XAI_API_KEY).
 #   DET_MODEL      model for the deterministic / model-independent suites
 #                  (no LLM call). Default: "auto".
 #   LLM_SUITES     space-separated per-model suites to run. Default is the full

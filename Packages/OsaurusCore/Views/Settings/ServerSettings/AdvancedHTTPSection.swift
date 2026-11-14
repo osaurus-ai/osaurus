@@ -4,7 +4,7 @@
 //
 //  Request body limits for the Server → Settings tab. Persisted to
 //  `server.json` and enforced by Osaurus's HTTP pipeline (`/v1/...`
-//  endpoints and the unauthenticated `/pair` route).
+//  endpoints and the unauthenticated pairing routes).
 //
 
 import SwiftUI
@@ -32,7 +32,7 @@ struct AdvancedHTTPSection: View {
                 label: "Max Pairing Body (KB)",
                 placeholder: "64",
                 help:
-                    "Tighter cap for the unauthenticated /pair endpoint. Should stay small.",
+                    "Tighter cap for the unauthenticated pairing endpoints. Should stay small.",
                 value: pairingBodyBinding,
                 clamp: 1 ... 1024 * 1024
             )

@@ -1,0 +1,12 @@
+{
+  "id": "onboarding.discovery",
+  "domain": "onboarding",
+  "label": "onboarding • one discovery card a day; dismissed items never return",
+  "query": "discovery",
+  "fixtures": {},
+  "expect": {
+    "onboarding": {
+      "check": "discovery"
+    }
+  }
+}

@@ -373,6 +373,83 @@ struct RemoteProviderModelDiscoveryTests {
         )
     }
 
+    @Test func deepInfraModelsResponse_capturesNestedMetadataContextLength() throws {
+        let provider = makeProvider()
+        let body = Data(
+            """
+            {
+              "object": "list",
+              "data": [
+                {
+                  "id": "deepseek-ai/DeepSeek-V4.1-Flash",
+                  "object": "model",
+                  "created": 0,
+                  "owned_by": "deepinfra",
+                  "metadata": {
+                    "context_length": 1048576,
+                    "max_tokens": 163840,
+                    "pricing": {"input_tokens": 0.5},
+                    "tags": ["chat", "reasoning"]
+                  }
+                },
+                {"id": "top-level-wins", "context_length": 131072, "metadata": {"context_length": 8192}},
+                {"id": "string-nested", "metadata": {"context_length": "163840"}},
+                {"id": "null-nested", "metadata": {"context_length": null, "max_tokens": null}},
+                {"id": "zero-nested", "metadata": {"context_length": 0}},
+                {"id": "max-tokens-only", "metadata": {"max_tokens": 4096}}
+              ]
+            }
+            """.utf8
+        )
+
+        let discovery = try RemoteProviderService.decodeOpenAICompatibleModelsDiscovery(
+            data: body,
+            statusCode: 200,
+            provider: provider
+        )
+
+        #expect(discovery.models.count == 6)
+        #expect(
+            discovery.contextLengths == [
+                "deepseek-ai/DeepSeek-V4.1-Flash": 1_048_576,
+                "top-level-wins": 131072,
+                "string-nested": 163840,
+            ]
+        )
+    }
+
+    @Test func nonObjectMetadata_degradesToNilWithoutFailingDiscovery() throws {
+        let provider = makeProvider()
+        let body = Data(
+            """
+            {
+              "data": [
+                {"id": "null-metadata", "metadata": null},
+                {"id": "string-metadata", "metadata": "chat"},
+                {"id": "array-metadata", "metadata": ["chat"]},
+                {"id": "number-metadata", "metadata": 7},
+                {"id": "empty-metadata", "metadata": {}},
+                {"id": "metadata-beside-window", "metadata": "chat", "max_model_len": 32768}
+              ]
+            }
+            """.utf8
+        )
+
+        let discovery = try RemoteProviderService.decodeOpenAICompatibleModelsDiscovery(
+            data: body,
+            statusCode: 200,
+            provider: provider
+        )
+
+        #expect(
+            discovery.models == [
+                "null-metadata", "string-metadata", "array-metadata", "number-metadata",
+                "empty-metadata", "metadata-beside-window",
+            ]
+        )
+        #expect(discovery.contextLengths == ["metadata-beside-window": 32768])
+    }
+
     @Test func manualModelFallback_reportsNoContextLengths() throws {
         let provider = makeProvider(manualModelIds: ["manual-model"])
         let body = Data(#"{"error":{"message":"not found"}}"#.utf8)

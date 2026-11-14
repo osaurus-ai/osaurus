@@ -319,6 +319,10 @@ struct MetalGateTests {
     @Test func alreadyCancelledAcquireThrowsImmediately() async {
         let gate = MetalGate.makeForTesting()
         let task = Task { () -> Bool in
+            // Establish cancellation before admission. Cancelling from the
+            // parent races with this task completing on the idle gate.
+            withUnsafeCurrentTask { $0?.cancel() }
+            #expect(Task.isCancelled)
             do {
                 try await gate.enterGeneration(model: "never-ran")
                 await gate.exitGeneration(model: "never-ran")
@@ -327,7 +331,6 @@ struct MetalGateTests {
                 return error is CancellationError
             }
         }
-        task.cancel()
         let threwCancellation = await task.value
         #expect(threwCancellation)
     }
@@ -455,9 +458,19 @@ struct MetalGateTests {
         // NON-cancellable teardown owner (engine.unload immediately follows
         // entering the gate) — a teardown that gave up mid-wait on
         // cancellation would free buffers without the gate.
+        // Production still uses the shared gate; injection only supplies an
+        // isolated gate to explicit fixture construction.
+        #expect(imageService.contains("public init() {\n        metalGate = .shared"))
         #expect(
             imageService.contains(
-                "await MetalGate.shared.enterModelTeardown(model: \"image-unload\")\n        await engine.unload()"
+                """
+                await metalGate.enterModelTeardown(model: "image-unload")
+                        await engine.unload()
+                        loadedDirectoryName = nil
+                        loadedDirectoryURL = nil
+                        cleanupGPUCache()
+                        await metalGate.exitModelTeardown(model: "image-unload")
+                """
             )
         )
     }

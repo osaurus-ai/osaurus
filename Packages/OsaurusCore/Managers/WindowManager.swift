@@ -12,13 +12,11 @@ import SwiftUI
 /// Identifies managed windows in the application
 public enum WindowIdentifier: Hashable, CustomStringConvertible, Sendable {
     case chat
-    case management
     case permission
 
     public var description: String {
         switch self {
         case .chat: return L("Chat")
-        case .management: return L("Management")
         case .permission: return L("Permission")
         }
     }
@@ -27,7 +25,6 @@ public enum WindowIdentifier: Hashable, CustomStringConvertible, Sendable {
 /// Strictly typed autosave names for window frame persistence
 public enum WindowFrameAutosaveKey: String, Sendable {
     case chat = "ChatWindow"
-    case management = "ManagementWindow"
 }
 
 /// Configuration for creating a managed window
@@ -55,18 +52,6 @@ public struct WindowConfiguration: Sendable {
         hideStandardButtons: [.closeButton, .miniaturizeButton, .zoomButton],
         autosaveKey: .chat
     )
-
-    public static let management = WindowConfiguration(
-        identifier: .management,
-        defaultSize: NSSize(width: 940, height: 640),
-        styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-        usePanel: false,
-        titlebarAppearsTransparent: true,
-        titleVisibility: .hidden,
-        isMovableByWindowBackground: false,
-        hideStandardButtons: [],
-        autosaveKey: .management
-    )
 }
 
 /// Centralized window management for the application
@@ -87,6 +72,18 @@ public final class WindowManager: NSObject, ObservableObject {
     private override init() {
         super.init()
         loadPinnedState()
+    }
+
+    // MARK: - Hosting
+
+    /// The hosting controller for a window whose size AppKit owns. SwiftUI
+    /// never drives the frame (no `NSHostingSizingOptions`); these windows
+    /// size their floors elsewhere (`ChatWindowManager` for chat).
+    public func makeHostingController<Content: View>(
+        for identifier: WindowIdentifier,
+        rootView: Content
+    ) -> NSViewController {
+        AppKitOwnedWindowHostingController(rootView: rootView, minimumContentSize: .zero)
     }
 
     // MARK: - Window Registration
@@ -173,6 +170,11 @@ public final class WindowManager: NSObject, ObservableObject {
         if center {
             centerOnActiveScreen(window)
         }
+
+        // The restored autosave frame may come from a larger display, so
+        // make sure the window (and the floor its content enforces) fits
+        // the screen it is about to appear on (#2761).
+        fitToScreen(window, identifier: identifier, repositions: false)
 
         // Temporarily use screenSaver level (highest) to force window above everything
         // This is necessary because macOS won't bring windows to front from background apps
@@ -296,25 +298,27 @@ public final class WindowManager: NSObject, ObservableObject {
         config: WindowConfiguration,
         content: () -> Content
     ) -> NSWindow {
-        let hostingController = NSHostingController(rootView: content())
-
         // AppKit owns these windows' size via `defaultSize` + frame autosave,
-        // so the SwiftUI content should fill the window rather than drive it.
-        // Leaving the default sizingOptions on lets the hosting controller push
-        // the content's measured size back onto the window every layout pass;
-        // with fill-style (`maxWidth/maxHeight: .infinity`) roots that negotiation
-        // has no fixed point and can oscillate after a resize or state change,
-        // pinning the main thread in a non-converging layout loop.
-        if #available(macOS 13.0, *) {
-            hostingController.sizingOptions = []
-        }
+        // so the SwiftUI content fills the window and never drives it. The
+        // controller keeps every `NSHostingSizingOptions` off — `.minSize`
+        // included — because any option lets `NSHostingView.windowDidLayout`
+        // resize the window itself, and when the size it wants is one the
+        // window cannot hold that resize/invalidate cycle exhausts AppKit's
+        // update-constraints budget and raises (Sentry APPLE-MACOS-1ZM; see
+        // `AppKitOwnedWindowHostingController`).
+        let hostingController = makeHostingController(for: config.identifier, rootView: content())
 
-        // Calculate centered position on active screen
+        // Calculate centered position on active screen. The default size is
+        // shrunk to the screen's visible frame so a small display ("Larger
+        // Text" scaling on a 13" laptop) never opens a window that hangs
+        // off its edges (#2761).
+        let screen = activeScreen
+        let defaultSize = Self.fittedSize(config.defaultSize, to: screen)
         let initialRect: NSRect
-        if let s = activeScreen {
-            initialRect = centeredRect(size: config.defaultSize, on: s)
+        if let s = screen {
+            initialRect = centeredRect(size: defaultSize, on: s)
         } else {
-            initialRect = NSRect(origin: .zero, size: config.defaultSize)
+            initialRect = NSRect(origin: .zero, size: defaultSize)
         }
 
         let window: NSWindow
@@ -342,6 +346,10 @@ public final class WindowManager: NSObject, ObservableObject {
                 defer: false
             )
             window.isReleasedWhenClosed = false
+            // Transparent so `WindowMaterialView` can blur what is behind the
+            // window (behindWindow blending).
+            window.isOpaque = false
+            window.backgroundColor = .clear
         }
 
         // Opt out of AppKit snapshot state restoration. Window positions
@@ -361,12 +369,9 @@ public final class WindowManager: NSObject, ObservableObject {
 
         window.contentViewController = hostingController
 
-        // Pre-layout to avoid jank
-        hostingController.view.layoutSubtreeIfNeeded()
-
-        // Force set content size again to ensure we start with the intended size
-        // This prevents the window from starting at 0x0 or wrong size if layoutSubtreeIfNeeded did something unexpected
-        window.setContentSize(config.defaultSize)
+        // Explicitly set the content size so the window starts at the intended
+        // dimensions rather than 0x0 before SwiftUI's first layout pass.
+        window.setContentSize(defaultSize)
 
         if let autosaveKey = config.autosaveKey {
             window.setFrameAutosaveName(autosaveKey.rawValue)
@@ -374,6 +379,11 @@ public final class WindowManager: NSObject, ObservableObject {
 
         // Register with manager
         register(window, as: config.identifier)
+
+        // The autosave frame just restored may come from a larger display;
+        // shrink it to this screen and pull it fully into view.
+        fitToScreen(window, identifier: config.identifier, repositions: true)
+        ensureScreenParametersObserver()
 
         return window
     }
@@ -385,7 +395,6 @@ public final class WindowManager: NSObject, ObservableObject {
     private static func fallbackSize(for identifier: WindowIdentifier) -> NSSize {
         switch identifier {
         case .chat: return WindowConfiguration.chat.defaultSize
-        case .management: return WindowConfiguration.management.defaultSize
         case .permission: return NSSize(width: 800, height: 600)
         }
     }
@@ -393,6 +402,117 @@ public final class WindowManager: NSObject, ObservableObject {
     private var activeScreen: NSScreen? {
         let mouse = NSEvent.mouseLocation
         return NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+    }
+
+    // MARK: - Screen fit
+
+    /// `size` shrunk to `screen`'s visible frame (menu bar and Dock
+    /// excluded). Unchanged when no screen is known.
+    private static func fittedSize(_ size: NSSize, to screen: NSScreen?) -> NSSize {
+        guard let vf = screen?.visibleFrame else { return size }
+        return NSSize(width: min(size.width, vf.width), height: min(size.height, vf.height))
+    }
+
+    /// Keep `window` inside its screen's visible frame: shrink the frame if
+    /// it is larger than the screen and move it back on screen. Runs on
+    /// creation (the restored autosave frame may come from a larger
+    /// display), on every show, and whenever the window lands on another
+    /// screen. A window taller than
+    /// its screen could otherwise only be shown with its title bar under the
+    /// menu bar and its bottom cut off (#2761).
+    ///
+    /// `repositions` also pulls a window that FITS but sits partly off
+    /// screen back into view; only creation wants that. A window the user
+    /// dragged partly off screen on purpose is left alone, and nothing moves
+    /// while a mouse button is down (a drag between displays is in
+    /// progress; snapping mid-drag would fight the user). Full screen is
+    /// left to AppKit. Mirrors `ChatWindowManager.fitToScreen`.
+    private func fitToScreen(_ window: NSWindow, identifier: WindowIdentifier, repositions: Bool) {
+        guard !window.styleMask.contains(.fullScreen),
+            let screen = window.screen ?? activeScreen
+        else { return }
+        guard NSEvent.pressedMouseButtons == 0 else {
+            // A drag between displays is in progress. `windowDidChangeScreen`
+            // fires mid-drag and nothing re-runs this afterwards, so without
+            // a retry a window dragged onto a smaller display keeps its
+            // oversized frame until the next show. Re-fit once the button
+            // is released.
+            deferFitUntilMouseUp(identifier, repositions: repositions)
+            return
+        }
+        let vf = screen.visibleFrame
+        var frame = window.frame
+        frame.size.width = min(frame.width, vf.width)
+        frame.size.height = min(frame.height, vf.height)
+        if repositions || frame.size != window.frame.size {
+            frame.origin.x = min(max(frame.minX, vf.minX), vf.maxX - frame.width)
+            frame.origin.y = min(max(frame.minY, vf.minY), vf.maxY - frame.height)
+        }
+        guard frame != window.frame else { return }
+        window.setFrame(frame, display: true)
+    }
+
+    fileprivate func windowDidChangeScreen(_ identifier: WindowIdentifier) {
+        guard let window = windows[identifier] else { return }
+        fitToScreen(window, identifier: identifier, repositions: false)
+    }
+
+    /// Windows whose fit was skipped mid-drag, keyed by identifier, with the
+    /// strongest `repositions` requested while the button was down.
+    private var pendingFits: [WindowIdentifier: Bool] = [:]
+    private var mouseUpMonitor: Any?
+
+    /// Arm a one-shot local monitor that re-runs `fitToScreen` for every
+    /// deferred window on the next mouse-up. Local monitors only see events
+    /// delivered to this app, which is the case for a drag of our own
+    /// window; the monitor is removed as soon as it fires so idle sessions
+    /// carry no observer.
+    private func deferFitUntilMouseUp(_ identifier: WindowIdentifier, repositions: Bool) {
+        pendingFits[identifier] = (pendingFits[identifier] ?? false) || repositions
+        guard mouseUpMonitor == nil else { return }
+        mouseUpMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseUp, .rightMouseUp, .otherMouseUp]
+        ) { [weak self] event in
+            // Let the window finish its own drag handling first; running the
+            // fit inside the event callback would move the window while
+            // AppKit is still committing the drag's final frame.
+            DispatchQueue.main.async { [weak self] in
+                self?.runPendingFits()
+            }
+            return event
+        }
+    }
+
+    private func runPendingFits() {
+        if let monitor = mouseUpMonitor {
+            NSEvent.removeMonitor(monitor)
+            mouseUpMonitor = nil
+        }
+        let fits = pendingFits
+        pendingFits = [:]
+        for (identifier, repositions) in fits {
+            guard let window = windows[identifier] else { continue }
+            fitToScreen(window, identifier: identifier, repositions: repositions)
+        }
+    }
+
+    private var screenParametersCancellable: AnyCancellable?
+
+    /// Re-fit every managed window when a display's resolution or
+    /// arrangement changes (e.g. switching to "Larger Text" scaling, or
+    /// unplugging the external display the window was on). Armed on first
+    /// window creation.
+    private func ensureScreenParametersObserver() {
+        guard screenParametersCancellable == nil else { return }
+        screenParametersCancellable = NotificationCenter.default
+            .publisher(for: NSApplication.didChangeScreenParametersNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                for (identifier, window) in self.windows {
+                    self.fitToScreen(window, identifier: identifier, repositions: false)
+                }
+            }
     }
 
     private func applyPinnedStyle(to window: NSWindow, pinned: Bool) {
@@ -435,7 +555,6 @@ public final class WindowManager: NSObject, ObservableObject {
         let identifiers = pinnedWindows.map { identifier -> String in
             switch identifier {
             case .chat: return "chat"
-            case .management: return "management"
             case .permission: return "permission"
             }
         }
@@ -449,7 +568,6 @@ public final class WindowManager: NSObject, ObservableObject {
         for id in identifiers {
             switch id {
             case "chat": pinnedWindows.insert(.chat)
-            case "management": pinnedWindows.insert(.management)
             case "permission": pinnedWindows.insert(.permission)
             default: break
             }
@@ -469,6 +587,10 @@ private final class WindowManagerDelegate: NSObject, NSWindowDelegate {
         self.identifier = identifier
         self.manager = manager
         super.init()
+    }
+
+    func windowDidChangeScreen(_ notification: Notification) {
+        manager?.windowDidChangeScreen(identifier)
     }
 
     func windowWillClose(_ notification: Notification) {

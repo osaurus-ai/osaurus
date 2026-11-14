@@ -1,8 +1,11 @@
 # Agent Channel Security Foundation
 
-This document covers the policy-only foundation for future Discord, Slack,
-Telegram, and JSON Agent Channel receive flows. It does not implement adapter
-routing, an inbox UI, a remote command center, or computer-use triggers.
+This document covers the shared inbound policy layer (identity, allowlists,
+replay and trust checks) that every Agent Channel receive path runs through:
+the native Discord, Slack, Telegram, iMessage, WhatsApp and Email adapters and
+the n8n / custom JSON receivers. Routing a message to an agent is covered in
+`docs/AGENT_CHANNELS.md` ("Inbound routing is automations"); this document is
+only the policy that runs before it.
 
 ## Identity Model
 
@@ -164,7 +167,7 @@ connections may declare provider-side idempotency in their action config;
 Discord/Slack/Telegram bot sends have no server-side dedupe key, which is
 exactly why the ambiguous class exists.
 
-The prompt payload is redacted by design: the dynamic "Channel Destinations"
+The prompt payload is redacted by design: the dynamic "Where It Can Post"
 section lists only the current agent's usable bindings for the current run
 source — stable binding ids, labels, connection/room display ids, modes, and
 operator guidance. It never includes secrets, sender identities, other agents'
@@ -261,6 +264,81 @@ records. Durable authorization still belongs to channel allowlists, reply-token
 validation, nonce replay protection, message-store dedupe, and the write kill
 switch. The helper prunes stale in-memory rate windows and task leases lazily
 when authorized channel requests are evaluated.
+
+## Webhook Ingress (`/channels/`)
+
+The generic inbound route `POST /channels/{kind}/{connection_id}/inbound`, its
+poll twin `GET /channels/{kind}/{connection_id}/tasks/{task_id}`, and the
+credential-test probe `GET /channels/{kind}/{connection_id}/ping` are
+bearer-exempt: they are reachable without an `osk-v1` key because the caller is
+an external automation (today: n8n) that cannot hold one. The connection
+secret is therefore the entire authentication, and `AgentChannelWebhookIngress`
+applies these rules in order, before any other work:
+
+- **Rate limit first.** A dedicated per-source limiter (120 requests/min with
+  a 10 s cooldown after a denial) runs before connection lookup, so an unknown
+  caller cannot enumerate connection ids cheaply. `401` and foreign-task `404`
+  responses penalize the source.
+- **Connection gate.** Unknown ids return `404 connection_not_found`, disabled
+  connections `403 connection_disabled`, kinds without ingress `400
+  unsupported_kind`.
+- **Remote transport policy.** Non-loopback plaintext callers receive `426
+  secure_channel_required` unless the connection explicitly opts into
+  `plaintext_allowed`. Loopback and Secure Channel (`/secure/call`) callers
+  always pass. This is the same fail-closed posture the agent request gate
+  uses; the Docker-on-the-same-Mac topology is the documented reason the
+  opt-in exists.
+- **Verify before parse.** Bodies over 256 KiB are refused with `413`. The
+  shared-secret header or HMAC-SHA256 body signature is checked with
+  constant-time comparison via `AgentChannelAsyncSubstrate.verifyWebhookSource`
+  *before* the body is decoded. A failed verification returns `401
+  unauthorized`, increments a per-connection `signature_failures` counter,
+  and writes nothing to the message store or activity feed. `none` is not an
+  accepted verification method for this route.
+- **Fail-closed authorization.** After parsing, `authorizeInboundMessage`
+  requires non-empty sender and room allowlists that match the envelope;
+  denials are recorded as audit rows (`202 rejected` with a typed reason) and
+  never dispatched.
+- **Dedupe.** `event_id` is the provider event id; replays acknowledge with
+  `200 duplicate` and do not create a second dispatch.
+- **Poll ownership.** A task is readable only by the connection that
+  dispatched it. Unknown and foreign tasks are indistinguishable (`404`), and
+  the returned `output` passes through `ChannelRemoteSafetyGate.sanitizeResult`.
+- **Redaction.** The verification header is the credential; the HTTP shim logs
+  only a redacted header twin and a byte count, and the secret never appears in
+  responses, activity rows, audit rows, or diagnostics.
+
+- **Ping is not a task read.** `/ping` verifies the secret on the empty body
+  and reports the connection's verification method and the transport it saw
+  (`loopback`, `plaintext`, `secure_channel`). It never consults the task
+  store, so a credential test cannot probe task ids and does not pay the
+  foreign-task penalty.
+
+Residual risk to state, not hide: a `plaintext_allowed` connection reachable
+from a non-loopback network relies solely on the secret and rate limiter, and
+the read-only poll route is replayable within its window. Secure Channel
+remains the default and recommended remote transport.
+
+### Pairing code
+
+The n8n sheet issues a pairing code (`osrs-n8n-1.<base64url JSON>`,
+`N8nPairingCode`) that bundles the URL candidates, connection id, verification
+method, **the channel secret**, and optionally the address of the bound local
+agent. Security properties:
+
+- The code **is** the secret. It is shown once in the sheet, copied to the
+  clipboard, and pasted into an n8n credential (encrypted at rest by n8n). It
+  is never written to `agent-channels.json`, logs, or diagnostics. Rotating
+  the secret invalidates every code issued before.
+- The agent address in the code is a **pin**, not a credential. The node
+  refuses a `/secure/session` whose transcript signature does not recover to
+  that address, so a relay or MITM cannot substitute its own ephemeral key.
+- When the address is present the node never downgrades to plaintext: a peer
+  that answers `/secure/session` with 404 is reported as unsupported, not
+  retried in the clear.
+- The Secure Channel inner request carries no `osk-v1` bearer for
+  `/channels/` routes; the channel secret remains the only authentication and
+  is verified inside the ciphertext exactly as in plaintext.
 
 ## Local State Assumption
 

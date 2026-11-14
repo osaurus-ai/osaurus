@@ -141,6 +141,37 @@ struct DocumentParserShimTests {
         #expect(supported.contains(potx))
     }
 
+    @Test func supportedDocumentTypes_includeMarkdownPickerTypes() throws {
+        let md = try #require(UTType(filenameExtension: "md"))
+        let markdown = try #require(UTType(filenameExtension: "markdown"))
+        let supported = Set(DocumentParser.supportedDocumentTypes)
+
+        #expect(supported.contains(md))
+        #expect(supported.contains(markdown))
+        if let daringfireball = UTType("net.daringfireball.markdown") {
+            #expect(supported.contains(daringfireball))
+        }
+    }
+
+    /// Picker/router parity: every extension `canParse` accepts must resolve
+    /// to a UTType the picker advertises, otherwise NSOpenPanel greys the
+    /// file out even though dropping it onto the composer works.
+    @Test func supportedDocumentTypes_coverEveryParsableExtension() throws {
+        let supported = Set(DocumentParser.supportedDocumentTypes)
+        let extensions = [
+            "md", "markdown", "txt", "toml", "ini", "cfg", "conf", "env", "log",
+            "ts", "tsx", "jsx", "rs", "go", "java", "kt", "c", "cpp", "h",
+            "rb", "php", "css", "scss", "sql", "lua", "tf", "dockerfile",
+            "pdf", "docx", "doc", "rtf", "html", "htm",
+        ]
+        for ext in extensions {
+            let url = URL(fileURLWithPath: "/tmp/sample.\(ext)")
+            #expect(DocumentParser.canParse(url: url), "canParse must accept .\(ext)")
+            let type = try #require(UTType(filenameExtension: ext), ".\(ext) must resolve to a UTType")
+            #expect(supported.contains(type), "picker allowlist must include .\(ext)")
+        }
+    }
+
     // MARK: - Fixtures
 
     private func writeFile(content: String, ext: String) throws -> URL {

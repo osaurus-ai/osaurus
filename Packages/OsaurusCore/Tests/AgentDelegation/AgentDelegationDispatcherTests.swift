@@ -7,7 +7,7 @@
 //  spawn-tool strip inside a delegated child, the delegation gating on
 //  `TextSubagentKind` (production agent targets delegate; the eval seam
 //  and bare-model spawns keep the in-memory runner), and the feed's
-//  notch-mirror suppression + child-session link.
+//  Activity-mirror suppression + child-session link.
 //
 
 import Foundation
@@ -16,6 +16,22 @@ import Testing
 @testable import OsaurusCore
 
 struct AgentDelegationDispatcherTests {
+
+    @Test func localWrapperForwardsModelAndWorkspaceKeepsHostOwnership() throws {
+        let source = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("Services/AgentDelegation/AgentDelegationDispatcher.swift"),
+            encoding: .utf8
+        )
+        // Integration tripwire: the workspace dispatcher overload was added
+        // concurrently with the local admitted-model propagation change.
+        #expect(source.contains("maxContextPositions: maxContextPositions,\n            model: model,"))
+        #expect(source.contains("model: String? = nil,"))
+        #expect(source.contains("delegationModel: target.isWorkspace ? nil : model"))
+    }
 
     // MARK: - Dispatcher: title + harvest
 
@@ -67,7 +83,8 @@ struct AgentDelegationDispatcherTests {
                     "Services/AgentDelegation/AgentDelegationDispatcher.swift"),
             encoding: .utf8
         )
-        #expect(source?.contains("prompt: delegatedPrompt(input: input)") == true)
+        #expect(source?.contains("prompt: delegatedPrompt(") == true)
+        #expect(source?.contains("remote: target.isWorkspace,") == true)
         #expect(source?.contains("title: sessionTitle(for: input)") == true)
     }
 
@@ -228,9 +245,9 @@ struct AgentDelegationDispatcherTests {
         // Chat-owned inference provenance: the parent's residency-handoff
         // restore must be able to reclaim the helper's model afterwards.
         #expect(SessionSource.delegation.inferenceSource == .chatUI)
-        // Sidebar/notch decoration.
+        // Sidebar/Activity decoration.
         #expect(SessionSource.delegation.originLabel() == "delegated")
-        #expect(SessionSource.delegation.shortLabel == "Delegated")
+        #expect(SessionSource.delegation.shortLabel == "Orchestrator")
         #expect(!SessionSource.delegation.iconName.isEmpty)
     }
 
@@ -285,11 +302,11 @@ struct AgentDelegationDispatcherTests {
     // MARK: - Delegation gating on TextSubagentKind
 
     @Test func agentTargetsDelegateOnlyWithoutTheEvalSeam() {
-        // Production agent target → true delegation (and no duplicate notch
+        // Production agent target → true delegation (and no duplicate Activity
         // mirror: the dispatched run registers its own background task).
         let production = TextSubagentKind(agentID: UUID(), input: "x")
         #expect(production.isDelegatedAgentTarget)
-        #expect(production.suppressNotchMirror)
+        #expect(production.suppressActivityMirror)
 
         // The eval seam forces the deterministic in-memory runner.
         let eval = TextSubagentKind(
@@ -298,27 +315,22 @@ struct AgentDelegationDispatcherTests {
             modelOverride: "eval/forced-model"
         )
         #expect(!eval.isDelegatedAgentTarget)
-        #expect(!eval.suppressNotchMirror)
-
-        // Bare-model spawns keep the ephemeral flow unchanged.
-        let model = TextSubagentKind(model: "some-model", input: "x")
-        #expect(!model.isDelegatedAgentTarget)
-        #expect(!model.suppressNotchMirror)
+        #expect(!eval.suppressActivityMirror)
     }
 
     // MARK: - Feed: mirror suppression + child session link
 
     @Test func feedCarriesSuppressionFlagAndDelegatedSessionId() {
         let plain = SubagentFeed(toolCallId: "t1", kindId: "spawn", title: "spawn → Helper")
-        #expect(!plain.suppressNotchMirror)
+        #expect(!plain.suppressActivityMirror)
 
         let suppressed = SubagentFeed(
             toolCallId: "t2",
             kindId: "spawn",
             title: "spawn → Helper",
-            suppressNotchMirror: true
+            suppressActivityMirror: true
         )
-        #expect(suppressed.suppressNotchMirror)
+        #expect(suppressed.suppressActivityMirror)
 
         // The delegated child's session id lands on the feed (thread-safe
         // one-shot) so the in-chat card can link to the chat, and setting it
@@ -345,34 +357,43 @@ struct AgentDelegationDispatcherTests {
     @Test @MainActor func delegatedSessionsStripSpawnToolsFromTheSchema() async throws {
         let lease = await acquireSubagentStoreSandbox("delegation-spawn-strip")
         defer { lease.release() }
-        // Give the Default agent a non-empty spawn pool so `spawn_agent`
-        // resolves into its direct-chat schema — the baseline the strip is
-        // measured against.
-        SubagentConfigurationStore.save(
-            SubagentConfiguration(
-                spawnableAgentIDs: [UUID()],
-                spawnableModelNames: ["some-model"]
-            )
-        )
+        // Supply a described, runnable request-local target; a random missing
+        // UUID must no longer expose delegation merely because it is stored.
+        let worker = Agent(name: "Boundary probe", description: "Checks delegated tasks for the tool boundary probe.",
+            defaultModel: "local/boundary-probe")
+        SubagentConfigurationStore.save(SubagentConfiguration(spawnableAgentIDs: [worker.id]))
+        let targets = SpawnTargetAvailabilitySnapshot(agentTargets: [
+            .init(descriptor: .init(id: worker.id, name: worker.name, description: worker.description,
+                modelId: worker.defaultModel, isLocal: true, providerName: nil), state: .runnable)
+        ])
 
+        // A custom launcher: the Orchestrator itself never holds spawn tools.
+        let snapshot = AgentConfigSnapshot(
+            agentId: UUID(), toolsDisabled: false, memoryDisabled: true,
+            autonomousConfig: nil, toolMode: .auto, model: nil, manualToolNames: nil,
+            systemPrompt: "", dbEnabled: false,
+            spawnDelegationEnabled: true, spawnableAgentIDs: [worker.id]
+        )
         let spawnNames = Set(SubagentCapabilityRegistry.spawn.toolNames)
 
         let direct = await ChatExecutionContext.$currentSessionSource.withValue(.chat) {
             SystemPromptComposer.resolveTools(
-                agentId: Agent.defaultId,
-                executionMode: .none
+                snapshot: snapshot,
+                executionMode: .none,
+                spawnTargets: targets
             )
         }
         let directNames = Set(direct.map { $0.function.name })
         #expect(
             !directNames.isDisjoint(with: spawnNames),
-            "baseline: a non-empty spawn pool must expose spawn tools in direct chat"
+            "baseline: a described runnable spawn pool must expose spawn tools in direct chat"
         )
 
         let delegated = await ChatExecutionContext.$currentSessionSource.withValue(.delegation) {
             SystemPromptComposer.resolveTools(
-                agentId: Agent.defaultId,
-                executionMode: .none
+                snapshot: snapshot,
+                executionMode: .none,
+                spawnTargets: targets
             )
         }
         let delegatedNames = Set(delegated.map { $0.function.name })
@@ -388,9 +409,11 @@ struct AgentDelegationDispatcherTests {
         #expect(!delegatedNames.contains("clarify"), "a delegated child must not carry clarify")
 
         // CAPABILITY SURFACE CONTRACT: exactly the two structural strips
-        // above — everything else the target agent sees in direct chat, the
+        // above, plus the folder picker every windowless source drops —
+        // everything else the target agent sees in direct chat, the
         // delegated child sees too (the child IS the agent).
-        let expected = directNames.subtracting(spawnNames).subtracting(["clarify"])
+        let expected = directNames.subtracting(spawnNames)
+            .subtracting(["clarify", PromptWorkingFolderTool.toolName])
         #expect(
             delegatedNames == expected,
             "delegated surface must be direct-chat minus spawn+clarify; missing: \(expected.subtracting(delegatedNames)), extra: \(delegatedNames.subtracting(expected))"

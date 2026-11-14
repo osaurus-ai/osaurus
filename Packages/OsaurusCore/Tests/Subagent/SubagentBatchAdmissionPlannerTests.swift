@@ -36,6 +36,7 @@ struct SubagentBatchAdmissionPlannerTests {
         local: Int = 3,
         remote: Int = 0,
         agent: Int = 3,
+        remoteLimit: Int = SubagentBudgets.remoteParallelSpawnBounds.upperBound,
         engine: Int = 3,
         continuousBatching: Bool = true,
         ramSafety: Bool = true,
@@ -46,6 +47,7 @@ struct SubagentBatchAdmissionPlannerTests {
             localJobCount: local,
             remoteJobCount: remote,
             agentParallelLimit: agent,
+            remoteParallelLimit: remoteLimit,
             engineParallelLimit: engine,
             continuousBatchingEnabled: continuousBatching,
             ramSafetyEnabled: ramSafety,
@@ -243,8 +245,25 @@ struct SubagentBatchAdmissionPlannerTests {
         #expect(plan.projectedModelWorkingSetBytes == UInt64.max)
     }
 
-    @Test("oversized batch is rejected instead of silently dropping jobs")
+    @Test("oversized local batch is rejected instead of silently dropping jobs")
     func oversizedBatchRejects() {
+        let plan = SubagentBatchAdmissionPlanner.plan(
+            input(
+                local: 4,
+                remote: 0,
+                agent: 3,
+                ramSafety: false
+            )
+        )
+
+        #expect(plan.verdict == .rejected(.batchExceedsAgentLimit))
+        #expect(plan.limitingFactors == [.agentPolicy])
+    }
+
+    @Test("remote jobs never consume the local fan-out limit")
+    func remoteJobsDoNotCountAgainstLocalLimit() {
+        // 2 local + 2 remote under a local limit of 3 used to be rejected as
+        // "4 > 3". Remote workers allocate no local model, KV, or engine slot.
         let plan = SubagentBatchAdmissionPlanner.plan(
             input(
                 local: 2,
@@ -253,9 +272,29 @@ struct SubagentBatchAdmissionPlannerTests {
                 ramSafety: false
             )
         )
+        #expect(plan.verdict == .admitted)
+        #expect(plan.localParallelism == 2)
+        #expect(plan.remoteParallelism == 2)
 
+        let wide = SubagentBatchAdmissionPlanner.plan(
+            input(local: 0, remote: 8, agent: 1, engine: 1, continuousBatching: false)
+        )
+        #expect(wide.verdict == .admitted, "eight cloud workers behind a one-slot local engine")
+        #expect(wide.remoteParallelism == 8)
+    }
+
+    @Test("remote jobs are bounded by the remote fan-out limit")
+    func remoteJobsRespectRemoteLimit() {
+        let plan = SubagentBatchAdmissionPlanner.plan(
+            input(local: 0, remote: 5, agent: 3, remoteLimit: 4, engine: 1, continuousBatching: false)
+        )
         #expect(plan.verdict == .rejected(.batchExceedsAgentLimit))
         #expect(plan.limitingFactors == [.agentPolicy])
+
+        let zeroRemote = SubagentBatchAdmissionPlanner.plan(
+            input(local: 1, remote: 0, agent: 3, remoteLimit: 0, ramSafety: false)
+        )
+        #expect(zeroRemote.verdict == .rejected(.invalidParallelLimit))
     }
 
     @Test("remote-only batch needs no local memory estimate")

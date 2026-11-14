@@ -88,8 +88,9 @@ public struct ServerConfiguration: Codable, Equatable, Sendable {
     /// Default: 32 MiB (generous for multimodal chat completions).
     public var maxRequestBodyBytes: Int
 
-    /// Tighter ceiling for `POST /pair`, which is unauthenticated and
-    /// only ever carries a small JSON envelope. A 64 KiB cap is several
+    /// Tighter ceiling for the pairing routes (`/pair-invite`,
+    /// `/secure/session`), which are unauthenticated and
+    /// only ever carry a small JSON envelope. A 64 KiB cap is several
     /// orders of magnitude more than a real pairing request needs.
     public var maxPairingBodyBytes: Int
 
@@ -325,16 +326,19 @@ public enum ModelIdleResidencyPolicy: Codable, Equatable, Hashable, Sendable {
         }
     }
 
-    /// Default warm residency keeps local chat/API follow-up turns from paying
-    /// a full cold load and losing per-model cache/coordinator state after
-    /// every response. Immediate unload remains available as an explicit
-    /// low-memory setting.
-    public static let defaultWarm: ModelIdleResidencyPolicy = .afterSeconds(900)
+    /// Short follow-up window; permanent residency is an explicit opt-in.
+    public static let defaultWarm: ModelIdleResidencyPolicy = .afterSeconds(30)
+
+    public var keepsModelLoaded: Bool {
+        get { self == .never }
+        set { self = newValue ? .never : .defaultWarm }
+    }
 
     /// Settings picker presets.
     public static let presets: [ModelIdleResidencyPolicy] = [
-        .afterSeconds(300),
         .defaultWarm,
+        .afterSeconds(300),
+        .afterSeconds(900),
         .afterSeconds(1_800),
         .afterSeconds(3_600),
         .immediately,
@@ -345,6 +349,8 @@ public enum ModelIdleResidencyPolicy: Codable, Equatable, Hashable, Sendable {
         switch self {
         case .immediately:
             return L("Immediately")
+        case .afterSeconds(30):
+            return L("30 seconds")
         case .afterSeconds(300):
             return L("5 minutes")
         case .afterSeconds(900):
@@ -362,14 +368,19 @@ public enum ModelIdleResidencyPolicy: Codable, Equatable, Hashable, Sendable {
     }
 
     public var description: String {
+        let reloadCost = L("The next message reloads the model first, which can take a while for large models.")
         switch self {
         case .immediately:
-            return L("Unloads model memory as soon as no active chat window or generation lease keeps it warm.")
+            return L("Unloads model memory when the last generation finishes.") + " " + reloadCost
+        case .afterSeconds(30):
+            return L(
+                "Unloads after 30 seconds without a request, or when the last chat window using the model closes. Active requests finish first."
+            ) + " " + reloadCost
         case .afterSeconds(let seconds):
             return String(
-                format: L("Keeps model memory resident for %d minutes after the last generation finishes."),
+                format: L("Unloads after %d minutes without a request, or when the last chat window using the model closes. Active requests finish first."),
                 max(1, seconds / 60)
-            )
+            ) + " " + reloadCost
         case .never:
             return L("Keeps model memory resident until manual unload, model switch, memory cleanup, or quit.")
         }
@@ -410,7 +421,7 @@ public enum ModelEvictionPolicy: String, Codable, CaseIterable, Sendable {
         case .strictSingleModel:
             return L("Automatically unloads other models. Recommended for standard use.")
         case .manualMultiModel:
-            return L("Keeps models loaded until manually unloaded. Requires 32GB+ RAM.")
+            return L("Allows multiple resident models. The idle-unload setting still applies.")
         }
     }
 }

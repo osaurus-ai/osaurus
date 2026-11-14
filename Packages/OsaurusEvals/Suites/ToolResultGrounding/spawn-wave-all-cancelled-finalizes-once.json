@@ -1,0 +1,93 @@
+{
+  "id": "tool_result_grounding.spawn-wave-all-cancelled-finalizes-once",
+  "domain": "tool_result_grounding",
+  "label": "spawn_agent wave • user stop settles every call once and the parent does not restart",
+  "query": "Stop the delegated work and report that both workers were stopped without restarting them.",
+  "notes": "Model-free committed-transcript contract paired with the scripted Subagent cancellation case. Both calls of the wave settle as user_denied rows; exact sequence plus one terminal final rejects duplicate continuation or a replacement wave.",
+  "fixtures": {},
+  "expect": {
+    "toolResultGrounding": {
+      "events": [
+        {
+          "kind": "toolCall",
+          "callId": "wave-a",
+          "tool": "spawn_agent",
+          "arguments": "{\"agent\":\"A11CE001-0000-4000-8000-000000000311\",\"input\":\"Wait for stop.\"}"
+        },
+        {
+          "kind": "toolCall",
+          "callId": "wave-b",
+          "tool": "spawn_agent",
+          "arguments": "{\"agent\":\"A11CE001-0000-4000-8000-000000000312\",\"input\":\"Wait for stop.\"}"
+        },
+        {
+          "kind": "toolResult",
+          "callId": "wave-a",
+          "tool": "spawn_agent",
+          "content": "{\"ok\":false,\"kind\":\"user_denied\",\"message\":\"Subagent run was stopped by the user.\",\"retryable\":false,\"tool\":\"spawn_agent\"}"
+        },
+        {
+          "kind": "toolResult",
+          "callId": "wave-b",
+          "tool": "spawn_agent",
+          "content": "{\"ok\":false,\"kind\":\"user_denied\",\"message\":\"Subagent run was stopped by the user.\",\"retryable\":false,\"tool\":\"spawn_agent\"}"
+        },
+        {
+          "kind": "assistant",
+          "content": "Both delegated workers were stopped by the user before finishing. No replacement work was started."
+        }
+      ],
+      "assertions": [
+        {
+          "callId": "wave-a",
+          "answerMustContain": [
+            "stopped"
+          ],
+          "resultMustContain": [
+            "\"kind\":\"user_denied\""
+          ],
+          "argumentsMustNotContain": [
+            "stopped"
+          ]
+        },
+        {
+          "callId": "wave-b",
+          "resultMustContain": [
+            "\"kind\":\"user_denied\""
+          ]
+        }
+      ],
+      "expectedToolSequence": [
+        "spawn_agent",
+        "spawn_agent"
+      ],
+      "requireSingleFinalAssistant": true,
+      "requireFinalAfterAllToolResults": true,
+      "requireFinalIsLastEvent": true,
+      "spawnWave": {
+        "exactCallCount": 2,
+        "expectedTargets": [
+          "A11CE001-0000-4000-8000-000000000311",
+          "A11CE001-0000-4000-8000-000000000312"
+        ],
+        "expectedSucceeded": 0,
+        "expectedFailed": 2,
+        "expectedWaveSizes": [
+          2
+        ],
+        "expectedRows": [
+          {
+            "target": "A11CE001-0000-4000-8000-000000000311",
+            "ok": false,
+            "failureKind": "user_denied"
+          },
+          {
+            "target": "A11CE001-0000-4000-8000-000000000312",
+            "ok": false,
+            "failureKind": "user_denied"
+          }
+        ]
+      }
+    }
+  }
+}

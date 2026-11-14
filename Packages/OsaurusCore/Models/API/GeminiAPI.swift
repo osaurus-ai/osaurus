@@ -229,6 +229,13 @@ struct GeminiImageConfig: Codable, Sendable {
     let imageSize: String?  // "512px", "1K", "2K", "4K"
 }
 
+/// Gemini `generationConfig.thinkingConfig`. Exactly one of the two fields
+/// is set, matching the model family's documented control.
+struct GeminiThinkingConfig: Codable, Sendable, Equatable {
+    var thinkingLevel: String? = nil
+    var thinkingBudget: Int? = nil
+}
+
 /// Gemini generation configuration
 struct GeminiGenerationConfig: Codable, Sendable {
     let temperature: Double?
@@ -243,6 +250,13 @@ struct GeminiGenerationConfig: Codable, Sendable {
     /// `"application/json"` for JSON mode (maps OpenAI
     /// `response_format: {type: json_object}`).
     var responseMimeType: String? = nil
+    /// JSON Schema the response must satisfy (maps OpenAI
+    /// `response_format: {type: json_schema}`).
+    var responseJsonSchema: JSONValue? = nil
+    /// Thinking control. Gemini 3 models take `thinkingLevel`; Gemini 2.5
+    /// models take a `thinkingBudget` token count. See
+    /// `GeminiReasoningContract`.
+    var thinkingConfig: GeminiThinkingConfig? = nil
 }
 
 // MARK: - Response Models
@@ -265,6 +279,26 @@ struct GeminiUsageMetadata: Codable, Sendable {
     let promptTokenCount: Int?
     let candidatesTokenCount: Int?
     let totalTokenCount: Int?
+    /// Tokens of the prompt served from Gemini's implicit (or explicit)
+    /// context cache at the discounted rate; subset of `promptTokenCount`.
+    /// Absent when nothing was cached.
+    var cachedContentTokenCount: Int? = nil
+    /// Reasoning tokens for thinking models; not part of `candidatesTokenCount`.
+    var thoughtsTokenCount: Int? = nil
+
+    init(
+        promptTokenCount: Int?,
+        candidatesTokenCount: Int?,
+        totalTokenCount: Int?,
+        cachedContentTokenCount: Int? = nil,
+        thoughtsTokenCount: Int? = nil
+    ) {
+        self.promptTokenCount = promptTokenCount
+        self.candidatesTokenCount = candidatesTokenCount
+        self.totalTokenCount = totalTokenCount
+        self.cachedContentTokenCount = cachedContentTokenCount
+        self.thoughtsTokenCount = thoughtsTokenCount
+    }
 }
 
 // MARK: - Error Response

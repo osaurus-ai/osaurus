@@ -20,17 +20,19 @@ struct ConfigManifestDerivationTests {
 
     @Test
     func knownKeysMatchManifestSections() {
-        // Root must know every section plus `version`.
+        // Root must know every section plus `version`, and still accept the
+        // pre-events sections that are translated into `events`.
         let root = ConfigManifest.knownKeys[""]
-        #expect(root == Set(ConfigSectionID.allNames + ["version"]))
+        #expect(root == Set(ConfigSectionID.allNames + ["version"] + ConfigManifest.legacySections.map(\.name)))
         // Spot-check derived paths exist.
         for path in ["memory", "delegation", "agents[]", "agents[].capabilities",
-            "search_providers.providers[]"]
+            "search_providers.providers[]", "harness_runtimes[]", "agents[].claude_code",
+            "default_agent.claude_code"]
         {
             #expect(ConfigManifest.knownKeys[path] != nil, "missing knownKeys path `\(path)`")
         }
-        // Scope reduction 2: the removed sections must not resurface.
-        for removed in ["server", "chat", "app"] {
+        // Scope reduction 2: the removed section must not resurface.
+        for removed in ["server"] {
             #expect(ConfigManifest.knownKeys[removed] == nil, "`\(removed)` crept back")
         }
     }
@@ -124,8 +126,8 @@ struct ConfigManifestDerivationTests {
         // Enum constraints survive derivation.
         let delegation = try #require(properties["delegation"] as? [String: Any])
         let delegationProps = try #require(delegation["properties"] as? [String: Any])
-        let spawnAccess = try #require(delegationProps["spawn_tool_access"] as? [String: Any])
-        #expect((spawnAccess["enum"] as? [String])?.contains("read_only") == true)
+        let mode = try #require(delegationProps["applescript_execution_mode"] as? [String: Any])
+        #expect((mode["enum"] as? [String])?.contains("confirm_each") == true)
     }
 
     @Test

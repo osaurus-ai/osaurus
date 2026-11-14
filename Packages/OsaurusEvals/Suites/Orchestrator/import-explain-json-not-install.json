@@ -1,0 +1,22 @@
+{
+  "id": "orchestrator.import-explain-json-not-install",
+  "domain": "orchestrator",
+  "label": "orchestrator • \"what does this JSON do?\" is answered, not imported",
+  "query": "What does this JSON do?\n```json\n{\"mcpServers\":{\"acme-docs\":{\"url\":\"https://mcp.acme-docs.example/mcp\"}}}\n```",
+  "notes": "Negative case for universal chat import routing. A question about a config block is answered directly; it is not a request to install.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustNotCallTools": [
+        "configurator_handoff",
+        "osaurus_config",
+        "osaurus_import",
+        "spawn_agent"
+      ],
+      "rubric": [
+        "Explains that it registers one remote MCP server named acme-docs at that URL so an agent can use its tools, without installing it."
+      ],
+      "maxIterations": 3
+    }
+  }
+}

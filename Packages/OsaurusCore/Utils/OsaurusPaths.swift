@@ -8,6 +8,7 @@
 
 import AppKit
 import Foundation
+import OsaurusRepository
 
 /// Centralized path management for all Osaurus app data.
 /// All stores and services should use this module for path resolution.
@@ -51,12 +52,20 @@ public enum OsaurusPaths {
         if let override = overrideRoot {
             return override
         }
-        if let envRoot = ProcessInfo.processInfo.environment["OSAURUS_TEST_ROOT"],
+        if let envRoot = ProcessEnvironment.value("OSAURUS_TEST_ROOT"),
             !envRoot.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         {
             return URL(fileURLWithPath: envRoot, isDirectory: true)
         }
+        if let spaceRoot = SpaceRegistry.activeDataRoot() {
+            return spaceRoot
+        }
         return defaultRoot
+    }
+
+    /// The Default Space's root (`~/.osaurus`), whichever Space is active.
+    public static func defaultSpaceRoot() -> URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".osaurus", isDirectory: true)
     }
 
     /// Returns the marker path for a resolved root without triggering another
@@ -72,6 +81,11 @@ public enum OsaurusPaths {
         root().appendingPathComponent("config", isDirectory: true)
     }
 
+    /// Configuration history: one snapshot of the declarative document per change.
+    public static func configHistoryDatabaseFile() -> URL {
+        config().appendingPathComponent("history.sqlite")
+    }
+
     /// Voice-related configuration directory
     public static func voiceConfig() -> URL {
         config().appendingPathComponent("voice", isDirectory: true)
@@ -80,6 +94,20 @@ public enum OsaurusPaths {
     /// Provider configurations directory
     public static func providers() -> URL {
         root().appendingPathComponent("providers", isDirectory: true)
+    }
+
+    /// Unified credentials metadata (`CredentialStore`). Secret values stay
+    /// in the Keychain; this directory holds only the index and bindings.
+    public static func credentials() -> URL {
+        root().appendingPathComponent("credentials", isDirectory: true)
+    }
+
+    public static func credentialsIndexFile() -> URL {
+        credentials().appendingPathComponent("index.json")
+    }
+
+    public static func credentialBindingsFile() -> URL {
+        credentials().appendingPathComponent("bindings.json")
     }
 
     /// Agents directory
@@ -94,11 +122,35 @@ public enum OsaurusPaths {
         root().appendingPathComponent("agent-invites", isDirectory: true)
     }
 
+    /// Unsaved New Agent drafts (`AgentDraftStore`). A sibling of `agents()`
+    /// for the same reason as the invite ledger.
+    public static func agentDrafts() -> URL {
+        root().appendingPathComponent("agent-drafts", isDirectory: true)
+    }
+
     /// Remote (paired) agents that the receiver has added from someone else's
     /// share link. Distinct from `agents()` — those are the local agents
     /// this device owns and signs for.
     public static func remoteAgents() -> URL {
         root().appendingPathComponent("remote-agents", isDirectory: true)
+    }
+
+    /// Copies of the records `ClassicResaveRecovery` guards, under the same
+    /// relative paths. Osaurus Classic never reads this directory.
+    public static func classicResaveCopies() -> URL {
+        root().appendingPathComponent("classic-resave", isDirectory: true)
+    }
+
+    /// Workspaces (shared-agent) host state: minted teammate key records and
+    /// the per-workspace audit trail.
+    public static func workspaces() -> URL {
+        root().appendingPathComponent("workspaces", isDirectory: true)
+    }
+
+    /// Append-only, hash-chained per-workspace audit logs
+    /// (`<workspaceId>.jsonl` + `<workspaceId>.head`).
+    public static func workspaceAudit() -> URL {
+        workspaces().appendingPathComponent("audit", isDirectory: true)
     }
 
     /// Projects directory (one JSON file per project)
@@ -111,11 +163,6 @@ public enum OsaurusPaths {
         root().appendingPathComponent("themes", isDirectory: true)
     }
 
-    /// Chat sessions directory (legacy JSON files, archived after migration)
-    public static func sessions() -> URL {
-        root().appendingPathComponent("sessions", isDirectory: true)
-    }
-
     /// Archive directory used by the chat-history SQLite migration to retain
     /// the original per-session JSON files (never deleted).
     public static func sessionsArchive() -> URL {
@@ -125,6 +172,22 @@ public enum OsaurusPaths {
     /// Chat history database directory
     public static func chatHistory() -> URL {
         root().appendingPathComponent("chat-history", isDirectory: true)
+    }
+
+    /// File history: change-set database plus the content-addressed object store.
+    public static func fileHistory() -> URL {
+        root().appendingPathComponent("file-history", isDirectory: true)
+    }
+
+    /// Data directory owned by the Osaurus Sync core (conversations, blobs).
+    public static func sync() -> URL {
+        root().appendingPathComponent("sync", isDirectory: true)
+    }
+
+    /// Per-device conversation state that never syncs (folder bookmarks,
+    /// tool-call step logs, app data that didn't fit a synced write).
+    public static func syncLocalState() -> URL {
+        root().appendingPathComponent("sync-local", isDirectory: true)
     }
 
     /// Provider-neutral Agent Channel message state.
@@ -140,6 +203,21 @@ public enum OsaurusPaths {
     /// Watchers directory
     public static func watchers() -> URL {
         root().appendingPathComponent("watchers", isDirectory: true)
+    }
+
+    /// Events directory: one JSON per event, plus the run ledger.
+    public static func events() -> URL {
+        root().appendingPathComponent("events", isDirectory: true)
+    }
+
+    /// Encrypted ledger of every event occurrence.
+    public static func eventRunsDatabaseFile() -> URL {
+        events().appendingPathComponent("runs.sqlite")
+    }
+
+    /// Automation source connections (`SourceConnectionStore`), one JSON file each.
+    public static func sourceConnections() -> URL {
+        root().appendingPathComponent("connections", isDirectory: true)
     }
 
     /// Runtime state directory
@@ -198,17 +276,25 @@ public enum OsaurusPaths {
 
     // MARK: - Volume free-space query
     //
-    // Prefer the cheap POSIX filesystem query. On some external/APFS volumes
-    // `.volumeAvailableCapacityForImportantUsageKey` enters CacheDelete and can
-    // block model load for minutes before any weights are mapped. The URL-keyed
-    // query remains a fallback for volumes where legacy `.systemFreeSize` is
-    // missing or reports zero under sandbox/container pressure.
+    // Two figures exist. The strict `.systemFreeSize` excludes purgeable space
+    // (APFS local snapshots, purgeable caches); on a Mac with a large purgeable
+    // pool it reads as nearly full (18 GB vs 1.44 TB on one 8 TB drive).
+    // `.volumeAvailableCapacityForImportantUsageKey` includes it and is what
+    // Finder and System Settings show, but on some external/APFS volumes it
+    // enters CacheDelete and can block for minutes. So the strict query runs
+    // inline and the purgeable-inclusive one comes from
+    // `VolumeAvailableCapacityCache`, which refreshes it in the background.
+    // The inline URL-keyed query remains the fallback for volumes where the
+    // strict figure is missing or zero under sandbox/container pressure.
 
-    /// Returns the free byte count on the volume that hosts `path`. Uses the
-    /// legacy filesystem attribute first to avoid CacheDelete stalls, then falls
-    /// back to `.volumeAvailableCapacityForImportantUsageKey` when needed.
+    /// Returns the free byte count on the volume that hosts `path`: the larger
+    /// of the strict filesystem figure and the cached purgeable-inclusive
+    /// figure. Never waits on CacheDelete while the strict figure is positive.
     /// Returns `nil` if both queries fail — callers should treat `nil` as
     /// "unknown, render 'unknown'" rather than coercing to zero.
+    // INVARIANT: known purgeable capacity may increase strict free space, but
+    // the slow query must not block the positive-strict path. Guarded by
+    // ModelDownloadServiceStorageTests and VolumeAvailableCapacityCacheTests.
     public static func volumeFreeBytes(forPath path: String) -> Int64? {
         var legacyFree: Int64?
         if let attrs = try? FileManager.default.attributesOfFileSystem(forPath: path),
@@ -217,7 +303,10 @@ public enum OsaurusPaths {
             legacyFree = free
         }
         if let legacyFree, legacyFree > 0 {
-            return legacyFree
+            return resolvedVolumeFreeBytes(
+                importantCapacity: VolumeAvailableCapacityCache.shared.cachedBytes(forPath: path),
+                legacyFree: legacyFree
+            )
         }
 
         let url = URL(fileURLWithPath: path)
@@ -239,6 +328,10 @@ public enum OsaurusPaths {
         legacyFree: Int64?
     ) -> Int64? {
         if let legacyFree, legacyFree > 0 {
+            // Purgeable space counts: macOS frees it for any real write.
+            if let importantCapacity, importantCapacity > legacyFree {
+                return importantCapacity
+            }
             return legacyFree
         }
         if let importantCapacity, importantCapacity > 0 {
@@ -301,6 +394,87 @@ public enum OsaurusPaths {
         root().appendingPathComponent("templates", isDirectory: true)
     }
 
+    /// Versioned agent and workflow template library (`TemplateStore`).
+    public static func templateLibrary() -> URL {
+        root().appendingPathComponent("template-library", isDirectory: true)
+    }
+
+    /// Task queues, tasks and their journal (`TaskStore`).
+    public static func tasks() -> URL {
+        root().appendingPathComponent("tasks", isDirectory: true)
+    }
+
+    /// Encrypted task store: queues, tasks, journal, reservations.
+    public static func tasksDatabaseFile() -> URL {
+        tasks().appendingPathComponent("tasks.sqlite")
+    }
+
+    /// Installed workflows, saved answers, drafts, and run records.
+    public static func workflows() -> URL {
+        root().appendingPathComponent("workflows", isDirectory: true)
+    }
+
+    /// Encrypted workflow run records (`WorkflowRunStore`).
+    public static func workflowRunsDatabaseFile() -> URL {
+        workflows().appendingPathComponent("runs.sqlite")
+    }
+
+    /// Unsaved Architect drafts (`WorkflowDraftStore`).
+    public static func workflowDrafts() -> URL {
+        workflows().appendingPathComponent("drafts", isDirectory: true)
+    }
+
+    /// Per-workflow side data: `answers.json` and run workspaces.
+    public static func workflowDirectory(_ id: UUID) -> URL {
+        workflows().appendingPathComponent(id.uuidString.lowercased(), isDirectory: true)
+    }
+
+    /// Scratch directory for one run's files, passed to nodes by handle.
+    /// Files a run's steps shared, kept apart from the workspace its steps write.
+    public static func workflowRunArtifacts(workflowID: UUID, runID: UUID) -> URL {
+        workflowDirectory(workflowID)
+            .appendingPathComponent("artifacts", isDirectory: true)
+            .appendingPathComponent(runID.uuidString.lowercased(), isDirectory: true)
+    }
+
+    public static func workflowRunWorkspace(workflowID: UUID, runID: UUID) -> URL {
+        workflowDirectory(workflowID)
+            .appendingPathComponent("runs", isDirectory: true)
+            .appendingPathComponent(runID.uuidString.lowercased(), isDirectory: true)
+    }
+
+    // A workflow's sandbox environment is keyed by its template id
+    // (`WorkflowSandboxEnvironment` explains why), so every path below
+    // takes `environmentID`, never the installed-workflow or run id.
+
+    /// Sandbox identity of a workflow: the agent-style name its Linux user
+    /// (`agent-wf-<uuid>`) and home (`/workspace/agents/wf-<uuid>`) use.
+    public static func workflowSandboxAgentName(environmentID: UUID) -> String {
+        "wf-\(environmentID.uuidString.lowercased())"
+    }
+
+    /// Record of what is installed in a workflow's sandbox environment.
+    /// Lives in the environment's home so a sandbox reset that clears the
+    /// share clears it too.
+    public static func workflowSandboxManifestFile(environmentID: UUID) -> URL {
+        containerAgentDir(workflowSandboxAgentName(environmentID: environmentID))
+            .appendingPathComponent(".osaurus-environment.json")
+    }
+
+    /// Scratch directory of one run of a sandbox workflow. It lives under
+    /// the VirtioFS share so the host and the VM see one directory: this
+    /// path on the host, `workflowSandboxRunWorkspaceInContainer` inside.
+    public static func workflowSandboxRunWorkspace(environmentID: UUID, runID: UUID) -> URL {
+        containerAgentDir(workflowSandboxAgentName(environmentID: environmentID))
+            .appendingPathComponent("runs", isDirectory: true)
+            .appendingPathComponent(runID.uuidString.lowercased(), isDirectory: true)
+    }
+
+    public static func workflowSandboxRunWorkspaceInContainer(environmentID: UUID, runID: UUID) -> String {
+        inContainerAgentHome(workflowSandboxAgentName(environmentID: environmentID))
+            + "/runs/" + runID.uuidString.lowercased()
+    }
+
     /// Artifacts directory
     public static func artifacts() -> URL {
         root().appendingPathComponent("artifacts", isDirectory: true)
@@ -351,11 +525,15 @@ public enum OsaurusPaths {
         knowledge().appendingPathComponent("write_log.sqlite")
     }
 
-    /// Per-collection VecturaKit vector index directory. Like the memory
-    /// vectors, always a derivable artifact of the indexed corpus.
-    public static func knowledgeVecturaDirectory(for id: UUID) -> URL {
+    /// Per-collection VecturaKit vector index directory for the active
+    /// embedding profile. Like the memory vectors, always a derivable
+    /// artifact of the indexed corpus.
+    public static func knowledgeVecturaDirectory(
+        for id: UUID,
+        indexDirectoryName: String = EmbeddingService.indexDirectoryName
+    ) -> URL {
         knowledge()
-            .appendingPathComponent("vectura", isDirectory: true)
+            .appendingPathComponent(indexDirectoryName, isDirectory: true)
             .appendingPathComponent(id.uuidString, isDirectory: true)
     }
 
@@ -371,6 +549,11 @@ public enum OsaurusPaths {
     /// On-device Osaurus Router billing ledger directory (`~/.osaurus/billing/`).
     public static func billing() -> URL {
         root().appendingPathComponent("billing", isDirectory: true)
+    }
+
+    /// Persisted Insights activity / audit log directory (`~/.osaurus/activity/`).
+    public static func activity() -> URL {
+        root().appendingPathComponent("activity", isDirectory: true)
     }
 
     /// Tool index data directory
@@ -520,6 +703,9 @@ public enum OsaurusPaths {
     public static func chatConfigFile() -> URL { config().appendingPathComponent("chat.json") }
     public static func serverConfigFile() -> URL { config().appendingPathComponent("server.json") }
     public static func toolConfigFile() -> URL { config().appendingPathComponent("tools.json") }
+    public static func syncConfigFile() -> URL { config().appendingPathComponent("sync.json") }
+    /// Last fetched relay and discovery server list (`SyncNetworkDirectory`).
+    public static func syncNetworkFile() -> URL { config().appendingPathComponent("sync-network.json") }
     public static func computerUseConfigFile() -> URL {
         config().appendingPathComponent("computer-use.json")
     }
@@ -527,6 +713,10 @@ public enum OsaurusPaths {
     /// the built-in Default agent has no per-agent settings editor).
     public static func browserConfigFile() -> URL {
         config().appendingPathComponent("browser.json")
+    }
+    /// Built-in Apple app tools state (one-time plugin → native migration marker).
+    public static func appleAppsConfigFile() -> URL {
+        config().appendingPathComponent("apple-apps.json")
     }
     /// Persistent catalog of native browser sessions (agent id → WebKit
     /// profile UUID + last-known page + observed auth status). The WebKit
@@ -565,12 +755,23 @@ public enum OsaurusPaths {
     public static func chatHistoryDatabaseFile() -> URL {
         chatHistory().appendingPathComponent("history.sqlite")
     }
+    public static func fileHistoryDatabaseFile() -> URL {
+        fileHistory().appendingPathComponent("history.sqlite")
+    }
     public static func agentChannelMessagesDatabaseFile() -> URL {
         agentChannels().appendingPathComponent("messages.sqlite")
     }
     public static func methodsDatabaseFile() -> URL { methods().appendingPathComponent("methods.sqlite") }
     /// Encrypted on-device Osaurus Router billing ledger: `~/.osaurus/billing/ledger.sqlite`.
     public static func billingLedgerDatabaseFile() -> URL { billing().appendingPathComponent("ledger.sqlite") }
+    /// Hash-chained Insights activity log: `~/.osaurus/activity/activity.sqlite`
+    /// plus an `activity.head` sidecar holding the last `seq:hash`.
+    public static func activityLogDatabaseFile() -> URL { activity().appendingPathComponent("activity.sqlite") }
+    public static func activityLogHeadFile() -> URL { activity().appendingPathComponent("activity.head") }
+    /// Activity log retention / content policy: `~/.osaurus/config/activity-log.json`.
+    public static func activityLogConfigFile() -> URL { config().appendingPathComponent("activity-log.json") }
+    /// Attention routing (which kinds reach which channels): `~/.osaurus/config/notifications.json`.
+    public static func notificationPreferencesFile() -> URL { config().appendingPathComponent("notifications.json") }
     public static func toolIndexDatabaseFile() -> URL { toolIndex().appendingPathComponent("tool_index.sqlite") }
     public static func memoryConfigFile() -> URL { config().appendingPathComponent("memory.json") }
     public static func relayConfigFile() -> URL { config().appendingPathComponent("relay.json") }
@@ -583,10 +784,6 @@ public enum OsaurusPaths {
 
     public static func themeFile(for id: UUID) -> URL {
         themes().appendingPathComponent("\(id.uuidString).json")
-    }
-
-    public static func sessionFile(for id: UUID) -> URL {
-        sessions().appendingPathComponent("\(id.uuidString).json")
     }
 
     public static func scheduleFile(for id: UUID) -> URL {

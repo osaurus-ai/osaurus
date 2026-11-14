@@ -444,7 +444,7 @@ final class PluginRepositoryService: ObservableObject {
         }
 
         let missingRequired = secrets.filter { spec in
-            spec.required && !ToolSecretsKeychain.hasSecret(id: spec.id, for: pluginId, agentId: Agent.defaultId)
+            spec.required && !PluginCredentials.isSatisfied(pluginId: pluginId, specId: spec.id, agentId: nil)
         }
 
         if !missingRequired.isEmpty {

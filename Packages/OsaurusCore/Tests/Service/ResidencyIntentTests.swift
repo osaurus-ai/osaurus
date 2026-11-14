@@ -202,34 +202,37 @@ struct ResidencyIntentTests {
     // MARK: - The intent must survive the trip, and must expire
 
     @Test("Copying a request keeps its background flag")
-    func copyHelpersPreserveBackgroundIntent() throws {
-        let src = try Self.source("Models/API/OpenAIAPI.swift")
-
-        // `withModel` and `withContext` rebuild the request field by field. Both
-        // already carry the other local-only flags. Omitting this one silently
-        // PROMOTES a background request to interactive — and interactive requests
-        // are the ones allowed to evict a model someone is using. A dropped flag
-        // here undoes the entire guard, quietly, with no failing test anywhere.
-        let copies = src.components(separatedBy: "copy.backgroundModelLoad = backgroundModelLoad")
-            .count - 1
-        let ownerCopies = src.components(
-            separatedBy:
-                "copy.preserveExistingResidencyOwner = preserveExistingResidencyOwner"
-        ).count - 1
-        let helpers = src.components(separatedBy: "copy.warmupPrefill = warmupPrefill").count - 1
-        #expect(helpers == 2, "expected withModel + withContext to copy local-only flags")
-        #expect(
-            copies == helpers,
-            """
-            \(helpers) request-copy helpers but only \(copies) copy \
-            `backgroundModelLoad`. A helper that drops it turns background \
-            housekeeping back into an eviction-entitled interactive request.
-            """
+    func copyHelpersPreserveBackgroundIntent() {
+        var original = ChatCompletionRequest(
+            model: "model",
+            messages: [],
+            temperature: nil,
+            max_tokens: nil,
+            stream: true,
+            top_p: nil,
+            frequency_penalty: nil,
+            presence_penalty: nil,
+            stop: nil,
+            n: nil,
+            tools: nil,
+            tool_choice: nil
         )
-        #expect(
-            ownerCopies == helpers,
-            "every request-copy helper must preserve the nested residency-owner policy"
-        )
+        original.backgroundModelLoad = true
+        original.preserveExistingResidencyOwner = true
+        original.warmupPrefill = true
+        let copies = [
+            original.withModel("other"),
+            original.withContext(messages: [], tools: nil, toolChoice: nil),
+        ]
+        for copy in copies {
+            #expect(copy.backgroundModelLoad)
+            #expect(copy.preserveExistingResidencyOwner)
+            #expect(copy.warmupPrefill)
+        }
+        var independent = copies[0]
+        independent.backgroundModelLoad = false
+        #expect(original.backgroundModelLoad)
+        #expect(copies[1].backgroundModelLoad)
     }
 
     @Test("nested requests preserve an existing non-chat residency owner")
@@ -269,8 +272,8 @@ struct ResidencyIntentTests {
         let runner = try Self.source(
             "Services/AgentDelegation/AgentSubagentRunner.swift"
         )
-        #expect(runner.contains("request.backgroundModelLoad = true"))
-        #expect(runner.contains("request.preserveExistingResidencyOwner = true"))
+        #expect(runner.contains("request.context.backgroundModelLoad = true"))
+        #expect(runner.contains("request.context.preserveExistingResidencyOwner = true"))
 
         let handoff = try Self.source(
             "Services/AgentDelegation/ChatResidencyHandoff.swift"

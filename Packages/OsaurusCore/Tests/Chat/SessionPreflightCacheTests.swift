@@ -28,6 +28,64 @@ struct SessionPreflightCacheTests {
     }
 
     @Test
+    func sameNameSchemaReplacementInvalidatesFrozenCatalog() async {
+        let store = SessionToolStateStore()
+        let first = SessionToolStateStore.ToolGrantSnapshot(
+            agentAllowedNames: ["a"],
+            enabledDynamicNames: ["a"],
+            schemas: ["a": Data("schema-v1".utf8)]
+        )
+        await store.reconcileToolGrants("s", current: first)
+        await store.setInitial("s", alwaysLoadedNames: ["a"], toolSpecs: [], manifest: "old")
+        await store.reconcileToolGrants("s", current: first)
+        #expect(await store.get("s")?.frozenManifest == "old")
+        await store.reconcileToolGrants(
+            "s",
+            current: .init(
+                agentAllowedNames: ["a"],
+                enabledDynamicNames: ["a"],
+                schemas: ["a": Data("schema-v2".utf8)]
+            )
+        )
+        #expect(await store.get("s")?.frozenManifest == nil)
+        #expect(await store.get("s")?.initialToolSpecs == nil)
+    }
+
+    @Test
+    func changedToolGrantsRefreshCatalogAndPreserveHistory() async {
+        let store = SessionToolStateStore()
+        let first = SessionToolStateStore.ToolGrantSnapshot(
+            agentAllowedNames: ["a"],
+            enabledDynamicNames: ["a", "b"]
+        )
+        await store.reconcileToolGrants("s", current: first)
+        await store.setInitial(
+            "s",
+            alwaysLoadedNames: ["capabilities"],
+            toolSpecs: [],
+            fingerprint: "none/auto",
+            manifest: "old",
+            soul: "soul"
+        )
+        await store.recordUserPrefix("s", key: "history", prefix: "memory")
+        await store.reconcileToolGrants("s", current: first)
+        #expect(await store.get("s")?.frozenManifest == "old")
+        await store.reconcileToolGrants(
+            "s",
+            current: .init(
+                agentAllowedNames: ["a", "b"],
+                enabledDynamicNames: ["a", "b"]
+            )
+        )
+        let changed = await store.get("s")
+        #expect(changed?.frozenManifest == nil)
+        #expect(changed?.initialAlwaysLoadedNames == nil)
+        #expect(changed?.initialToolSpecs == nil)
+        #expect(changed?.frozenSoul == "soul")
+        #expect(changed?.frozenUserPrefixes["history"] == "memory")
+    }
+
+    @Test
     func sessionToolStateStore_appendLoadedToolsPersistsIdempotently() async {
         let sessionId = "same-turn-load-\(UUID().uuidString)"
         await SessionToolStateStore.shared.appendLoadedTools(

@@ -30,12 +30,15 @@ enum DatabaseImport {
         case tsv
         case json
         case jsonl
+        case xlsx
     }
 
     enum ImportError: LocalizedError {
         case undecodableText
         case noRows
         case badJSON(String)
+        case badWorkbook(String)
+        case sheetNotFound(String, available: [String])
         case headerlessNeedsColumns
         case tooLarge(bytes: Int, limit: Int)
 
@@ -47,6 +50,12 @@ enum DatabaseImport {
                 return "No data rows were found in the file."
             case .badJSON(let m):
                 return "Could not parse JSON: \(m)"
+            case .badWorkbook(let m):
+                return "Could not read the .xlsx workbook: \(m)"
+            case .sheetNotFound(let name, let available):
+                return
+                    "Sheet `\(name)` was not found in the workbook. Available sheets: "
+                    + available.map { "`\($0)`" }.joined(separator: ", ") + "."
             case .headerlessNeedsColumns:
                 return
                     "has_header is false but no `columns` were provided — supply the "
@@ -83,6 +92,7 @@ enum DatabaseImport {
             case "tsv": return .tsv
             case "json": return .json
             case "jsonl", "ndjson": return .jsonl
+            case "xlsx": return .xlsx
             default: break  // e.g. "txt" → sniff
             }
         }
@@ -91,8 +101,11 @@ enum DatabaseImport {
         case "tsv": return .tsv
         case "json": return .json
         case "jsonl", "ndjson": return .jsonl
+        case "xlsx": return .xlsx
         default: break
         }
+        // OOXML packages start with the ZIP local-file signature.
+        if sample.hasPrefix("PK\u{03}\u{04}") { return .xlsx }
 
         let trimmed = sample.drop(while: { $0 == " " || $0 == "\n" || $0 == "\r" || $0 == "\t" })
         if let first = trimmed.first {
@@ -116,12 +129,23 @@ enum DatabaseImport {
         format: Format,
         hasHeader: Bool,
         explicitColumns: [String]?,
-        maxRows: Int?
+        maxRows: Int?,
+        sheetName: String? = nil,
+        filename: String = "import.xlsx"
     ) throws -> Parsed {
         guard data.count <= maxBytes else {
             throw ImportError.tooLarge(bytes: data.count, limit: maxBytes)
         }
         switch format {
+        case .xlsx:
+            return try parseXLSX(
+                data: data,
+                filename: filename,
+                sheetName: sheetName,
+                hasHeader: hasHeader,
+                explicitColumns: explicitColumns,
+                maxRows: maxRows
+            )
         case .csv, .tsv:
             let delimiter: Character = (format == .tsv) ? "\t" : ","
             guard let text = String(data: data, encoding: .utf8) else {
@@ -217,6 +241,129 @@ enum DatabaseImport {
             truncated: truncated,
             errors: []
         )
+    }
+
+    // MARK: - Workbook (.xlsx)
+
+    /// One sheet of an `.xlsx` workbook → typed rows. Mirrors the delimited
+    /// path: the first row is the header unless `hasHeader` is false, blank
+    /// rows are skipped, numbers/booleans keep their cell type, and the
+    /// widest row bounds the column count. `sheetName` picks a sheet
+    /// (case-insensitive); the first sheet is the default.
+    static func parseXLSX(
+        data: Data,
+        filename: String,
+        sheetName: String?,
+        hasHeader: Bool,
+        explicitColumns: [String]?,
+        maxRows: Int?
+    ) throws -> Parsed {
+        let workbook: Workbook
+        do {
+            workbook = try XLSXAdapter.workbook(from: data, filename: filename)
+        } catch {
+            throw ImportError.badWorkbook(
+                (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            )
+        }
+        let sheet: Workbook.Sheet
+        if let wanted = sheetName?.trimmingCharacters(in: .whitespacesAndNewlines), !wanted.isEmpty {
+            guard let match = workbook.sheets.first(where: { $0.name.caseInsensitiveCompare(wanted) == .orderedSame })
+            else {
+                throw ImportError.sheetNotFound(wanted, available: workbook.sheets.map(\.name))
+            }
+            sheet = match
+        } else {
+            guard let first = workbook.sheets.first(where: { !$0.rows.isEmpty }) else {
+                throw ImportError.noRows
+            }
+            sheet = first
+        }
+
+        // Materialize a dense grid: sparse cells → positional fields keyed by
+        // column number so gaps become empty strings like a CSV would.
+        let width = sheet.rows.reduce(0) { max($0, $1.cells.map(\.columnNumber).max() ?? 0) }
+        guard width > 0 else { throw ImportError.noRows }
+        var records: [[Workbook.CellValue]] = []
+        records.reserveCapacity(sheet.rows.count)
+        for row in sheet.rows.sorted(by: { $0.number < $1.number }) {
+            var record = [Workbook.CellValue](repeating: .empty, count: width)
+            for cell in row.cells where cell.columnNumber >= 1 && cell.columnNumber <= width {
+                record[cell.columnNumber - 1] = cell.value
+            }
+            records.append(record)
+        }
+        guard !records.isEmpty else { throw ImportError.noRows }
+
+        let columns: [String]
+        var dataRecords: ArraySlice<[Workbook.CellValue]>
+        if let explicit = explicitColumns, !explicit.isEmpty {
+            columns = explicit
+            dataRecords = hasHeader ? records.dropFirst() : records[...]
+        } else if hasHeader {
+            columns = records[0].enumerated().map { index, value in
+                let header = sanitizeHeader(value.fallbackText)
+                return header.isEmpty ? "column_\(index + 1)" : header
+            }
+            dataRecords = records.dropFirst()
+        } else {
+            throw ImportError.headerlessNeedsColumns
+        }
+        guard !columns.isEmpty else { throw ImportError.noRows }
+
+        var rows: [[String: AgentSQLValue]] = []
+        rows.reserveCapacity(dataRecords.count)
+        var sampler = TypeSampler(columns: columns)
+        var skipped = 0
+        var truncated = false
+
+        for record in dataRecords {
+            if let cap = maxRows, rows.count >= cap {
+                truncated = true
+                break
+            }
+            var row: [String: AgentSQLValue] = [:]
+            for (i, column) in columns.enumerated() where i < record.count {
+                let value = sqlValue(record[i])
+                if case .null = value { continue }
+                row[column] = value
+                sampler.observe(column: column, value: value)
+            }
+            if row.isEmpty {
+                skipped += 1
+                continue
+            }
+            rows.append(row)
+        }
+        if rows.isEmpty { throw ImportError.noRows }
+
+        return Parsed(
+            columns: columns,
+            rows: rows,
+            inferredTypes: sampler.affinities(),
+            rowsSkipped: skipped,
+            truncated: truncated,
+            errors: []
+        )
+    }
+
+    /// Workbook cell → SQL value. Typed cells stay typed; text cells go
+    /// through the same coercion as CSV fields so "42" in a text cell still
+    /// lands as an integer.
+    private static func sqlValue(_ cell: Workbook.CellValue) -> AgentSQLValue {
+        switch cell {
+        case .empty:
+            return .null
+        case .bool(let flag):
+            return .bool(flag)
+        case .number(let value):
+            if value.isFinite, value == value.rounded(), abs(value) < 9_007_199_254_740_992 {
+                return .integer(Int64(value))
+            }
+            return .double(value)
+        case .string(let text):
+            return typedValue(text)
+        }
     }
 
     /// Split delimited text into records of fields. State machine so quotes

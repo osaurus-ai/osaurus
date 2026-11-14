@@ -1,0 +1,481 @@
+//
+//  OsaurusIDSection.swift
+//  osaurus
+//
+//  Settings ▸ Identity ▸ Osaurus ID: the human-facing handle a person claims
+//  for their master key. One card, one decision:
+//
+//   - Unclaimed: a single `@handle` field with live availability underneath
+//     and a Claim button. Only the handle is required; everything else is
+//     editable after.
+//   - Claimed: the handle (copyable), the display name and bio, and an
+//     inline Edit form. No sheets, no wizard.
+//
+//  Router off / unreachable states stay quiet: one line and a way forward.
+//
+
+import AppKit
+import SwiftUI
+
+struct OsaurusIDSection: View {
+    @Environment(\.theme) private var theme
+    @ObservedObject private var service = OsaurusIDService.shared
+
+    @State private var handleInput = ""
+    @State private var availability: OsaurusIDAvailabilityStatus?
+    @State private var isCheckingAvailability = false
+    @State private var claimError: String?
+    /// The handle awaiting the "are you sure" step. A claim is permanent,
+    /// so neither the Claim button nor Enter sends it straight away.
+    @State private var pendingClaimHandle: String?
+
+    @State private var isEditing = false
+    @State private var draftDisplayName = ""
+    @State private var draftBio = ""
+    @State private var saveError: String?
+    @State private var copied = false
+    /// Why the last profile pull couldn't reach the router, while the state
+    /// is still `.unknown`. Drives the Retry row.
+    @State private var unavailableMessage: String?
+
+
+    private var routerEnabled: Bool { OsaurusRouter.isEnabled }
+
+    private var trimmedHandle: String {
+        handleInput.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var isHandleValid: Bool {
+        OsaurusIDValidator.isValid(trimmedHandle)
+    }
+
+    /// Claim gate: the format must be right and the handle not known-unclaimable.
+    /// An unknown availability (offline, router unreachable) does not block —
+    /// the claim itself remains the authority.
+    private var canClaim: Bool {
+        isHandleValid && availability != .taken && availability != .reserved
+            && availability != .invalid && !service.isClaiming
+    }
+
+    var body: some View {
+        SettingsSection(title: "Public Profile") {
+            content
+        }
+        .task {
+            guard routerEnabled, service.state == .unknown else { return }
+            await load()
+        }
+        .task(id: trimmedHandle) {
+            // Debounced as-you-type availability. `task(id:)` cancels the
+            // previous check on every keystroke, so only a settled handle
+            // reaches the router. Editing also clears a stale claim error.
+            availability = nil
+            claimError = nil
+            guard isHandleValid else { return }
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            guard !Task.isCancelled else { return }
+            isCheckingAvailability = true
+            let status = await service.checkAvailability(trimmedHandle)
+            isCheckingAvailability = false
+            guard !Task.isCancelled else { return }
+            availability = status
+        }
+        // A handle can never be changed once claimed, and the field's fine
+        // print is easy to miss on the way to Enter. Ask once, plainly.
+        .themedAlert(
+            pendingClaimHandle.map { String(format: L("Claim @%@?"), $0) } ?? "",
+            isPresented: Binding(
+                get: { pendingClaimHandle != nil },
+                set: { if !$0 { pendingClaimHandle = nil } }
+            ),
+            message: L(
+                "Your Osaurus ID is permanent and public. It cannot be changed or released later, so make sure this is the handle you want."
+            ),
+            // The handle is captured when the alert is built rather than read
+            // back on confirm, so the claim does not depend on whether the
+            // dialog clears `pendingClaimHandle` before or after its action.
+            primaryButton: .primary(L("Claim")) { [handle = pendingClaimHandle] in
+                pendingClaimHandle = nil
+                if let handle { claim(handle) }
+            },
+            secondaryButton: .cancel(L("Cancel"))
+        )
+    }
+
+    // MARK: - State routing
+
+    @ViewBuilder
+    private var content: some View {
+        if !routerEnabled {
+            routerOffRow
+        } else {
+            switch service.state {
+            case .claimed:
+                if let profile = service.profile {
+                    claimedContent(profile)
+                } else {
+                    loadingRow
+                }
+            case .unclaimed:
+                claimContent
+            case .unknown:
+                if let unavailableMessage, !service.isRefreshing {
+                    unreachableRow(unavailableMessage)
+                } else {
+                    loadingRow
+                }
+            }
+        }
+    }
+
+    // MARK: - Router off / loading / unreachable
+
+    private var routerOffRow: some View {
+        SettingsCallout(
+            icon: "network",
+            title: "Osaurus ID needs Osaurus Router",
+            message: "Your handle lives on the router, next to your credits and workspaces. Turn it on to claim one."
+        ) {
+            SettingsButton(.secondary, "Open Wallet & Credits", size: .compact) {
+                ManagementStateManager.shared.selectedTab = .credits
+            }
+        }
+    }
+
+    private var loadingRow: some View {
+        SettingsEmptyState(loading: "Checking your Osaurus ID…")
+    }
+
+    private func unreachableRow(_ message: String) -> some View {
+        HStack(spacing: theme.space.s12) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                Text("Couldn't reach Osaurus", bundle: .module)
+                    .font(SettingsFont.sectionTitle)
+                    .foregroundColor(theme.text.primary)
+                Text(message)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.secondary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer()
+            Button(action: { Task { await load() } }) {
+                Text("Retry", bundle: .module)
+            }
+            .assignedSettingsButtonStyle(.secondary, isLoading: service.isRefreshing, size: .compact)
+            .disabled(service.isRefreshing)
+        }
+    }
+
+    /// Pull the profile and remember why it couldn't be reached, so the
+    /// card can offer Retry instead of spinning forever.
+    private func load() async {
+        unavailableMessage = nil
+        if case .unavailable(let message) = await service.refresh(), service.state == .unknown {
+            unavailableMessage = message
+        }
+    }
+
+    // MARK: - Unclaimed: claim row
+
+    private var claimContent: some View {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
+            Text(
+                "Your public handle across Osaurus. Workspaces, invites, and usage show it instead of your master address.",
+                bundle: .module
+            )
+            .font(SettingsFont.caption)
+            .foregroundColor(theme.text.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: theme.space.s8) {
+                handleField
+                Button(action: requestClaim) {
+                    Text("Claim", bundle: .module)
+                }
+                .assignedSettingsButtonStyle(.primary, isLoading: service.isClaiming, size: .compact)
+                .disabled(!canClaim)
+                .accessibilityIdentifier("identity.osaurusId.claim")
+            }
+
+            availabilityStatusLine
+
+            if let claimError {
+                Text(claimError)
+                    .font(SettingsFont.smallLabel)
+                    .foregroundColor(theme.status.error.foreground)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .transition(.opacity)
+            }
+
+            Text(
+                "Permanent and public. You can add a display name and bio after.",
+                bundle: .module
+            )
+            .font(SettingsFont.footnote)
+            .foregroundColor(theme.text.tertiary)
+        }
+        .animation(theme.motion.quick, value: claimError)
+        .animation(theme.motion.quick, value: availability)
+    }
+
+    private var handleField: some View {
+        SettingsTextField(
+            placeholder: "your-handle",
+            text: sanitizedHandleBinding,
+            icon: "at",
+            monospaced: true,
+            onSubmit: { if canClaim { requestClaim() } }
+        )
+        .accessibilityIdentifier("identity.osaurusId.handle")
+        .frame(maxWidth: 320)
+    }
+
+    /// Lowercases / strips as the user types so the field only ever holds a
+    /// candidate the server could accept.
+    private var sanitizedHandleBinding: Binding<String> {
+        Binding(
+            get: { handleInput },
+            set: { handleInput = OsaurusIDValidator.sanitizedInput($0) }
+        )
+    }
+
+    /// Live verdict under the field: format rules while the handle is short
+    /// or malformed, then the router's availability answer. When the check
+    /// can't run (offline), nothing shows — the claim is the authority.
+    @ViewBuilder
+    private var availabilityStatusLine: some View {
+        Group {
+            if trimmedHandle.isEmpty {
+                Text("3–20 characters: a–z, 0–9, and hyphens.", bundle: .module)
+                    .foregroundColor(theme.text.tertiary)
+            } else if !isHandleValid {
+                Text(
+                    "3–20 characters: a–z, 0–9, and hyphens. Must start and end with a letter or digit.",
+                    bundle: .module
+                )
+                .foregroundColor(theme.text.tertiary)
+            } else if isCheckingAvailability {
+                HStack(spacing: theme.space.s6) {
+                    SettingsSpinner(size: .mini)
+                    Text("Checking availability…", bundle: .module)
+                        .foregroundColor(theme.text.secondary)
+                }
+            } else {
+                switch availability {
+                case .available:
+                    Label(
+                        String(format: L("@%@ is available"), trimmedHandle),
+                        systemImage: "checkmark.circle.fill"
+                    )
+                    .foregroundColor(theme.status.success.foreground)
+                case .taken:
+                    Label(
+                        String(format: L("@%@ is already taken"), trimmedHandle),
+                        systemImage: "xmark.circle.fill"
+                    )
+                    .foregroundColor(theme.status.error.foreground)
+                case .reserved:
+                    Label(L("That name is reserved"), systemImage: "lock.fill")
+                        .foregroundColor(theme.status.error.foreground)
+                case .invalid:
+                    Label(L("That name isn't allowed"), systemImage: "xmark.circle.fill")
+                        .foregroundColor(theme.status.error.foreground)
+                case nil:
+                    // Valid format, no verdict (yet): keep the height stable.
+                    Text(verbatim: " ")
+                }
+            }
+        }
+        .font(SettingsFont.smallLabel)
+        .frame(height: 14, alignment: .leading)
+    }
+
+    /// Opens the confirmation for the current handle; the claim itself only
+    /// goes out from the dialog's confirm button.
+    private func requestClaim() {
+        guard canClaim else { return }
+        claimError = nil
+        pendingClaimHandle = trimmedHandle
+    }
+
+    private func claim(_ handle: String) {
+        claimError = nil
+        Task {
+            switch await service.claim(handle: handle) {
+            case .claimed, .adopted:
+                handleInput = ""
+                availability = nil
+            case .failed(let message):
+                claimError = message
+                // A claim that lost a race re-checks the field so the
+                // verdict under it matches the error above it.
+                availability = await service.checkAvailability(handle)
+            }
+        }
+    }
+
+    // MARK: - Claimed: profile card
+
+    private func claimedContent(_ profile: OsaurusIDProfile) -> some View {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            HStack(alignment: .top, spacing: theme.space.s12) {
+                VStack(alignment: .leading, spacing: theme.space.s4) {
+                    Text(profile.handle)
+                        .font(SettingsFont.mono)
+                        .foregroundColor(theme.text.primary)
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier("identity.osaurusId.handleLabel")
+                    if !isEditing {
+                        Text(profile.effectiveName)
+                            .font(SettingsFont.rowTitle)
+                            .foregroundColor(profile.displayName.isEmpty ? theme.text.tertiary : theme.text.primary)
+                        if !profile.bio.isEmpty {
+                            Text(profile.bio)
+                                .font(SettingsFont.caption)
+                                .foregroundColor(theme.text.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+
+                Spacer()
+
+                if !isEditing {
+                    Button(action: beginEditing) {
+                        HStack(spacing: theme.space.s4) {
+                            Image(systemName: "pencil")
+                                .glyphSize(.footnote, weight: .medium)
+                            Text("Edit", bundle: .module)
+                        }
+                    }
+                    .assignedSettingsButtonStyle(.secondary, size: .compact)
+                    .accessibilityIdentifier("identity.osaurusId.edit")
+
+                    Button(action: { copy(profile.handle) }) {
+                        HStack(spacing: theme.space.s4) {
+                            Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                                .glyphSize(.footnote, weight: .medium)
+                            Text(copied ? L("Copied") : L("Copy"))
+                        }
+                        .foregroundColor(copied ? theme.status.success.foreground : theme.text.primary)
+                    }
+                    .assignedSettingsButtonStyle(.secondary, size: .compact)
+                }
+            }
+
+            if isEditing {
+                editForm(profile)
+            } else {
+                Divider().background(theme.border.default)
+                Text(
+                    "Shown to teammates in workspaces, invites, and usage. The handle is permanent; the display name and bio are yours to change.",
+                    bundle: .module
+                )
+                .font(SettingsFont.footnote)
+                .foregroundColor(theme.text.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .animation(theme.motion.quick, value: isEditing)
+    }
+
+    private func editForm(_ profile: OsaurusIDProfile) -> some View {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
+            SettingsFieldRow(label: "Display Name") {
+                SettingsTextField(placeholder: profile.osaurusID, text: $draftDisplayName)
+                    .onChange(of: draftDisplayName) { _, value in
+                        if value.count > OsaurusIDDisplayName.maxLength {
+                            draftDisplayName = String(value.prefix(OsaurusIDDisplayName.maxLength))
+                        }
+                    }
+                    .accessibilityIdentifier("identity.osaurusId.displayName")
+            }
+
+            VStack(alignment: .leading, spacing: theme.space.s4) {
+                HStack {
+                    Text("Bio", bundle: .module)
+                        .font(SettingsFont.smallLabel)
+                        .foregroundColor(theme.text.secondary)
+                    Spacer()
+                    Text(verbatim: "\(draftBio.count)/\(OsaurusIDBio.maxLength)")
+                        .font(SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.tertiary)
+                }
+                SettingsTextEditor(text: $draftBio, minHeight: 56, maxHeight: 110)
+                    .onChange(of: draftBio) { _, value in
+                        if value.count > OsaurusIDBio.maxLength {
+                            draftBio = String(value.prefix(OsaurusIDBio.maxLength))
+                        }
+                    }
+                    .accessibilityIdentifier("identity.osaurusId.bio")
+            }
+
+            if let saveError {
+                Text(saveError)
+                    .font(SettingsFont.smallLabel)
+                    .foregroundColor(theme.status.error.foreground)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            HStack(spacing: theme.space.s8) {
+                Spacer()
+                Button(action: cancelEditing) {
+                    Text("Cancel", bundle: .module)
+                }
+                .assignedSettingsButtonStyle(.secondary, size: .compact)
+                .disabled(service.isSaving)
+
+                Button(action: { save(profile) }) {
+                    Text("Save", bundle: .module)
+                }
+                .assignedSettingsButtonStyle(.primary, isLoading: service.isSaving, size: .compact)
+                .disabled(service.isSaving)
+                .accessibilityIdentifier("identity.osaurusId.save")
+            }
+        }
+    }
+
+    private func beginEditing() {
+        guard let profile = service.profile else { return }
+        draftDisplayName = profile.displayName
+        draftBio = profile.bio
+        saveError = nil
+        isEditing = true
+    }
+
+    private func cancelEditing() {
+        isEditing = false
+        saveError = nil
+    }
+
+    private func save(_ profile: OsaurusIDProfile) {
+        let name = OsaurusIDDisplayName.sanitized(draftDisplayName)
+        let bio = OsaurusIDBio.sanitized(draftBio)
+        // Only send what changed; an untouched field stays out of the patch.
+        let displayName: String? = name == profile.displayName ? nil : name
+        let bioPatch: String? = bio == profile.bio ? nil : bio
+        guard displayName != nil || bioPatch != nil else {
+            isEditing = false
+            return
+        }
+        saveError = nil
+        Task {
+            switch await service.update(displayName: displayName, bio: bioPatch) {
+            case .updated:
+                isEditing = false
+            case .failed(let message):
+                saveError = message
+            }
+        }
+    }
+
+    private func copy(_ value: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(value, forType: .string)
+        withAnimation { copied = true }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            withAnimation { copied = false }
+        }
+    }
+}

@@ -21,14 +21,19 @@ struct SubagentConfigurationTests {
         // preflight (also on) guards it. Off-by-default lives per agent now.
         #expect(config.localTextDelegationEnabled == true)
         #expect(config.imageJobLoadPolicy == .agentSingleResidency)
-        #expect(config.permissionDefaults.policy(for: "spawn") == .ask)
+        // Local spawn is Always Allow out of the box: workers run on the
+        // user's own agents, which carry their own permission cards.
+        #expect(config.permissionDefaults.policy(for: "spawn") == .alwaysAllow)
         #expect(config.permissionDefaults.policy(for: "image") == .ask)
-        #expect(config.budgets.maxDelegateTokens == 2048)
-        // 2 turns so a first tool-refusal envelope (text-only spawn) still
-        // leaves the model one turn to produce its digest.
-        #expect(config.budgets.maxDelegateTurns == 2)
-        #expect(config.budgets.maxToolCalls == 0)
-        #expect(config.budgets.maxElapsedSeconds == 120)
+        #expect(
+            config.permissionDefaults.policy(for: SubagentPermissionDefaults.workspaceSpawnKindId)
+                == .ask
+        )
+        // Sized so a worker can finish a real task (users reported the old
+        // 2048-token / 2-turn / 120 s defaults ended runs too early).
+        #expect(config.budgets.maxDelegateTokens == 8192)
+        #expect(config.budgets.maxDelegateTurns == 24)
+        #expect(config.budgets.maxElapsedSeconds == 900)
         #expect(config.budgets.maxParallelSpawns == 3)
         // AppleScript keeps its model warm after a run by default for the
         // back-to-back automation latency win.
@@ -83,14 +88,12 @@ struct SubagentConfigurationTests {
         let raw = SubagentBudgets(
             maxDelegateTokens: -10,
             maxDelegateTurns: 0,
-            maxToolCalls: -1,
             maxElapsedSeconds: 0,
             maxParallelSpawns: 0
         )
 
         #expect(raw.normalized.maxDelegateTokens == 256)
         #expect(raw.normalized.maxDelegateTurns == 1)
-        #expect(raw.normalized.maxToolCalls == 0)
         #expect(raw.normalized.maxElapsedSeconds == 15)
         #expect(raw.normalized.maxParallelSpawns == 1)
     }
@@ -99,16 +102,14 @@ struct SubagentConfigurationTests {
     func budgetNormalizationCapsRunawayValues() {
         let raw = SubagentBudgets(
             maxDelegateTokens: 1_000_000,
-            maxDelegateTurns: 100,
-            maxToolCalls: 100,
+            maxDelegateTurns: 1_000,
             maxElapsedSeconds: 100_000,
             maxParallelSpawns: 100
         )
 
-        #expect(raw.normalized.maxDelegateTokens == 32_768)
-        #expect(raw.normalized.maxDelegateTurns == 8)
-        #expect(raw.normalized.maxToolCalls == 32)
-        #expect(raw.normalized.maxElapsedSeconds == 1_800)
+        #expect(raw.normalized.maxDelegateTokens == 65_536)
+        #expect(raw.normalized.maxDelegateTurns == 100)
+        #expect(raw.normalized.maxElapsedSeconds == 3_600)
         #expect(raw.normalized.maxParallelSpawns == 32)
     }
 
@@ -125,7 +126,6 @@ struct SubagentConfigurationTests {
             budgets: SubagentBudgets(
                 maxDelegateTokens: 4096,
                 maxDelegateTurns: 2,
-                maxToolCalls: 3,
                 maxElapsedSeconds: 240,
                 maxParallelSpawns: 4
             )
@@ -255,59 +255,98 @@ struct SubagentConfigurationTests {
         #expect(decoded.subagentModelOverrides.isEmpty)
     }
 
-    @Test("spawnable model names + notes round-trip, trim/dedupe, and prune orphan notes")
-    func spawnableModelPoolRoundTripAndNormalize() throws {
-        // init normalizes: trim ids, drop blanks, de-dupe (exact, order-kept);
-        // notes are trimmed, blank notes dropped, and any note whose id is no
-        // longer in the pool is pruned (so removing a model drops its note).
-        let config = SubagentConfiguration(
-            spawnableModelNames: [
-                "qwen3-4b-4bit",
-                "  qwen3-4b-4bit  ",  // dup after trim → dropped
-                "openai/gpt-4o-mini",
-                "   ",  // blank → dropped
-            ],
-            spawnableModelNotes: [
-                "qwen3-4b-4bit": "  Quick local edits  ",  // trimmed
-                "openai/gpt-4o-mini": "   ",  // blank value → dropped
-                "deleted-model": "orphan note",  // id not in pool → pruned
-            ]
-        )
-
-        #expect(config.spawnableModelNames == ["qwen3-4b-4bit", "openai/gpt-4o-mini"])
-        #expect(config.spawnableModelNotes == ["qwen3-4b-4bit": "Quick local edits"])
-
-        let data = try JSONEncoder().encode(config)
+    @Test("legacy spawnable model pool + worker tool-access keys are ignored on decode")
+    func legacyModelPoolKeysIgnored() throws {
+        // `spawn_model` was removed; older files still carry its pool. They
+        // decode cleanly and the keys are not written back.
+        let data = Data(
+            #"""
+            {"localTextDelegationEnabled":true,
+             "spawnableModelNames":["qwen3-4b-4bit"],
+             "spawnableModelNotes":{"qwen3-4b-4bit":"Quick local edits"},
+             "spawnToolAccess":"readOnly",
+             "budgets":{"maxDelegateTokens":4096,"maxToolCalls":6}}
+            """#.utf8)
         let decoded = try JSONDecoder().decode(SubagentConfiguration.self, from: data)
-        #expect(decoded == config)
-        #expect(decoded.spawnableModelNames == ["qwen3-4b-4bit", "openai/gpt-4o-mini"])
-        #expect(decoded.spawnableModelNotes == ["qwen3-4b-4bit": "Quick local edits"])
+        #expect(decoded.localTextDelegationEnabled == true)
+        #expect(decoded.budgets.maxDelegateTokens == 4096)
+        let reencoded = String(decoding: try JSONEncoder().encode(decoded), as: UTF8.self)
+        #expect(!reencoded.contains("spawnableModelNames"))
+        #expect(!reencoded.contains("spawnToolAccess"))
+        #expect(!reencoded.contains("maxToolCalls"))
     }
 
-    @Test("legacy config without the spawnable model pool decodes to empty")
-    func backCompatModelPoolEmpty() throws {
-        let data = Data(#"{"localTextDelegationEnabled":true}"#.utf8)
-        let decoded = try JSONDecoder().decode(SubagentConfiguration.self, from: data)
-        #expect(decoded.spawnableModelNames.isEmpty)
-        #expect(decoded.spawnableModelNotes.isEmpty)
-        #expect(!decoded.anyModelSpawnable)
+    // MARK: - Workspace agents: auto-join, tombstones, prune, per-workspace switch
+
+    /// `WorkspaceAgentRef` keeps only real 42-char `0x…` addresses; pad a
+    /// short label into one so fixtures stay readable.
+    private static func ref(_ workspace: String, _ label: String) -> WorkspaceAgentRef {
+        let hex = label.lowercased().filter(\.isHexDigit)
+        let address = "0x" + String(repeating: "0", count: max(0, 40 - hex.count)) + hex
+        return WorkspaceAgentRef(workspaceId: workspace, agentAddress: address)
     }
 
-    @Test("model-pool helpers: exact/trimmed membership, anySpawnable, and note lookup")
-    func modelPoolHelpers() {
-        let config = SubagentConfiguration(
-            spawnableModelNames: ["qwen3-4b-4bit"],
-            spawnableModelNotes: ["qwen3-4b-4bit": "Quick local edits"]
-        )
-        #expect(config.anyModelSpawnable)
-        // Exact match, trimmed (model ids are canonical — NOT case-insensitive
-        // like agent names).
-        #expect(config.isModelSpawnable("qwen3-4b-4bit"))
-        #expect(config.isModelSpawnable("  qwen3-4b-4bit  "))
-        #expect(!config.isModelSpawnable("Qwen3-4B-4bit"))
-        #expect(!config.isModelSpawnable("other-model"))
-        // Note lookup is trimmed; absent ids return nil.
-        #expect(config.modelNote("qwen3-4b-4bit") == "Quick local edits")
-        #expect(config.modelNote("other-model") == nil)
+    @Test("roster refs auto-join the pool; user removals stay removed across re-shares")
+    func workspaceAutoJoinRespectsTombstones() {
+        let alice = Self.ref("ws-1", "0xaaa1")
+        let bob = Self.ref("ws-1", "0xbbb2")
+        var config = SubagentConfiguration()
+
+        config = config.reconcilingWorkspaceAgents(rosterRefs: [alice, bob], loadedWorkspaceIds: ["ws-1"])
+        #expect(Set(config.spawnableWorkspaceAgents) == [alice, bob])
+
+        // The user removes Bob in the editor → tombstoned, and a later roster
+        // tick that still lists him must NOT bring him back.
+        config.removeWorkspaceAgent(bob)
+        #expect(config.spawnableWorkspaceAgents == [alice])
+        #expect(config.removedWorkspaceAgents == [bob])
+        config = config.reconcilingWorkspaceAgents(rosterRefs: [alice, bob], loadedWorkspaceIds: ["ws-1"])
+        #expect(config.spawnableWorkspaceAgents == [alice])
+
+        // Re-adding clears the tombstone.
+        config.addWorkspaceAgent(bob)
+        #expect(config.removedWorkspaceAgents.isEmpty)
+        #expect(Set(config.spawnableWorkspaceAgents) == [alice, bob])
+    }
+
+    @Test("unshared agents and left workspaces prune; unloaded workspaces are trusted")
+    func workspacePruneOnlyForKnownWorkspaces() {
+        let alice = Self.ref("ws-1", "0xaaa1")
+        let bob = Self.ref("ws-1", "0xbbb2")
+        let carol = Self.ref("ws-2", "0xccc3")
+        var config = SubagentConfiguration(spawnableWorkspaceAgents: [alice, bob, carol])
+        config.removeWorkspaceAgent(bob)
+
+        // ws-2 has not loaded (cold start): Carol is kept. ws-1 loaded and
+        // no longer lists Bob: his pool entry AND his tombstone go.
+        config = config.reconcilingWorkspaceAgents(rosterRefs: [alice], loadedWorkspaceIds: ["ws-1"])
+        #expect(Set(config.spawnableWorkspaceAgents) == [alice, carol])
+        #expect(config.removedWorkspaceAgents.isEmpty)
+
+        // Leaving ws-2 (its id is reported as known with no roster refs)
+        // drops Carol.
+        config = config.reconcilingWorkspaceAgents(rosterRefs: [alice], loadedWorkspaceIds: ["ws-1", "ws-2"])
+        #expect(config.spawnableWorkspaceAgents == [alice])
+    }
+
+    @Test("per-workspace auto-join off prunes that workspace and stops joining")
+    func workspaceAutoJoinSwitch() {
+        let alice = Self.ref("ws-1", "0xaaa1")
+        let carol = Self.ref("ws-2", "0xccc3")
+        var config = SubagentConfiguration()
+        config = config.reconcilingWorkspaceAgents(
+            rosterRefs: [alice, carol], loadedWorkspaceIds: ["ws-1", "ws-2"])
+        #expect(Set(config.spawnableWorkspaceAgents) == [alice, carol])
+
+        config.setWorkspaceAutoJoin(false, workspaceId: "WS-2")
+        #expect(!config.workspaceAutoJoinEnabled("ws-2"))
+        config = config.reconcilingWorkspaceAgents(
+            rosterRefs: [alice, carol], loadedWorkspaceIds: ["ws-1", "ws-2"])
+        #expect(config.spawnableWorkspaceAgents == [alice])
+
+        config.setWorkspaceAutoJoin(true, workspaceId: "ws-2")
+        config = config.reconcilingWorkspaceAgents(
+            rosterRefs: [alice, carol], loadedWorkspaceIds: ["ws-1", "ws-2"])
+        #expect(Set(config.spawnableWorkspaceAgents) == [alice, carol])
     }
 }

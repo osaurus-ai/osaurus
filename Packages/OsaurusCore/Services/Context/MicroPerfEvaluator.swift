@@ -6,15 +6,14 @@
 //  eval domain. Runs the SAME single-message prompt through the real
 //  ChatEngine streaming path N+1 times (one unmeasured warm-up, N
 //  measured reps) with a fixed decode cap, and samples each rep's wall
-//  clock, TTFT, and the runtime's authoritative StreamingStatsHint
+//  clock, TTFT, and the runtime's authoritative typed completion
 //  (decode tok/s, prefill tok/s, token count). No tools, no system
 //  prompt, temperature 0 — both sides of the request are pinned so the
 //  numbers are comparable run-over-run, unlike behaviour rows whose
 //  prompt/decode sizes move with fixtures.
 //
-//  Lives in OsaurusCore (not the evals kit) because the streaming hint
-//  decoders are internal runtime surface: this is the one sanctioned
-//  place that turns them into a benchmark sample.
+//  Lives in OsaurusCore because typed Responses generation is internal
+//  runtime surface. Fixed benchmark sampling is explicit, not chat defaults.
 //
 
 import Foundation
@@ -23,8 +22,8 @@ import Foundation
 public struct MicroPerfSample: Sendable, Codable {
     /// Wall clock for the whole rep (dispatch → stream end), ms.
     public let wallMs: Double
-    /// Dispatch → first streamed delta (any channel), ms. nil when the
-    /// stream produced nothing.
+    /// Dispatch → first generated text, reasoning, or tool-envelope bytes,
+    /// ms. Control metadata does not count. nil when no output was produced.
     public let ttftMs: Double?
     /// Authoritative decode speed from the runtime's end-of-step stats
     /// hint. nil when the path never emitted one (Foundation, most
@@ -310,7 +309,7 @@ public enum MicroPerfEvaluator {
     /// Cancellation-lifecycle row (`lifecycle: "cold_load_cancel"` /
     /// `"midgen_cancel"`): dispatch a generation, cancel it at the declared
     /// point (during the cold model load, or `cancelAfterMs` after the
-    /// first streamed delta), and prove the runtime terminates the stream,
+    /// first generated output), and prove the runtime terminates the stream,
     /// leaves no zombie state, and serves a full recovery generation
     /// afterwards. SKIPs when the run model is not an installed local MLX
     /// model (nothing to load or cancel).
@@ -365,28 +364,23 @@ public enum MicroPerfEvaluator {
 
         let footprintBefore = ProcessMemoryProbe.currentPhysFootprintMB()
 
-        let request = ChatCompletionRequest(
+        let request = ResponsesInferenceRequest(
             model: resolvedModel,
-            messages: [ChatMessage(role: "user", content: prompt)],
-            temperature: 0.0,
-            max_tokens: maxTokens,
-            stream: true,
-            top_p: nil,
-            frequency_penalty: nil,
-            presence_penalty: nil,
-            stop: nil,
-            n: nil,
-            tools: nil,
-            tool_choice: nil,
-            session_id: UUID().uuidString
+            input: [ChatMessage(role: "user", content: prompt)],
+            generation: ResponsesGenerationOptions(temperature: 0, maxOutputTokens: maxTokens),
+            sessionID: UUID().uuidString
         )
 
         let observation = CancellationObservation()
         let dispatchedAt = Date()
         let consumer = Task { @MainActor in
             do {
-                let stream = try await engine.streamChat(request: request)
-                for try await _ in stream {
+                let stream = try await engine.streamResponses(request: request)
+                for try await event in stream {
+                    if case .drainFailed(let message) = event {
+                        throw ResponsesGenerationResult.CollectionError.drainFailed(message)
+                    }
+                    guard event.isGeneratedOutput else { continue }
                     observation.deltas += 1
                     if observation.firstDeltaAt == nil {
                         observation.firstDeltaAt = Date()
@@ -411,7 +405,9 @@ public enum MicroPerfEvaluator {
         if coldLoad {
             await sleepMs(cancelAfterMs)
         } else {
-            // Wait (bounded) for the first delta, then the declared delay.
+            // Wait for real generation, not prepared-input/prefill metadata,
+            // then the declared delay. Otherwise this can cancel in prefill
+            // while incorrectly reporting a mid-generation cancellation.
             let firstDeltaBudgetMs: Double = 120_000
             let waitStart = Date()
             while observation.firstDeltaAt == nil,
@@ -498,59 +494,64 @@ public enum MicroPerfEvaluator {
 
     /// One measured generation of the fixed benchmark request. Shared by
     /// the steady-state and lifecycle lanes.
-    private static func measureRep(
-        engine: ChatEngine,
+    static func measureRep(
+        engine: any ResponsesEngineProtocol,
         model: String,
         prompt: String,
         maxTokens: Int,
         sessionId: String,
         enableThinking: Bool? = nil
     ) async throws -> MicroPerfSample {
-        var request = ChatCompletionRequest(
-            model: model,
-            messages: [ChatMessage(role: "user", content: prompt)],
-            temperature: 0.0,
-            max_tokens: maxTokens,
-            stream: true,
-            top_p: nil,
-            frequency_penalty: nil,
-            presence_penalty: nil,
-            stop: nil,
-            n: nil,
-            tools: nil,
-            tool_choice: nil,
-            session_id: sessionId
+        let request = ResponsesInferenceRequest(
+            model: model, input: [ChatMessage(role: "user", content: prompt)],
+            generation: ResponsesGenerationOptions(
+                temperature: 0, maxOutputTokens: maxTokens, enableThinking: enableThinking
+            ),
+            sessionID: sessionId
         )
-        request.enable_thinking = enableThinking
         let started = Date()
         var ttftMs: Double?
-        var decodeTps: Double?
-        var prefillTps: Double?
-        var tokenCount: Int?
+        var completion: ResponsesGenerationCompletion?
         var contentChars = 0
-        let stream = try await engine.streamChat(request: request)
-        for try await delta in stream {
-            if ttftMs == nil {
+        let stream = try await engine.streamResponses(request: request)
+        for try await event in stream {
+            try Task.checkCancellation()
+            if completion != nil, event.isGeneratedOutput {
+                throw ResponsesGenerationResult.CollectionError.outputAfterCompletion
+            }
+            if ttftMs == nil, event.isGeneratedOutput {
                 ttftMs = Date().timeIntervalSince(started) * 1000
             }
-            if StreamingReasoningHint.decode(delta) != nil { continue }
-            if let stats = StreamingStatsHint.decode(delta) {
-                if stats.tokensPerSecond > 0 { decodeTps = stats.tokensPerSecond }
-                if stats.tokenCount > 0 { tokenCount = stats.tokenCount }
-                if prefillTps == nil, let prefill = stats.prefillTokensPerSecond, prefill > 0 {
-                    prefillTps = prefill
-                }
-                continue
+            switch event {
+            case .outputTextDelta(let text): contentChars += text.count
+            case .responseCompleted(let value):
+                guard completion == nil else { throw ResponsesGenerationResult.CollectionError.duplicateCompletion }
+                completion = value
+            case .drainFailed(let message):
+                throw ResponsesGenerationResult.CollectionError.drainFailed(message)
+            case .drained, .compatibilityStreamClosed:
+                guard completion != nil else { throw ResponsesGenerationResult.CollectionError.drainBeforeCompletion }
+            default: break
             }
-            if StreamingToolHint.isSentinel(delta) { continue }
-            contentChars += delta.count
+        }
+        try Task.checkCancellation()
+        guard let completion else { throw ResponsesGenerationResult.CollectionError.missingCompletion }
+        switch completion.status {
+        case .cancelled: throw CancellationError()
+        case .incomplete:
+            // A fixed decode cap is part of this benchmark's public contract;
+            // it is not a coherent-chat or unclosed-reasoning qualification.
+            guard completion.stopReason == "length" else {
+                throw ResponsesGenerationResult.CollectionError.incomplete(completion.stopReason)
+            }
+        case .completed: break
         }
         return MicroPerfSample(
             wallMs: Date().timeIntervalSince(started) * 1000,
             ttftMs: ttftMs,
-            decodeTokensPerSecond: decodeTps,
-            prefillTokensPerSecond: prefillTps,
-            tokenCount: tokenCount,
+            decodeTokensPerSecond: completion.tokensPerSecond,
+            prefillTokensPerSecond: completion.promptTokensPerSecond,
+            tokenCount: completion.tokenCount,
             contentChars: contentChars
         )
     }

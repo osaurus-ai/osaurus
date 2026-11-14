@@ -39,6 +39,8 @@ public actor ScriptedCUDriver: MacDriver {
         let editable: Bool
         var hidden: Bool
         let onClick: EvalCase.ComputerUseLoopExpectations.ClickEffect?
+        /// Effect of Return while this cell is focused (scene `onReturn`).
+        let onReturn: EvalCase.ComputerUseLoopExpectations.ClickEffect?
         /// Lowest capture tier at which this cell is rendered.
         let minTier: CaptureTier
         /// Remaining element-addressed click failures (stale-ref simulation).
@@ -63,6 +65,11 @@ public actor ScriptedCUDriver: MacDriver {
     private var snapshotCounter = 0
     /// Set once the loop performs any scroll; gates `revealOnScroll` cells.
     private var didScroll = false
+    /// When true, `open` reports `ready: false` and the next capture is empty
+    /// — the "process is up, tree not queryable yet" shape.
+    private let openNotReady: Bool
+    /// Captures still to serve as an empty tree (armed by a not-ready open).
+    private var emptyCapturesRemaining = 0
 
     // MARK: - Recorded signals (read by the scorer after the run)
 
@@ -74,8 +81,13 @@ public actor ScriptedCUDriver: MacDriver {
 
     // MARK: - Init
 
-    public init(app: String, elements: [EvalCase.ComputerUseLoopExpectations.SceneElement]) {
+    public init(
+        app: String,
+        elements: [EvalCase.ComputerUseLoopExpectations.SceneElement],
+        openNotReady: Bool = false
+    ) {
         self.appName = app
+        self.openNotReady = openNotReady
         self.cells = elements.map { element in
             Cell(
                 id: element.id,
@@ -86,6 +98,7 @@ public actor ScriptedCUDriver: MacDriver {
                 editable: element.editable ?? false,
                 hidden: element.hidden ?? false,
                 onClick: element.onClick,
+                onReturn: element.onReturn,
                 minTier: CaptureTier(rawValue: element.minTier ?? "ax") ?? .ax,
                 clickFailuresRemaining: max(0, element.clickFailures ?? 0),
                 revealAfterCaptures: max(0, element.revealAfterCaptures ?? 0),
@@ -152,7 +165,14 @@ public actor ScriptedCUDriver: MacDriver {
         // The scene is a single app; `open` always resolves to it so a model
         // that opens-before-acting and one that acts on the pre-focused app
         // both proceed.
-        .success(CUAppInfo(pid: pid, bundleId: nil, name: appName))
+        executedVerbs.append("open")
+        if openNotReady {
+            // Readiness poll exhausted: the loop's follow-up capture must come
+            // back empty so it reports the open as not ready, not "Opened".
+            emptyCapturesRemaining = 1
+            return .success(CUAppInfo(pid: pid, bundleId: nil, name: appName, ready: false))
+        }
+        return .success(CUAppInfo(pid: pid, bundleId: nil, name: appName))
     }
 
     public func capture(
@@ -163,7 +183,22 @@ public actor ScriptedCUDriver: MacDriver {
         focusedWindowOnly: Bool,
         interactiveOnly: Bool
     ) async -> CUSnapshot {
-        makeSnapshot(tier: tier)
+        if emptyCapturesRemaining > 0 {
+            emptyCapturesRemaining -= 1
+            snapshotCounter += 1
+            return CUSnapshot(
+                snapshotId: snapshotCounter,
+                pid: pid,
+                app: appName,
+                focusedWindow: nil,
+                tier: tier,
+                truncated: false,
+                windows: [],
+                elements: [],
+                image: nil
+            )
+        }
+        return makeSnapshot(tier: tier)
     }
 
     public func find(
@@ -233,12 +268,21 @@ public actor ScriptedCUDriver: MacDriver {
         case .clearField(let id):
             executedVerbs.append("clear")
             return applyEdit(id: id, value: "")
-        case .pressKey(_, let key, _):
+        case .pressKey(_, let key, let modifiers):
             executedVerbs.append("press_key")
-            // No global key bindings in the scripted world; the press is a
-            // legible no-op success so a model that submits with Return
-            // isn't penalised, but the field/toggle state is the contract.
-            _ = key
+            // No global key bindings in the scripted world. The one binding a
+            // scene can declare is Return on the focused field (`onReturn`),
+            // the conventional submit — so a type→Return plan has an
+            // observable result to verify, exactly like a real form. Any other
+            // key is a legible no-op success.
+            let k = key.lowercased()
+            let isReturn = (k == "return" || k == "enter" || k == "\r") && modifiers.isEmpty
+            if isReturn, let focusedId,
+                let index = cells.firstIndex(where: { $0.id == focusedId }),
+                let effect = cells[index].onReturn
+            {
+                apply(effect, on: index)
+            }
             return .ok(delta: focusDelta())
         }
     }
@@ -289,29 +333,35 @@ public actor ScriptedCUDriver: MacDriver {
         focusedId = id
 
         if let effect = cells[index].onClick {
-            if effect.toggle == true {
-                let current = (cells[index].value ?? "").lowercased()
-                cells[index].value = (current == "on") ? "off" : "on"
+            apply(effect, on: index)
+        }
+        return .ok(delta: focusDelta())
+    }
+
+    /// Apply a scene effect (toggle → setValues → reveal) with `index` as
+    /// the acting cell. Shared by click and Return-key effects.
+    private func apply(_ effect: EvalCase.ComputerUseLoopExpectations.ClickEffect, on index: Int) {
+        if effect.toggle == true {
+            let current = (cells[index].value ?? "").lowercased()
+            cells[index].value = (current == "on") ? "off" : "on"
+        }
+        for set in effect.setValues ?? [] {
+            if let target = cells.firstIndex(where: { $0.id == set.id }) {
+                cells[target].value = set.value
             }
-            for set in effect.setValues ?? [] {
-                if let target = cells.firstIndex(where: { $0.id == set.id }) {
-                    cells[target].value = set.value
-                }
-            }
-            for revealId in effect.reveal ?? [] {
-                if let target = cells.firstIndex(where: { $0.id == revealId }) {
-                    // Async reveal: a cell with `revealAfterCaptures` starts a
-                    // countdown and only appears after that many captures, so
-                    // the model has to wait/observe; otherwise it shows at once.
-                    if cells[target].revealAfterCaptures > 0 {
-                        cells[target].revealCountdown = cells[target].revealAfterCaptures
-                    } else {
-                        cells[target].hidden = false
-                    }
+        }
+        for revealId in effect.reveal ?? [] {
+            if let target = cells.firstIndex(where: { $0.id == revealId }) {
+                // Async reveal: a cell with `revealAfterCaptures` starts a
+                // countdown and only appears after that many captures, so
+                // the model has to wait/observe; otherwise it shows at once.
+                if cells[target].revealAfterCaptures > 0 {
+                    cells[target].revealCountdown = cells[target].revealAfterCaptures
+                } else {
+                    cells[target].hidden = false
                 }
             }
         }
-        return .ok(delta: focusDelta())
     }
 
     private func applyEdit(id: String, value: String) -> CUActionResult {

@@ -107,7 +107,6 @@ struct AgentLegacyPolarityDecodeTests {
         #expect(cfg.enabled == true)
         #expect(cfg.sandboxNetworkEnabled == true)
         #expect(cfg.pluginCreate == true)
-        #expect(cfg.allowHostSecretReads == false)
         #expect(cfg.maxCommandsPerTurn == 10)
         // Background jobs are opt-in: JSON without the key stays off.
         #expect(cfg.backgroundProcessEnabled == false)

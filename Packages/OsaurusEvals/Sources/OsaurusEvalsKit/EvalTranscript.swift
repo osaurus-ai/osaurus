@@ -17,6 +17,7 @@
 //
 
 import Foundation
+import OsaurusCore
 
 struct EvalTrialIdentity: Sendable, Equatable {
     let ordinal: Int
@@ -41,19 +42,29 @@ public struct EvalCaseTranscript: Codable, Sendable {
         public let resultPreview: String?
         public let wasDeduped: Bool?
         public let wasError: Bool?
+        public let spawnSummary: String?
+        /// Model step that issued the call (same step = same wave).
+        public let step: Int?
+        public let spawnCall: AgentLoopTranscript.SpawnCallObservation?
 
         public init(
             name: String,
             arguments: String,
             resultPreview: String? = nil,
             wasDeduped: Bool? = nil,
-            wasError: Bool? = nil
+            wasError: Bool? = nil,
+            spawnSummary: String? = nil,
+            step: Int? = nil,
+            spawnCall: AgentLoopTranscript.SpawnCallObservation? = nil
         ) {
             self.name = name
             self.arguments = arguments
             self.resultPreview = resultPreview
             self.wasDeduped = wasDeduped
             self.wasError = wasError
+            self.spawnSummary = spawnSummary
+            self.step = step
+            self.spawnCall = spawnCall
         }
     }
 
@@ -201,6 +212,8 @@ public struct EvalCaseTranscript: Codable, Sendable {
     public let trial: Int?
     public let trialCount: Int?
     public let error: String?
+    /// Cache-specific per-turn status, usage, restore and producer-drain data.
+    public let cacheProof: CacheProofTranscript?
 
     public init(
         caseId: String,
@@ -219,7 +232,8 @@ public struct EvalCaseTranscript: Codable, Sendable {
         stepDiagnostics: [StepEvent]? = nil,
         trial: Int? = nil,
         trialCount: Int? = nil,
-        error: String? = nil
+        error: String? = nil,
+        cacheProof: CacheProofTranscript? = nil
     ) {
         self.caseId = caseId
         self.domain = domain
@@ -238,6 +252,7 @@ public struct EvalCaseTranscript: Codable, Sendable {
         self.trial = trial ?? EvalTrialExecutionContext.current?.ordinal
         self.trialCount = trialCount ?? EvalTrialExecutionContext.current?.total
         self.error = error
+        self.cacheProof = cacheProof
     }
 }
 
@@ -245,7 +260,8 @@ public struct EvalCaseTranscript: Codable, Sendable {
 /// `<report>.transcripts/` when `--transcripts` is set; runners hand it
 /// every LLM-case transcript and it persists ONLY failed/errored rows
 /// (a passing case's transcript is rarely interesting and multiplies
-/// disk fast). Repeat failures carry a trial ordinal and write distinct files,
+/// disk fast). An explicit all-transcripts mode also retains successful rows.
+/// Repeats carry a trial ordinal and write distinct files,
 /// so stochastic protocol failures do not overwrite one another.
 @MainActor
 public enum EvalTranscriptStore {
@@ -253,25 +269,30 @@ public enum EvalTranscriptStore {
     public private(set) static var directory: URL?
     /// Files written since `configure` — the CLI's end-of-suite summary.
     public private(set) static var writtenCount = 0
+    /// Explicit qualification mode; reset for every configured suite.
+    public private(set) static var includeSuccessful = false
 
     /// Point the store at a directory (created lazily on first write) or
     /// disable it with nil. Resets the written counter — call per suite.
-    public static func configure(directory: URL?) {
+    public static func configure(directory: URL?, includeSuccessful: Bool = false) {
         self.directory = directory
+        self.includeSuccessful = directory != nil && includeSuccessful
         writtenCount = 0
     }
 
-    /// Persist `transcript` iff the store is enabled and the case did not
-    /// pass/skip. Failures are swallowed into stderr — transcript loss
+    /// Persist failures when enabled; explicit RAM/batch proof callers may
+    /// also retain successful runs. Failures are swallowed into stderr — transcript loss
     /// must never fail a run that already produced its report.
-    public static func persistIfEnabled(_ transcript: EvalCaseTranscript) {
+    public static func persistIfEnabled(_ transcript: EvalCaseTranscript, includeSuccessful: Bool = false) {
         guard let directory else { return }
         // `outcome` is the persisted rawValue of `EvalCaseOutcome`; keep it
         // tied to the enum rather than bare string literals.
         let persisted: Set<String> = [
             EvalCaseOutcome.failed.rawValue, EvalCaseOutcome.errored.rawValue,
         ]
-        guard persisted.contains(transcript.outcome) else { return }
+        guard persisted.contains(transcript.outcome)
+            || ((includeSuccessful || self.includeSuccessful) && transcript.outcome == EvalCaseOutcome.passed.rawValue)
+        else { return }
         do {
             try FileManager.default.createDirectory(
                 at: directory,

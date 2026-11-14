@@ -1,0 +1,62 @@
+{
+  "id": "frontier.document-drafting-revisions",
+  "domain": "agent_loop",
+  "label": "frontier • draft a .docx brief, then revise it in place twice with file_edit (no regenerate), verify by reading back",
+  "query": "Draft a one-page project brief as brief.docx with a title 'Atlas Migration Brief' and three headed sections: Goal, Scope and Timeline, each with two or three bullet points; the first Timeline bullet must be 'Kickoff: April 7'. Then make two revisions to the file you just wrote, editing it in place with file_edit rather than rewriting it: (1) change the kickoff date to May 5, and (2) add a fourth section headed Risks with two bullet points after Timeline. Finally read brief.docx back and tell me the final section headings in order.",
+  "notes": "Drafting workflow: one file_write to create the document, then in-place file_edit revisions on the generated .docx (paragraph replace for the date; append/insert_paragraph or a multi-paragraph replace for the new section), then a verification read. The audit forbids a second file_write so the revisions must go through the document editor, and the checker confirms the final text order Goal < Scope < Timeline < Risks, the revised date, and that the old date is gone. Budgets leave room for todo bookkeeping (a planning-tool call between steps is normal on a multi-step task).",
+  "fixtures": {
+    "workspaceFiles": []
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 16,
+      "maxToolCalls": 14,
+      "mustCallTools": [
+        "file_write",
+        "file_edit",
+        "file_read"
+      ],
+      "mustNotCallTools": [
+        "shell_run"
+      ],
+      "toolUsageAudit": [
+        {
+          "tool": "file_write",
+          "minCalls": 1,
+          "maxCalls": 1,
+          "maxErrors": 0,
+          "argsMustContain": "brief.docx"
+        },
+        {
+          "tool": "file_edit",
+          "minCalls": 1,
+          "maxCalls": 5,
+          "maxErrors": 2,
+          "argsMustContain": "brief.docx"
+        }
+      ],
+      "files": [
+        {
+          "path": "brief.docx",
+          "exists": true
+        }
+      ],
+      "commands": [
+        {
+          "command": "unzip -l brief.docx | grep -q 'word/document.xml'",
+          "expectExitCode": 0
+        },
+        {
+          "command": "python3 -c \"import zipfile,re; x=zipfile.ZipFile('brief.docx').read('word/document.xml').decode(); paras=[''.join(re.findall(r'<w:t[^>]*>([^<]*)</w:t>', p)) for p in re.findall(r'<w:p[ >].*?</w:p>', x, re.S)]; text='\\n'.join(paras); assert 'Atlas Migration Brief' in text, text; assert 'May 5' in text and 'April 7' not in text, text; idx=[next(i for i,p in enumerate(paras) if p.strip().rstrip(':').lower()==h) for h in ('goal','scope','timeline','risks')]; assert idx==sorted(idx), (idx, paras); assert sum(1 for p in paras[idx[3]+1:] if p.strip()) >= 2, paras[idx[3]:]\"",
+          "expectExitCode": 0
+        }
+      ],
+      "finalTextContains": [
+        "Risks"
+      ],
+      "rubric": [
+        "The final answer lists the brief's section headings in order: Goal, Scope, Timeline, Risks."
+      ]
+    }
+  }
+}

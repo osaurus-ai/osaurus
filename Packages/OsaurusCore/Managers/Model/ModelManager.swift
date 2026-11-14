@@ -40,7 +40,12 @@ enum ModelListTab: String, CaseIterable, AnimatedTabItem {
 /// Download orchestration is handled by ModelDownloadService.
 @MainActor
 public final class ModelManager: NSObject, ObservableObject {
-    static let shared = ModelManager()
+    static let shared: ModelManager = {
+        let manager = ModelManager()
+        manager.ownsModelUpdatePolling = true
+        if !RuntimeEnvironment.isUnderTests { manager.restartModelUpdatePolling() }
+        return manager
+    }()
 
     /// Diagnostics logger usable from the `nonisolated static` discovery paths.
     nonisolated static let discoveryLog = Logger(
@@ -196,22 +201,25 @@ public final class ModelManager: NSObject, ObservableObject {
         }
     }
 
-    // MARK: - Model Deprecation
-
-    struct DeprecationNotice: Identifiable {
-        let id: String
-        let oldId: String
-        let newId: String
-    }
-
-    /// Maps deprecated model IDs to their recommended OsaurusAI replacements.
-    nonisolated static let deprecatedModelReplacements: [String: String] = [:]
-
     // MARK: - Published Properties
     @Published var availableModels: [MLXModel] = []
     @Published var isLoadingModels: Bool = false
+    @Published private(set) var imageSearchRepoId: String?
     @Published var suggestedModels: [MLXModel] = ModelManager.curatedSuggestedModels
-    @Published var deprecationNotices: [DeprecationNotice] = []
+    @Published var manifestChecks: [String: ModelManifestCheck] = [:]
+    @Published var manifestChecksInFlight: Set<String> = []
+    var pendingManifestChecks: [String: MLXModel] = [:]
+    @Published var automaticallyChecksModelUpdates =
+        UserDefaults.standard.object(forKey: "AutomaticallyCheckModelUpdates") as? Bool ?? true
+    {
+        didSet {
+            UserDefaults.standard.set(automaticallyChecksModelUpdates, forKey: "AutomaticallyCheckModelUpdates")
+            restartModelUpdatePolling()
+        }
+    }
+    var ownsModelUpdatePolling = false
+    var modelUpdatePollingTask: Task<Void, Never>?
+    let automaticModelUpdateSweep = ModelUpdateSweep()
 
     /// True while a refresh of the OsaurusAI org listing is in flight. Drives
     /// the spinner on the Recommended tab's refresh button.
@@ -241,9 +249,15 @@ public final class ModelManager: NSObject, ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.refreshDownloadStates()
+                Task {
+                    await self?.refreshCachedManifestLocalState()
+                    await self?.refreshAutomaticModelUpdates()
+                }
             }
             .store(in: &cancellables)
 
+        // Download progress publishes are coalesced at the source
+        // (`ModelDownloadService.shouldPublishProgress`), so forward as-is.
         downloadService.objectWillChange
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -277,6 +291,8 @@ public final class ModelManager: NSObject, ObservableObject {
         // a cached Hub measurement still replaces it here.
         let curated = Self.curatedSuggestedModels.map { model in
             model.withDownloadSize(ModelSizeCache.bytes(forId: model.id))
+                .withWeightSize(ModelSizeCache.bytes(forId: ModelSSDResidency.weightFilesCacheKey(model.id)))
+                .withSSDResidentBytes(ModelSSDResidency.cachedBytes(repoId: model.id))
         }
 
         suggestedModels = curated
@@ -295,34 +311,20 @@ public final class ModelManager: NSObject, ObservableObject {
         // stays main-actor isolated so `self` never crosses actor boundaries.
         Task { [weak self] in
             let localModels = await Self.discoverLocalModelsOffMain()
-            self?.mergeAvailable(
+            guard let self else { return }
+            self.mergeAvailable(
                 with: localModels,
                 refreshLocalInstallationMetadata: true
             )
+            self.refreshTotalDownloadedSize()
         }
 
         isLoadingModels = false
-
-        checkForDeprecatedModels()
 
         let allModels = availableModels + suggestedModels
         Task { [downloadService] in
             await downloadService.topUpCompletedModels(allModels)
         }
-    }
-
-    /// Scans locally installed models for deprecated entries and populates deprecation notices.
-    func checkForDeprecatedModels() {
-        deprecationNotices = Self.deprecatedModelReplacements.compactMap { oldId, newId in
-            let probe = MLXModel(id: oldId, name: "", description: "", downloadURL: "")
-            guard probe.isDownloaded else { return nil }
-            return DeprecationNotice(id: oldId, oldId: oldId, newId: newId)
-        }
-    }
-
-    /// Returns the replacement model ID if the given model is deprecated, nil otherwise.
-    nonisolated static func replacementForDeprecatedModel(_ modelId: String) -> String? {
-        deprecatedModelReplacements[modelId]
     }
 
     /// Re-evaluate download states for all known models against the current
@@ -346,8 +348,17 @@ public final class ModelManager: NSObject, ObservableObject {
                 with: localModels,
                 refreshLocalInstallationMetadata: true
             )
-            self.checkForDeprecatedModels()
+            self.refreshTotalDownloadedSize()
         }
+    }
+
+    /// Re-sum the on-disk size of the installed inventory. Runs after every
+    /// local-discovery merge (launch scan, `.localModelsChanged`) so the
+    /// Models page header sizes exactly the set it counts beside it. The
+    /// candidates are captured here on the main actor; the probe and the
+    /// directory walk run off it inside the service.
+    func refreshTotalDownloadedSize() {
+        downloadService.refreshTotalDownloadedSize(inventoryCandidates: deduplicatedModels())
     }
 
     /// Fetch MLX-compatible models from Hugging Face and merge into availableModels.
@@ -358,26 +369,37 @@ public final class ModelManager: NSObject, ObservableObject {
 
         // Mark loading to show spinner if needed
         isLoadingModels = true
+        imageSearchRepoId = nil
 
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // If user pasted a direct HF URL or "org/repo", immediately surface it without requiring SDK allowlist
-        if let directId = Self.parseHuggingFaceRepoId(from: query), !directId.isEmpty,
-            !findExistingModel(id: directId).found
-        {
-            let probe = MLXModel(id: directId, name: "", description: "", downloadURL: "")
-            let model = MLXModel(
-                id: directId,
-                name: ModelMetadataParser.friendlyName(from: directId),
-                description: probe.isDownloaded ? L("Local model (detected)") : L("Imported from input"),
-                downloadURL: "https://huggingface.co/\(directId)"
-            )
-            availableModels.insert(model, at: 0)
-            downloadService.downloadStates[model.id] = model.isDownloaded ? .completed : .notStarted
-        }
-
         remoteSearchTask = Task { [weak self] in
             guard let self else { return }
+
+            // Diffusers/mflux bundles intentionally have nested configs, not
+            // the root config required by the language-model downloader.
+            if let directId = Self.parseHuggingFaceRepoId(from: query), !directId.isEmpty,
+                !Self.isGGUFRepo(id: directId)
+            {
+                let isImage = await ImageModelDownloadService.isImageRepo(directId)
+                guard !Task.isCancelled else { return }
+                if isImage {
+                    self.imageSearchRepoId = directId
+                    self.availableModels.removeAll { $0.id.caseInsensitiveCompare(directId) == .orderedSame }
+                    self.isLoadingModels = false
+                    return
+                }
+                if !self.findExistingModel(id: directId).found {
+                    self.insertModel(
+                        MLXModel(
+                            id: directId,
+                            name: ModelMetadataParser.friendlyName(from: directId),
+                            description: L("Imported from input"),
+                            downloadURL: "https://huggingface.co/\(directId)"
+                        )
+                    )
+                }
+            }
 
             // Build candidate URLs
             let limit = 100
@@ -408,13 +430,19 @@ public final class ModelManager: NSObject, ObservableObject {
                 for await arr in group { collected.append(arr) }
                 return collected
             }
+            guard !Task.isCancelled else { return }
 
             var byId: [String: HFModel] = [:]
             for arr in results { for m in arr { byId[m.id] = m } }
 
             let allow = Self.sdkSupportedModelIds()
             let allowedMapped: [MLXModel] = byId.values.compactMap { hf in
-                guard allow.contains(hf.id.lowercased()) else { return nil }
+                guard allow.contains(hf.id.lowercased()),
+                    Self.isChatCatalogEligible(id: hf.id, pipelineTag: hf.pipeline_tag, tags: hf.tags),
+                    !Self.isGGUFRepo(id: hf.id, tags: hf.tags)
+                else {
+                    return nil
+                }
                 return MLXModel(
                     id: hf.id,
                     name: ModelMetadataParser.friendlyName(from: hf.id),
@@ -425,11 +453,8 @@ public final class ModelManager: NSObject, ObservableObject {
                 )
             }
 
-            // Publish to UI on main actor (we already are, but be explicit about ordering)
-            await MainActor.run {
-                self.mergeAvailable(with: allowedMapped)
-                self.isLoadingModels = false
-            }
+            self.mergeAvailable(with: allowedMapped)
+            self.isLoadingModels = false
         }
     }
 
@@ -485,18 +510,44 @@ public final class ModelManager: NSObject, ObservableObject {
     ///     Private repos may use their actual file layout instead of a public
     ///     naming/tag convention.
     func resolveModelIfMLXCompatible(byRepoId repoId: String) async -> MLXModel? {
-        let trimmed = repoId.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
+        if case .model(let model) = await resolveModelForDeepLink(byRepoId: repoId) { return model }
+        return nil
+    }
 
-        if let existing = findExistingModel(id: trimmed).model { return existing }
+    /// Outcome of resolving a repo id that arrived from outside the catalog
+    /// (a `huggingface://` / `osaurus://open_from_hf` link or a pasted id).
+    enum DeepLinkResolution {
+        case model(MLXModel)
+        case image(repoId: String)
+        /// The Hub or the bundle rejected the repo; see the failure for why.
+        case unsupported(HuggingFaceService.MLXCompatibility.Failure)
+        /// A public OsaurusAI repo that is not in the curated registry. Other
+        /// product bundles live in that org and must not enter this catalog.
+        case registryGated
+    }
+
+    /// Resolves a repo id for the import flow, inserting it into the catalog
+    /// when the Hub says it is an MLX bundle the user can read.
+    func resolveModelForDeepLink(byRepoId repoId: String) async -> DeepLinkResolution {
+        let trimmed = repoId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .unsupported(.notFound) }
+
+        // Check the actual layout even for a cached catalog entry: older
+        // versions could insert an image repo into the language-model list.
+        if await ImageModelDownloadService.isImageRepo(trimmed) {
+            ImageModelDownloadService.shared.offer(repoId: trimmed)
+            return .image(repoId: trimmed)
+        }
+
+        if let existing = findExistingModel(id: trimmed).model { return .model(existing) }
 
         let lower = trimmed.lowercased()
         let compatibility = await HuggingFaceService.shared.mlxCompatibility(repoId: trimmed)
-        guard compatibility.isCompatible else { return nil }
+        guard compatibility.isCompatible else {
+            return .unsupported(compatibility.failure ?? .notMLX)
+        }
         if lower.hasPrefix("osaurusai/"), !compatibility.isPrivate {
-            // Unknown public OsaurusAI repos remain registry-gated so other
-            // product bundles do not leak into the language-model catalog.
-            return nil
+            return .registryGated
         }
 
         let model = MLXModel(
@@ -506,7 +557,7 @@ public final class ModelManager: NSObject, ObservableObject {
             downloadURL: "https://huggingface.co/\(trimmed)"
         )
         insertModel(model)
-        return model
+        return .model(model)
     }
 
     // MARK: - Model Lookup
@@ -550,24 +601,48 @@ public final class ModelManager: NSObject, ObservableObject {
     func deleteModel(_ model: MLXModel) async { await downloadService.delete(model) }
 
     func estimateDownloadSize(for model: MLXModel) async -> Int64? {
-        await downloadService.estimateSize(for: model)
+        if model.hasLocalInstallationEvidence, let bytes = model.downloadSizeBytes, bytes > 0 { return bytes }
+        return await downloadService.estimateSize(for: model)
     }
 
     /// Publish a size resolved on demand by the detail sheet back into the
     /// in-memory catalog. `ModelSizeCache` already persists the measurement;
     /// this keeps cards, filters, onboarding, and a reopened sheet from
     /// continuing to render the name-derived fallback until the next launch.
+    /// Publish an n-gram (SSD-resident) byte count resolved by the detail sheet, so cards and filters use the
+    /// same RAM verdict the sheet shows.
+    func applyResolvedSSDResidentBytes(_ bytes: Int64, for modelId: String) {
+        guard bytes >= 0 else { return }
+        func updating(_ models: [MLXModel]) -> ([MLXModel], Bool) {
+            var changed = false
+            let updated = models.map { model in
+                guard !model.hasLocalInstallationEvidence,
+                    model.id.caseInsensitiveCompare(modelId) == .orderedSame, model.ssdResidentBytes != bytes
+                else { return model }
+                changed = true
+                return model.withSSDResidentBytes(bytes)
+            }
+            return (updated, changed)
+        }
+        let available = updating(availableModels)
+        if available.1 { availableModels = available.0 }
+        let suggested = updating(suggestedModels)
+        if suggested.1 { suggestedModels = suggested.0 }
+    }
+
     func applyResolvedDownloadSize(_ bytes: Int64, for modelId: String) {
         guard bytes > 0 else { return }
 
         func updating(_ models: [MLXModel]) -> ([MLXModel], Bool) {
             var changed = false
             let updated = models.map { model in
-                guard model.id.caseInsensitiveCompare(modelId) == .orderedSame,
+                guard !model.hasLocalInstallationEvidence,
+                    model.id.caseInsensitiveCompare(modelId) == .orderedSame,
                     model.downloadSizeBytes != bytes
                 else { return model }
                 changed = true
                 return model.withDownloadSize(bytes)
+                    .withWeightSize(ModelSizeCache.bytes(forId: ModelSSDResidency.weightFilesCacheKey(model.id)))
             }
             return (updated, changed)
         }
@@ -590,6 +665,7 @@ public final class ModelManager: NSObject, ObservableObject {
     var downloadStates: [String: DownloadState] { downloadService.downloadStates }
     var downloadMetrics: [String: ModelDownloadService.DownloadMetrics] { downloadService.downloadMetrics }
     var totalDownloadedSize: Int64 { downloadService.totalDownloadedSize }
+    var totalDownloadedModelCount: Int { downloadService.totalDownloadedModelCount }
     var totalDownloadedSizeString: String { downloadService.totalDownloadedSizeString }
     var activeDownloadsCount: Int { downloadService.activeDownloadsCount }
     var downloadAlert: ModelDownloadService.DownloadAlertInfo? {
@@ -597,7 +673,8 @@ public final class ModelManager: NSObject, ObservableObject {
         set { downloadService.downloadAlert = newValue }
     }
 
-    /// Deduplicated merge of suggestedModels + availableModels, preferring curated descriptions.
+    /// Deduplicated merge of suggestedModels + availableModels: one entry per
+    /// lowercased id, preferring curated descriptions.
     ///
     /// Order is deterministic: rows keep the insertion order of `combined`
     /// (suggestedModels first, then availableModels). Earlier this returned
@@ -605,20 +682,38 @@ public final class ModelManager: NSObject, ObservableObject {
     /// between calls — so any view that recomputed on a tick (e.g. the
     /// onboarding picker observing `SystemMonitorService`'s 2s timer) saw the
     /// rows jump around. Preserving insertion order keeps the list stable.
+    ///
+    /// On an id collision the representative is the entry that carries
+    /// installation evidence (see `deduplicatedModels(suggested:available:)`).
     func deduplicatedModels() -> [MLXModel] {
-        let combined = suggestedModels + availableModels
+        Self.deduplicatedModels(suggested: suggestedModels, available: availableModels)
+    }
+
+    /// Pure form of `deduplicatedModels()` so the inventory contract is
+    /// testable without a manager and callable off the main actor.
+    ///
+    /// The first occurrence of an id keeps its slot. When a later occurrence
+    /// carries installation evidence (`bundleDirectory` / `rootDirectory` /
+    /// `externalSource`) and the one in the slot does not, the slot takes the
+    /// first entry's editorial fields merged with the later entry's
+    /// installation metadata. Before this, the suggestion always won, so an
+    /// externally installed bundle whose id was also a curated or org
+    /// suggestion was represented by a card that probed the managed models
+    /// directory and reported not-downloaded: the Models page header, the
+    /// On Device tab and the Catalog cards undercounted while the sidebar
+    /// badge, picker and spawn checks (built from `availableModels`) did not.
+    nonisolated static func deduplicatedModels(
+        suggested: [MLXModel],
+        available: [MLXModel]
+    ) -> [MLXModel] {
         var ordered: [MLXModel] = []
         var indexByLowerId: [String: Int] = [:]
-        for m in combined {
+        for m in suggested + available {
             let key = m.id.lowercased()
             if let existingIndex = indexByLowerId[key] {
-                let existingIsDiscovered =
-                    ordered[existingIndex].description == "Discovered on Hugging Face"
-                let currentIsDiscovered = m.description == "Discovered on Hugging Face"
-                // Swap a richer (curated) entry into the slot a discovered
-                // placeholder already occupies, keeping the original position.
-                if existingIsDiscovered && !currentIsDiscovered {
-                    ordered[existingIndex] = m
+                let existing = ordered[existingIndex]
+                if m.hasLocalInstallationEvidence && !existing.hasLocalInstallationEvidence {
+                    ordered[existingIndex] = existing.mergingLocalInstallationMetadata(from: m)
                 }
             } else {
                 indexByLowerId[key] = ordered.count
@@ -626,6 +721,61 @@ public final class ModelManager: NSObject, ObservableObject {
             }
         }
         return ordered
+    }
+
+    // MARK: - Installed inventory
+
+    /// THE installed-models inventory: every known model (suggested or
+    /// available), one entry per id, that is complete on disk. The sidebar
+    /// Local Models badge, the Models page header count and size, the On
+    /// Device tab, the config catalog/planner/applier/exporter, `osaurus_inspect`
+    /// and onboarding all read this, so they cannot disagree with each other.
+    ///
+    /// `isDownloaded` probes the disk on a cache miss; callers on the main
+    /// actor that cannot afford that (the badge store) capture
+    /// `deduplicatedModels()` here and run `installedModels(among:)` off main.
+    func installedModels() -> [MLXModel] {
+        Self.installedModels(among: deduplicatedModels())
+    }
+
+    var installedModelCount: Int { installedModels().count }
+
+    /// Waits for the launch-time disk scan and folds it into the inventory,
+    /// so `installedModels()` lists every bundle on this Mac and not only the
+    /// curated entries seeded at init. For callers that run right after
+    /// launch and would otherwise read "scan not landed" as "not installed".
+    func awaitInstalledInventory() async {
+        await Self.awaitLocalModelsCacheReadyForDispatch()
+        let localModels = await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                // Materialize the external registry too; discovery only reads
+                // its non-blocking snapshot, which is empty until built.
+                _ = ExternalModelLocator.models()
+                continuation.resume(returning: Self.discoverLocalModels())
+            }
+        }
+        mergeAvailable(with: localModels, refreshLocalInstallationMetadata: true)
+    }
+
+    /// `!installedModels().isEmpty`, stopping at the first installed entry
+    /// instead of probing every candidate.
+    var hasInstalledModels: Bool { deduplicatedModels().contains(where: Self.isInstalledInventoryModel) }
+
+    /// The installed subset of an inventory candidate list (the output of
+    /// `deduplicatedModels()`), computed wherever the caller is. Pure over
+    /// its input so a background task can run it on a main-actor snapshot.
+    nonisolated static func installedModels(among candidates: [MLXModel]) -> [MLXModel] {
+        // INVARIANT: UI, configuration and setup checks share this installed
+        // subset; catalog refresh preserves local evidence. Guarded by
+        // InstalledModelInventoryTests (landing orders and surface counts).
+        candidates.filter(isInstalledInventoryModel)
+    }
+
+    /// Complete on disk and able to chat. Embedding bundles (e.g. potion
+    /// imported from the HF cache) are excluded: Osaurus ships its own
+    /// embedder, and they can't serve chat completions.
+    nonisolated private static func isInstalledInventoryModel(_ model: MLXModel) -> Bool {
+        model.isDownloaded && !model.isEmbedding
     }
 
     // MARK: - Private Methods
@@ -709,39 +859,27 @@ extension ModelManager {
     }
 
     /// Fully curated models with descriptions we control.
-    /// Order is a fallback only — `ModelDownloadView.filteredSuggestedModels`
-    /// sorts by curated-first → top-pick → `releasedAt` desc → name.
+    /// Order is a fallback only — `LanguageModelCatalog.makeLists` sorts by
+    /// top-pick → `releasedAt` desc → name.
     nonisolated fileprivate static let curatedSuggestedModels: [MLXModel] = [
+        // Recommendations (2026-11-11). Onboarding offers only
+        // `ConfigureAIState.preferredOnboardingModelId` (Raptor 0.7), on every
+        // Mac. `isTopSuggestion` drives the Models tab "Top Picks" section and
+        // the full-DMG bundled-brain gate; it no longer feeds a per-RAM
+        // onboarding pick. Top Picks: Raptor 0.7 4B, LFM3-VL 2B, Diplodocus
+        // preview, Qwen3.8 27B, MiniCPM-V 4.7 35B-A3B and Flint 40B-A2.5B
+        // (JANG_4M + JANG_6M, grouped into one family row). JANG builds have
+        // no name-derived size, so each Top Pick bootstraps its measured Hub
+        // size for the fit label until `ModelSizeCache` refreshes.
+        // Gemma 4, Ornith 1.5, Nanbeige 4.2, Qwen 3.6, Nemotron-3 and Bonsai
+        // stay installable from the catalog but are not Top Picks.
+
         // MARK: Gemma 4 — multimodal
-        //
-        // Onboarding recommendation spine (2026-08-31). Top Pick membership
-        // controls the first-run shortlist; the memory-fit selector below still
-        // refuses to auto-default into the `.tight` band:
-        //   • Mainstream RAM → Raptor v0.5 8B-A1B JANG_6M (~1B active) and
-        //                      Gemma 4 12B-it-MXFP8 as RAM allows. LFM2.5 8B
-        //                      and dense Ornith 1.5 9B remain in the catalog,
-        //                      but Raptor is the small-active-set first-run
-        //                      default once it comfortably fits.
-        //   • Larger RAM     → Ornith 1.5 35B-A3B MXFP8 (below).
-        //   • Smaller RAM → official OsaurusAI Gemma 4 at the highest non-QAT,
-        //                    non-MXFP4 precision that exists: `12B-it-MXFP8`
-        //                    (the only MXFP8 Gemma the org ships) and the
-        //                    `E4B/E2B-it-8bit` retention builds (no E-series
-        //                    MXFP8 exists on the HF org). Nanbeige 4.2 3B
-        //                    JANG_6M is the text-quality exception in this
-        //                    band (looped transformer; JANG_6M beats the
-        //                    family's MXFP8 on fidelity — see that entry).
-        // A *recommended* Gemma build must never be `qat` or plain `MXFP4`, so
-        // the 5 Gemma `qat-MXFP4` builds (E2B/E4B/12B/31B/26B-A4B) stay in the
-        // catalog but are not Top Picks. Qwen 3.6 (incl. MXFP8-MTP), Nemotron-3
-        // and Bonsai remain catalog-only: they are installable and selectable,
-        // just not part of the auto-default recommendation spine.
 
         curated(
             id: "OsaurusAI/gemma-4-12B-it-MXFP8",
             description:
                 "Gemma 4 12B multimodal — images, video, and audio at high-precision MXFP8. 128K context.",
-            isTopSuggestion: true,
             modelType: "gemma4",
             releasedAt: date("2026-06-01"),
             useCase: .vision
@@ -796,7 +934,7 @@ extension ModelManager {
         // E-series, 8-bit retains far better than 4-bit (E4B: 17% vs 33%
         // bounce; E2B: median 19 vs 2 messages). The 4-bit builds stay listed
         // only as the smallest-download option for the most RAM-constrained
-        // Macs; the 8-bit builds (below) are the recommended edge picks.
+        // Macs; prefer the 8-bit builds (below).
         curated(
             id: "OsaurusAI/gemma-4-E4B-it-4bit",
             description:
@@ -824,24 +962,6 @@ extension ModelManager {
         // (`"mxtq"`) — no osaurus-side branching required.
 
         curated(
-            id: "OsaurusAI/Qwen3.6-27B-MXFP4",
-            description:
-                "Qwen 3.6 27B dense vision model. MXFP4 — best quality per byte. The org's most-downloaded model. 256K context.",
-            modelType: "qwen3_5",
-            releasedAt: date("2026-05-20"),
-            useCase: .vision
-        ),
-
-        curated(
-            id: "OsaurusAI/Qwen3.6-27B-MXFP8-MTP",
-            description:
-                "Qwen 3.6 27B dense vision model. MXFP8 + multi-token-prediction speculative decode — high precision, fast. 256K context.",
-            modelType: "qwen3_5",
-            releasedAt: date("2026-05-20"),
-            useCase: .vision
-        ),
-
-        curated(
             id: "OsaurusAI/Qwen3.6-35B-A3B-MXFP8-MTP",
             description:
                 "Qwen 3.6 35B MoE (~3B active) vision model. MXFP8 + multi-token-prediction speculative decode — the precision-first sibling of the MXFP4 build. 256K context.",
@@ -862,17 +982,104 @@ extension ModelManager {
             useCase: .vision
         ),
 
-        // MARK: Raptor v0.5 (Ling 3 / BailingMoeV3 — Top Pick)
+        // MARK: Raptor 0.7 (Spark-X2.6 — the only onboarding model)
+        //
+        // Bootstrap size is the Hub download set at the commit
+        // `fetch_bundled_model.sh` pins, so the onboarding card shows a size
+        // and fit label before the Hub size fetch returns.
 
         curated(
-            id: "OsaurusAI/Raptor-v0.5-8B-A1B-JANG_6M",
+            id: "OsaurusAI/Raptor-0.7-4B-JANG_6M",
             description:
-                "Raptor v0.5 8B-A1B text model on the Ling 3 architecture. JANG_6M — fast agentic tool use with ~1B active parameters. 128K context.",
+                "Raptor 0.7 4B, the local agent model for Osaurus, on Spark-X2.6. JANG_6M — files, workbooks, sandbox, delegation and workflows in a 3.41 GiB dense bundle. 1M context.",
             isTopSuggestion: true,
-            bootstrapDownloadSizeBytes: 6_783_354_784,
-            modelType: "bailing_hybrid",
-            releasedAt: date("2026-08-25"),
+            bootstrapDownloadSizeBytes: 3_677_782_859,
+            modelType: "spark2_5",
+            releasedAt: date("2026-11-12"),
             useCase: .general
+        ),
+
+        // Raptor v0.5 8B-A1B and Raptor 0.6 4B were retired from the catalog
+        // as their successors shipped — see `retiredOsaurusOrgIds`. Installed
+        // copies still load from the local scan.
+
+        // MARK: LFM3-VL (Liquid AI vision-language — Top Pick)
+
+        curated(
+            id: "OsaurusAI/LFM3-VL-2B-JANG_6M",
+            description:
+                "Liquid AI LFM3-VL 2B vision-language model — images and video in a ~2 GB download. JANG_6M. 128K context.",
+            isTopSuggestion: true,
+            bootstrapDownloadSizeBytes: 2_059_332_288,
+            modelType: "lfm3_vl",
+            releasedAt: date("2026-10-28"),
+            useCase: .vision
+        ),
+
+        // MARK: Diplodocus (K2 Horizon — Top Pick)
+
+        curated(
+            id: "OsaurusAI/Diplodocus-preview-JANG_6M",
+            description:
+                "Diplodocus preview, a reasoning and tool-use model for documents, spreadsheets and finance on the K2 Horizon architecture. JANG_6M. 512K context.",
+            isTopSuggestion: true,
+            bootstrapDownloadSizeBytes: 6_959_436_049,
+            modelType: "k2_horizon",
+            releasedAt: date("2026-10-14"),
+            useCase: .general
+        ),
+
+        // MARK: Qwen 3.8 (dense vision — Top Pick)
+
+        curated(
+            id: "OsaurusAI/Qwen3.8-27B-JANG_4D",
+            description:
+                "Qwen 3.8 27B dense vision model with thinking and tool use — images and video. JANG_4D. 256K context.",
+            isTopSuggestion: true,
+            bootstrapDownloadSizeBytes: 26_551_442_542,
+            modelType: "qwen3_5",
+            releasedAt: date("2026-10-07"),
+            useCase: .vision
+        ),
+
+        // MARK: MiniCPM-V 4.7 (vision MoE — Top Pick)
+
+        curated(
+            id: "OsaurusAI/MiniCPM-V-4.7-35B-A3B-JANG_4M",
+            description:
+                "MiniCPM-V 4.7 35B-A3B vision MoE (~3B active) with thinking — images and video. JANG_4M. 256K context.",
+            isTopSuggestion: true,
+            bootstrapDownloadSizeBytes: 24_698_006_436,
+            modelType: "minicpmv4_7",
+            releasedAt: date("2026-10-13"),
+            useCase: .vision
+        ),
+
+        // MARK: Flint (coding-agent MoE — Top Pick)
+        //
+        // Both quantizations are Top Picks; the Models tab groups them into
+        // one family row with a Versions picker.
+
+        curated(
+            id: "OsaurusAI/Flint-40B-A2.5B-JANG_4M",
+            description:
+                "Flint 40B-A2.5B coding-agent MoE (~2.5B active) for Osaurus — reasoning and tool use. JANG_4M, the smaller build. 256K context.",
+            isTopSuggestion: true,
+            bootstrapDownloadSizeBytes: 23_381_798_582,
+            modelType: "flint",
+            releasedAt: date("2026-10-22"),
+            useCase: .coding
+        ),
+
+        curated(
+            id: "OsaurusAI/Flint-40B-A2.5B-JANG_6M",
+            description:
+                "Flint 40B-A2.5B coding-agent MoE (~2.5B active) for Osaurus — reasoning and tool use. JANG_6M, the higher-precision build. 256K context.",
+            isTopSuggestion: true,
+            bootstrapDownloadSizeBytes: 32_844_164_206,
+            modelType: "flint",
+            releasedAt: date("2026-10-22"),
+            useCase: .coding
         ),
 
         // MARK: Ornith 1.5 (Qwen 3.5 hybrid backbone)
@@ -882,7 +1089,7 @@ extension ModelManager {
         // onboarding downloads of the old IDs died at the file-list fetch
         // ("Could not retrieve file list from Hugging Face"). 1.5 keeps the
         // same `qwen3_5` / `qwen3_5_moe` runtime classes (Gated-DeltaNet
-        // linear attention + full attention). MXFP8 is the curated Top Pick
+        // linear attention + full attention). MXFP8 is the curated
         // representative per family (precision-first); JANG siblings stay
         // auto-fetched and collapse into each family card's Versions picker.
 
@@ -899,29 +1106,26 @@ extension ModelManager {
             id: "OsaurusAI/Ornith-1.5-35B-A3B-MXFP8",
             description:
                 "Ornith 1.5 35B-A3B vision-language MoE, state-of-the-art open agentic coding for its size. MXFP8 — near-lossless precision. 256K context.",
-            isTopSuggestion: true,
             modelType: "qwen3_5_moe",
             releasedAt: date("2026-08-19"),
             useCase: .vision
         ),
 
-        // MARK: Nanbeige 4.2 (looped transformer — Top Pick)
+        // MARK: Nanbeige 4.2 (looped transformer)
         //
         // 22 physical layers × 2 loops (44 KV slots), text-only, 256K, tools
         // + thinking. The MXFP8 sibling is format coverage and loses on
         // fidelity *and* size to both JANG profiles (live card: Tokyo-capital
-        // miss on MXFP8; JANG_6M is 5/5 top-1, KL 0.001). So this family
-        // breaks the MXFP8-only Top Pick rule on purpose — JANG_6M is the
-        // one we recommend. Hub weight shard is ~3.9 GB; bootstrap that
-        // measurement so first-launch hardware selection isn't the 0.5
-        // byte/param JANG fallback (~1.5 GB), which would look comfortable
-        // on an 8 GB Mac when the real working set is ~4.5 GB.
+        // miss on MXFP8; JANG_6M is 5/5 top-1, KL 0.001), so JANG_6M is the
+        // curated build. Hub weight shard is ~3.9 GB; bootstrap that
+        // measurement so the fit label isn't the 0.5 byte/param JANG
+        // fallback (~1.5 GB), which would look comfortable on an 8 GB Mac
+        // when the real working set is ~4.5 GB.
 
         curated(
             id: "OsaurusAI/Nanbeige4.2-3B-JANG_6M",
             description:
                 "Nanbeige 4.2 3B looped-transformer reasoning model (en + zh). 6-bit affine JANG — the quality pick of the family. 256K context.",
-            isTopSuggestion: true,
             bootstrapDownloadSizeBytes: 3_921_000_000,
             modelType: "nanbeige",
             releasedAt: date("2026-07-28"),
@@ -1021,34 +1225,10 @@ extension ModelManager {
         // T=0.6 top_p=0.95 (DeepSeek-style). Bundles ship those defaults
         // in `generation_config.json`; `LocalGenerationDefaults` reads them.
 
-        // AUDIT FLAG (quality decision, not hard-changed): this MXFP4 build
-        // is the Top Pick ("fastest decode"), but its `JANGTQ4` sibling below
-        // is described as "near-bf16 quality." If near-bf16 holds, JANGTQ4 may
-        // be the better first-impression default. Decide MXFP4-speed vs
-        // JANGTQ4-quality (with real decode + quality proof) before swapping
-        // the Top-Pick flag.
         curated(
             id: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-MXFP4",
             description:
                 "NVIDIA Nemotron-3 30B Reasoning hybrid (Mamba-2 + MoE). MXFP4 quantization — fastest decode path. 262K context.",
-            modelType: "nemotron_h",
-            releasedAt: date("2026-04-28"),
-            useCase: .reasoning
-        ),
-
-        curated(
-            id: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ4",
-            description:
-                "Nemotron-3 30B Reasoning hybrid, 4-bit TurboQuant routed experts. Near-bf16 quality at ~37 GB. 262K context.",
-            modelType: "nemotron_h",
-            releasedAt: date("2026-04-28"),
-            useCase: .reasoning
-        ),
-
-        curated(
-            id: "OsaurusAI/Nemotron-3-Nano-Omni-30B-A3B-JANGTQ2",
-            description:
-                "Nemotron-3 30B Reasoning hybrid, 2-bit TurboQuant routed experts. Smallest footprint (~21 GB). 262K context.",
             modelType: "nemotron_h",
             releasedAt: date("2026-04-28"),
             useCase: .reasoning
@@ -1067,14 +1247,6 @@ extension ModelManager {
             id: "OsaurusAI/ZAYA1-8B-MXFP4",
             description:
                 "ZAYA1 8B reasoning + tool-use model with CCA hybrid attention. MXFP4 quantization.",
-            releasedAt: date("2026-06-05"),
-            useCase: .reasoning
-        ),
-
-        curated(
-            id: "OsaurusAI/ZAYA1-8B-JANGTQ4",
-            description:
-                "ZAYA1 8B reasoning + tool-use, 4-bit TurboQuant routed experts. CCA hybrid attention.",
             releasedAt: date("2026-06-05"),
             useCase: .reasoning
         ),
@@ -1128,63 +1300,12 @@ extension ModelManager {
             useCase: .coding
         ),
 
-        // MARK: Mistral-Medium-3.5-128B (preview — architecturally supported, end-to-end load unverified)
-        //
-        // `model_type=mistral3` outer wrapper with `text_config.model_type=
-        // ministral3` (88 layers, hidden 12288, 96/8 GQA, head_dim 128, 256K
-        // YaRN). Pixtral vision tower (48 layers, hidden 1664, image_size
-        // 1540, patch 14, spatial_merge 2). Text + image. Source FP8 e4m3
-        // with per-tensor scales; vision tower / projector / lm_head stay
-        // in bf16/fp16.
-        //
-        // vmlx-swift's `mistral3` factory branches on
-        // `text_config.model_type == "mistral4"` and falls through to
-        // `Mistral3VLM` otherwise. `Mistral3VLM.LanguageModel`
-        // (Libraries/MLXVLM/Models/Mistral3.swift:516) is explicitly
-        // documented to handle BOTH `ministral3` (sliding + llama4 scaling)
-        // AND vanilla `mistral` model_types via `Ministral3ModelInner`.
-        // Vision shapes (image_size, num_layers, spatial_merge) are
-        // config-parametric. So Mistral 3.5 should load through the
-        // existing factory dispatch — but no end-to-end smoke test has
-        // been run on real 3.5 weights yet, hence "preview". Marked top
-        // suggestion only after a real load + decode pass on bundle.
-        //
-        // Quant + bundle metadata per `jang_tools/convert_mistral3_jangtq.py`
-        // and `jang_tools/convert_mistral3_mxfp4.py`. `jang_config.json` v2:
-        //   { "weight_format": "mxtq" | "mxfp4",
-        //     "source_model.architecture": "mistral3",
-        //     "has_vision": true, "vision_arch": "pixtral",
-        //     "mxtq_bits": { text_decoder=2|4, embed_tokens=8,
-        //                    vision_tower="passthrough_fp16",
-        //                    multi_modal_projector="passthrough_fp16",
-        //                    lm_head="passthrough_fp16" } }
-        //
-        // Not a Mamba/SSM hybrid — `isKnownHybridModel` does NOT match.
-
-        curated(
-            id: "OsaurusAI/Mistral-Medium-3.5-128B-mxfp4",
-            description:
-                "Mistral Medium 3.5 128B + Pixtral vision. MXFP4 quant — fastest decode. 256K context, 24-language coverage.",
-            modelType: "mistral3",
-            releasedAt: date("2026-04-30"),
-            useCase: .vision
-        ),
-
-        curated(
-            id: "OsaurusAI/Mistral-Medium-3.5-128B-JANGTQ",
-            description:
-                "Mistral Medium 3.5 128B + Pixtral vision, 2-bit TurboQuant text decoder. ~41 GB footprint. 256K context, 24-language coverage.",
-            modelType: "mistral3",
-            releasedAt: date("2026-04-30"),
-            useCase: .vision
-        ),
-
         // MARK: gemma-4-12B (lower-precision companion)
 
         curated(
             id: "OsaurusAI/gemma-4-12B-it-MXFP4",
             description:
-                "Gemma 4 12B multimodal at MXFP4 — smaller, lower-precision companion to the 12B MXFP8 Top Pick. 128K context.",
+                "Gemma 4 12B multimodal at MXFP4 — smaller, lower-precision companion to the 12B MXFP8 build. 128K context.",
             modelType: "gemma4",
             releasedAt: date("2026-06-01"),
             useCase: .vision
@@ -1192,56 +1313,11 @@ extension ModelManager {
 
         // MARK: Large / specialist catalog
         //
-        // Never onboarding auto-defaults. Each is gated on real Osaurus load +
+        // Not Top Picks. Each is gated on real Osaurus load +
         // decode + architecture-correct cache proof before any Top-Pick
         // promotion. `modelType` hints below are inferred from HF tags and are
         // confirmed/overridden by runtime auto-detection from each repo's
         // config.json at load time.
-
-        curated(
-            id: "OsaurusAI/DeepSeek-V4-Flash-JANGTQ2",
-            description:
-                "DeepSeek V4 Flash reasoning model, 2-bit TurboQuant. CSA/HSA/SWA hybrid attention. Large specialist footprint.",
-            modelType: "deepseek_v4",
-            releasedAt: date("2026-06-05"),
-            useCase: .reasoning
-        ),
-
-        curated(
-            id: "OsaurusAI/DeepSeek-V4-Flash-JANGTQ-K",
-            description:
-                "DeepSeek V4 Flash reasoning model, K-quant TurboQuant. CSA/HSA/SWA hybrid attention. Large specialist footprint.",
-            modelType: "deepseek_v4",
-            releasedAt: date("2026-06-05"),
-            useCase: .reasoning
-        ),
-
-        curated(
-            id: "OsaurusAI/Kimi-K2.6-JANGTQ_K",
-            description:
-                "Kimi K2.6 vision model, K-quant TurboQuant. Large specialist footprint.",
-            modelType: "kimi_k25",
-            releasedAt: date("2026-06-05"),
-            useCase: .vision
-        ),
-
-        curated(
-            id: "OsaurusAI/Hy3-preview-JANGTQ_K",
-            description:
-                "Hunyuan 3 (295B MoE) preview, K-quant TurboQuant. Very large specialist footprint.",
-            modelType: "hy_v3",
-            releasedAt: date("2026-06-05"),
-            useCase: .general
-        ),
-
-        curated(
-            id: "OsaurusAI/NVIDIA-Nemotron-3-Ultra-550B-A55B-JANGTQ_1L",
-            description:
-                "NVIDIA Nemotron-3 Ultra 550B (~55B active) reasoning MoE, TurboQuant. Showcase — requires very high unified memory.",
-            modelType: "nemotron_h",
-            releasedAt: date("2026-06-05"),
-            useCase: .reasoning
-        ),
 
         curated(
             id: "OsaurusAI/Step-3.7-Flash-JANG_K",
@@ -1270,19 +1346,17 @@ extension ModelManager {
             useCase: .coding
         ),
 
-        // MARK: Gemma 4 E-series — 8-bit retention builds (Top Picks)
+        // MARK: Gemma 4 E-series — 8-bit retention builds
         //
         // Within the E-series, 8-bit retains far better than 4-bit, so these
-        // are the recommended high-precision edge picks (not the demoted
-        // 4-bit fallbacks above). `releasedAt` is bumped to mid-2026 so the
-        // newest-first Top Picks carousel surfaces these retention builds near
-        // the top instead of stranding them at the tail with the April dates.
+        // are the high-precision edge builds (not the 4-bit fallbacks above).
+        // `releasedAt` is mid-2026 so newest-first lists sort them above the
+        // April 4-bit builds.
 
         curated(
             id: "OsaurusAI/gemma-4-E4B-it-8bit",
             description:
-                "Recommended multimodal edge model — 8-bit precision, the best first-run quality for the E4B family (highest retention). Images, video, audio. 128K context.",
-            isTopSuggestion: true,
+                "Gemma 4 E4B multimodal edge model — 8-bit precision, the highest-retention E4B build. Images, video, audio. 128K context.",
             modelType: "gemma4",
             releasedAt: date("2026-06-02"),
             useCase: .vision
@@ -1292,7 +1366,6 @@ extension ModelManager {
             id: "OsaurusAI/gemma-4-E2B-it-8bit",
             description:
                 "Smallest high-precision multimodal model — 8-bit, the best quality that still runs on any Mac. 128K context.",
-            isTopSuggestion: true,
             modelType: "gemma4",
             releasedAt: date("2026-06-02"),
             useCase: .smallest
@@ -1300,10 +1373,9 @@ extension ModelManager {
 
         // MARK: LFM2.5 (Liquid AI hybrid MoE — catalog only, listed last)
         //
-        // Kept at the tail of the catalog so LFM rows always render at the
-        // bottom of order-following lists (the onboarding chooser keeps
-        // catalog order). Raptor v0.5 now occupies the mainstream-RAM Top Pick
-        // slot; LFM2.5 remains available as an installable alternative.
+        // Kept at the tail of the catalog so LFM2.5 rows render at the bottom
+        // of order-following lists. Installable from the catalog; not a Top
+        // Pick.
 
         curated(
             id: "OsaurusAI/LFM2.5-8B-A1B-MXFP8",
@@ -1342,6 +1414,14 @@ extension ModelManager {
         // a re-upload or stale org listing cannot re-surface a dead download.
         "osaurusai/ornith-1.0-9b-mxfp8",
         "osaurusai/ornith-1.0-35b-mxfp8",
+        // Raptor v0.5 8B-A1B is superseded by Raptor 0.6 4B (smaller, faster,
+        // better quality). Hidden from the catalog; installed copies still
+        // load from the local scan.
+        "osaurusai/raptor-v0.5-8b-a1b-jang_6m",
+        // Raptor 0.6 4B is superseded by Raptor 0.7 4B, the onboarding model
+        // and the one bundled in the full DMG.
+        "osaurusai/raptor-0.6-4b-jang_6m",
+        "osaurusai/raptor-0.6-4b-jang_4m",
     ]
 
     /// HF `pipeline_tag` values that mark a repo as chat-capable (text or
@@ -1369,14 +1449,38 @@ extension ModelManager {
         ]
     }
 
+    /// GGUF repos are published for the Windows build. The Mac app has no
+    /// GGUF inference engine, so they never belong in this catalog, however
+    /// they were found (org listing, search, or a pasted repo id).
+    nonisolated static func isGGUFRepo(id: String, tags: [String]? = nil) -> Bool {
+        if id.lowercased().contains("gguf") { return true }
+        return tags?.contains { $0.lowercased() == "gguf" } ?? false
+    }
+
     /// True when an OsaurusAI org repo may appear in the LLM catalog.
     /// Untagged repos pass (MLX conversions frequently omit `pipeline_tag`,
     /// so `nil` is not evidence of a non-chat repo) unless they are owned by
     /// another Settings panel.
-    nonisolated static func isChatCatalogEligible(id: String, pipelineTag: String?) -> Bool {
+    nonisolated static func isChatCatalogEligible(id: String, pipelineTag: String?, tags: [String]? = nil) -> Bool {
         if panelOwnedOrgIds.contains(id.lowercased()) { return false }
+        if isGGUFRepo(id: id, tags: tags) { return false }
         guard let tag = pipelineTag?.lowercased(), !tag.isEmpty else { return true }
         return chatCapablePipelineTags.contains(tag)
+    }
+
+    /// Decision bundles are downloadable local models, but never chat models.
+    /// Require the publisher's task declaration and decision artifacts rather
+    /// than inferring the task from a repo name or its chat-capable backbone.
+    nonisolated static func isDecisionCatalogEligible(
+        id: String, pipelineTag: String?, tags: [String]?, files: [String]?
+    ) -> Bool {
+        guard !panelOwnedOrgIds.contains(id.lowercased()), !isGGUFRepo(id: id, tags: tags),
+            pipelineTag?.lowercased() == "zero-shot-classification",
+            tags?.contains(where: { $0.lowercased() == "decision-model" }) == true,
+            let files
+        else { return false }
+        return Set(["jang_config.json", "decision/decision_config.json", "decision/readout.safetensors"])
+            .isSubset(of: Set(files))
     }
 }
 
@@ -1388,7 +1492,7 @@ extension ModelManager {
         let models = discoverLocalModels()
         var seen: Set<String> = []
         var names: [String] = []
-        for m in models {
+        for m in models where !m.isDecision && !m.isEmbedding {
             let repo = m.id.split(separator: "/").last.map(String.init)?.lowercased() ?? m.id.lowercased()
             if !seen.contains(repo) {
                 seen.insert(repo)
@@ -1416,11 +1520,13 @@ extension ModelManager {
         // refresh). Rebuilding the merged model list and re-splitting every id
         // per call is wasted main-thread work — and under memory pressure it
         // shows up in hang reports. Memoize per name, invalidated when either
-        // the local scan cache or the external registry changes.
+        // the local scan cache or the external catalog changes. Registry
+        // identity alone misses completion of the asynchronous catalog build
+        // and can retain a provisional miss for the lifetime of the app.
         localModelsCacheCondition.lock()
         let localGen = localModelsCacheGen
         localModelsCacheCondition.unlock()
-        let externalGen = ExternalModelLocator.registryGeneration()
+        let externalGen = ExternalModelLocator.catalogGeneration()
 
         matchMemoLock.lock()
         if matchMemoLocalGen == localGen, matchMemoExternalGen == externalGen,
@@ -1447,7 +1553,8 @@ extension ModelManager {
     private static nonisolated let matchMemoLock = NSLock()
     private static nonisolated(unsafe) var matchMemo: [String: MLXModel?] = [:]
     private static nonisolated(unsafe) var matchMemoLocalGen: UInt64 = .max
-    private static nonisolated(unsafe) var matchMemoExternalGen: UInt64 = .max
+    private static nonisolated(unsafe) var matchMemoExternalGen =
+        ExternalModelLocator.CatalogGeneration(registry: .max, snapshot: .max)
 
     nonisolated static func matchInstalledMLXModel(
         named name: String,
@@ -1504,10 +1611,11 @@ extension ModelManager {
 // MARK: - Hugging Face discovery helpers
 
 extension ModelManager {
-    fileprivate struct HFModel: Decodable {
+    struct HFModel: Decodable, Sendable {
         let id: String
         let tags: [String]?
         let pipeline_tag: String?
+        let siblings: [HuggingFaceService.RepoFile]?
         let lastModified: String?
         let downloads: Int?
     }
@@ -1546,13 +1654,15 @@ extension ModelManager {
         repoId: String,
         revision: String?
     ) async -> Int64? {
-        if let cached = ModelSizeCache.bytes(forId: repoId, matchingRevision: revision) {
+        if let cached = ModelSizeCache.bytes(forId: repoId, matchingRevision: revision),
+            ModelSizeCache.bytes(forId: ModelSSDResidency.weightFilesCacheKey(repoId), matchingRevision: revision) != nil {
             return cached
         }
         let fetched = await HuggingFaceService.shared.estimateTotalSize(
             repoId: repoId,
             patterns: ModelDownloadService.downloadFilePatterns,
-            excludedFiles: ModelDownloadService.downloadExcludedFiles
+            excludedFiles: ModelDownloadService.downloadExcludedFiles,
+            revision: revision
         )
         if let fetched {
             ModelSizeCache.record(id: repoId, bytes: fetched, revision: revision)
@@ -1576,20 +1686,35 @@ extension ModelManager {
         }
     }
 
-    /// Parse a HF `lastModified` ISO8601 string into a `Date`.
-    fileprivate static func parseHFTimestamp(_ s: String?) -> Date? {
-        guard let s, !s.isEmpty else { return nil }
+    /// Cached HF timestamp formatters. Building an `ISO8601DateFormatter` (or
+    /// changing its `formatOptions`) re-initialises the underlying ICU
+    /// formatter, which loads locale symbol tables. Doing that once per repo
+    /// for a 200-entry org listing hung the main thread (APPLE-MACOS-38J).
+    /// Formatters are configured once and only read afterwards, which is
+    /// thread-safe for `ISO8601DateFormatter`.
+    nonisolated(unsafe) private static let hfTimestampFractionalFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        if let d = formatter.date(from: s) { return d }
+        return formatter
+    }()
+
+    nonisolated(unsafe) private static let hfTimestampPlainFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
-        return formatter.date(from: s)
+        return formatter
+    }()
+
+    /// Parse a HF `lastModified` ISO8601 string into a `Date`.
+    nonisolated static func parseHFTimestamp(_ s: String?) -> Date? {
+        guard let s, !s.isEmpty else { return nil }
+        if let d = hfTimestampFractionalFormatter.date(from: s) { return d }
+        return hfTimestampPlainFormatter.date(from: s)
     }
 
     /// Map HF tags to a known `model_type` string when possible.
     /// Returns the first tag that matches the VLM type registry, otherwise nil
     /// (auto-fetched LLM entries fall back to post-download detection).
-    fileprivate static func inferModelType(from tags: [String]?) -> String? {
+    nonisolated fileprivate static func inferModelType(from tags: [String]?) -> String? {
         guard let tags else { return nil }
         for tag in tags {
             if VLMDetection.isVLM(modelType: tag) { return tag }
@@ -1597,7 +1722,7 @@ extension ModelManager {
         return nil
     }
 
-    fileprivate func mergeAvailable(
+    func mergeAvailable(
         with newModels: [MLXModel],
         refreshLocalInstallationMetadata: Bool = false
     ) {
@@ -1639,6 +1764,18 @@ extension ModelManager {
                             .mergingLocalInstallationMetadata(from: m)
                         availableModels[idx] = merged
                         refreshedExactMatch = true
+                    } else if !appended.contains(where: {
+                        $0.id.caseInsensitiveCompare(m.id) == .orderedSame
+                    }), let suggested = suggestedModels.first(where: {
+                        $0.id.caseInsensitiveCompare(m.id) == .orderedSame
+                    }) {
+                        // Installed, but known only as a suggestion: an
+                        // OsaurusAI org auto-fetch can land before the local
+                        // scan. `availableModels` is the installed inventory
+                        // for the sidebar count, the config catalog and spawn
+                        // setup checks, so the bundle joins it here, keeping
+                        // the suggestion's editorial fields.
+                        appended.append(suggested.mergingLocalInstallationMetadata(from: m))
                     }
                     if let idx = suggestedModels.firstIndex(where: {
                         $0.id.caseInsensitiveCompare(m.id) == .orderedSame
@@ -1710,8 +1847,11 @@ extension ModelManager {
     /// The use-case pill is inferred where the HF metadata supports it
     /// (multimodal tags → Vision) so auto-fetched cards aren't all blank
     /// next to curated ones.
-    fileprivate static func makeAutoFetchedModel(from hf: HFModel) -> MLXModel {
+    nonisolated static func makeAutoFetchedModel(from hf: HFModel) -> MLXModel {
         let modelType = inferModelType(from: hf.tags)
+        let isDecision = Self.isDecisionCatalogEligible(
+            id: hf.id, pipelineTag: hf.pipeline_tag, tags: hf.tags, files: hf.siblings?.map(\.rfilename)
+        )
         let isMultimodal =
             modelType.map { VLMDetection.isVLM(modelType: $0) } ?? false
             || (hf.pipeline_tag?.lowercased() == "image-text-to-text")
@@ -1723,7 +1863,8 @@ extension ModelManager {
             modelType: modelType,
             releasedAt: parseHFTimestamp(hf.lastModified),
             downloads: hf.downloads,
-            useCase: isMultimodal ? .vision : nil
+            useCase: isMultimodal && !isDecision ? .vision : nil,
+            isDecision: isDecision
         )
     }
 
@@ -1742,20 +1883,27 @@ extension ModelManager {
         let fetched = (try? await Self.requestHFModels(at: url)) ?? []
         guard !fetched.isEmpty else { return }
 
-        // Drop repos that other Settings panels own (rampart PII guard,
-        // embeddings, image/speech pipelines) before they can become chat
-        // cards. Curated entries never pass through this gate — they merge
-        // from `curatedSuggestedModels` directly.
+        // Other panels own guards, embeddings and image/speech pipelines.
+        // Decision bundles share this downloader, but carry their task so
+        // chat selectors continue to exclude them. Curated entries merge
+        // separately and never pass through this discovery gate.
         let raw = fetched.filter {
-            Self.isChatCatalogEligible(id: $0.id, pipelineTag: $0.pipeline_tag)
+            Self.isChatCatalogEligible(id: $0.id, pipelineTag: $0.pipeline_tag, tags: $0.tags)
+                || Self.isDecisionCatalogEligible(
+                    id: $0.id, pipelineTag: $0.pipeline_tag, tags: $0.tags, files: $0.siblings?.map(\.rfilename)
+                )
         }
         guard !raw.isEmpty else { return }
 
         let curatedIds = Self.curatedSuggestedIds
-        let autoFetched: [MLXModel] =
+        // Build the auto-fetched cards off the main actor: up to
+        // `osaurusOrgFetchLimit` repos are mapped (timestamp parsing, VLM
+        // type inference), which must not block the UI at launch.
+        let autoFetched: [MLXModel] = await Task.detached(priority: .utility) {
             raw
-            .filter { !curatedIds.contains($0.id.lowercased()) }
-            .map(Self.makeAutoFetchedModel(from:))
+                .filter { !curatedIds.contains($0.id.lowercased()) }
+                .map { Self.makeAutoFetchedModel(from: $0) }
+        }.value
 
         var statsById: [String: Int] = [:]
         // HF `lastModified` per repo — the revision used to gate the size
@@ -1803,7 +1951,32 @@ extension ModelManager {
             return collected
         }
 
-        applyOsaurusOrgFetch(autoFetched: autoFetched, statsById: statsById, sizesById: sizesById)
+        // Discover table storage from tensor metadata for every repo. Tags and product names are not
+        // reliable architecture contracts; negative results are revision-cached too.
+        let ngramCandidates = repoIdsToSize
+        let cachedSSD = Dictionary(uniqueKeysWithValues: ngramCandidates.compactMap { repoId -> (String, Int64)? in
+            let key = repoId.lowercased()
+            guard let bytes = ModelSSDResidency.cachedBytes(repoId: repoId, revision: revisionById[key]) else { return nil }
+            return (key, bytes)
+        })
+        // Publish catalog sizes immediately. Header inspections must not delay first paint or downloads.
+        applyOsaurusOrgFetch(
+            autoFetched: autoFetched, statsById: statsById, sizesById: sizesById, ssdById: cachedSSD)
+        await withTaskGroup(of: (String, Int64?).self) { group in
+            var pending = ngramCandidates.makeIterator()
+            func add(_ repoId: String) {
+                let revision = revisionById[repoId.lowercased()]
+                group.addTask {
+                    (repoId.lowercased(), await ModelSSDResidency.remoteNGramBytes(repoId: repoId, revision: revision))
+                }
+            }
+            // Header responses are bounded but may be large; cap concurrent inspections.
+            for _ in 0..<8 { if let repoId = pending.next() { add(repoId) } }
+            for await (key, value) in group {
+                if let value { applyResolvedSSDResidentBytes(value, for: key) }
+                if let repoId = pending.next() { add(repoId) }
+            }
+        }
     }
 
     /// Replace the auto-fetched portion of `suggestedModels` while preserving
@@ -1816,7 +1989,8 @@ extension ModelManager {
     func applyOsaurusOrgFetch(
         autoFetched: [MLXModel],
         statsById: [String: Int] = [:],
-        sizesById: [String: Int64] = [:]
+        sizesById: [String: Int64] = [:],
+        ssdById: [String: Int64] = [:]
     ) {
         let curatedIds = Self.curatedSuggestedIds
         let enrich: (MLXModel) -> MLXModel = { model in
@@ -1825,6 +1999,8 @@ extension ModelManager {
                 model
                 .withDownloads(statsById[key] ?? model.downloads)
                 .withDownloadSize(sizesById[key])
+                .withWeightSize(ModelSizeCache.bytes(forId: ModelSSDResidency.weightFilesCacheKey(model.id)))
+                .withSSDResidentBytes(ssdById[key])
         }
         let curated = Self.curatedSuggestedModels.map(enrich)
         let enrichedAutoFetched =
@@ -1832,6 +2008,20 @@ extension ModelManager {
             .filter { !Self.retiredOsaurusOrgIds.contains($0.id.lowercased()) }
             .filter { !Self.panelOwnedOrgIds.contains($0.id.lowercased()) }
             .map(enrich)
+
+        // Installation evidence is sticky across a refresh. The curated and
+        // org entries built above are fresh structs that resolve to the
+        // managed models directory; the entries they replace may already
+        // carry the `bundleDirectory` / provenance a local-discovery merge
+        // folded in. The org fetch carries editorial data and must never
+        // erase on-disk evidence, otherwise every externally installed bundle
+        // whose id is also a suggestion flipped to not-downloaded on the
+        // Models page each time the listing landed.
+        var installedByLowerId: [String: MLXModel] = [:]
+        for model in suggestedModels + availableModels where model.hasLocalInstallationEvidence {
+            let key = model.id.lowercased()
+            if installedByLowerId[key] == nil { installedByLowerId[key] = model }
+        }
 
         // Drop previous OsaurusAI auto-fetched entries, keeping curated and
         // any non-OsaurusAI entries other code may have injected.
@@ -1850,6 +2040,11 @@ extension ModelManager {
             }
         }
 
+        merged = merged.map { model in
+            guard let installed = installedByLowerId[model.id.lowercased()] else { return model }
+            return model.mergingLocalInstallationMetadata(from: installed)
+        }
+
         suggestedModels = merged
         downloadService.syncStates(for: merged)
     }
@@ -1858,6 +2053,7 @@ extension ModelManager {
     func refreshSuggestedModels() async {
         isLoadingSuggested = true
         await loadOsaurusAIOrgModels()
+        await refreshModelUpdates(force: true)
         isLoadingSuggested = false
     }
 }
@@ -1898,6 +2094,8 @@ extension ModelManager {
     private static nonisolated(unsafe) var lastLocalModelsScanDiagnostic: [String: Any]?
     nonisolated(unsafe) static var scanLocalModelsOverrideForTests: ((URL) -> [MLXModel])?
     nonisolated(unsafe) static var localModelsScanWaitLimitOverrideForTests: TimeInterval?
+    nonisolated(unsafe) static var localModelsScanFinishedForTests: (@Sendable () -> Void)?
+    nonisolated(unsafe) static var localModelsDispatchWaitingForTests: (@Sendable () -> Void)?
 
     public nonisolated static func invalidateLocalModelsCache() {
         localModelsCacheCondition.lock()
@@ -1942,10 +2140,11 @@ extension ModelManager {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
                 localModelsCacheCondition.lock()
-                if cachedLocalModels == nil && !localModelsScanInFlight {
-                    startLocalModelsScanLocked()
-                }
-                while cachedLocalModels == nil && localModelsScanInFlight {
+                while cachedLocalModels == nil {
+                    if !localModelsScanInFlight {
+                        startLocalModelsScanLocked()
+                    }
+                    localModelsDispatchWaitingForTests?()
                     localModelsCacheCondition.wait()
                 }
                 localModelsCacheCondition.unlock()
@@ -2032,10 +2231,20 @@ extension ModelManager {
     /// `localModelsCacheCondition` with `localModelsScanInFlight == false`.
     private nonisolated static func startLocalModelsScanLocked() {
         localModelsScanInFlight = true
+        // Invalidation starts a new catalog generation without waiting for old
+        // filesystem work. Only the scan that still owns this generation may
+        // publish or clear the current in-flight flag.
+        let scanGeneration = localModelsCacheGen
+        let finishedForTests = localModelsScanFinishedForTests
         DispatchQueue.global(qos: .utility).async {
+            defer { finishedForTests?() }
             let scanned = scanLocalModels()
 
             localModelsCacheCondition.lock()
+            guard localModelsCacheGen == scanGeneration else {
+                localModelsCacheCondition.unlock()
+                return
+            }
             cachedLocalModels = scanned
             localModelsScanInFlight = false
             localModelsCacheGen &+= 1
@@ -2087,8 +2296,14 @@ extension ModelManager {
     /// Internal entry point used by tests so they can supply a fixture root.
     /// Detects both the flat (`<root>/<modelDir>/`) and nested (`<root>/<org>/<repo>/`)
     /// layouts.
-    internal nonisolated static func scanLocalModels(at root: URL) -> [MLXModel] {
+    internal nonisolated static func scanLocalModels(
+        at root: URL,
+        diagnosticHandler: (([String: Any]) -> Void)? = nil
+    ) -> [MLXModel] {
         let fm = FileManager.default
+        // Nested scans shadow `root` with the publisher directory. Keep the inventory root
+        // for logical bundle paths so <root>/<publisher>/<model> never duplicates publisher.
+        let inventoryRoot = root
         var rootIsDir: ObjCBool = false
         let rootExists = fm.fileExists(atPath: root.path, isDirectory: &rootIsDir)
         let rootReadable = access(root.path, R_OK | X_OK) == 0
@@ -2108,6 +2323,9 @@ extension ModelManager {
             localModelsCacheCondition.lock()
             lastLocalModelsScanDiagnostic = diagnostic
             localModelsCacheCondition.unlock()
+            // Synchronous per-invocation observation remains valid even when
+            // another background scan replaces the global last diagnostic.
+            diagnosticHandler?(diagnostic)
         }
         publishDiagnostic(status: "started", modelCount: 0, error: nil)
 
@@ -2280,12 +2498,16 @@ extension ModelManager {
                         name: ModelMetadataParser.friendlyName(from: id),
                         description: L("Local model (detected)"),
                         downloadURL: "https://huggingface.co/\(id)",
-                        downloadSizeBytes: MLXModel.localBundleWeightSizeBytes(at: resolved),
+                        downloadSizeBytes: MLXModel.localBundleDownloadSizeBytes(at: resolved)
+                            ?? MLXModel.localBundleWeightSizeBytes(at: resolved),
+                        weightSizeBytes: MLXModel.localBundleWeightSizeBytes(at: resolved),
+                        ssdResidentBytes: ModelSSDResidency.localSSDResidentBytes(at: resolved),
                         // The scan already runs off-main. Preserve the bundle's
                         // architecture tag here so hot UI paths can distinguish
                         // image-only from video-capable local VLMs without
                         // re-reading config.json during SwiftUI layout.
-                        modelType: VLMDetection.readModelType(at: resolved)
+                        modelType: VLMDetection.readModelType(at: resolved),
+                        bundleDirectory: inventoryRoot.appendingPathComponent(id, isDirectory: true)
                     )
                     models.append(model)
                 }

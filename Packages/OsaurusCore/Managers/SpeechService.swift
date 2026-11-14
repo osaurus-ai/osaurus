@@ -628,7 +628,14 @@ public final class SpeechService: ObservableObject {
     @Published public var isModelLoaded: Bool = false
     @Published public var isLoadingModel: Bool = false
     @Published public var loadedModelId: String?
-    @Published public var lastError: String?
+    /// Shown as a toast when it changes: the mic button otherwise just
+    /// stops, with no reason given.
+    @Published public var lastError: String? {
+        didSet {
+            guard let lastError, lastError != oldValue else { return }
+            _ = ToastManager.shared.error(L("Voice input stopped"), message: lastError)
+        }
+    }
     @Published public var microphonePermissionGranted: Bool = false
     @Published public var isRecording: Bool = false
     @Published public var currentTranscription: String = ""
@@ -644,6 +651,8 @@ public final class SpeechService: ObservableObject {
     private var activeInputDeviceId: String?
     private var activeInputSource: AudioInputSource?
     private var activeTapFormat: AVAudioFormat?
+    /// One Insights row per live dictation session (opened at start, closed at stop).
+    private var liveTranscriptionJob: MediaActivityLogger.TranscriptionJob?
     private var engineConfigObserver: NSObjectProtocol?
     private var engineHealthTask: Task<Void, Never>?
     private var lastRecoveryTime: Date?
@@ -738,6 +747,9 @@ public final class SpeechService: ObservableObject {
         isModelLoaded = false
         loadedModelId = nil
 
+        CoreMLLoadSentinel.begin(.speech, modelId: modelId)
+        defer { CoreMLLoadSentinel.end(.speech) }
+
         do {
             let version: AsrModelVersion = modelId == "v2" ? .v2 : .v3
             let models = try await Task.detached(priority: .userInitiated) {
@@ -776,6 +788,18 @@ public final class SpeechService: ObservableObject {
         print("[SpeechService] Model unloaded")
     }
 
+    /// Frees the speech model when no mic session, transcription, or VAD
+    /// listener needs it. The next mic tap loads it again. Called under
+    /// critical memory pressure.
+    public func unloadIfIdle() {
+        guard isModelLoaded, !isRecording, !isTranscribing, !isLoadingModel else { return }
+        switch VADService.shared.state {
+        case .starting, .listening: return
+        case .idle, .error: break
+        }
+        unloadModel()
+    }
+
     /// Auto-load the model if a default model is selected
     public func autoLoadIfNeeded() async {
         guard let selectedModel = SpeechModelManager.shared.selectedModel else {
@@ -787,11 +811,34 @@ public final class SpeechService: ObservableObject {
         }
 
         do {
-            try await loadModel(selectedModel.id)
+            guard try await loadModelAutomatically(selectedModel.id) else { return }
             print("[SpeechService] Auto-loaded model: \(selectedModel.id)")
         } catch {
             print("[SpeechService] Failed to auto-load model: \(error)")
         }
+    }
+
+    /// A load the app starts on its own (launch, chat input appearing, voice
+    /// settings changing). Skipped when the previous process died while
+    /// loading the speech model, so a Core ML crash can't repeat on every
+    /// launch (see `CoreMLLoadSentinel`). Loads the user starts call
+    /// `loadModel` directly and always run. Returns false when skipped.
+    @discardableResult
+    public func loadModelAutomatically(_ modelId: String) async throws -> Bool {
+        if !isLoadingModel, let crashed = CoreMLLoadSentinel.crashedLoad(.speech) {
+            lastError = L(
+                "The speech model stopped Osaurus while it was loading last time, so it is no longer loaded automatically. Use the microphone button to load it again."
+            )
+            NSLog(
+                "[SpeechService] Skipping automatic load of %@: the previous launch died while loading speech model %@ on %@",
+                modelId,
+                crashed.modelId,
+                crashed.osBuild
+            )
+            return false
+        }
+        try await loadModel(modelId)
+        return true
     }
 
     /// Ensure a model is loaded, using the default if needed
@@ -824,17 +871,28 @@ public final class SpeechService: ObservableObject {
         isTranscribing = true
         defer { isTranscribing = false }
 
+        let fileBytes = (try? FileManager.default.attributesOfItem(atPath: audioURL.path)[.size] as? Int) ?? nil
+        let activity = MediaActivityLogger.beginTranscription(
+            model: loadedModelId ?? "unknown",
+            audioSeconds: nil,
+            audioBytes: fileBytes,
+            audioFormat: audioURL.pathExtension.isEmpty ? nil : audioURL.pathExtension.lowercased(),
+            mode: "file"
+        )
+
         do {
             let result = try await Task.detached {
                 var decoderState = await SpeechDecoderStateFactory.make(for: wrappedManager.manager)
                 return try await wrappedManager.manager.transcribe(audioURL, decoderState: &decoderState)
             }.value
 
+            activity?.finish(transcript: result.text, language: nil, error: nil, audioSeconds: result.duration)
             return TranscriptionResult(
                 text: result.text,
                 durationSeconds: result.duration
             )
         } catch {
+            activity?.finish(transcript: nil, language: nil, error: error.localizedDescription)
             throw SpeechError.transcriptionFailed(error.localizedDescription)
         }
     }
@@ -917,6 +975,13 @@ public final class SpeechService: ObservableObject {
         audioBuffer.setActive(true)
         currentTranscription = ""
         confirmedTranscription = ""
+        liveTranscriptionJob = MediaActivityLogger.beginTranscription(
+            model: loadedModelId ?? "unknown",
+            audioSeconds: nil,
+            audioBytes: nil,
+            audioFormat: inputSource == .systemAudio ? "system_audio" : "microphone",
+            mode: "live"
+        )
         audioLevel = 0.0
         isSpeechDetected = false
         isUsingSystemAudio = (inputSource == .systemAudio)
@@ -1042,6 +1107,10 @@ public final class SpeechService: ObservableObject {
         isRecording = false
 
         let finalBuffer = audioBuffer.getAndClear()
+        let activity = liveTranscriptionJob
+        liveTranscriptionJob = nil
+        // Live capture runs in real time, so session wall-clock ≈ audio duration.
+        let sessionSeconds = activity.map { Date().timeIntervalSince($0.started) }
 
         if finalBuffer.count > 16000, let wrappedManager = sendableAsrManager {
             do {
@@ -1059,12 +1128,22 @@ public final class SpeechService: ObservableObject {
                     }
                     self.currentTranscription = ""
                 }
+                activity?.finish(
+                    transcript: confirmedTranscription, language: nil, error: nil, audioSeconds: sessionSeconds)
                 return finalText
             } catch {
                 print("[SpeechService] Final transcription error: \(error)")
+                await MainActor.run { self.lastError = error.localizedDescription }
+                activity?.finish(
+                    transcript: confirmedTranscription, language: nil, error: error.localizedDescription,
+                    audioSeconds: sessionSeconds)
+                return currentTranscription
             }
         }
 
+        let fullTranscript = [confirmedTranscription, currentTranscription]
+            .filter { !$0.isEmpty }.joined(separator: " ")
+        activity?.finish(transcript: fullTranscript, language: nil, error: nil, audioSeconds: sessionSeconds)
         return currentTranscription
     }
 
@@ -1264,7 +1343,7 @@ public final class SpeechService: ObservableObject {
 
         guard recoveryAttempts < maxRecoveryAttempts else {
             print("[SpeechService] Max recovery attempts (\(maxRecoveryAttempts)) reached")
-            lastError = "Audio device changed. Please restart voice input."
+            lastError = L("Audio device changed. Please restart voice input.")
             audioBuffer.setActive(false)
             await transcriptionWorker?.stop()
             transcriptionWorker = nil
@@ -1296,7 +1375,7 @@ public final class SpeechService: ObservableObject {
             print("[SpeechService] Audio engine recovered successfully")
         } catch {
             print("[SpeechService] Audio engine recovery failed: \(error)")
-            lastError = "Audio device changed. Please restart voice input."
+            lastError = L("Audio device changed. Please restart voice input.")
         }
     }
 

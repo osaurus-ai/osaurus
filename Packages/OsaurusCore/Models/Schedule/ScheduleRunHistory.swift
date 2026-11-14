@@ -193,10 +193,11 @@ extension Schedule {
 
     public mutating func recordRunSucceeded(endedAt: Date, chatSessionId: UUID?) {
         let startedAt = lastTriggeredAt ?? endedAt
+        let clampedEndedAt = max(endedAt, startedAt)
         let index = latestRunningHistoryIndex(startedAt: startedAt)
         if let index {
             runHistory[index].status = .succeeded
-            runHistory[index].endedAt = endedAt
+            runHistory[index].endedAt = clampedEndedAt
             runHistory[index].chatSessionId = chatSessionId ?? runHistory[index].chatSessionId
             runHistory[index].errorMessage = nil
         } else {
@@ -206,7 +207,7 @@ extension Schedule {
                     agentId: agentId,
                     status: .succeeded,
                     startedAt: startedAt,
-                    endedAt: endedAt,
+                    endedAt: clampedEndedAt,
                     chatSessionId: chatSessionId,
                     instructionsPreview: Self.instructionsPreview(instructions)
                 )
@@ -222,10 +223,11 @@ extension Schedule {
         errorMessage: String
     ) {
         let terminalStatus: ScheduleRunStatus = status.isTerminal ? status : .failed
+        let clampedEndedAt = max(endedAt, startedAt)
         let index = latestRunningHistoryIndex(startedAt: startedAt)
         if let index {
             runHistory[index].status = terminalStatus
-            runHistory[index].endedAt = endedAt
+            runHistory[index].endedAt = clampedEndedAt
             runHistory[index].errorMessage = errorMessage
         } else {
             runHistory.append(
@@ -234,7 +236,7 @@ extension Schedule {
                     agentId: agentId,
                     status: terminalStatus,
                     startedAt: startedAt,
-                    endedAt: endedAt,
+                    endedAt: clampedEndedAt,
                     errorMessage: errorMessage,
                     instructionsPreview: Self.instructionsPreview(instructions)
                 )

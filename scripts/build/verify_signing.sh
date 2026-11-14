@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP="build_output/Osaurus.app"
+# Defaults to the light export; build_full_app.sh points APP at the full app.
+APP="${APP:-build_output/Osaurus.app}"
 
-echo "Verifying ARM64 app (default)..."
+echo "Verifying ARM64 app at ${APP}..."
 codesign -vvv --deep --strict "$APP"
 
 echo "Checking Sparkle framework (ARM64)..."

@@ -45,9 +45,25 @@ public enum OsaurusKeychainServices {
     public static let github = "com.dinoki.osaurus.github"
     /// Hugging Face access token (`HuggingFaceAuth`).
     public static let huggingFace = "com.dinoki.osaurus.huggingface"
+    /// Osaurus ID router session token (`OsaurusIDSessionStore`).
+    public static let osaurusID = "ai.osaurus.id"
+    /// Workflow secrets and remembered secret answers (`WorkflowSecretsKeychain`).
+    public static let workflowSecrets = "ai.osaurus.workflows"
+    /// Webhook event secrets (`EventSecretsKeychain`).
+    public static let eventSecrets = "ai.osaurus.events"
+    /// Automation source connection secrets (`SourceCredentialVault`).
+    public static let sourceCredentials = "ai.osaurus.sources"
+    /// Unified global + per-agent credentials (`CredentialStore`).
+    public static let credentials = "ai.osaurus.credentials"
+    /// Paired devices' push tokens (`PushTokenStore`).
+    public static let pushTokens = "ai.osaurus.push-tokens"
+    /// Osaurus Sync device key, user secret and database key (`SyncKeyStores`).
+    public static let sync = "ai.osaurus.sync"
 
     /// Everything factory reset must wipe.
     public static let all: [String] = [
+        credentials,
+        pushTokens,
         account,
         storage,
         accessKeys,
@@ -62,5 +78,10 @@ public enum OsaurusKeychainServices {
         ttsRemote,
         github,
         huggingFace,
+        osaurusID,
+        workflowSecrets,
+        eventSecrets,
+        sourceCredentials,
+        sync,
     ]
 }

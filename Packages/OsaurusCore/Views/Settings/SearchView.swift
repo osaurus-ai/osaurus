@@ -3,7 +3,7 @@
 //  osaurus
 //
 //  The Search settings tab — native web-search providers, following the
-//  standard management-tab shell (ManagerHeader band + scrollable content):
+//  standard management-tab shell (SettingsPageHeader band + scrollable content):
 //
 //    - Hub panel with search status and provider/source metrics.
 //    - Try-it playground running the exact cascade agents get.
@@ -22,8 +22,6 @@ struct SearchView: View {
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
-    @State private var hasAppeared = false
-
     // Try-it playground
     @State private var tryQuery: String = ""
     @State private var trySearching = false
@@ -41,35 +39,21 @@ struct SearchView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        SettingsPage {
             headerView
-                .managerHeaderEntrance(hasAppeared: hasAppeared)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    hubPanel
-                    premiumSearchStrip
-                    tryItCard
-                    if apiProviderRows.isEmpty {
-                        presetGallery
-                    } else {
-                        providerCardList
-                    }
-                    freeSourcesSection
-                    advancedSection
-                }
-                .padding(24)
+        } content: {
+            hubPanel
+            premiumSearchSection
+            tryItCard
+            if apiProviderRows.isEmpty {
+                presetGallery
+            } else {
+                providerCardList
             }
-            .opacity(hasAppeared ? 1 : 0)
+            freeSourcesSection
+            advancedSection
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
         .environment(\.theme, themeManager.currentTheme)
-        .onAppear {
-            withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
-                hasAppeared = true
-            }
-        }
         .sheet(item: $connectSheet) { config in
             SearchProviderConnectSheet(initialDefinition: config.definition)
         }
@@ -81,14 +65,15 @@ struct SearchView: View {
     // MARK: - Header
 
     private var headerView: some View {
-        ManagerHeaderWithActions(
-            title: L("Web Search"),
-            subtitle: subtitleText
-        ) {
-            HeaderPrimaryButton("Connect Provider", icon: "plus") {
-                connectSheet = ConnectSheetConfig(definition: nil)
+        SettingsPageHeader(
+            title: "Web Search",
+            subtitle: subtitleText,
+            primary: {
+                SettingsButton(.primary, "Connect Provider", icon: "plus") {
+                    connectSheet = ConnectSheetConfig(definition: nil)
+                }
             }
-        }
+        )
     }
 
     private var subtitleText: String {
@@ -128,20 +113,12 @@ struct SearchView: View {
         return last.ok ? .healthy(last) : .failing(last)
     }
 
-    private var hubStatusIcon: (name: String, color: Color) {
+    private var hubStatusChip: (label: String, tone: StatusChip.Tone) {
         switch healthState {
-        case .off: ("xmark.octagon.fill", theme.errorColor)
-        case .unverified: ("magnifyingglass.circle.fill", theme.accentColor)
-        case .healthy: ("checkmark.seal.fill", theme.successColor)
-        case .failing: ("exclamationmark.triangle.fill", theme.warningColor)
-        }
-    }
-
-    private var hubStatusTitle: LocalizedStringKey {
-        switch healthState {
-        case .off: "Web Search is off"
-        case .unverified, .healthy: "Web Search is on"
-        case .failing: "Web Search needs attention"
+        case .off: (L("Off"), .error)
+        case .unverified: (L("On"), .accent)
+        case .healthy: (L("Working"), .success)
+        case .failing: (L("Needs attention"), .warning)
         }
     }
 
@@ -173,72 +150,35 @@ struct SearchView: View {
         return manager.definition(id: id)?.name ?? id
     }
 
-    // MARK: - Premium search strip
+    // MARK: - Premium search
 
-    /// Compact premium-search state row: the on/off preference lives here for
-    /// discoverability next to the providers it front-runs; grants, auto-pay,
-    /// and usage live in the dedicated Credits section this links to.
+    /// The only Premium Search switch, next to the providers it front-runs;
+    /// grants, auto-pay, and usage live on Wallet & Credits, which this links to.
     @ViewBuilder
-    private var premiumSearchStrip: some View {
+    private var premiumSearchSection: some View {
         if OsaurusRouter.isEnabled {
-            HStack(alignment: .center, spacing: 12) {
-                Image(systemName: "magnifyingglass.circle.fill")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(
-                        manager.hostedSearchEnabled ? theme.accentColor : theme.tertiaryText)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Premium search", bundle: .module)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                    Text(premiumStripSubtitle, bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-
-                Spacer(minLength: 12)
-
-                Button {
-                    ManagementStateManager.shared.selectedTab = .credits
-                } label: {
-                    Text("Credits", bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .localizedHelp("Manage search credits and billing.")
-
-                Toggle(
-                    "",
+            SettingsSection(title: "Premium Search", anchorId: "search.premium") {
+                SettingsToggle(
+                    title: "Use Premium Search",
+                    description: premiumSearchDescription,
                     isOn: Binding(
                         get: { manager.hostedSearchEnabled },
                         set: { manager.setHostedSearchEnabled($0) }
                     )
                 )
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .tint(theme.accentColor)
+                SettingsLinkRow(
+                    title: "Search Credits",
+                    description: "Manage search credits and billing.",
+                    icon: "creditcard",
+                    actionTitle: "Open Wallet & Credits"
+                ) {
+                    ManagementStateManager.shared.selectedTab = .credits
+                }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(theme.cardBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10)
-                            .stroke(
-                                manager.hostedSearchEnabled
-                                    ? theme.accentColor.opacity(0.35) : theme.cardBorder,
-                                lineWidth: 1
-                            )
-                    )
-            )
         }
     }
 
-    private var premiumStripSubtitle: LocalizedStringKey {
+    private var premiumSearchDescription: String {
         if !manager.hostedSearchEnabled {
             if manager.hasActiveUserProviderSetup {
                 return "Off — your own providers below handle every search."
@@ -263,147 +203,48 @@ struct SearchView: View {
         }.count
         let freeOn = freeProviderRows.filter { $0.provider.enabled }.count
         let categories = manager.availableCategories()
-        let status = hubStatusIcon
+        let chip = hubStatusChip
 
-        return VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .center, spacing: 12) {
-                HStack(spacing: 10) {
-                    Image(systemName: status.name)
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(status.color)
-                        .frame(width: 30, height: 30)
-                        .background(Circle().fill(status.color.opacity(0.12)))
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(hubStatusTitle, bundle: .module)
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-                        hubStatusSubtitle
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.secondaryText)
-                    }
-                }
-                Spacer()
+        return SettingsSection(title: "Status") {
+            SettingsRow(title: "Web Search") {
+                hubStatusSubtitle
+            } trailing: {
+                StatusChip(chip.label, tone: chip.tone, showsDot: true)
             }
-
-            HStack(spacing: 8) {
-                metricPill(title: L("Providers"), value: "\(readyAPI)", color: theme.accentColor)
-                metricPill(title: L("Built-in sources"), value: "\(freeOn)", color: theme.successColor)
-                metricPill(
-                    title: L("Categories"),
-                    value: categories.map { $0.capitalized }.joined(separator: " · "),
-                    color: theme.infoColor
-                )
-            }
+            SettingsValueRow(
+                title: "Categories",
+                value: categories.isEmpty
+                    ? L("None") : categories.map { $0.capitalized }.joined(separator: " · ")
+            )
+            SettingsValueRow(title: "Providers", value: "\(readyAPI)")
+            SettingsValueRow(title: "Built-in Sources", value: "\(freeOn)")
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.secondaryBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(status.color.opacity(0.35), lineWidth: 1)
-                )
-        )
-    }
-
-    private func metricPill(title: String, value: String, color: Color) -> some View {
-        HStack(spacing: 6) {
-            Text(value)
-                .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                .foregroundColor(color)
-            Text(title)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundColor(theme.secondaryText)
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(Capsule().fill(color.opacity(0.1)))
     }
 
     // MARK: - Try it
 
     private var tryItCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-                Text("Try it", bundle: .module)
-                    .textCase(.uppercase)
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(theme.secondaryText)
-                    .tracking(0.5)
-            }
-
-            HStack(spacing: 10) {
-                HStack(spacing: 8) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
-                    TextField(L("Search the web…"), text: $tryQuery)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 13))
-                        .foregroundColor(theme.primaryText)
-                        .onSubmit { runTrySearch() }
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(theme.inputBorder, lineWidth: 1)
-                        )
-                )
-
-                Button {
-                    runTrySearch()
-                } label: {
-                    Group {
-                        if trySearching {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            Text("Search", bundle: .module)
-                                .font(.system(size: 12, weight: .semibold))
-                        }
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 9)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(
-                                trySearching || tryQueryEmpty
-                                    ? theme.tertiaryBackground : theme.accentColor)
+        SettingsSection(
+            title: "Test Search",
+            subtitle: "The same search your agents get, so what you see here is what they see.",
+            anchorId: "search.tryIt"
+        ) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
+                HStack(spacing: theme.settingsControlGap) {
+                    SettingsTextField(
+                        placeholder: L("Search the web…"),
+                        text: $tryQuery,
+                        icon: "magnifyingglass",
+                        onSubmit: runTrySearch
                     )
+                    SettingsButton(.primary, "Search", isLoading: trySearching, action: runTrySearch)
+                        .disabled(trySearching || tryQueryEmpty)
                 }
-                .buttonStyle(PlainButtonStyle())
-                .disabled(trySearching || tryQueryEmpty)
-            }
-
-            if let outcome = tryOutcome {
-                tryResults(outcome)
-            } else {
-                Text(
-                    "This uses the exact same search your agents get — what you see here is what they see.",
-                    bundle: .module
-                )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                if let outcome = tryOutcome {
+                    tryResults(outcome)
+                }
             }
         }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
-        .settingsLandingAnchor("search.tryIt")
     }
 
     private var tryQueryEmpty: Bool {
@@ -412,22 +253,22 @@ struct SearchView: View {
 
     @ViewBuilder
     private func tryResults(_ outcome: SearchEngineOutcome) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             if outcome.hits.isEmpty {
                 Text("No results. Try a different query.", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.caption)
+                    .foregroundColor(theme.text.secondary)
             } else {
                 ForEach(Array(outcome.hits.prefix(5).enumerated()), id: \.offset) { _, hit in
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: theme.space.s2) {
                         Button {
                             if let url = URL(string: hit.url) {
                                 NSWorkspace.shared.open(url, configuration: NSWorkspace.OpenConfiguration())
                             }
                         } label: {
                             Text(hit.title.isEmpty ? hit.url : hit.title)
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundColor(theme.accentColor)
+                                .font(SettingsFont.compactLabel)
+                                .foregroundColor(theme.text.link)
                                 .lineLimit(1)
                         }
                         .buttonStyle(.plain)
@@ -436,33 +277,33 @@ struct SearchView: View {
                         }
                         if !hit.snippet.isEmpty {
                             Text(hit.snippet)
-                                .font(.system(size: 11))
-                                .foregroundColor(theme.secondaryText)
+                                .font(SettingsFont.rowDescription)
+                                .foregroundColor(theme.text.secondary)
                                 .lineLimit(2)
                         }
                         Text(SearchHTML.sourceDomain(of: hit.url) ?? hit.url)
-                            .font(.system(size: 10))
-                            .foregroundColor(theme.tertiaryText)
+                            .font(SettingsFont.footnote)
+                            .foregroundColor(theme.text.tertiary)
                             .lineLimit(1)
                     }
                 }
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 if let provider = outcome.provider, !provider.isEmpty {
                     Text(
                         "via \(providerDisplayName(provider)) · \(String(format: "%.1f", outcome.elapsed))s"
                     )
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
                 }
                 Spacer()
                 Button {
-                    withAnimation(.easeOut(duration: 0.15)) { showAttempts.toggle() }
+                    withAnimation(theme.motion.quick) { showAttempts.toggle() }
                 } label: {
                     Text(showAttempts ? "Hide attempts" : "Show attempts", bundle: .module)
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.footnote)
+                        .foregroundColor(theme.text.tertiary)
                 }
                 .buttonStyle(.plain)
             }
@@ -471,29 +312,29 @@ struct SearchView: View {
                 attemptsTrace(outcome.attempts)
             }
         }
-        .padding(.top, 4)
+        .padding(.top, theme.space.s4)
     }
 
     private func attemptsTrace(_ attempts: [SearchAttempt]) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
             ForEach(Array(attempts.enumerated()), id: \.offset) { index, attempt in
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     Image(systemName: attempt.ok ? "checkmark.circle" : "xmark.circle")
-                        .font(.system(size: 9))
-                        .foregroundColor(attempt.ok ? theme.successColor : theme.errorColor)
+                        .glyphSize(.tiny)
+                        .foregroundColor(attempt.ok ? theme.status.success.foreground : theme.status.error.foreground)
                     Text(
                         "\(index + 1). \(providerDisplayName(attempt.provider)) — "
                             + (attempt.ok
                                 ? (attempt.count == 1 ? L("1 result") : L("\(attempt.count) results"))
                                 : (attempt.error ?? "failed"))
                     )
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
+                    .textStyle(.micro, family: .code)
+                    .foregroundColor(theme.text.tertiary)
                     .lineLimit(1)
                 }
             }
         }
-        .padding(.top, 2)
+        .padding(.top, theme.space.s2)
     }
 
     private func runTrySearch() {
@@ -519,49 +360,19 @@ struct SearchView: View {
     // MARK: - Preset gallery (empty state)
 
     private var presetGallery: some View {
-        VStack(spacing: 16) {
-            VStack(spacing: 8) {
-                ZStack {
-                    Circle()
-                        .fill(theme.accentColor.opacity(0.1))
-                        .frame(width: 56, height: 56)
-                    Image(systemName: "globe.americas.fill")
-                        .font(.system(size: 24))
-                        .foregroundColor(theme.accentColor)
-                }
-                Text("Want better results?", bundle: .module)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Text(
-                    "Built-in sources work out of the box. Connect a search provider for faster, more relevant results — setup takes about 2 minutes.",
-                    bundle: .module
-                )
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-                .multilineTextAlignment(.center)
-                .frame(maxWidth: 440)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.top, 8)
-
-            VStack(spacing: 10) {
-                ForEach(manager.addableDefinitions) { definition in
-                    SearchPresetRowCard(definition: definition) {
-                        connectSheet = ConnectSheetConfig(definition: definition)
-                    }
+        SettingsSection(
+            title: "Search Providers",
+            subtitle:
+                "Built-in sources work out of the box. Connect a search provider for faster, more relevant results — setup takes about 2 minutes.",
+            footer: "Your API keys are stored securely in Keychain.",
+            anchorId: "search.providers"
+        ) {
+            ForEach(manager.addableDefinitions) { definition in
+                SearchPresetRowCard(definition: definition) {
+                    connectSheet = ConnectSheetConfig(definition: definition)
                 }
             }
-
-            HStack(spacing: 4) {
-                Image(systemName: "lock.fill")
-                    .font(.system(size: 10))
-                Text("Your API keys are stored securely in Keychain.", bundle: .module)
-                    .font(.system(size: 12))
-            }
-            .foregroundColor(theme.tertiaryText)
-            .frame(maxWidth: .infinity)
         }
-        .settingsLandingAnchor("search.providers")
     }
 
     // MARK: - Provider cards (configured state)
@@ -573,18 +384,11 @@ struct SearchView: View {
 
     private var providerCardList: some View {
         let rows = apiProviderRows
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Your Providers", bundle: .module)
-                    .textCase(.uppercase)
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(theme.secondaryText)
-                    .tracking(0.5)
-                Spacer()
-                Text("Tried top to bottom — if one fails, the next takes over.", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
-            }
+        return SettingsSection(
+            title: "Your Providers",
+            subtitle: "Tried top to bottom — if one fails, the next takes over.",
+            anchorId: "search.providers"
+        ) {
             ForEach(Array(rows.enumerated()), id: \.element.provider.id) { index, row in
                 SearchProviderCard(
                     provider: row.provider,
@@ -603,7 +407,6 @@ struct SearchView: View {
                 )
             }
         }
-        .settingsLandingAnchor("search.providers")
     }
 
     /// Move an API provider up/down within the API-provider block of the
@@ -626,22 +429,12 @@ struct SearchView: View {
     }
 
     private var freeSourcesSection: some View {
-        SettingsSection(title: L("Built-in Sources"), icon: "globe") {
-            VStack(alignment: .leading, spacing: 0) {
-                Text(
-                    "Built-in sources that need no key. Always available as backup when no provider answers.",
-                    bundle: .module
-                )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-                .padding(.bottom, 10)
-
-                ForEach(Array(freeProviderRows.enumerated()), id: \.element.provider.id) { index, row in
-                    if index > 0 {
-                        Divider().background(theme.primaryBorder)
-                    }
-                    freeSourceRow(row.provider, row.definition)
-                }
+        SettingsSection(
+            title: "Built-in Sources",
+            subtitle: "Built-in sources that need no key. Always available as backup when no provider answers."
+        ) {
+            ForEach(freeProviderRows, id: \.provider.id) { row in
+                freeSourceRow(row.provider, row.definition)
             }
         }
     }
@@ -650,19 +443,14 @@ struct SearchView: View {
         _ provider: SearchProvider,
         _ definition: SearchProviderDefinition
     ) -> some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
+        HStack(spacing: theme.settingsControlGap) {
+            VStack(alignment: .leading, spacing: theme.settingsTitleToDescription) {
+                HStack(spacing: theme.space.s6) {
                     Text(definition.name)
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.rowTitle)
+                        .foregroundColor(theme.text.primary)
                     if definition.lastResort {
-                        Text("Last resort", bundle: .module)
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(theme.warningColor)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(Capsule().fill(theme.warningColor.opacity(0.12)))
+                        StatusChip(L("Last resort"), tone: .warning)
                             .localizedHelp(
                                 "Only used when every other source fails — this source sometimes returns unreliable results."
                             )
@@ -670,8 +458,8 @@ struct SearchView: View {
                 }
                 if let summary = definition.summary {
                     Text(summary)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.tertiary)
                 }
             }
             Spacer()
@@ -685,67 +473,47 @@ struct SearchView: View {
                     set: { manager.setEnabled($0, for: provider.definitionId) }
                 )
             )
-            .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-            .controlSize(.small)
-            .labelsHidden()
+            .settingsSwitch()
         }
-        .padding(.vertical, 10)
     }
 
-    @ViewBuilder
     private func testButton(for definitionId: String) -> some View {
-        Button {
+        SettingsIconButton(
+            "bolt.fill",
+            isLoading: manager.testStatus[definitionId] == .testing,
+            help: L("Run a test search"),
+            size: .compact
+        ) {
             Task { await manager.testProvider(definitionId: definitionId) }
-        } label: {
-            Group {
-                if manager.testStatus[definitionId] == .testing {
-                    ProgressView()
-                        .scaleEffect(0.5)
-                        .frame(width: 28, height: 28)
-                } else {
-                    Image(systemName: "bolt.fill")
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
-                        .frame(width: 28, height: 28)
-                }
-            }
-            .background(RoundedRectangle(cornerRadius: 8).fill(theme.tertiaryBackground))
         }
-        .buttonStyle(PlainButtonStyle())
         .disabled(manager.testStatus[definitionId] == .testing)
-        .localizedHelp("Run a test search")
     }
 
     // MARK: - Advanced
 
+    @ViewBuilder
     private var advancedSection: some View {
-        SettingsSection(title: L("Advanced"), icon: "slider.horizontal.3") {
-            VStack(alignment: .leading, spacing: 20) {
-                SettingsSubsection(label: L("Category preferences"), anchorId: "search.routing") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text(
-                            "Pick which provider answers first for each kind of search. The rest follow your main list order, with built-in sources as backup.",
-                            bundle: .module
-                        )
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-
-                        VStack(alignment: .leading, spacing: 0) {
-                            ForEach(Array(allCategories.enumerated()), id: \.element) { index, category in
-                                if index > 0 {
-                                    Divider().background(theme.primaryBorder)
-                                }
-                                routingRow(category: category)
-                            }
-                        }
-                    }
-                }
-
-                SettingsSubsection(label: L("Custom providers"), anchorId: "search.custom") {
-                    customProvidersContent
-                }
+        SettingsSection(
+            title: "Category Preferences",
+            subtitle:
+                "Pick which provider answers first for each kind of search. The rest follow your main list order, with built-in sources as backup.",
+            anchorId: "search.routing"
+        ) {
+            ForEach(allCategories, id: \.self) { category in
+                routingRow(category: category)
             }
+        }
+        SettingsSection(
+            title: "Custom Providers",
+            subtitle:
+                "Any REST search API (Perplexity, SearXNG, self-hosted…) can be added as a JSON definition — no app update required.",
+            anchorId: "search.custom"
+        ) {
+            SettingsButton(.secondary, "Add Custom Provider", icon: "plus", size: .compact) {
+                showCustomEditor = true
+            }
+        } content: {
+            customProvidersContent
         }
     }
 
@@ -780,48 +548,47 @@ struct SearchView: View {
         let order = eligibleOrder(for: category)
         let hasOverride = manager.configuration.routing[category]?.isEmpty == false
 
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
+        return VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: categoryIcon(category))
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.accentColor)
+                    .glyphSize(.footnote, weight: .medium)
+                    .foregroundColor(theme.text.link)
                     .frame(width: 16)
                 Text(category.capitalized)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
 
                 Spacer()
 
                 if order.count > 1 {
                     Text("Try first:", bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.tertiary)
                     tryFirstMenu(category: category, order: order, hasOverride: hasOverride)
                 }
             }
 
             if order.isEmpty {
                 Text("No enabled source can search this category.", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
             } else if order.count == 1 {
                 orderChip(rank: 1, definitionId: order[0], isFirst: true)
             } else {
                 // Read-only trace of the effective try order; the menu above
                 // is the only control, so nothing here needs decoding.
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     ForEach(Array(order.enumerated()), id: \.element) { index, id in
                         if index > 0 {
                             Image(systemName: "arrow.right")
-                                .font(.system(size: 7, weight: .semibold))
-                                .foregroundColor(theme.tertiaryText.opacity(0.6))
+                                .glyphSize(.tiny, weight: .semibold)
+                                .foregroundColor(theme.text.tertiary)
                         }
                         orderChip(rank: index + 1, definitionId: id, isFirst: index == 0)
                     }
                 }
             }
         }
-        .padding(.vertical, 10)
     }
 
     /// One provider in the try-order trace. The first chip is accent-tinted;
@@ -829,24 +596,10 @@ struct SearchView: View {
     /// the engine actually does.
     private func orderChip(rank: Int, definitionId: String, isFirst: Bool) -> some View {
         let isLastResort = manager.definition(id: definitionId)?.lastResort == true
-        let tint: Color = isLastResort ? theme.warningColor : (isFirst ? theme.accentColor : theme.secondaryText)
-        return HStack(spacing: 4) {
-            Text(providerDisplayName(definitionId))
-                .font(.system(size: 10, weight: isFirst ? .semibold : .regular))
-                .foregroundColor(isFirst || isLastResort ? tint : theme.secondaryText)
-            if isLastResort {
-                Text("last resort", bundle: .module)
-                    .font(.system(size: 9))
-                    .foregroundColor(theme.warningColor)
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(
-            Capsule().fill(
-                isFirst
-                    ? theme.accentColor.opacity(0.1)
-                    : (isLastResort ? theme.warningColor.opacity(0.08) : theme.tertiaryBackground))
+        let name = providerDisplayName(definitionId)
+        return StatusChip(
+            isLastResort ? "\(name) · \(L("last resort"))" : name,
+            tone: isLastResort ? .warning : (isFirst ? .accent : .neutral)
         )
         .localizedHelp(
             isLastResort
@@ -859,138 +612,45 @@ struct SearchView: View {
     /// clears the override; picking a provider stores a single-id override
     /// (`ranking(for:)` appends the rest in main-list order).
     private func tryFirstMenu(category: String, order: [String], hasOverride: Bool) -> some View {
-        Menu {
-            Button {
-                manager.setRouting(category: category, order: nil)
-            } label: {
-                if hasOverride {
-                    Text("Default order", bundle: .module)
-                } else {
-                    Label(L("Default order"), systemImage: "checkmark")
-                }
-            }
+        SettingsMenuPicker(
+            selection: Binding(
+                get: { hasOverride ? order.first : nil },
+                set: { manager.setRouting(category: category, order: $0.map { [$0] }) }
+            )
+        ) {
+            Text("Default order", bundle: .module).tag(String?.none)
             Divider()
             ForEach(order, id: \.self) { id in
-                Button {
-                    manager.setRouting(category: category, order: [id])
-                } label: {
-                    if hasOverride, id == order.first {
-                        Label(providerDisplayName(id), systemImage: "checkmark")
-                    } else {
-                        Text(providerDisplayName(id))
-                    }
-                }
+                Text(providerDisplayName(id)).tag(String?.some(id))
             }
-        } label: {
-            HStack(spacing: 6) {
-                Text(hasOverride ? providerDisplayName(order.first ?? "") : L("Default order"))
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.primaryText)
-                Image(systemName: "chevron.up.chevron.down")
-                    .font(.system(size: 8))
-                    .foregroundColor(theme.secondaryText)
-            }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(theme.tertiaryBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(theme.inputBorder, lineWidth: 1)
-                    )
-            )
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
     }
 
+    @ViewBuilder
     private var customProvidersContent: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text(
-                "Any REST search API (Perplexity, SearXNG, self-hosted…) can be added as a JSON definition — no app update required.",
-                bundle: .module
-            )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
-            .fixedSize(horizontal: false, vertical: true)
-
+        if manager.customDefinitions.isEmpty {
+            SettingsEmptyState(inline: "curlybraces", title: "No custom providers yet")
+        } else {
             ForEach(manager.customDefinitions) { definition in
-                HStack(spacing: 10) {
-                    Image(systemName: "curlybraces")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.secondaryText)
-                        .frame(width: 28, height: 28)
-                        .background(RoundedRectangle(cornerRadius: 7).fill(theme.tertiaryBackground))
-
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(definition.name)
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.primaryText)
-                        Text(definition.id)
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundColor(theme.tertiaryText)
+                SettingsRow(title: definition.name, verbatimTitle: true) {
+                    Text(verbatim: definition.id)
+                        .font(SettingsFont.monoSmall)
+                } trailing: {
+                    HStack(spacing: theme.space.s6) {
+                        SettingsIconButton("doc.on.doc", help: L("Copy definition JSON"), size: .compact) {
+                            copyDefinitionJSON(definition)
+                        }
+                        SettingsIconButton(
+                            "trash",
+                            help: L("Delete this custom provider"),
+                            size: .compact,
+                            isDestructive: true
+                        ) {
+                            manager.deleteCustomDefinition(id: definition.id)
+                        }
                     }
-
-                    Spacer()
-
-                    Button {
-                        copyDefinitionJSON(definition)
-                    } label: {
-                        Image(systemName: "doc.on.doc")
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.secondaryText)
-                            .frame(width: 26, height: 26)
-                            .background(RoundedRectangle(cornerRadius: 7).fill(theme.tertiaryBackground))
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .localizedHelp("Copy definition JSON")
-
-                    Button {
-                        manager.deleteCustomDefinition(id: definition.id)
-                    } label: {
-                        Image(systemName: "trash")
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.errorColor.opacity(0.8))
-                            .frame(width: 26, height: 26)
-                            .background(RoundedRectangle(cornerRadius: 7).fill(theme.errorColor.opacity(0.1)))
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .localizedHelp("Delete this custom provider")
                 }
-                .padding(10)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(theme.cardBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(theme.cardBorder, lineWidth: 1)
-                        )
-                )
             }
-
-            // Dashed full-width add affordance so "add" reads as creating a
-            // new row, not a global action.
-            Button {
-                showCustomEditor = true
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 10, weight: .semibold))
-                    Text("Add custom provider", bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .foregroundColor(theme.secondaryText)
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 9)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.inputBorder, style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                )
-                .contentShape(RoundedRectangle(cornerRadius: 10))
-            }
-            .buttonStyle(PlainButtonStyle())
         }
     }
 
@@ -1014,88 +674,23 @@ struct SearchView: View {
 
 // MARK: - Preset row card
 
-/// Selection row for the connect gallery, mirroring `ProviderRowCard`'s
-/// treatment (icon tile, hover accent stroke) with search-provider content
-/// (pricing note, Recommended badge).
+/// Selection row for the connect gallery: the `ProviderRowCard` shape with
+/// search-provider content (pricing note, Recommended badge).
 private struct SearchPresetRowCard: View {
     let definition: SearchProviderDefinition
     let action: () -> Void
 
-    @Environment(\.theme) private var theme
-    @State private var isHovered = false
-
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 14) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(
-                            LinearGradient(
-                                colors: isHovered
-                                    ? [theme.accentColor, theme.accentColor.opacity(0.7)]
-                                    : [theme.tertiaryBackground, theme.tertiaryBackground],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .frame(width: 42, height: 42)
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(isHovered ? .white : theme.secondaryText)
-                }
-
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text(definition.name)
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-                        if definition.recommended {
-                            Text("Recommended", bundle: .module)
-                                .font(.system(size: 9, weight: .semibold))
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Capsule().fill(theme.accentColor.opacity(0.15)))
-                                .foregroundColor(theme.accentColor)
-                        }
-                        if let pricing = definition.pricingNote {
-                            Text(pricing)
-                                .font(.system(size: 10))
-                                .foregroundColor(theme.tertiaryText)
-                        }
-                    }
-                    if let summary = definition.summary {
-                        Text(summary)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.secondaryText)
-                            .lineLimit(1)
-                    }
-                }
-
-                Spacer(minLength: 8)
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(theme.cardBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(
-                                isHovered ? theme.accentColor.opacity(0.4) : theme.cardBorder,
-                                lineWidth: 1
-                            )
-                    )
-            )
-            .scaleEffect(isHovered ? 1.01 : 1.0)
-        }
-        .buttonStyle(PlainButtonStyle())
-        .onHover { hovering in
-            withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) {
-                isHovered = hovering
+        LibraryRow(
+            title: definition.name,
+            subtitle: [definition.summary, definition.pricingNote].compactMap { $0 }.joined(separator: " · "),
+            showsChevron: true,
+            action: action
+        ) {
+            SettingsIconTile(icon: "magnifyingglass", size: 32)
+        } badges: {
+            if definition.recommended {
+                StatusChip(L("Recommended"), tone: .accent)
             }
         }
     }
@@ -1103,9 +698,8 @@ private struct SearchPresetRowCard: View {
 
 // MARK: - Provider card
 
-/// Full-width card for one configured API provider, mirroring the remote
-/// provider card treatment: icon tile, capsule status badge, action cluster,
-/// enable toggle.
+/// One configured API provider, in fallback rank order: status, reorder,
+/// test, enable; key and removal in the menu.
 private struct SearchProviderCard: View {
     let provider: SearchProvider
     let definition: SearchProviderDefinition
@@ -1123,7 +717,6 @@ private struct SearchProviderCard: View {
     @ObservedObject private var manager = SearchProviderManager.shared
 
     @State private var showDeleteConfirm = false
-    @State private var isHovered = false
 
     private var isConfigured: Bool {
         manager.configuredProviderIds.contains(definition.id)
@@ -1132,121 +725,58 @@ private struct SearchProviderCard: View {
     private var isReady: Bool { provider.enabled && isConfigured }
 
     private var statusColor: Color {
-        if !provider.enabled { return theme.tertiaryText }
-        if case .failed = manager.testStatus[definition.id] { return theme.errorColor }
-        if !isConfigured { return theme.warningColor }
-        return theme.successColor
+        if !provider.enabled { return theme.text.tertiary }
+        if case .failed = manager.testStatus[definition.id] { return theme.status.error.foreground }
+        if !isConfigured { return theme.status.warning.foreground }
+        return theme.status.success.foreground
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 16) {
-                // Icon tile
-                ZStack {
-                    RoundedRectangle(cornerRadius: 12)
-                        .fill(statusColor.opacity(0.12))
-                    Image(systemName: "globe.americas.fill")
-                        .font(.system(size: 20))
-                        .foregroundColor(statusColor)
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            LibraryRow(title: definition.name, subtitle: definition.summary) {
+                HStack(spacing: theme.space.s8) {
+                    Text(verbatim: "#\(rank)")
+                        .font(SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.tertiary)
+                        .frame(minWidth: 18, alignment: .trailing)
+                    SettingsIconTile(icon: "globe.americas.fill", size: 32, tint: statusColor)
                 }
-                .frame(width: 44, height: 44)
-
-                // Info
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        Text("#\(rank)")
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                            .foregroundColor(theme.tertiaryText)
-                        Text(definition.name)
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-                        statusBadge
-                    }
-                    if let summary = definition.summary {
-                        Text(summary)
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.secondaryText)
-                            .lineLimit(1)
-                    }
+            } badges: {
+                statusBadge
+            } trailing: {
+                if showReorder {
+                    SettingsIconButton("chevron.up", help: "Move up", size: .compact, action: onMoveUp)
+                        .disabled(isFirst)
+                    SettingsIconButton("chevron.down", help: "Move down", size: .compact, action: onMoveDown)
+                        .disabled(isLast)
                 }
+                SettingsIconButton(
+                    "bolt.fill",
+                    isLoading: manager.testStatus[definition.id] == .testing,
+                    help: "Run a test search"
+                ) {
+                    Task { await manager.testProvider(definitionId: definition.id) }
+                }
+                .disabled(manager.testStatus[definition.id] == .testing)
 
-                Spacer()
-
-                // Actions
-                HStack(spacing: 10) {
-                    if showReorder {
-                        VStack(spacing: 2) {
-                            reorderButton(icon: "chevron.up", disabled: isFirst, action: onMoveUp)
-                            reorderButton(icon: "chevron.down", disabled: isLast, action: onMoveDown)
-                        }
-                    }
-
-                    cardIconButton(icon: nil, help: "Run a test search") {
-                        Task { await manager.testProvider(definitionId: definition.id) }
-                    }
-
-                    cardIconButton(icon: "key.fill", help: "Update API key", action: onEditKey)
-
-                    Button {
-                        showDeleteConfirm = true
-                    } label: {
-                        Image(systemName: "trash")
-                            .font(.system(size: 12))
-                            .foregroundColor(theme.errorColor.opacity(0.8))
-                            .frame(width: 30, height: 30)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(theme.errorColor.opacity(0.1))
-                            )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .localizedHelp("Remove provider and its key")
-
-                    Toggle(
-                        "",
-                        isOn: Binding(
-                            get: { provider.enabled },
-                            set: { onToggle($0) }
-                        )
+                Toggle(
+                    "",
+                    isOn: Binding(
+                        get: { provider.enabled },
+                        set: { onToggle($0) }
                     )
-                    .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-                    .labelsHidden()
-                }
+                )
+                .settingsSwitch()
+            } menu: {
+                Button(L("Update API key"), action: onEditKey)
+                Divider()
+                Button(L("Remove provider and its key"), role: .destructive) { showDeleteConfirm = true }
             }
-            .padding(16)
 
             // Test-failure detail
             if case .failed(let message) = manager.testStatus[definition.id] {
-                Divider().background(theme.errorColor.opacity(0.3))
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 12))
-                    Text(message)
-                        .font(.system(size: 12))
-                        .lineLimit(2)
-                }
-                .foregroundColor(theme.errorColor)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(theme.errorColor.opacity(0.05))
+                InlineBanner(kind: .error, title: message)
             }
-        }
-        .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(theme.secondaryBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14)
-                        .stroke(
-                            isReady ? theme.successColor.opacity(0.4) : theme.primaryBorder,
-                            lineWidth: 1
-                        )
-                )
-        )
-        .scaleEffect(isHovered ? 1.005 : 1.0)
-        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isHovered)
-        .onHover { hovering in
-            isHovered = hovering
         }
         .themedAlert(
             L("Remove Provider?"),
@@ -1261,78 +791,24 @@ private struct SearchProviderCard: View {
     private var statusBadge: some View {
         switch manager.testStatus[definition.id] {
         case .testing:
-            HStack(spacing: 4) {
-                ProgressView()
-                    .scaleEffect(0.5)
-                    .frame(width: 12, height: 12)
-                Text("Checking…", bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-            }
-            .foregroundColor(theme.accentColor)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(Capsule().fill(theme.accentColor.opacity(0.12)))
+            StatusChip(L("Checking…"), tone: .accent)
         case .ok:
-            badge(L("Working"), color: theme.successColor)
+            badge(L("Working"), color: theme.status.success.foreground)
         case .failed:
-            badge(isConfigured ? L("Key invalid") : L("Needs key"), color: theme.errorColor)
+            badge(isConfigured ? L("Key invalid") : L("Needs key"), color: theme.status.error.foreground)
         case nil:
             if !isConfigured {
-                badge(L("Needs key"), color: theme.warningColor)
+                badge(L("Needs key"), color: theme.status.warning.foreground)
             } else if !provider.enabled {
-                badge(L("Off"), color: theme.tertiaryText)
+                badge(L("Off"), color: theme.text.tertiary)
             } else {
-                badge(L("Ready"), color: theme.successColor)
+                badge(L("Ready"), color: theme.status.success.foreground)
             }
         }
     }
 
     private func badge(_ text: String, color: Color) -> some View {
-        Text(text)
-            .font(.system(size: 11, weight: .medium))
-            .foregroundColor(color)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 3)
-            .background(Capsule().fill(color.opacity(0.12)))
-    }
-
-    private func reorderButton(icon: String, disabled: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 9, weight: .bold))
-                .foregroundColor(disabled ? theme.tertiaryText.opacity(0.35) : theme.secondaryText)
-                .frame(width: 30, height: 14)
-                .background(RoundedRectangle(cornerRadius: 4).fill(theme.tertiaryBackground))
-        }
-        .buttonStyle(PlainButtonStyle())
-        .disabled(disabled)
-    }
-
-    /// 30×30 tertiary action button. `icon == nil` renders the test action
-    /// (bolt, or a spinner while a test is in flight).
-    private func cardIconButton(
-        icon: String?,
-        help: LocalizedStringKey,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Group {
-                if icon == nil, manager.testStatus[definition.id] == .testing {
-                    ProgressView()
-                        .scaleEffect(0.5)
-                        .frame(width: 30, height: 30)
-                } else {
-                    Image(systemName: icon ?? "bolt.fill")
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
-                        .frame(width: 30, height: 30)
-                }
-            }
-            .background(RoundedRectangle(cornerRadius: 8).fill(theme.tertiaryBackground))
-        }
-        .buttonStyle(PlainButtonStyle())
-        .disabled(icon == nil && manager.testStatus[definition.id] == .testing)
-        .localizedHelp(help)
+        StatusChip(text, tint: color)
     }
 }
 
@@ -1364,7 +840,7 @@ private struct SearchProviderConnectSheet: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             sheetHeader
 
             ScrollView {
@@ -1375,17 +851,17 @@ private struct SearchProviderConnectSheet: View {
                         pickerBody
                     }
                 }
-                .padding(24)
+                .padding(theme.space.s24)
             }
 
             sheetFooter
         }
         .frame(width: 560, height: definition == nil ? 560 : 480)
-        .background(theme.primaryBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .background(theme.surface.canvas)
+        .clipShape(RoundedRectangle(cornerRadius: theme.radius.xlarge))
         .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(theme.primaryBorder, lineWidth: 1)
+            RoundedRectangle(cornerRadius: theme.radius.xlarge)
+                .stroke(theme.border.subtle, lineWidth: theme.stroke.default)
         )
         .onAppear {
             // Prefill presence indicators for already-saved secrets (values
@@ -1400,97 +876,40 @@ private struct SearchProviderConnectSheet: View {
 
     // MARK: Header
 
+    @ViewBuilder
     private var sheetHeader: some View {
-        HStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                theme.accentColor.opacity(0.2),
-                                theme.accentColor.opacity(0.05),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [theme.accentColor, theme.accentColor.opacity(0.7)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-            }
-            .frame(width: 40, height: 40)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Group {
-                    if let definition {
-                        Text("Connect \(definition.name)", bundle: .module)
-                    } else {
-                        Text("Connect a Search Provider", bundle: .module)
-                    }
-                }
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-
-                Group {
-                    if definition != nil {
-                        Text("Paste your API key — it's verified with a real search", bundle: .module)
-                    } else {
-                        Text("Choose a service to connect", bundle: .module)
-                    }
-                }
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-            }
-
-            Spacer()
-
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                    .frame(width: 28, height: 28)
-                    .background(Circle().fill(theme.tertiaryBackground))
-            }
-            .buttonStyle(PlainButtonStyle())
-            .keyboardShortcut(.escape, modifiers: [])
+        if let definition {
+            SettingsSheetHeader(
+                icon: "magnifyingglass",
+                title: "Connect \(definition.name)",
+                subtitle: "Paste your API key — it's verified with a real search"
+            ) { dismiss() }
+        } else {
+            SettingsSheetHeader(
+                icon: "magnifyingglass",
+                title: "Connect a Search Provider",
+                subtitle: "Choose a service to connect"
+            ) { dismiss() }
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 20)
-        .background(
-            theme.secondaryBackground
-                .overlay(
-                    LinearGradient(
-                        colors: [theme.accentColor.opacity(0.03), Color.clear],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-        )
     }
 
     // MARK: Picker phase
 
     private var pickerBody: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: theme.space.s10) {
             if manager.addableDefinitions.isEmpty {
                 Text("All bundled providers are already connected.", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
-                    .padding(.vertical, 24)
+                    .font(SettingsFont.caption)
+                    .foregroundColor(theme.text.secondary)
+                    .padding(.vertical, theme.space.s24)
             } else {
-                ForEach(manager.addableDefinitions) { candidate in
-                    SearchPresetRowCard(definition: candidate) {
-                        selectedDefinition = candidate
-                        verified = false
-                        verifyError = nil
+                SettingsGroup {
+                    ForEach(manager.addableDefinitions) { candidate in
+                        SearchPresetRowCard(definition: candidate) {
+                            selectedDefinition = candidate
+                            verified = false
+                            verifyError = nil
+                        }
                     }
                 }
             }
@@ -1501,19 +920,19 @@ private struct SearchProviderConnectSheet: View {
 
     @ViewBuilder
     private func configureBody(_ definition: SearchProviderDefinition) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: theme.space.s16) {
             if let steps = definition.instructions, !steps.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: theme.space.s6) {
                     ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
-                        HStack(alignment: .top, spacing: 8) {
+                        HStack(alignment: .top, spacing: theme.space.s8) {
                             Text("\(index + 1)")
-                                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                .foregroundColor(theme.accentColor)
+                                .font(SettingsFont.monoSmall)
+                                .foregroundColor(theme.text.link)
                                 .frame(width: 18, height: 18)
-                                .background(Circle().fill(theme.accentColor.opacity(0.12)))
+                                .background(Circle().fill(theme.status.info.background))
                             Text(step)
-                                .font(.system(size: 12))
-                                .foregroundColor(theme.secondaryText)
+                                .font(SettingsFont.caption)
+                                .foregroundColor(theme.text.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
@@ -1528,23 +947,16 @@ private struct SearchProviderConnectSheet: View {
                     // returns immediately.
                     NSWorkspace.shared.open(url, configuration: NSWorkspace.OpenConfiguration())
                 } label: {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         Image(systemName: "safari")
-                            .font(.system(size: 11, weight: .medium))
+                            .glyphSize(.footnote, weight: .medium)
                         Text("Open signup page", bundle: .module)
-                            .font(.system(size: 12, weight: .medium))
+                            .font(SettingsFont.compactLabel)
                     }
-                    .foregroundColor(theme.primaryText)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.tertiaryBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(theme.inputBorder, lineWidth: 1)
-                            )
-                    )
+                    .foregroundColor(theme.text.primary)
+                    .padding(.horizontal, theme.space.s12)
+                    .padding(.vertical, theme.space.s8)
+                    .settingsChrome(.subtle)
                 }
                 .buttonStyle(PlainButtonStyle())
             }
@@ -1553,41 +965,33 @@ private struct SearchProviderConnectSheet: View {
                 secretField(field)
             }
 
-            HStack(spacing: 4) {
+            HStack(spacing: theme.space.s4) {
                 Image(systemName: "lock.fill")
-                    .font(.system(size: 9))
+                    .glyphSize(.tiny)
                 Text("Stored securely in Keychain. Never sent anywhere except this provider.", bundle: .module)
-                    .font(.system(size: 11))
+                    .font(SettingsFont.rowDescription)
             }
-            .foregroundColor(theme.tertiaryText)
+            .foregroundColor(theme.text.tertiary)
         }
     }
 
     private func secretField(_ field: SearchSecretField) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             Text(field.label)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.compactLabel)
+                .foregroundColor(theme.text.primary)
 
-            SecureField(field.help ?? L("Paste here"), text: binding(for: field.id))
-                .textFieldStyle(.plain)
-                .font(.system(size: 13, design: .monospaced))
-                .foregroundColor(theme.primaryText)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(theme.inputBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(theme.inputBorder, lineWidth: 1)
-                        )
-                )
+            SettingsTextField(
+                placeholder: field.help ?? L("Paste here"),
+                text: binding(for: field.id),
+                monospaced: true,
+                isSecure: true
+            )
 
             if let help = field.help {
                 Text(help)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
             }
         }
     }
@@ -1595,25 +999,25 @@ private struct SearchProviderConnectSheet: View {
     // MARK: Footer
 
     private var sheetFooter: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             if definition != nil {
                 if verifying {
-                    ProgressView().controlSize(.small)
+                    SettingsSpinner()
                     Text("Checking your key with a real search…", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
+                        .font(SettingsFont.caption)
+                        .foregroundColor(theme.text.secondary)
                 } else if verified {
                     Image(systemName: "checkmark.circle.fill")
-                        .foregroundColor(theme.successColor)
+                        .foregroundColor(theme.status.success.foreground)
                     Text("Connected. You're all set.", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.successColor)
+                        .font(SettingsFont.compactLabel)
+                        .foregroundColor(theme.status.success.foreground)
                 } else if let error = verifyError {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundColor(theme.errorColor)
+                        .foregroundColor(theme.status.error.foreground)
                     Text(error)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.errorColor)
+                        .font(SettingsFont.caption)
+                        .foregroundColor(theme.status.error.foreground)
                         .lineLimit(2)
                 }
             }
@@ -1621,23 +1025,12 @@ private struct SearchProviderConnectSheet: View {
             Spacer()
 
             if definition != nil, initialDefinition == nil {
-                Button {
+                SettingsButton(.secondary, "Back") {
                     selectedDefinition = nil
                     verified = false
                     verifyError = nil
                     values = [:]
-                } label: {
-                    Text("Back", bundle: .module)
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.tertiaryBackground)
-                        )
                 }
-                .buttonStyle(PlainButtonStyle())
             }
 
             if verified {
@@ -1645,22 +1038,14 @@ private struct SearchProviderConnectSheet: View {
                     dismiss()
                 } label: {
                     Text("Done", bundle: .module)
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.accentColor)
-                        )
                 }
-                .buttonStyle(PlainButtonStyle())
+                .assignedSettingsButtonStyle(.primary)
                 .keyboardShortcut(.defaultAction)
             }
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 16)
-        .background(theme.secondaryBackground)
+        .padding(.horizontal, theme.space.s24)
+        .padding(.vertical, theme.space.s16)
+        .background(theme.surface.subtle)
     }
 
     // MARK: Verification
@@ -1762,137 +1147,56 @@ private struct SearchCustomProviderSheet: View {
         """
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             sheetHeader
 
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 Text(
-                    "Describe any REST search API as JSON. Placeholders: {{query}}, {{max_results}}, {{offset}}, {{page}}, {{start}}, {{time_range}}, {{after_date}}, {{region}}, {{secret.<id>}}.",
+                    "Placeholders: {{query}}, {{max_results}}, {{offset}}, {{page}}, {{start}}, {{time_range}}, {{after_date}}, {{region}}, {{secret.<id>}}.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
 
-                TextEditor(text: $jsonText)
-                    .font(.system(size: 11, design: .monospaced))
-                    .scrollContentBackground(.hidden)
-                    .padding(8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(theme.inputBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .stroke(theme.inputBorder, lineWidth: 1)
-                            )
-                    )
-                    .frame(minHeight: 280)
+                SettingsTextEditor(text: $jsonText, minHeight: 280, maxHeight: 300, monospaced: true)
 
                 if let errorMessage {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 11))
+                            .glyphSize(.footnote)
                         Text(errorMessage)
-                            .font(.system(size: 11))
+                            .font(SettingsFont.rowDescription)
                             .lineLimit(3)
                     }
-                    .foregroundColor(theme.errorColor)
+                    .foregroundColor(theme.status.error.foreground)
                 }
             }
-            .padding(24)
+            .padding(theme.space.s24)
 
             sheetFooter
         }
         .fittedSheetFrame(width: 560, height: 540)
-        .background(theme.primaryBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .background(theme.surface.canvas)
+        .clipShape(RoundedRectangle(cornerRadius: theme.radius.xlarge))
         .overlay(
-            RoundedRectangle(cornerRadius: 16)
-                .stroke(theme.primaryBorder, lineWidth: 1)
+            RoundedRectangle(cornerRadius: theme.radius.xlarge)
+                .stroke(theme.border.subtle, lineWidth: theme.stroke.default)
         )
     }
 
     private var sheetHeader: some View {
-        HStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                theme.accentColor.opacity(0.2),
-                                theme.accentColor.opacity(0.05),
-                            ],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [theme.accentColor, theme.accentColor.opacity(0.7)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-            }
-            .frame(width: 40, height: 40)
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Custom Provider", bundle: .module)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-                Text("Describe any REST search API as a JSON definition", bundle: .module)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
-            }
-
-            Spacer()
-
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.secondaryText)
-                    .frame(width: 28, height: 28)
-                    .background(Circle().fill(theme.tertiaryBackground))
-            }
-            .buttonStyle(PlainButtonStyle())
-            .keyboardShortcut(.escape, modifiers: [])
-        }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 20)
-        .background(
-            theme.secondaryBackground
-                .overlay(
-                    LinearGradient(
-                        colors: [theme.accentColor.opacity(0.03), Color.clear],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-        )
+        SettingsSheetHeader(
+            icon: "slider.horizontal.3",
+            title: "Custom Provider",
+            subtitle: "Describe any REST search API as a JSON definition"
+        ) { dismiss() }
     }
 
     private var sheetFooter: some View {
-        HStack {
-            Spacer()
-            Button {
-                saveDefinition()
-            } label: {
-                Text("Validate & Save", bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(theme.accentColor))
-            }
-            .buttonStyle(PlainButtonStyle())
-            .keyboardShortcut(.defaultAction)
-        }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 16)
-        .background(theme.secondaryBackground)
+        SettingsSheetFooter(
+            primary: .init(label: "Validate & Save", handler: saveDefinition),
+            secondary: .init(label: "Cancel") { dismiss() }
+        )
     }
 
     private func saveDefinition() {
@@ -1951,6 +1255,6 @@ private struct SearchCustomProviderSheet: View {
 #if DEBUG && canImport(PreviewsMacros)
     #Preview {
         SearchView()
-            .environment(\.theme, DarkTheme())
+            .environment(\.theme, CustomizableTheme.dark())
     }
 #endif

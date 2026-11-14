@@ -51,6 +51,25 @@ struct BuiltinToolResilienceTests {
         }
     }
 
+    /// Every `type` keyword in every built-in's schema must be a JSON
+    /// Schema type name (or a list of them), and every `items` must be a
+    /// schema. The local validator shrugs at `"type": {}`; OpenAI's
+    /// function-schema check rejects the whole request with
+    /// `invalid_function_parameters`, which took the Architect down for
+    /// every turn until the offending tool was fixed. Pin it here so a bad
+    /// schema fails a unit test instead of a live chat.
+    @Test func allBuiltInsDeclareValidSchemaTypes() throws {
+        let registry = ToolRegistry.shared
+        let builtIns = registry.listTools()
+            .filter { registry.builtInToolNames.contains($0.name) }
+        #expect(!builtIns.isEmpty, "no built-in tools registered")
+
+        for entry in builtIns {
+            let parameters = try #require(entry.parameters, "\(entry.name): no parameter schema")
+            assertSchemaTypesAreValid(parameters, toolName: entry.name, path: "parameters")
+        }
+    }
+
     /// Every built-in's schema must accept `{<all-required-filled>}` and
     /// reject `{}`. Catches schemas that declare a required key but
     /// either (a) forgot to add it to `required` or (b) have a wrong-
@@ -357,6 +376,59 @@ struct BuiltinToolResilienceTests {
     }
 
     // MARK: - Schema introspection helpers
+
+    private static let jsonSchemaTypeNames: Set<String> = [
+        "object", "array", "string", "number", "integer", "boolean", "null",
+    ]
+
+    /// Walk a schema position: the `type` keyword must be a type name or
+    /// a non-empty list of type names; `items` and `additionalProperties`
+    /// (when not a bool) must themselves be schemas; `properties`,
+    /// `$defs`/`definitions` map names to schemas; `anyOf`/`oneOf`/`allOf`
+    /// list schemas. A property *named* `type` lives under `properties`,
+    /// so it is checked as a schema, never as a keyword.
+    private func assertSchemaTypesAreValid(_ schema: JSONValue, toolName: String, path: String) {
+        guard case .object(let obj) = schema else {
+            Issue.record("\(toolName): \(path) must be a schema object, got \(schema)")
+            return
+        }
+        if let type = obj["type"] {
+            switch type {
+            case .string(let name):
+                if !Self.jsonSchemaTypeNames.contains(name) {
+                    Issue.record("\(toolName): \(path).type is \"\(name)\", not a JSON Schema type")
+                }
+            case .array(let names):
+                let bad = names.filter { name in
+                    guard case .string(let s) = name else { return true }
+                    return !Self.jsonSchemaTypeNames.contains(s)
+                }
+                if names.isEmpty || !bad.isEmpty {
+                    Issue.record("\(toolName): \(path).type list must hold JSON Schema type names, got \(names)")
+                }
+            default:
+                Issue.record("\(toolName): \(path).type must be a string or list of strings, got \(type)")
+            }
+        }
+        for key in ["properties", "$defs", "definitions"] {
+            guard case .object(let children)? = obj[key] else { continue }
+            for (name, child) in children {
+                assertSchemaTypesAreValid(child, toolName: toolName, path: "\(path).\(key).\(name)")
+            }
+        }
+        if let items = obj["items"] {
+            assertSchemaTypesAreValid(items, toolName: toolName, path: "\(path).items")
+        }
+        if let additional = obj["additionalProperties"], case .object = additional {
+            assertSchemaTypesAreValid(additional, toolName: toolName, path: "\(path).additionalProperties")
+        }
+        for key in ["anyOf", "oneOf", "allOf"] {
+            guard case .array(let options)? = obj[key] else { continue }
+            for (index, option) in options.enumerated() {
+                assertSchemaTypesAreValid(option, toolName: toolName, path: "\(path).\(key)[\(index)]")
+            }
+        }
+    }
 
     /// Walk the schema (top-level + every declared object property) and
     /// fail the test if any object schema is missing

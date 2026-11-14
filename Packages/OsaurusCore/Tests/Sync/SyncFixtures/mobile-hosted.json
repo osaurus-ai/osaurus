@@ -1,0 +1,234 @@
+{
+  "description": "An iPhone's chat hosted on a Mac (SYNC_MOBILE_CONTRACT.md v2 §3): run options, a voice-call note and Privacy Filter choice on the first request, an image request, the reply's tool labels and generated image, and the host's progress, context usage and cloud-spend approval.",
+  "conversation": {
+    "title": "Plan the launch post",
+    "created_ms": 1767571200000,
+    "pinned": false,
+    "archived": false,
+    "tags": {
+      "osaurus.session": "8b9c0d1e-2f3a-4b4c-8d5e-6f7a8b9c0d1e",
+      "source": "chat",
+      "agentId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+      "hostDevice": "7c1f0e2d9a8b4c3d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5"
+    },
+    "app_data": {
+      "ai.osaurus.session/1": {
+        "v": 1,
+        "id": "8b9c0d1e-2f3a-4b4c-8d5e-6f7a8b9c0d1e",
+        "source": "chat",
+        "agentId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "hostDevice": "7c1f0e2d9a8b4c3d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5"
+      },
+      "ai.osaurus.host-run/1": {
+        "v": 1,
+        "turn": "f1000000-0000-4000-8000-000000000005",
+        "state": "running",
+        "updatedMs": 1767571260500
+      },
+      "ai.osaurus.run-progress/1": {
+        "v": 1,
+        "turn": "f1000000-0000-4000-8000-000000000005",
+        "phase": "image",
+        "prefill": { "stage": "prefill", "done": 2048, "total": 2048 },
+        "tools": [
+          {
+            "id": "call_7",
+            "name": "web_fetch",
+            "label": "Fetched osaurus.ai",
+            "icon": "globe",
+            "state": "done",
+            "durationMs": 840
+          },
+          {
+            "id": "preparing",
+            "name": "file_write",
+            "label": "Writing a file",
+            "icon": "doc",
+            "state": "preparing",
+            "argumentBytes": 312
+          }
+        ],
+        "image": { "step": 3, "total": 4 },
+        "artifacts": [
+          {
+            "id": "c2000000-0000-4000-8000-000000000001",
+            "filename": "outline.md",
+            "mimeType": "text/markdown",
+            "fileSize": 1180
+          }
+        ],
+        "thinkingChars": 1420,
+        "startedMs": 1767571260000,
+        "updatedMs": 1767571262500
+      },
+      "ai.osaurus.context-usage/1": {
+        "v": 1,
+        "usage": {
+          "tokens": 5310,
+          "usable_tokens": 104857,
+          "max_tokens": 131072,
+          "ratio": 0.0506,
+          "near_limit": false,
+          "hard_overflow": false,
+          "window_source": "model",
+          "context": [
+            { "id": "system", "label": "System prompt", "tokens": 1210, "tint": "purple" },
+            { "id": "tools", "label": "Tools", "tokens": 2890, "tint": "orange" }
+          ],
+          "messages": [
+            { "id": "conversation", "label": "Conversation", "tokens": 1210, "tint": "green" }
+          ]
+        },
+        "agentId": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "model": "OsaurusAI/gemma-4-qat-mxfp4",
+        "updatedMs": 1767571250000
+      },
+      "ai.osaurus.approval/1": {
+        "v": 1,
+        "pending": [
+          {
+            "id": "e2000000-0000-4000-8000-000000000001",
+            "turnId": "f1000000-0000-4000-8000-000000000005",
+            "tool": "image",
+            "description": "Generate a billable remote image. Review the provider, privacy policy, estimated minimum price, and selected options.",
+            "arguments": "{\"aspect_ratio\":\"16:9\",\"backend\":\"Osaurus Router\",\"billing_notice\":\"Approving starts a billable remote image generation.\",\"estimated_minimum_usd\":0.04,\"prompt\":\"A dinosaur at a laptop\",\"quality\":\"high\",\"resolved_model\":\"FLUX 1.1 Pro\"}",
+            "offersRunLease": true,
+            "requestedMs": 1767571261000
+          }
+        ]
+      }
+    }
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "Draft the launch post. Keep it short; I'm listening on a call.",
+      "created_ms": 1767571200000,
+      "app_data": {
+        "ai.osaurus.turn/1": {
+          "v": 1,
+          "id": "f1000000-0000-4000-8000-000000000001",
+          "role": "user",
+          "createdAt": 1767571200000,
+          "hostRun": {
+            "device": "7c1f0e2d9a8b4c3d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5",
+            "requestedMs": 1767571200000,
+            "model": "OsaurusAI/gemma-4-qat-mxfp4",
+            "options": { "reasoningEffort": "low", "thinking": false },
+            "voiceCall": { "instructions": "Answer in two short spoken sentences." },
+            "privacy": "auto"
+          }
+        }
+      }
+    },
+    {
+      "role": "assistant",
+      "content": "",
+      "created_ms": 1767571210000,
+      "app_data": {
+        "ai.osaurus.turn/1": {
+          "v": 1,
+          "id": "f1000000-0000-4000-8000-000000000002",
+          "role": "assistant",
+          "createdAt": 1767571205000,
+          "toolCalls": [
+            {
+              "id": "call_7",
+              "type": "function",
+              "function": { "name": "web_fetch", "arguments": "{\"url\":\"https://osaurus.ai\"}" }
+            }
+          ],
+          "toolCallDurations": { "call_7": 0.84 }
+        },
+        "ai.osaurus.turn-detail/1": {
+          "v": 1,
+          "toolCallDisplay": {
+            "call_7": { "label": "Fetched osaurus.ai", "category": "web", "icon": "globe" }
+          }
+        }
+      }
+    },
+    {
+      "role": "tool_result",
+      "content": "Osaurus: AI that runs on your Mac.",
+      "created_ms": 1767571211000,
+      "tool_call_id": "call_7",
+      "tool_name": "web_fetch",
+      "app_data": {
+        "ai.osaurus.turn/1": {
+          "v": 1,
+          "id": "f1000000-0000-4000-8000-000000000003",
+          "role": "tool",
+          "toolCallId": "call_7",
+          "createdAt": 1767571211000
+        }
+      }
+    },
+    {
+      "role": "assistant",
+      "content": "Osaurus 1.0 is out. It runs your agents on your Mac.\n\n![dinosaur](file:///Users/me/.osaurus/generated-images/hero.png)",
+      "created_ms": 1767571230000,
+      "app_data": {
+        "ai.osaurus.turn/1": {
+          "v": 1,
+          "id": "f1000000-0000-4000-8000-000000000004",
+          "role": "assistant",
+          "createdAt": 1767571212000,
+          "completedAt": 1767571230000,
+          "terminalStopReason": "stop"
+        },
+        "ai.osaurus.turn-detail/1": {
+          "v": 1,
+          "files": [
+            {
+              "kind": "generatedImage",
+              "link": "file:///Users/me/.osaurus/generated-images/hero.png",
+              "filename": "hero.png",
+              "mimeType": "image/png",
+              "fileSize": 3,
+              "blob": 0
+            },
+            {
+              "kind": "artifact",
+              "id": "c2000000-0000-4000-8000-000000000002",
+              "filename": "launch.mov",
+              "mimeType": "video/quicktime",
+              "fileSize": 52428800,
+              "skipped": "tooLarge"
+            }
+          ]
+        }
+      },
+      "app_data_blobs": {
+        "ai.osaurus.turn-detail/1": [
+          { "name": "hero.png", "media_type": "image/png", "text": "PNG" }
+        ]
+      }
+    },
+    {
+      "role": "user",
+      "content": "A dinosaur at a laptop",
+      "created_ms": 1767571260000,
+      "app_data": {
+        "ai.osaurus.turn/1": {
+          "v": 1,
+          "id": "f1000000-0000-4000-8000-000000000005",
+          "role": "user",
+          "createdAt": 1767571260000,
+          "hostRun": {
+            "device": "7c1f0e2d9a8b4c3d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5",
+            "requestedMs": 1767571260000,
+            "model": "router/flux-1.1-pro",
+            "image": {
+              "aspectRatio": "16:9",
+              "quality": "high",
+              "seed": 7,
+              "count": 1,
+              "negativePrompt": "text, watermark"
+            }
+          }
+        }
+      }
+    }
+  ]
+}

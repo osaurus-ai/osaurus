@@ -18,14 +18,19 @@ import QuartzCore
 
 final class ShimmerLabel: NSView {
 
+    /// One left-to-right pass of the highlight.
+    private static let sweepPeriod: CFTimeInterval = 1.3
+
     private let gradientLayer = CAGradientLayer()
     private let textMaskLayer = CATextLayer()
 
     private var text: String = ""
-    private var font: NSFont = .systemFont(ofSize: 12, weight: .semibold)
+    private var font: NSFont = ThemeManager.shared.chatTheme.nsFont(.caption)
     private var baseColor: NSColor = .secondaryLabelColor
     private var highlightColor: NSColor = .labelColor
     private var animating = false
+    private var recipeTracking: CGFloat = 0
+    private var recipeLineHeight: CGFloat?
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -38,12 +43,13 @@ final class ShimmerLabel: NSView {
         textMaskLayer.truncationMode = .end
         textMaskLayer.isWrapped = false
         textMaskLayer.alignmentMode = .left
-        textMaskLayer.foregroundColor = NSColor.white.cgColor
+        // A mask reads alpha only.
+        textMaskLayer.foregroundColor = CGColor(gray: 0, alpha: 1)
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func configure(text: String, font: NSFont, baseColor: NSColor, highlightColor: NSColor) {
+    func configure(text: String, font: NSFont, baseColor: NSColor, highlightColor: NSColor, tracking: CGFloat? = nil, lineHeight: CGFloat? = nil) {
         self.text = text
         self.font = font
         self.baseColor = baseColor
@@ -54,7 +60,13 @@ final class ShimmerLabel: NSView {
         gradientLayer.contentsScale = scale
         textMaskLayer.font = font
         textMaskLayer.fontSize = font.pointSize
-        textMaskLayer.string = text
+        recipeTracking = tracking ?? 0
+        recipeLineHeight = lineHeight
+        if tracking != nil || lineHeight != nil {
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.minimumLineHeight = lineHeight ?? 0
+            textMaskLayer.string = NSAttributedString(string: text, attributes: [.font: font, .kern: recipeTracking, .paragraphStyle: paragraph])
+        } else { textMaskLayer.string = text }
 
         applyColors()
         invalidateIntrinsicContentSize()
@@ -62,8 +74,8 @@ final class ShimmerLabel: NSView {
     }
 
     override var intrinsicContentSize: NSSize {
-        let size = (text as NSString).size(withAttributes: [.font: font])
-        return NSSize(width: ceil(size.width), height: ceil(size.height))
+        let size = (text as NSString).size(withAttributes: [.font: font, .kern: recipeTracking])
+        return NSSize(width: ceil(size.width), height: max(ceil(size.height), recipeLineHeight ?? 0))
     }
 
     override func layout() {
@@ -106,11 +118,11 @@ final class ShimmerLabel: NSView {
         // Re-adding under the same key replaces the in-flight animation and
         // snaps the sweep back to its start, which reads as a stutter during
         // token streaming (frequent re-layouts). Only add when none is live.
-        guard gradientLayer.animation(forKey: "shimmer") == nil else { return }
+        guard gradientLayer.animation(forKey: "shimmer") == nil, !ThemeMotion.reduceMotionEnabled else { return }
         let anim = CABasicAnimation(keyPath: "locations")
         anim.fromValue = [-1.0, -0.5, 0.0]
         anim.toValue = [1.0, 1.5, 2.0]
-        anim.duration = 1.3
+        anim.duration = Self.sweepPeriod
         anim.repeatCount = .infinity
         anim.isRemovedOnCompletion = false
         gradientLayer.add(anim, forKey: "shimmer")

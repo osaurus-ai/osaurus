@@ -62,7 +62,7 @@ struct SlackConnectionTests {
         }
     }
 
-    @Test func workspaceAccountsExtendTeamChannelAndSenderPolicies() {
+    @Test func legacyWorkspaceAccountsDoNotExtendThePrimaryWorkspace() {
         let configuration = SlackConnectionConfiguration(
             configuredTeamIds: ["TPRIMARY"],
             readableChannelIds: ["CPRIMARY"],
@@ -82,11 +82,14 @@ struct SlackConnectionTests {
             ]
         )
 
-        #expect(configuration.canUseTeam(teamId: "TSECOND"))
-        #expect(configuration.canRead(channelId: "CSECOND"))
-        #expect(configuration.canWrite(channelId: "WSECOND"))
-        #expect(configuration.canUseSender(senderId: "USECOND"))
-        #expect(!configuration.canRead(channelId: "CUNKNOWN"))
+        // Each extra workspace is its own `slack-<team>` connection; the
+        // primary's policies cover only its own team.
+        #expect(configuration.canUseTeam(teamId: "TPRIMARY"))
+        #expect(!configuration.canUseTeam(teamId: "TSECOND"))
+        #expect(!configuration.canRead(channelId: "CSECOND"))
+        #expect(!configuration.canWrite(channelId: "WSECOND"))
+        #expect(!configuration.canUseSender(senderId: "USECOND"))
+        #expect(configuration.canRead(channelId: "CPRIMARY"))
     }
 
     @Test func diagnosticsRedactsSavedSecretsEchoedByTransportError() async throws {
@@ -758,6 +761,78 @@ struct SlackConnectionTests {
             #expect(!normalized.payloadJSON.contains("legacy-verification-secret"))
             #expect(try service.recordInboundEvent(envelope) == nil)
             #expect(try store.messageCount(connectionId: "slack", roomId: "C23456") == 1)
+        }
+    }
+
+    @Test func slackInboundEventAcceptsAppPostsFromAllowlistedSendersOnlyWhenOptedIn() async throws {
+        try await withIsolatedSlackStores { credentials in
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            defer { store.close() }
+
+            let service = SlackConnectionService(
+                client: FakeSlackAPIClient(),
+                credentialStore: credentials,
+                messageStore: store
+            )
+            try service.saveConfiguration(
+                SlackConnectionConfiguration(
+                    readableChannelIds: ["C23456"],
+                    senderAllowlist: ["U55555"],
+                    botUserId: "UOSABOT",
+                    acceptAppPostsFromAllowlistedSenders: true
+                )
+            )
+            func envelope(user: String?, eventId: String, ts: String) -> SlackEventEnvelope {
+                SlackEventEnvelope(
+                    token: nil,
+                    teamId: "T12345",
+                    apiAppId: "A12345",
+                    event: SlackEventMessage(
+                        type: "message",
+                        subtype: nil,
+                        channel: "C23456",
+                        user: user,
+                        botId: "BMACRO",
+                        text: "dictated from my phone",
+                        ts: ts,
+                        threadTs: nil,
+                        channelType: "channel"
+                    ),
+                    type: "event_callback",
+                    eventId: eventId,
+                    eventTime: 1_718_800_001
+                )
+            }
+
+            var optedOut = service.configuration()
+            optedOut.acceptAppPostsFromAllowlistedSenders = false
+            try service.saveConfiguration(optedOut)
+            #expect(
+                try service.recordInboundEventOutcome(
+                    envelope(user: "U55555", eventId: "EvOptedOut", ts: "1718800001.000200")
+                ) == .rejected(reason: "bot_message_denied")
+            )
+            optedOut.acceptAppPostsFromAllowlistedSenders = true
+            try service.saveConfiguration(optedOut)
+
+            let userTokenPost = try service.recordInboundEventOutcome(
+                envelope(user: "U55555", eventId: "EvUserToken", ts: "1718800001.000300")
+            )
+            guard case .accepted(let normalized) = userTokenPost else {
+                Issue.record("expected user-token post to be accepted, got \(userTokenPost)")
+                return
+            }
+            #expect(normalized.authorId == "U55555")
+
+            let otherBot = try service.recordInboundEventOutcome(
+                envelope(user: "UOTHERBOT", eventId: "EvOtherBot", ts: "1718800001.000400")
+            )
+            guard case .rejected(let reason) = otherBot else {
+                Issue.record("expected other bot to be rejected, got \(otherBot)")
+                return
+            }
+            #expect(reason == "bot_message_denied")
         }
     }
 
@@ -2043,18 +2118,19 @@ struct SlackConnectionTests {
             let service = SlackConnectionService(
                 client: FakeSlackAPIClient(),
                 credentialStore: credentials,
-                inboundAgentAvailability: { _ in false }
+                inboundAgentAvailability: { _ in false },
+                channelListeners: {
+                    EventTestFixtures.listeners(
+                        agents: [(UUID(), [])], kind: .slack,
+                        connectionId: AgentChannelConnection.nativeSlackConnectionId)
+                }
             )
             try service.saveBotToken("xoxb-slack-bot-token-super-secret")
             try service.saveConfiguration(
                 SlackConnectionConfiguration(
                     configuredTeamIds: ["T12345"],
                     readableChannelIds: ["C23456"],
-                    senderAllowlist: ["U55555"],
-                    inboundDispatch: AgentChannelInboundDispatchConfiguration(
-                        enabled: true,
-                        targetAgentId: UUID()
-                    )
+                    senderAllowlist: ["U55555"]
                 )
             )
 
@@ -2063,33 +2139,36 @@ struct SlackConnectionTests {
             #expect(diagnostics.inboundDispatchEnabled)
             #expect(diagnostics.inboundDispatchIssue == "inbound_agent_unavailable")
             #expect(diagnostics.failures.contains {
-                $0.localizedCaseInsensitiveContains("routed agent no longer exists")
+                $0.localizedCaseInsensitiveContains("runs an agent that no longer exists")
             })
         }
     }
 
-    @Test func diagnosticsValidatesEveryRoutedAgentNotJustTheDefault() async throws {
+    @Test func diagnosticsValidatesEveryEventAgent() async throws {
         try await withIsolatedSlackStores { credentials in
             let liveAgent = UUID()
             let missingAgent = UUID()
+            final class Box: @unchecked Sendable {
+                var agents: [(UUID, [String])] = []
+            }
+            let box = Box()
+            box.agents = [(liveAgent, []), (missingAgent, ["C23456"])]
             let service = SlackConnectionService(
                 client: FakeSlackAPIClient(),
                 credentialStore: credentials,
-                inboundAgentAvailability: { $0 == liveAgent }
+                inboundAgentAvailability: { $0 == liveAgent },
+                channelListeners: {
+                    EventTestFixtures.listeners(
+                        agents: box.agents, kind: .slack,
+                        connectionId: AgentChannelConnection.nativeSlackConnectionId)
+                }
             )
             try service.saveBotToken("xoxb-slack-bot-token-super-secret")
             try service.saveConfiguration(
                 SlackConnectionConfiguration(
                     configuredTeamIds: ["T12345"],
                     readableChannelIds: ["C23456"],
-                    senderAllowlist: ["U55555"],
-                    inboundDispatch: AgentChannelInboundDispatchConfiguration(
-                        enabled: true,
-                        targetAgentId: liveAgent,
-                        routes: [
-                            AgentChannelDispatchRoute(roomId: "C23456", agentId: missingAgent)
-                        ]
-                    )
+                    senderAllowlist: ["U55555"]
                 )
             )
 
@@ -2097,22 +2176,10 @@ struct SlackConnectionTests {
 
             #expect(diagnostics.inboundDispatchIssue == "inbound_agent_unavailable")
 
-            // Routes-only config (no default agent) counts as configured.
-            try service.saveConfiguration(
-                SlackConnectionConfiguration(
-                    configuredTeamIds: ["T12345"],
-                    readableChannelIds: ["C23456"],
-                    senderAllowlist: ["U55555"],
-                    inboundDispatch: AgentChannelInboundDispatchConfiguration(
-                        enabled: true,
-                        routes: [
-                            AgentChannelDispatchRoute(roomId: "C23456", agentId: liveAgent)
-                        ]
-                    )
-                )
-            )
-            let routesOnly = await service.diagnostics()
-            #expect(routesOnly.inboundDispatchIssue == nil)
+            // A room-scoped event alone counts as configured.
+            box.agents = [(liveAgent, ["C23456"])]
+            let roomOnly = await service.diagnostics()
+            #expect(roomOnly.inboundDispatchIssue == nil)
         }
     }
 
@@ -2201,7 +2268,7 @@ struct SlackConnectionTests {
 
             let accepted = stages(for: "EvSTAGEOK")
             #expect(accepted.map(\.0) == [.received, .stored, .dispatchSuppressed])
-            #expect(accepted.last?.1 == "inbound_dispatch_not_configured")
+            #expect(accepted.last?.1 == "no_event_configured")
 
             let denied = stages(for: "EvSTAGEDENIED")
             #expect(denied.map(\.0) == [.received, .rejected])

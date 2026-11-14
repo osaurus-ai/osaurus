@@ -13,6 +13,7 @@ import Foundation
 
 struct SandboxSecretCheckTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_secret_check"
+    var outputSchema: JSONValue? { SandboxToolOutputSchemas.secretCheck }
     let description =
         "Check whether a named secret exists for the current agent. Returns whether the secret is "
         + "stored — never reveals the value. Useful before a tool call that needs the secret as an "
@@ -54,6 +55,11 @@ struct SandboxSecretCheckTool: OsaurusTool, @unchecked Sendable {
         )
         guard case .value(let key) = keyReq else { return keyReq.failureEnvelope ?? "" }
 
+        if CredentialResolver.credentialAgent(fallback: UUID(uuidString: agentId)) == nil {
+            return ToolEnvelope.success(
+                tool: name, result: ["key": key, "exists": CredentialResolver.source(key, agentId: nil) != nil])
+        }
+
         guard let uuid = UUID(uuidString: agentId) else {
             return ToolEnvelope.failure(
                 kind: .executionError,
@@ -63,7 +69,7 @@ struct SandboxSecretCheckTool: OsaurusTool, @unchecked Sendable {
             )
         }
 
-        let exists = AgentSecretsKeychain.getSecret(id: key, agentId: uuid) != nil
+        let exists = SandboxCredentials.exists(key, agentId: uuid)
         return ToolEnvelope.success(tool: name, result: ["key": key, "exists": exists])
     }
 }
@@ -82,8 +88,9 @@ enum SecretPromptAction {
     static let actionKey = "secret_prompt"
 }
 
-struct SandboxSecretSetTool: OsaurusTool, @unchecked Sendable {
+struct SandboxSecretSetTool: OsaurusTool, ContextualPermissionedTool, @unchecked Sendable {
     let name = "sandbox_secret_set"
+    var outputSchema: JSONValue? { SandboxToolOutputSchemas.secretSet }
     let description =
         "Store a secret (API key, token) securely for the current agent. "
         + "PREFER omitting `value`: the user gets a secure input dialog and the secret never "
@@ -91,6 +98,23 @@ struct SandboxSecretSetTool: OsaurusTool, @unchecked Sendable {
         + "(it is stored in Keychain and redacted from the recorded call)."
 
     let agentId: String
+
+    var requirements: [String] { [] }
+    var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
+
+    /// Without `value` the user types the secret into the secure dialog,
+    /// which is its own approval. A model-supplied value could replace a
+    /// key the user saved, so storing one asks first.
+    func resolveContextualPermissionPolicy(argumentsJSON: String) async -> ToolPermissionPolicy {
+        Self.suppliesValue(argumentsJSON) ? .ask : .auto
+    }
+
+    static func suppliesValue(_ argumentsJSON: String) -> Bool {
+        guard let data = argumentsJSON.data(using: .utf8),
+            let args = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else { return false }
+        return (args["value"] as? String)?.isEmpty == false
+    }
 
     var parameters: JSONValue? {
         .object([
@@ -142,6 +166,20 @@ struct SandboxSecretSetTool: OsaurusTool, @unchecked Sendable {
         )
         guard case .value(let key) = keyReq else { return keyReq.failureEnvelope ?? "" }
 
+        // A run with no agent (an automation-started workflow) has no agent
+        // to save a private key for, and must not save into whichever agent
+        // registered the tools.
+        if CredentialResolver.credentialAgent(fallback: UUID(uuidString: agentId)) == nil {
+            return ToolEnvelope.failure(
+                kind: .rejected,
+                message:
+                    "This run has no agent, so `\(key)` can't be saved here. Ask the user to add it "
+                    + "in General → Vault; it is then available to this workflow.",
+                tool: name,
+                retryable: false
+            )
+        }
+
         let descReq = requireString(
             args,
             "description",
@@ -187,7 +225,45 @@ struct SandboxSecretSetTool: OsaurusTool, @unchecked Sendable {
             // available as an env var when `sandbox_exec` will see nothing —
             // observed live as a model echoing an empty variable and then
             // confabulating the value in its final answer.
-            guard AgentSecretsKeychain.saveSecret(value, id: key, agentId: uuid) else {
+            guard SandboxCredentials.save(value, key: key, agentId: uuid, description: desc) else {
+                return ToolEnvelope.failure(
+                    kind: .executionError,
+                    message:
+                        "Secret storage failed for `\(key)`: the Keychain write "
+                        + "did not succeed, so the value will NOT be available to "
+                        + "sandbox commands. Do not report the secret as stored.",
+                    tool: name,
+                    retryable: false
+                )
+            }
+            return SecretToolResult.stored(key: key)
+        }
+
+        // A hosted run never reaches the chat view that turns the marker
+        // below into a prompt, so the marker would go to the model and
+        // nothing would be stored. Ask the device the user is chatting on
+        // (through Sync, or a phone still on the 6-digit pairing over its
+        // HTTP prompts, MOBILE_PROTOCOL §16.5) and store what it sends back,
+        // as the Mac's card does.
+        let syncScope = ChatExecutionContext.syncReviewerScope
+        if syncScope != nil || ChatExecutionContext.hasRemoteReviewer, let uuid = UUID(uuidString: agentId) {
+            let value: String?
+            if let syncScope {
+                value = await SyncSecretPromptQueue.shared.request(
+                    scope: syncScope,
+                    key: key,
+                    description: desc,
+                    instructions: instructions
+                )
+            } else {
+                value = await RemoteSecretPromptQueue.shared.request(
+                    key: key,
+                    description: desc,
+                    instructions: instructions
+                )
+            }
+            guard let value, !value.isEmpty else { return SecretToolResult.cancelled(key: key) }
+            guard SandboxCredentials.save(value, key: key, agentId: uuid, description: desc) else {
                 return ToolEnvelope.failure(
                     kind: .executionError,
                     message:
@@ -438,7 +514,7 @@ public enum SecretArgumentScrubber {
         if zip(calls, scrubbed).allSatisfy({ $0.function.arguments == $1.function.arguments }) {
             return message
         }
-        return ChatMessage(
+        var recorded = ChatMessage(
             role: message.role,
             content: message.content,
             contentParts: message.contentParts,
@@ -452,6 +528,11 @@ public enum SecretArgumentScrubber {
             // arguments. Never persist/replay them after secret scrubbing.
             responses_output_items: nil
         )
+        // Argument redaction does not rewrite provider thinking/signatures.
+        // Preserve their bytes; privacy filtering separately rejects a
+        // requested transformation of immutable signed thinking.
+        recorded.anthropic_thinking_blocks = message.anthropic_thinking_blocks
+        return recorded
     }
 
     /// Copy a completion response for persistence while preserving transport

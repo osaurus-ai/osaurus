@@ -110,6 +110,23 @@ enum OsaurusRouter {
         return "\(sign)\(body) \(unit)"
     }
 
+    /// "N cached" label for the router's prompt-cache split: how much of a
+    /// turn's (or session's) input was served from the upstream cache and so
+    /// billed at the discounted rate. `nil` when nothing was cached, so
+    /// callers can hide the label entirely instead of rendering "0 cached".
+    /// Pass `inputTokens` to append the hit ratio (`"3,200 cached · 80%"`);
+    /// the ratio is omitted when the total is unknown, zero, or the cached
+    /// count exceeds it (a defensive guard — the router already clamps).
+    static func formatCachedInputLabel(cachedTokens: Int, inputTokens: Int? = nil) -> String? {
+        guard cachedTokens > 0 else { return nil }
+        var label = "\(groupedThousands(Int64(cachedTokens))) cached"
+        if let inputTokens, inputTokens > 0, cachedTokens <= inputTokens {
+            let percent = Int((Double(cachedTokens) / Double(inputTokens) * 100).rounded())
+            label += " · \(percent)%"
+        }
+        return label
+    }
+
     /// Hero-figure variant of `formatMicroAsCredits`: the grouped whole-credit
     /// number without the unit, so large balances can render with "credits" as
     /// a small caption instead of inside the oversized monospaced string.
@@ -192,8 +209,21 @@ enum OsaurusRouter {
     /// streaming path surfaces the raw server body inside a
     /// `RemoteProviderServiceError.requestFailed("HTTP 402: {json}")` string,
     /// so match the stable server error code rather than a localized message.
+    /// A workspace-pool 402 (`WORKSPACE_INSUFFICIENT_FUNDS`) contains this
+    /// substring but must NOT trigger the personal top-up flow — there is no
+    /// fallback from workspace billing to personal credits — so it is
+    /// explicitly excluded.
     static func isInsufficientFundsError(_ message: String) -> Bool {
         message.range(of: "INSUFFICIENT_FUNDS", options: .caseInsensitive) != nil
+            && !isWorkspaceInsufficientFundsError(message)
+    }
+
+    /// True when a chat/stream error string carries the workspace-pool 402
+    /// (`WORKSPACE_INSUFFICIENT_FUNDS`, or the pre-rename `TEAM_…`): the
+    /// shared pool is dry. Surface "workspace is out of credits", never a
+    /// personal top-up prompt.
+    static func isWorkspaceInsufficientFundsError(_ message: String) -> Bool {
+        OsaurusRouterWorkspaceErrorCode.insufficientFunds.appears(in: message)
     }
 }
 
@@ -324,6 +354,180 @@ struct OsaurusRouterRedeemCodeResponse: Decodable, Equatable, Sendable {
     }
 }
 
+// MARK: - Announcements (`GET /announcements`)
+
+/// `GET /announcements` — the router-served community announcements that
+/// are live right now (the router already filtered on status, schedule and
+/// app-version bounds against its own clock). Unauthenticated.
+struct OsaurusRouterAnnouncementsResponse: Decodable, Equatable, Sendable {
+    /// Informational database clock at response time (ISO-8601). Never used
+    /// to re-evaluate the window locally; handy for "N hours left" copy.
+    let serverTime: String?
+    let announcements: [OsaurusRouterAnnouncement]
+
+    enum CodingKeys: String, CodingKey {
+        case announcements
+        case serverTime = "server_time"
+    }
+
+    init(serverTime: String?, announcements: [OsaurusRouterAnnouncement]) {
+        self.serverTime = serverTime
+        self.announcements = announcements
+    }
+
+    /// Lenient: one malformed announcement is dropped, never the whole feed.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        serverTime = try c.decodeIfPresent(String.self, forKey: .serverTime)
+        var list = try c.nestedUnkeyedContainer(forKey: .announcements)
+        var decoded: [OsaurusRouterAnnouncement] = []
+        while !list.isAtEnd {
+            if let item = try? list.decode(OsaurusRouterAnnouncement.self) {
+                decoded.append(item)
+            } else {
+                _ = try? list.decode(OsaurusRouterLenientJSONValue.self)
+            }
+        }
+        announcements = decoded
+    }
+}
+
+/// Swallows one arbitrary JSON value so a lenient array decode can skip it.
+struct OsaurusRouterLenientJSONValue: Decodable {
+    init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if c.decodeNil() { return }
+        if (try? c.decode(Bool.self)) != nil { return }
+        if (try? c.decode(Double.self)) != nil { return }
+        if (try? c.decode(String.self)) != nil { return }
+        if (try? c.decode([OsaurusRouterLenientJSONValue].self)) != nil { return }
+        _ = try c.decode([String: OsaurusRouterLenientJSONValue].self)
+    }
+}
+
+struct OsaurusRouterAnnouncement: Decodable, Identifiable, Equatable, Sendable {
+    /// One call-to-action button. `kind` and `style` stay raw strings so an
+    /// unknown future kind is dropped at selection time instead of failing
+    /// the decode of the whole announcement.
+    struct CTA: Decodable, Equatable, Sendable {
+        let label: String
+        let kind: String
+        let url: String
+        let style: String?
+
+        init(label: String, kind: String, url: String, style: String? = nil) {
+            self.label = label
+            self.kind = kind
+            self.url = url
+            self.style = style
+        }
+
+        /// `https://` page opened in the default browser.
+        var isExternalURL: Bool { kind == "external_url" }
+        /// `osaurus://` link routed through the app's own URL handler.
+        var isDeepLink: Bool { kind == "deeplink" }
+        var isPrimary: Bool { (style ?? "").lowercased() == "primary" }
+
+        /// Parsed destination when the kind/scheme pair is one this build
+        /// understands; nil for anything else (dropped, per the contract).
+        var resolvedURL: URL? {
+            guard let url = URL(string: url), let scheme = url.scheme?.lowercased() else { return nil }
+            if isExternalURL { return scheme == "https" ? url : nil }
+            if isDeepLink { return scheme == "osaurus" ? url : nil }
+            return nil
+        }
+    }
+
+    let id: String
+    /// The dismissal key: a user who dismissed this slug never sees it again.
+    let slug: String
+    let title: String
+    let body: String
+    /// Only `"markdown"` is emitted today; anything else is skipped so
+    /// future formats stay forward-compatible.
+    let bodyFormat: String
+    let imageURL: String?
+    let ctas: [CTA]
+    let startsAt: String?
+    let endsAt: String?
+    let priority: Int
+
+    enum CodingKeys: String, CodingKey {
+        case id, slug, title, body, ctas, priority
+        case bodyFormat = "body_format"
+        case imageURL = "image_url"
+        case startsAt = "starts_at"
+        case endsAt = "ends_at"
+    }
+
+    init(
+        id: String,
+        slug: String,
+        title: String,
+        body: String,
+        bodyFormat: String = "markdown",
+        imageURL: String? = nil,
+        ctas: [CTA] = [],
+        startsAt: String? = nil,
+        endsAt: String? = nil,
+        priority: Int = 0
+    ) {
+        self.id = id
+        self.slug = slug
+        self.title = title
+        self.body = body
+        self.bodyFormat = bodyFormat
+        self.imageURL = imageURL
+        self.ctas = ctas
+        self.startsAt = startsAt
+        self.endsAt = endsAt
+        self.priority = priority
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        slug = try c.decode(String.self, forKey: .slug)
+        title = try c.decode(String.self, forKey: .title)
+        body = try c.decode(String.self, forKey: .body)
+        bodyFormat = try c.decodeIfPresent(String.self, forKey: .bodyFormat) ?? "markdown"
+        imageURL = try c.decodeIfPresent(String.self, forKey: .imageURL)
+        ctas = try c.decodeIfPresent([CTA].self, forKey: .ctas) ?? []
+        startsAt = try c.decodeIfPresent(String.self, forKey: .startsAt)
+        endsAt = try c.decodeIfPresent(String.self, forKey: .endsAt)
+        priority = try c.decodeIfPresent(Int.self, forKey: .priority) ?? 0
+    }
+
+    /// Whether this build can render the announcement at all.
+    var isRenderable: Bool { bodyFormat == "markdown" && !title.isEmpty && !body.isEmpty }
+
+    /// Past its `ends_at` by this Mac's clock. Only ever hides an
+    /// announcement the last fetch returned; nothing is shown by local time.
+    func hasEnded(at instant: Date) -> Bool {
+        guard let endsAt else { return false }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        guard let end = fractional.date(from: endsAt) ?? ISO8601DateFormatter().date(from: endsAt) else {
+            return false
+        }
+        return instant >= end
+    }
+
+    /// The CTAs this build can act on (`https` external / `osaurus` deep
+    /// link), capped at three per the contract. Order is preserved.
+    var actionableCTAs: [CTA] {
+        Array(ctas.filter { $0.resolvedURL != nil && !$0.label.isEmpty }.prefix(3))
+    }
+
+    /// Optional `https://` header image; any other scheme is ignored.
+    var resolvedImageURL: URL? {
+        guard let imageURL, let url = URL(string: imageURL), url.scheme?.lowercased() == "https" else {
+            return nil
+        }
+        return url
+    }
+}
+
 struct OsaurusRouterCheckoutResponse: Decodable, Equatable, Sendable {
     let clientSecret: String
     let checkoutURL: String
@@ -399,25 +603,96 @@ struct OsaurusRouterUsageResponse: Decodable, Sendable {
 }
 
 struct OsaurusRouterUsageItem: Decodable, Identifiable, Equatable, Sendable {
+    /// Who spent from the pool — present only on workspace usage rows
+    /// (`GET /workspaces/:id/credits/usage`), which otherwise share the personal
+    /// usage shape.
+    typealias Actor = OsaurusRouterWorkspacePerson
+
     let id: String
     let requestId: String?
     let model: String
     let provider: String
     let inputTokens: Int
     let outputTokens: Int
+    /// Provider-reported prompt-cache split (router `0046_cache_pricing`).
+    /// Both are subsets of `inputTokens` (the TOTAL prompt size); cached
+    /// input billed at the discounted rate, writes at the premium rate.
+    /// `0` when the upstream reported no cache activity or the row predates
+    /// cache-aware billing (older routers omit the fields entirely).
+    let cachedInputTokens: Int
+    let cacheWriteTokens: Int
     let costMicro: String
     let status: String
     let tokenSource: String
     let createdAt: String
+    let actor: Actor?
+    /// The attested teammate who invoked the agent (workspace usage rows only;
+    /// requires the host to have sent `caller_attestation`). `actor` is
+    /// whose instance billed; `caller` is who asked. `nil` when the request
+    /// carried no attestation.
+    let caller: Actor?
 
     enum CodingKeys: String, CodingKey {
-        case id, model, provider, status
+        case id, model, provider, status, actor, caller
         case requestId = "request_id"
         case inputTokens = "input_tokens"
         case outputTokens = "output_tokens"
+        case cachedInputTokens = "cached_input_tokens"
+        case cacheWriteTokens = "cache_write_tokens"
         case costMicro = "cost_micro"
         case tokenSource = "token_source"
         case createdAt = "created_at"
+    }
+
+    init(
+        id: String,
+        requestId: String?,
+        model: String,
+        provider: String,
+        inputTokens: Int,
+        outputTokens: Int,
+        cachedInputTokens: Int = 0,
+        cacheWriteTokens: Int = 0,
+        costMicro: String,
+        status: String,
+        tokenSource: String,
+        createdAt: String,
+        actor: Actor? = nil,
+        caller: Actor? = nil
+    ) {
+        self.id = id
+        self.requestId = requestId
+        self.model = model
+        self.provider = provider
+        self.inputTokens = inputTokens
+        self.outputTokens = outputTokens
+        self.cachedInputTokens = cachedInputTokens
+        self.cacheWriteTokens = cacheWriteTokens
+        self.costMicro = costMicro
+        self.status = status
+        self.tokenSource = tokenSource
+        self.createdAt = createdAt
+        self.actor = actor
+        self.caller = caller
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        requestId = try c.decodeIfPresent(String.self, forKey: .requestId)
+        model = try c.decode(String.self, forKey: .model)
+        provider = try c.decode(String.self, forKey: .provider)
+        inputTokens = try c.decode(Int.self, forKey: .inputTokens)
+        outputTokens = try c.decode(Int.self, forKey: .outputTokens)
+        // Old-server compatibility: pre-cache routers omit the split.
+        cachedInputTokens = max(0, try c.decodeIfPresent(Int.self, forKey: .cachedInputTokens) ?? 0)
+        cacheWriteTokens = max(0, try c.decodeIfPresent(Int.self, forKey: .cacheWriteTokens) ?? 0)
+        costMicro = try c.decode(String.self, forKey: .costMicro)
+        status = try c.decode(String.self, forKey: .status)
+        tokenSource = try c.decode(String.self, forKey: .tokenSource)
+        createdAt = try c.decode(String.self, forKey: .createdAt)
+        actor = try c.decodeIfPresent(Actor.self, forKey: .actor)
+        caller = try c.decodeIfPresent(Actor.self, forKey: .caller)
     }
 }
 
@@ -467,6 +742,14 @@ struct OsaurusRouterSummaryEvent: Decodable, Equatable, Sendable {
         let tokenSource: String
         let inputTokens: Int
         let outputTokens: Int
+        /// Provider-reported prompt-cache split; subsets of `inputTokens`.
+        /// Absent on pre-cache routers → decoded as `0`.
+        let cachedInputTokens: Int
+        let cacheWriteTokens: Int
+        /// `"workspace:<workspace_id>"` when the turn was charged to a
+        /// workspace pool (request carried `workspace_context`); absent for
+        /// personal spend. Pre-rename routers emitted `"team:<id>"`.
+        let billedTo: String?
 
         enum CodingKeys: String, CodingKey {
             case requestId = "request_id"
@@ -475,6 +758,54 @@ struct OsaurusRouterSummaryEvent: Decodable, Equatable, Sendable {
             case tokenSource = "token_source"
             case inputTokens = "input_tokens"
             case outputTokens = "output_tokens"
+            case cachedInputTokens = "cached_input_tokens"
+            case cacheWriteTokens = "cache_write_tokens"
+            case billedTo = "billed_to"
+        }
+
+        init(
+            requestId: String?,
+            costMicro: String,
+            status: String,
+            tokenSource: String,
+            inputTokens: Int,
+            outputTokens: Int,
+            cachedInputTokens: Int = 0,
+            cacheWriteTokens: Int = 0,
+            billedTo: String?
+        ) {
+            self.requestId = requestId
+            self.costMicro = costMicro
+            self.status = status
+            self.tokenSource = tokenSource
+            self.inputTokens = inputTokens
+            self.outputTokens = outputTokens
+            self.cachedInputTokens = cachedInputTokens
+            self.cacheWriteTokens = cacheWriteTokens
+            self.billedTo = billedTo
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            requestId = try c.decodeIfPresent(String.self, forKey: .requestId)
+            costMicro = try c.decode(String.self, forKey: .costMicro)
+            status = try c.decode(String.self, forKey: .status)
+            tokenSource = try c.decode(String.self, forKey: .tokenSource)
+            inputTokens = try c.decode(Int.self, forKey: .inputTokens)
+            outputTokens = try c.decode(Int.self, forKey: .outputTokens)
+            cachedInputTokens = max(0, try c.decodeIfPresent(Int.self, forKey: .cachedInputTokens) ?? 0)
+            cacheWriteTokens = max(0, try c.decodeIfPresent(Int.self, forKey: .cacheWriteTokens) ?? 0)
+            billedTo = try c.decodeIfPresent(String.self, forKey: .billedTo)
+        }
+
+        /// The workspace id when this summary billed a workspace pool, nil otherwise.
+        var billedWorkspaceId: String? {
+            guard let billedTo else { return nil }
+            for prefix in ["workspace:", "team:"] where billedTo.hasPrefix(prefix) {
+                let id = String(billedTo.dropFirst(prefix.count))
+                return id.isEmpty ? nil : id
+            }
+            return nil
         }
     }
 
@@ -494,6 +825,14 @@ public struct RouterBillingSummary: Codable, Equatable, Sendable {
     public var tokenSource: String
     public var inputTokens: Int
     public var outputTokens: Int
+    /// Prompt-cache split reported by the upstream provider and billed by the
+    /// router at cache rates. Both are subsets of `inputTokens`. `0` = no
+    /// cache activity (or a pre-cache router / ledger row).
+    public var cachedInputTokens: Int
+    public var cacheWriteTokens: Int
+    /// `"workspace:<workspace_id>"` for pool spend; nil = personal. Optional so
+    /// ledger entries persisted before Workspaces existed keep decoding.
+    public var billedTo: String?
 
     public init(
         requestId: String? = nil,
@@ -501,7 +840,10 @@ public struct RouterBillingSummary: Codable, Equatable, Sendable {
         status: String,
         tokenSource: String,
         inputTokens: Int,
-        outputTokens: Int
+        outputTokens: Int,
+        cachedInputTokens: Int = 0,
+        cacheWriteTokens: Int = 0,
+        billedTo: String? = nil
     ) {
         self.requestId = requestId
         self.costMicro = costMicro
@@ -509,6 +851,9 @@ public struct RouterBillingSummary: Codable, Equatable, Sendable {
         self.tokenSource = tokenSource
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens
+        self.cachedInputTokens = cachedInputTokens
+        self.cacheWriteTokens = cacheWriteTokens
+        self.billedTo = billedTo
     }
 
     init(_ summary: OsaurusRouterSummaryEvent.Summary) {
@@ -518,6 +863,29 @@ public struct RouterBillingSummary: Codable, Equatable, Sendable {
         self.tokenSource = summary.tokenSource
         self.inputTokens = summary.inputTokens
         self.outputTokens = summary.outputTokens
+        self.cachedInputTokens = summary.cachedInputTokens
+        self.cacheWriteTokens = summary.cacheWriteTokens
+        self.billedTo = summary.billedTo
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case requestId, costMicro, status, tokenSource, inputTokens, outputTokens
+        case cachedInputTokens, cacheWriteTokens, billedTo
+    }
+
+    /// Tolerates hints/ledger payloads persisted before the cache split
+    /// existed (fields absent → 0).
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        requestId = try c.decodeIfPresent(String.self, forKey: .requestId)
+        costMicro = try c.decode(String.self, forKey: .costMicro)
+        status = try c.decode(String.self, forKey: .status)
+        tokenSource = try c.decode(String.self, forKey: .tokenSource)
+        inputTokens = try c.decode(Int.self, forKey: .inputTokens)
+        outputTokens = try c.decode(Int.self, forKey: .outputTokens)
+        cachedInputTokens = max(0, try c.decodeIfPresent(Int.self, forKey: .cachedInputTokens) ?? 0)
+        cacheWriteTokens = max(0, try c.decodeIfPresent(Int.self, forKey: .cacheWriteTokens) ?? 0)
+        billedTo = try c.decodeIfPresent(String.self, forKey: .billedTo)
     }
 }
 

@@ -136,21 +136,48 @@ struct NativeImageJobCoordinatorTests {
         #expect(resolved == "ready-edit")
     }
 
-    @Test func chatResidencyPolicyOnlyEvictsForAgentSingleResidency() {
-        // The image-job residency decision now lives on the config as the single
-        // source consumed by the shared `ChatResidencyHandoff` dedup.
-        #expect(
-            SubagentConfiguration(imageJobLoadPolicy: .agentSingleResidency)
-                .imageJobUnloadsChatModels
+    @Test(
+        "all persisted image cleanup policies obey the shared parent setting",
+        arguments: [false, true],
+        SubagentImageLoadPolicy.allCases
+    )
+    func sharedParentSetting(enabled: Bool, policy: SubagentImageLoadPolicy) {
+        let config = SubagentConfiguration(localTextDelegationEnabled: enabled, imageJobLoadPolicy: policy)
+        #expect(config.imageJobUnloadsChatModels == enabled)
+        #expect(policy.unloadAfterJob(restoresParent: true))
+        #expect(policy.unloadAfterJob(restoresParent: false) == (policy != .manualPanelKeepsImageLoaded))
+    }
+
+    @Test("legacy single-residency value decodes but is not a competing parent control")
+    func legacyImagePolicy() throws {
+        let policy = try JSONDecoder().decode(
+            SubagentImageLoadPolicy.self,
+            from: Data("\"agent_single_residency\"".utf8)
         )
-        #expect(
-            !SubagentConfiguration(imageJobLoadPolicy: .unloadImageAfterAgentJob)
-                .imageJobUnloadsChatModels
-        )
-        #expect(
-            !SubagentConfiguration(imageJobLoadPolicy: .manualPanelKeepsImageLoaded)
-                .imageJobUnloadsChatModels
-        )
+        #expect(policy.effectiveCleanupPolicy == .unloadImageAfterAgentJob)
+        #expect(!SubagentImageLoadPolicy.visibleCases.contains(.agentSingleResidency))
+        #expect(SubagentImageLoadPolicy.visibleCases.count == 2)
+    }
+
+    @Test(
+        "native image invocation keeps the actual parent through detachment",
+        arguments: SessionSource.allCases
+    )
+    func imageInvocationProvenance(source: SessionSource) async {
+        let context = ChatExecutionContext.$currentModelName.withValue("invoking-parent") {
+            ChatExecutionContext.$currentSessionSource.withValue(source) {
+                NativeImageJobContext.current()
+            }
+        }
+        await Task.detached {
+            #expect(ChatExecutionContext.currentModelName == nil)
+            await context.invocation.withContext {
+                #expect(ChatExecutionContext.currentModelName == "invoking-parent")
+                #expect(ChatExecutionContext.currentSessionSource == source)
+            }
+        }.value
+        #expect(NativeImageJobContext.empty.invocation.parentModelName == nil)
+        #expect(NativeImageJobContext.empty.invocation.source == nil)
     }
 
     @Test("post-job chat restore is best-effort so a produced image is never lost")
@@ -214,11 +241,31 @@ struct NativeImageJobCoordinatorTests {
         )
     }
 
+    @Test func upscaleResolverPicksAReadyUpscalerAndNamesWhatIsWrong() throws {
+        let available = [
+            imageModel(id: "gen-only", ready: true, textToImage: true),
+            imageModel(id: "half-upscaler", ready: false, textToImage: false, upscale: true),
+            imageModel(id: "upscaler", ready: true, textToImage: false, upscale: true),
+        ]
+        #expect(try NativeImageJobModelResolver.resolveUpscale(requested: nil, available: available) == "upscaler")
+        #expect(try NativeImageJobModelResolver.resolveUpscale(requested: "upscaler", available: available) == "upscaler")
+        #expect(throws: NativeImageJobCoordinatorError.self) {
+            try NativeImageJobModelResolver.resolveUpscale(requested: "gen-only", available: available)
+        }
+        #expect(throws: NativeImageJobCoordinatorError.self) {
+            try NativeImageJobModelResolver.resolveUpscale(requested: "half-upscaler", available: available)
+        }
+        #expect(throws: NativeImageJobCoordinatorError.self) {
+            try NativeImageJobModelResolver.resolveUpscale(requested: nil, available: Array(available.prefix(2)))
+        }
+    }
+
     private func imageModel(
         id: String,
         ready: Bool,
         textToImage: Bool,
-        imageEdit: Bool = false
+        imageEdit: Bool = false,
+        upscale: Bool = false
     ) -> ImageModelInfo {
         ImageModelInfo(
             id: id,
@@ -229,7 +276,7 @@ struct NativeImageJobCoordinatorTests {
             quantizationBits: nil,
             defaultSteps: nil,
             defaultGuidance: nil,
-            capabilities: ImageModelCapabilities(textToImage: textToImage, imageEdit: imageEdit),
+            capabilities: ImageModelCapabilities(textToImage: textToImage, imageEdit: imageEdit, upscale: upscale),
             blockedReasons: ready ? [] : ["missing weights"],
             totalBytes: 0
         )

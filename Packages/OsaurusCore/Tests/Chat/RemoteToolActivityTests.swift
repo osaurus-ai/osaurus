@@ -57,6 +57,15 @@ struct RemoteToolActivityTests {
         #expect(ToolEnvelope.isError(turn.remoteToolResults["c1"] ?? ""))
     }
 
+    @Test func refusal_carriesTheCallersMessage() {
+        let turn = makeTurn()
+        turn.noteRemoteToolFinished(callId: "c1", name: "Bash", isError: true, failureMessage: "Shell is off.")
+        let result = turn.remoteToolResults["c1"] ?? ""
+        #expect(ToolEnvelope.isError(result))
+        #expect(ToolEnvelope.failureMessage(result) == "Shell is off.")
+        #expect(result.contains(ToolEnvelope.Kind.rejected.rawValue))
+    }
+
     @Test func doesNotPopulateToolCalls_soHistoryStaysClean() {
         let turn = makeTurn()
         turn.noteRemoteToolStarted(callId: "c1", name: "get_weather")
@@ -97,8 +106,9 @@ struct RemoteToolActivityTests {
         #expect(turn.remoteToolResults["c1"] == nil)  // shimmering
 
         turn.finalizeRemoteToolActivity()
-        // No longer running → a result is stamped so it can't shimmer forever.
-        #expect(turn.remoteToolResults["c1"] != nil)
+        // Settled observation is not an invented execution verdict.
+        #expect(turn.remoteToolResults["c1"] == nil)
+        #expect(turn.remoteToolUnobservedResults["c1"] == .completed)
     }
 
     @Test func tick_advancesOnEveryMutation() {
@@ -121,4 +131,37 @@ struct RemoteToolActivityTests {
         #expect(turn.remoteToolActivityTick == before)
         #expect(turn.hasRemoteToolActivity == false)
     }
+
+    @Test(arguments: [RemoteToolStreamEnd.completed, .failed, .cancelled])
+    func missingResultSettlesAsUnknownWithoutChangingKnownVerdicts(_ reason: RemoteToolStreamEnd) throws {
+        let turn = makeTurn()
+        for id in ["unknown", "good", "bad"] {
+            turn.noteRemoteToolStarted(callId: id, name: "lookup")
+        }
+        turn.noteRemoteToolFinished(callId: "good", name: "lookup", isError: false)
+        turn.noteRemoteToolFinished(callId: "bad", name: "lookup", isError: true)
+        let known = turn.remoteToolResults
+        turn.finalizeRemoteToolActivity(endedBy: reason)
+        #expect(turn.remoteToolResults == known)
+        #expect(turn.remoteToolResults["unknown"] == nil)
+        #expect(turn.remoteToolUnobservedResults == ["unknown": reason])
+        let blocks = ContentBlock.generateBlocks(from: [turn], streamingTurnId: nil, agentName: "Assistant")
+        let items = blocks.flatMap { block -> [ToolCallItem] in
+            if case .toolCallGroup(let items) = block.kind { return items }
+            if case .activityGroup(let children) = block.kind {
+                return children.flatMap { child -> [ToolCallItem] in
+                    if case .toolCallGroup(let items) = child.kind { return items }
+                    return []
+                }
+            }
+            return []
+        }
+        // The display-only group uses the same item model as local tools.
+        #expect(!items.isEmpty)
+        #expect(items.first { $0.call.id == "unknown" }?.unobservedResult == reason)
+        turn.noteRemoteToolFinished(callId: "unknown", name: "lookup", isError: false)
+        #expect(turn.remoteToolUnobservedResults["unknown"] == nil)
+        #expect(turn.remoteToolResults["unknown"] != nil)
+    }
+
 }

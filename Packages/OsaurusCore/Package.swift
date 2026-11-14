@@ -1,5 +1,9 @@
 // swift-tools-version: 6.2
 import PackageDescription
+import Foundation
+
+// Runtime design library ships in every build; the editor/verification catalog is opt-in.
+let designInspectorBuild = ProcessInfo.processInfo.environment["OSAURUS_DESIGN_INSPECTOR_BUILD"] == "1"
 
 let package = Package(
     name: "OsaurusCore",
@@ -13,16 +17,20 @@ let package = Package(
         // of hanging in-process. See `PluginHost/main.swift` and
         // `Services/Plugin/PluginProcessHost.swift`.
         .executable(name: "osaurus-plugin-host", targets: ["osaurus-plugin-host"]),
+        // Workflow code-node runtime: JavaScriptCore in a fresh, Seatbelt-
+        // confined process per run, killed on timeout or memory breach. See
+        // `JSHost/main.swift` and `Services/Workflow/CodeNodeExecutor.swift`.
+        .executable(name: "osaurus-js-host", targets: ["osaurus-js-host"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.88.0"),
         // Keep this exact pin aligned with SandboxRuntimeAssets.initfsReference.
-        // Containerization 0.41 is the SDK shipped by Apple container 1.3 and
-        // includes restricted OCI capability defaults, vminit secret
-        // redaction, atomic image-store state, and startup cleanup fixes.
+        // 0.54 adds the LinuxPod per-container isolation the sandbox relies
+        // on, opt-in seccomp, unpacker path-escape fixes, and VMResources
+        // (replacing cpuOverhead/memoryOverhead).
         // Keep both app workspace lockfiles in step when bumping.
-        .package(url: "https://github.com/apple/containerization.git", exact: "0.41.0"),
-        .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", from: "0.12.0"),
+        .package(url: "https://github.com/apple/containerization.git", exact: "0.54.0"),
+        .package(url: "https://github.com/modelcontextprotocol/swift-sdk.git", from: "0.12.1"),
         // MCP pulls EventSource transitively. Enable its AsyncHTTPClient
         // trait at the root so the target's conditional AsyncHTTPClient
         // source has declared NIO/shim dependencies when vmlx/MLX is also
@@ -298,9 +306,69 @@ let package = Package(
         // vmlx-swift#408 pins quantized-embedding output to bf16 under the
         // Gemma-4/DSV4 jang_affine mmap preserve branches (the last audited
         // f16 seed into bf16 streams; dequant math keeps exact f16 metadata).
+        // vmlx-swift#475 corrects GLM media prefill and ordered image history,
+        // and validates complete model-owned disk state before live restore.
+        // vmlx-swift#479 retains Gemma image and tool history during explicit
+        // tool selection, keeping rendered image slots aligned with pixels.
+        // Also preserves the Bonsai2 strict Hadamard/packed ternary loading,
+        // native Qwen template/schema handling and multimodal tool history.
+        // vmlx-swift#481 fuses exact packed-ternary expansion on Metal;
+        // #482 bounds Qwen3.5/Bonsai2 media language prefill while retaining
+        // full-prompt M-RoPE positions and complete KV/GDN companion state.
+        // vmlx-swift#484 uses FP16 Bonsai2 attention K/V after norms/RoPE,
+        // retaining FP32 GDN recurrence and isolating old cache precision.
+        // vmlx-swift#489 indexes linked SSD payloads, scopes quota retention
+        // to conversation chains, and reports current-chat capacity pressure.
+        // vmlx-swift#493 adds native MiMo V2.6 mixed-quant/media runtime,
+        // resident expert dispatch, and correct post-answer cache boundaries.
+        // vmlx-swift#508 fuses exact BF16 Spark GELU/multiply for large
+        // prefill shapes; short/decode shapes retain the reference expression.
+        // #512 validates persisted architecture state before granting SSD hits
+        // and serializes validation with MLX disk I/O. #513 honors validated
+        // max_tokens bundle aliases with max_new_tokens precedence.
+        // #529 adds GLM/Naive JANGH packed execution and model-owned cache restore.
+        // Naive remains single-sequence text; this pin does not claim universal speedups.
+        // Gather row scheduling includes affine expert prefill and partial-K
+        // bounds correction. This pin also consumes the Unicode/BPE ordering,
+        // quantization_config, and SDK-gated JACCL fixes merged after #518.
+        // GLM native history retains reasoning, tool metadata and argument order;
+        // text-only cache checkpoints use exact active-template prefix proofs.
+        // vmlx-swift#569 adds Qwen-Image-2.1-Turbo: bundle-pinned 8-step sampling
+        // grid (model_index.json sample_sigmas), its registry entry and routing.
+        // vmlx-swift#572 (stacked on #570 and #571): write-behind SSD prompt-cache stores so the
+        // end of a turn or tool call no longer waits for the files to reach disk, and Uno
+        // self-speculation for K2 Horizon bundles that ship a uno/ adapter.
+        // Nemotron 3.5 Super-VL: image-only bundle loading, quantized projector,
+        // physical capability checks and staged recurrent MTP state handling.
+        // vmlx-swift#659: DeepSeek-V4.1 JANGHT bundles (JANGT trellis experts, MXFP8 projections,
+        // JANGHT dSpark drafter), exact sampled dSpark at temperature > 0, multi-row MXFP8 QMV.
+        // vmlx-swift#661: JANGHT bundles keep their F32 hyper-connection / sink / router-bias parameters.
+        // Preserve native MTP verifier failures and reject failed generated-state publication.
+        // vmlx-swift#662: every DeepSeek-V4.1 bundle (JANG_2K included) keeps its F32 control parameters.
+        // vmlx-swift#666 + #665 (with #667, main a05a5eef): V4.1 indexer evaluates each query chunk before the
+        // next (1M prefill peak -3.4 GiB), a fixed seed repeats under sampled dSpark, the resident dSpark head's
+        // 1024-token prefill cap wins over a wider server step.
+        // vmlx-swift#667: SSD restore retries, capacity estimates and nested vision configuration.
+        // vmlx-swift#668: DeepSeek-V4.1 split-by-keys decode attention; dSpark governor cost as a ratio of EMAs.
+        // vmlx-swift#670: DeepSeek-V4.1 SSD prefix restore past 16,384 prompt tokens.
+        // vmlx-swift#687: MiniMax-M3.1-Flash (JANGT experts, block-sparse MSA, dspark/ drafter, aligned prefix cache,
+        // thinking_mode, image input).
+        // Integration pin (main 9ec1d561 + #687, #689, #699 / #700, #697, #696, #703, #709 / #710, cache-detail fix): MiniMax-M3.1 JANGT
+        // prefill on expert-aligned tiles (bit-identical); prefix cache serves from SSD only by default (RAM tier opt-in
+        // via VMLX_RESIDENT_CACHE_GB), DeepSeek-V4 boundaries captured in prefill (a cold prefill cuts only at stable
+        // boundaries within 512 tokens of the prompt end) and named-tool turns reuse the prefix;
+        // DeepSeek-V4.1 prefill runs only the last KV-source layer's cache writes and its JANGT experts on
+        // expert-aligned tiles (bit-identical; routed sort without integer floorDivide, SwitchGLU too); the residency
+        // budget applies to bundles reached through a symlinked directory; main's Gemma 4 tool transport and Jinja
+        // namespace fixes. A read of a prefix entry whose SSD file is still being written reports diskPending
+        // (memory now means only the opt-in RAM tier).
+        // Gemma unified vision: match reference LayerNorm epsilon and invalidate
+        // old image-conditioned KV under a versioned unified-only cache identity.
+        // Gemma QAT tied heads keep their loaded activation precision, and seeded
+        // DFlash chain sampling is isolated per request.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "45bcb1de740d979a2322570a06edd457ce3d0697"
+            revision: "1bcd74ad182103a3b83941f61e57ee0bac23b330"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
@@ -314,16 +382,27 @@ let package = Package(
             url: "https://github.com/rryam/VecturaKit",
             revision: "3bc52538f16a95d956c575abbc7e0423737dfd64"
         ),
-        .package(url: "https://github.com/21-DOT-DEV/swift-secp256k1", exact: "0.21.1"),
+        .package(url: "https://github.com/21-DOT-DEV/swift-secp256k1", exact: "0.23.2"),
         .package(path: "../OsaurusNetworking"),
+        // osaurus-sync's Swift package, vendored by scripts/update-osaurus-sync.sh.
+        .package(path: "../Vendor/OsaurusSync"),
         .package(path: "../OsaurusRepository"),
         .package(url: "https://github.com/mgriebling/SwiftMath", from: "1.7.3"),
         .package(url: "https://github.com/raspu/Highlightr", from: "2.3.0"),
         .package(url: "https://github.com/AAChartModel/AAChartKit-Swift.git", from: "9.5.0"),
-        .package(url: "https://github.com/aptabase/aptabase-swift.git", from: "0.3.11"),
+        // 0.3.11 dequeues mutate a concurrent queue without a barrier. Pin the
+        // upstream race fix until a release containing only this change is available.
+        .package(
+            url: "https://github.com/aptabase/aptabase-swift.git",
+            revision: "a55267506ca9e9413e242cff00309f91bda16679"
+        ),
         // Crash + app-hang reporting (Sentry). Consent-gated through the same
         // `TelemetryService` opt-in as Aptabase — see `CrashReportingService`.
         .package(url: "https://github.com/getsentry/sentry-cocoa.git", from: "9.15.0"),
+        // The onboarding dino character (`Resources/Animations/dino.riv`).
+        // 6.29 is the first release whose concurrency API (`Worker`, `File`,
+        // `ViewModelInstance`) is the supported data-binding path.
+        .package(url: "https://github.com/rive-app/rive-ios", from: "6.29.0"),
     ],
     targets: [
         // Vendored SQLCipher 4.6.1 amalgamation (CommonCrypto
@@ -459,19 +538,36 @@ let package = Package(
                 .product(name: "VecturaKit", package: "VecturaKit"),
                 .product(name: "OsaurusNetworking", package: "OsaurusNetworking"),
                 .product(name: "OsaurusRepository", package: "OsaurusRepository"),
+                .product(name: "OsaurusSync", package: "OsaurusSync"),
                 .product(name: "P256K", package: "swift-secp256k1"),
+                .product(name: "libsecp256k1", package: "swift-secp256k1"),
                 .product(name: "SwiftMath", package: "SwiftMath"),
                 .product(name: "Containerization", package: "containerization"),
                 .product(name: "ContainerizationExtras", package: "containerization"),
+                .product(name: "ContainerizationArchive", package: "containerization"),
                 .product(name: "Highlightr", package: "Highlightr"),
                 .product(name: "AAInfographics", package: "AAChartKit-Swift"),
                 .product(name: "Aptabase", package: "aptabase-swift"),
                 .product(name: "Sentry", package: "sentry-cocoa"),
+                .product(name: "RiveRuntime", package: "rive-ios"),
             ],
             path: ".",
-            exclude: ["Tests", "SQLCipher", "ObjCSupport", "PluginHost"],
-            resources: [.process("Resources")],
-            swiftSettings: [
+            exclude: ["Tests", "DesignLibraryTests", "SQLCipher", "ObjCSupport", "PluginHost", "JSHost"]
+                + (designInspectorBuild ? [] : ["DevelopmentDesign"]),
+            // `.copy` keeps the embedding model's folder intact; `.process`
+            // would flatten its config.json/tokenizer.json into the bundle root.
+            resources: [
+                .process("Resources"),
+                .copy("Models/Theme/DesignLibrary/LibraryResources"),
+                .copy("EmbeddingModels/potion-base-4M"),
+            ]
+                + (designInspectorBuild ? [.copy("DevelopmentDesign/DesignInspectorResources")] : []),
+            // This local UI tool uses the Release dependency graph while avoiding
+            // expensive whole-app optimization on every structural inspector edit.
+            // Normal builds retain their existing optimization settings.
+            swiftSettings: (designInspectorBuild ? [
+                .define("OSAURUS_DESIGN_INSPECTOR"), .unsafeFlags(["-Onone"])
+            ] : []) + [
                 // `SystemLanguageModel.contextSize` only exists in the macOS 26.4+
                 // SDK. Enable this flag when building against that SDK (or newer) to
                 // read the real on-device context window; leave it off on older SDKs
@@ -486,6 +582,16 @@ let package = Package(
             name: "osaurus-plugin-host",
             path: "PluginHost"
         ),
+        // Foundation + JavaScriptCore only, for the same reason.
+        .executableTarget(
+            name: "osaurus-js-host",
+            path: "JSHost"
+        ),
+        .testTarget(
+            name: "DesignLibraryTests",
+            dependencies: ["OsaurusCore"],
+            path: "DesignLibraryTests"
+        ),
         .testTarget(
             name: "OsaurusCoreTests",
             dependencies: [
@@ -495,12 +601,16 @@ let package = Package(
                 // directory for every test lane (swift test AND xcodebuild),
                 // so PluginProcessHostTests can spawn the real executable.
                 "osaurus-plugin-host",
+                "osaurus-js-host",
                 .product(name: "VMLXJinja", package: "vmlx-swift"),
                 .product(name: "NIOEmbedded", package: "swift-nio"),
                 .product(name: "VecturaKit", package: "VecturaKit"),
             ],
             path: "Tests",
-            resources: [.process("ComputerUse/Fixtures")]
+            resources: [
+                .process("ComputerUse/Fixtures"), .copy("Identity/Fixtures"), .copy("Workflow/RegistryFixtures"),
+                .copy("Sync/SyncFixtures"),
+            ]
         ),
     ]
 )

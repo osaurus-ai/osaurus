@@ -53,18 +53,53 @@ public enum StringCleaning {
     /// keys is removed, so ordinary JSON the user asked to see is left intact.
     /// Display-only: the raw `content` is untouched for round-tripping.
     public static func stripLeakedActionJSON(_ content: String) -> String {
+        // Consume the complete XML envelope before stripping its JSON body.
+        // Otherwise a successfully recovered call leaves empty protocol tags
+        // visible, and a no-argument call without an arguments key leaks whole.
+        var content = content
+        var cursor = content.startIndex
+        while let open = content.range(of: "<tool_call>", range: cursor ..< content.endIndex),
+            let close = content.range(of: "</tool_call>", range: open.upperBound ..< content.endIndex)
+        {
+            let body = String(content[open.upperBound ..< close.lowerBound])
+            if isLeakedToolCallJSON(body, allowMissingArguments: true) {
+                let offset = content.distance(from: content.startIndex, to: open.lowerBound)
+                content.removeSubrange(open.lowerBound ..< close.upperBound)
+                cursor = content.index(content.startIndex, offsetBy: offset)
+            } else {
+                cursor = close.upperBound
+            }
+        }
         // Cheap guard: only do the work when a tool-call-shaped key is present.
         guard content.contains("\"action\"") || content.contains("\"arguments\"") else {
-            return content
+            return content.trimmingCharacters(in: .whitespacesAndNewlines)
         }
 
         let chars = Array(content)
+        // `isLeakedToolCallJSON` needs a top-level `action` or `name` key.
+        // A candidate block can only carry one if a key token (or a JSON
+        // `\u` escape that could spell one) starts strictly inside it, so
+        // record where those tokens start and skip the brace-match + JSON
+        // parse for every `{` that cannot enclose one. Without this, long
+        // code/JSON answers cost one parse per brace on the main thread
+        // (APPLE-MACOS-1FE / 2PF).
+        let keyStarts = leakKeyTokenStarts(in: chars)
+        let lastKeyStart = keyStarts.last ?? -1
+        var braceMatches: [Int: Int] = [:]
+
         var output: [Character] = []
         output.reserveCapacity(chars.count)
         var i = 0
         while i < chars.count {
+            // No key token starts after `i`: nothing ahead can be a leaked
+            // call. Append the remainder verbatim.
+            if i >= lastKeyStart {
+                output.append(contentsOf: chars[i...])
+                break
+            }
             if chars[i] == "{",
-                let end = matchingBraceIndex(chars, start: i),
+                let end = matchingBraceIndex(chars, start: i, cache: &braceMatches),
+                containsKeyStart(keyStarts, after: i, before: end),
                 isLeakedToolCallJSON(String(chars[i ... end]))
             {
                 i = end + 1
@@ -76,11 +111,76 @@ public enum StringCleaning {
         return String(output).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Text a model wrote before it was stopped, fit to save as the reply.
+    /// A local model that writes tool calls as text may be cut off inside
+    /// one: everything from an unclosed `<tool_call>` on is dropped, since a
+    /// half-written call's arguments can't be parsed and scrubbed of
+    /// secrets, and complete calls left in the text are removed as
+    /// `stripLeakedActionJSON` does.
+    static func stoppedReplyText(_ content: String) -> String {
+        var content = content
+        if let open = content.range(of: "<tool_call>", options: .backwards),
+            content.range(of: "</tool_call>", range: open.upperBound ..< content.endIndex) == nil
+        {
+            content.removeSubrange(open.lowerBound ..< content.endIndex)
+        }
+        return stripLeakedActionJSON(content)
+    }
+
+    /// Tokens whose presence is necessary for a `{...}` block to satisfy
+    /// `isLeakedToolCallJSON`: the two key literals, plus `\u` because a JSON
+    /// unicode escape inside a key could spell either of them.
+    private static let leakKeyTokens: [[Character]] = [
+        Array("\"action\""), Array("\"name\""), Array("\\u"),
+    ]
+
+    /// Sorted start indices (in `chars`) of every `leakKeyTokens` occurrence.
+    private static func leakKeyTokenStarts(in chars: [Character]) -> [Int] {
+        var starts: [Int] = []
+        var i = 0
+        while i < chars.count {
+            let c = chars[i]
+            if c == "\"" || c == "\\" {
+                for token in leakKeyTokens where token[0] == c {
+                    let end = i + token.count
+                    if end <= chars.count, chars[i ..< end].elementsEqual(token) {
+                        starts.append(i)
+                        break
+                    }
+                }
+            }
+            i += 1
+        }
+        return starts
+    }
+
+    /// Whether any key token starts in the open interval `(open, close)`.
+    /// `starts` is sorted; binary search for the first entry > `open`.
+    private static func containsKeyStart(_ starts: [Int], after open: Int, before close: Int) -> Bool {
+        var lo = 0
+        var hi = starts.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if starts[mid] <= open { lo = mid + 1 } else { hi = mid }
+        }
+        return lo < starts.count && starts[lo] < close
+    }
+
     /// Index of the `}` that closes the `{` at `start`, respecting string
     /// literals so braces inside JSON string values don't miscount. Returns
     /// nil if the block never closes.
-    private static func matchingBraceIndex(_ chars: [Character], start: Int) -> Int? {
-        var depth = 0
+    ///
+    /// `cache` maps `{` index → closing index (`-1` = never closes). One scan
+    /// resolves not just `start` but every `{` it passes outside a string
+    /// literal: a scan starting at such a `{` sees the same characters with
+    /// the same string state and a depth offset by a constant, so it closes
+    /// exactly where this scan's stack pops it. Braces met inside a string
+    /// are not cached — their own scan would start with inverted string
+    /// state. This keeps unbalanced code (a stray `'{'` char literal) linear
+    /// instead of re-scanning to the end from every brace.
+    private static func matchingBraceIndex(_ chars: [Character], start: Int, cache: inout [Int: Int]) -> Int? {
+        if let hit = cache[start] { return hit >= 0 ? hit : nil }
+        var open: [Int] = []
         var inString = false
         var escaped = false
         var i = start
@@ -97,23 +197,27 @@ public enum StringCleaning {
             } else if c == "\"" {
                 inString = true
             } else if c == "{" {
-                depth += 1
+                open.append(i)
             } else if c == "}" {
-                depth -= 1
-                if depth == 0 { return i }
+                if let opened = open.popLast() { cache[opened] = i }
+                if open.isEmpty { return i }
             }
             i += 1
         }
+        for opened in open { cache[opened] = -1 }
         return nil
     }
 
     /// True when `block` parses as a JSON object that looks like a leaked tool
     /// call: a ReAct `action` + `action_input`, or a `name` + `arguments` /
     /// `parameters` pair.
-    private static func isLeakedToolCallJSON(_ block: String) -> Bool {
+    private static func isLeakedToolCallJSON(_ block: String, allowMissingArguments: Bool = false) -> Bool {
         guard let data = block.data(using: .utf8),
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return false }
+        if allowMissingArguments, object["name"] is String, Set(object.keys) == ["name"] {
+            return true
+        }
         if object["action"] != nil, object["action_input"] != nil || object["action_inputs"] != nil {
             return true
         }
@@ -176,6 +280,16 @@ public enum StringCleaning {
         guard harmonyChannelLabels.contains(head) else { return content }
         lines.removeFirst()
         return lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Strips the `[end call]` an agent ends its goodbye with on a phone voice
+    /// call. The phone reads it to offer to hang up; the chat never shows it.
+    public static func stripCallEndMarker(_ content: String) -> String {
+        let pattern = "\\s*\\[\\s*end[ _-]?call\\s*\\]"
+        guard content.range(of: pattern, options: [.regularExpression, .caseInsensitive]) != nil else {
+            return content
+        }
+        return content.replacingOccurrences(of: pattern, with: "", options: [.regularExpression, .caseInsensitive])
     }
 
     /// Strips Gemini thought-signature markers from assistant text meant for display.

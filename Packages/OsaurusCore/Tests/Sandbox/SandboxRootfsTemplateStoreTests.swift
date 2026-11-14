@@ -178,7 +178,7 @@ struct SandboxRootfsTemplateStoreTests {
             )
 
             let evicted = SandboxRootfsTemplateStore.enforceLimit(
-                max: 2, currentKey: "k1", protecting: "agent-d")
+                max: 2, currentKey: "k1", protecting: ["agent-d"])
 
             // b and c are the least recently used unprotected clones.
             #expect(Set(evicted) == ["agent-b", "agent-c"])
@@ -201,9 +201,33 @@ struct SandboxRootfsTemplateStoreTests {
             _ = try SandboxRootfsTemplateStore.ensureEnvironment(agentName: "agent-new", key: "k-new")
 
             let evicted = SandboxRootfsTemplateStore.enforceLimit(
-                max: 10, currentKey: "k-new", protecting: "agent-new")
+                max: 10, currentKey: "k-new", protecting: ["agent-new"])
             #expect(evicted == ["agent-old"])
             #expect(SandboxRootfsTemplateStore.environmentIsValid(agentName: "agent-new", key: "k-new"))
+        }
+    }
+
+    @Test
+    func enforceLimit_protectsEveryPodMemberAndNeverCountsTheSystemEnvironment() async throws {
+        try await withCleanStore {
+            let rootfs = try makeFakeRootfs()
+            defer { try? FileManager.default.removeItem(at: rootfs) }
+            try SandboxRootfsTemplateStore.captureTemplate(from: rootfs, key: "k1")
+            for name in ["agent-a", "agent-b", "agent-c", SandboxPodLayout.systemEnvironmentName] {
+                _ = try SandboxRootfsTemplateStore.ensureEnvironment(agentName: name, key: "k1")
+            }
+
+            let evicted = SandboxRootfsTemplateStore.enforceLimit(
+                max: 2,
+                currentKey: "k1",
+                protecting: ["agent-a", "agent-b", SandboxPodLayout.systemEnvironmentName]
+            )
+            #expect(evicted == ["agent-c"])
+            #expect(
+                SandboxRootfsTemplateStore.environmentIsValid(
+                    agentName: SandboxPodLayout.systemEnvironmentName, key: "k1"))
+            #expect(SandboxRootfsTemplateStore.environmentIsValid(agentName: "agent-a", key: "k1"))
+            #expect(SandboxRootfsTemplateStore.environmentIsValid(agentName: "agent-b", key: "k1"))
         }
     }
 
@@ -216,7 +240,7 @@ struct SandboxRootfsTemplateStoreTests {
             _ = try SandboxRootfsTemplateStore.ensureEnvironment(agentName: "agent-only", key: "k1")
 
             let evicted = SandboxRootfsTemplateStore.enforceLimit(
-                max: 1, currentKey: "k1", protecting: "agent-only")
+                max: 1, currentKey: "k1", protecting: ["agent-only"])
             #expect(evicted.isEmpty)
             #expect(SandboxRootfsTemplateStore.environmentIsValid(agentName: "agent-only", key: "k1"))
         }

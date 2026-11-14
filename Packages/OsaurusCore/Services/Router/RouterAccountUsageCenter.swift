@@ -61,6 +61,9 @@ struct RouterCreditsSummary: Codable, Equatable, Sendable {
     let requestCount: Int
     let inputTokens: Int
     let outputTokens: Int
+    /// Input tokens the upstream served from its prompt cache (billed at the
+    /// cached rate). Subset of `inputTokens`; 0 on pre-cache routers.
+    let cachedInputTokens: Int
     let costMicro: String
     let latestUsageAt: Date?
     let providerBreakdown: [RouterUsageBreakdown]
@@ -311,6 +314,7 @@ enum RouterAccountUsageCenter {
             requestCount: usageItems.count,
             inputTokens: usageItems.reduce(0) { $0 + $1.inputTokens },
             outputTokens: usageItems.reduce(0) { $0 + $1.outputTokens },
+            cachedInputTokens: usageItems.reduce(0) { $0 + $1.cachedInputTokens },
             costMicro: String(sumMicro(usageItems.map(\.costMicro))),
             latestUsageAt: usageItems.compactMap { CreditsActivityProjector.date(fromRouterTimestamp: $0.createdAt) }
                 .max(),

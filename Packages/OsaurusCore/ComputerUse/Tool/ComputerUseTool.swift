@@ -167,10 +167,36 @@ final class ComputerUseTool: OsaurusTool, PermissionedTool, @unchecked Sendable 
         // Model resolution, the per-action gate + confirm overlay, the live
         // feed, the interrupt token, and the compact result all run through the
         // shared `SubagentSession` host via `ComputerUseKind`.
-        return await SubagentSession.run(
-            ComputerUseKind(goal: goal, limits: limits),
-            tool: name
-        )
+        let kind = ComputerUseKind(goal: goal, limits: limits)
+        let envelope = await SubagentSession.run(kind, tool: name)
+        // Funnel: a run that reached the loop already emitted its own
+        // `computer_use_run`. Anything else that came back as a failure was a
+        // pre-loop refusal, which used to vanish from telemetry entirely.
+        if !kind.loopStarted, ToolEnvelope.isError(envelope) {
+            let stage = kind.refusalStage ?? Self.refusalStage(fromEnvelope: envelope)
+            await MainActor.run { FeatureTelemetry.computerUseRefused(stage: stage) }
+        }
+        return envelope
+    }
+
+    /// Attribute a host-level pre-loop failure envelope (recursion guard,
+    /// admission timeout, RAM-safety verdict, cancellation) to its funnel
+    /// stage. Reads only the structured envelope fields the host sets — never
+    /// prose — so the token stays stable across message edits.
+    static func refusalStage(fromEnvelope envelope: String) -> ComputerUseRefusalStage {
+        guard let data = envelope.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return .other }
+        if dict["recursion"] as? Bool == true { return .recursion }
+        if let admission = dict["admission"] as? String {
+            if admission == "timeout" { return .admissionTimeout }
+            if admission == "stable_memory_refusal" { return .ramSafety }
+        }
+        if dict["cancelled"] as? Bool == true { return .cancelled }
+        if let kind = dict["kind"] as? String, kind == ToolEnvelope.Kind.userDenied.rawValue {
+            return .cancelled
+        }
+        return .other
     }
 
     /// Preserve the exact user wording only for the narrowly parsed old/new

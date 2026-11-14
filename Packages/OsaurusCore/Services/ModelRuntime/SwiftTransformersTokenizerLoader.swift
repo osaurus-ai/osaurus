@@ -14,7 +14,18 @@ struct SwiftTransformersTokenizerLoader: TokenizerLoader, @unchecked Sendable {
     func load(from directory: URL) async throws -> any MLXLMCommon.Tokenizer {
         let upstream = try await AutoTokenizer.from(modelFolder: directory)
         let modelType = Self.modelType(in: directory)
-        return TokenizerBridge(upstream: upstream, modelType: modelType)
+        let grammarVocabulary: GrammarTokenVocabulary?
+        if upstream.incrementalByteLevelDecoder != nil,
+            let tokenizerJSON = try? Data(contentsOf: directory.appendingPathComponent("tokenizer.json")),
+            let tokenizerConfig = try? Data(contentsOf: directory.appendingPathComponent("tokenizer_config.json"))
+        {
+            grammarVocabulary = GrammarTokenVocabulary.fromTokenizerJSON(
+                tokenizerJSON, tokenizerConfig: tokenizerConfig)
+        } else {
+            grammarVocabulary = nil
+        }
+        return TokenizerBridge(upstream: upstream, modelType: modelType,
+            grammarTokenVocabulary: grammarVocabulary)
     }
 
     static func normalizedToolsForChatTemplate(
@@ -46,6 +57,7 @@ struct SwiftTransformersTokenizerLoader: TokenizerLoader, @unchecked Sendable {
 private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenizer, @unchecked Sendable {
     let upstream: any VMLXTokenizers.Tokenizer
     let modelType: String?
+    let grammarTokenVocabulary: GrammarTokenVocabulary?
 
     private static let dsv4Bos =
         "<" + String(UnicodeScalar(0xFF5C)!)
@@ -80,7 +92,6 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                 {{ system_message | trim + '\n\n' }}
             {%- endif -%}
             {{ 'You have access to the following functions.\n' }}
-            {{ 'When a function call is required, do not explain, do not summarize, and do not answer in prose.\n' }}
             {{ 'Output exactly one function call using this grammar:\n' }}
             {{ '<start_function_call>call:FUNCTION_NAME{ARGUMENT_NAME:<escape>ARGUMENT_VALUE<escape>}<end_function_call>\n' }}
             {{ 'Example:\nUser asks: Count the lines in this text: alpha\nbeta\ngamma\n' }}
@@ -95,12 +106,6 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                     {{ 'Parameters: ' + (fn['parameters'] | tojson) + '\n' }}
                 {%- endif -%}
             {%- endfor -%}
-            {%- if tool_choice is defined and tool_choice == 'required' -%}
-                {{ '\nThe current assistant response MUST be a function call.' }}
-                {%- if tool_choice_name is defined and tool_choice_name -%}
-                    {{ ' Use the `' + tool_choice_name + '` function.' }}
-                {%- endif -%}
-            {%- endif -%}
             {{ '<end_of_turn>\n' }}
         {%- endif -%}
         {%- for message in loop_messages -%}
@@ -172,6 +177,20 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
         upstream.convertIdToToken(id)
     }
 
+    // Osaurus uses this bridge rather than the engine's macro bridge. Forward
+    // the upstream capability so compatible streams avoid decoding their full
+    // token history for every delta. Eligibility remains upstream-owned.
+    var incrementalByteLevelDecoder: (@Sendable (Int) -> MLXLMCommon.ByteLevelDecodingPiece)? {
+        guard let decoder = upstream.incrementalByteLevelDecoder else { return nil }
+        return { id in
+            switch decoder(id) {
+            case .bytes(let bytes): return .bytes(bytes)
+            case .literal(let text): return .literal(text)
+            case .ignored: return .ignored
+            }
+        }
+    }
+
     var bosToken: String? { upstream.bosToken }
     var eosToken: String? { upstream.eosToken }
     var unknownToken: String? { upstream.unknownToken }
@@ -195,6 +214,9 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
         additionalContext: [String: any Sendable]?,
         addGenerationPrompt: Bool
     ) throws -> [Int] {
+        var additionalContext = additionalContext
+        let requiresConfiguredTemplate = additionalContext?.removeValue(
+            forKey: ChatTemplateParameters.explicitContextKey) as? Bool == true
         let env = ProcessInfo.processInfo.environment
         let chatTemplateTools = Self.normalizedToolsForChatTemplate(tools)
         if let path = env["VMLX_CHAT_TEMPLATE_OVERRIDE"], !path.isEmpty,
@@ -213,6 +235,59 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             } catch VMLXTokenizers.TokenizerError.missingChatTemplate {
                 throw MLXLMCommon.TokenizerError.missingChatTemplate
             }
+        }
+
+        // Qwen's configured XML template owns the full JSON schema and its
+        // validation errors. Keep parity with the engine bridge: a native
+        // failure must not fall back to Nemotron/Gemma or lose schema fields.
+        if Qwen3XMLToolTemplate.matchesTemplate(
+            upstream.configuredChatTemplate(forTools: !(tools?.isEmpty ?? true))
+        ) {
+            return try upstream.applyChatTemplate(
+                messages: messages,
+                chatTemplate: nil,
+                addGenerationPrompt: addGenerationPrompt,
+                truncation: false,
+                maxLength: nil,
+                tools: tools,
+                additionalContext: additionalContext
+            )
+        }
+
+        // Osaurus uses this bridge, not the engine's tokenizer macro. Shared
+        // BOS/ChatML tokens do not make MiniCPM a Nemotron tool dialect.
+        // Preserve its configured grammar, native omitted/on/off tail and
+        // render errors before considering sentinel-based fallbacks.
+        if MiniCPM5ToolCallParser.matchesTemplate(
+            upstream.configuredChatTemplate(forTools: !(tools?.isEmpty ?? true))
+        ) {
+            return try upstream.applyChatTemplate(
+                messages: messages,
+                chatTemplate: nil,
+                addGenerationPrompt: addGenerationPrompt,
+                truncation: false,
+                maxLength: nil,
+                tools: chatTemplateTools,
+                additionalContext: additionalContext
+            )
+        }
+
+        // The configured Liquid reasoning/tool template owns its native
+        // <think> generation tail and preserve_thinking history policy.
+        // A non-thinking tool fallback must not replace that contract.
+        if !(tools?.isEmpty ?? true),
+            LFM2ToolCallParser.preservesNativeReasoningTemplate(
+            upstream.configuredChatTemplate(forTools: !(tools?.isEmpty ?? true))
+        ) {
+            return try upstream.applyChatTemplate(
+                messages: messages,
+                chatTemplate: nil,
+                addGenerationPrompt: addGenerationPrompt,
+                truncation: false,
+                maxLength: nil,
+                tools: LFM2ToolCallParser.nativeTemplateTools(tools),
+                additionalContext: additionalContext
+            )
         }
 
         let lagunaEos =
@@ -468,7 +543,10 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                 additionalContext: adjustedContext
             )
         } catch VMLXTokenizers.TokenizerError.missingChatTemplate {
-            guard (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1" else {
+            // Explicit template variables require that bundle's template. A
+            // generic fallback could silently turn extraction into plain chat.
+            guard !requiresConfiguredTemplate,
+                (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1" else {
                 throw MLXLMCommon.TokenizerError.missingChatTemplate
             }
             if hasLagunaSentinel {
@@ -522,15 +600,11 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
                     (chatTemplateTools?.isEmpty ?? true) || modelTypeIsGemma3n
                     ? MLXLMCommon.ChatTemplateFallbacks.gemma4Minimal
                     : MLXLMCommon.ChatTemplateFallbacks.gemma4WithTools
-                let fallbackMessages =
-                    Self.requiresToolChoice(adjustedContext)
-                    ? Self.compactCompletedToolHistoryForRequiredChoice(messages)
-                    : messages
                 let fallbackTools = modelTypeIsGemma3n ? nil : chatTemplateTools
                 return try fallback(
                     label: "Gemma4",
                     template: template,
-                    messages: fallbackMessages,
+                    messages: messages,
                     tools: fallbackTools,
                     additionalContext: adjustedContext,
                     addGenerationPrompt: addGenerationPrompt
@@ -550,7 +624,8 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             }
             throw MLXLMCommon.TokenizerError.missingChatTemplate
         } catch {
-            guard (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1" else {
+            guard !requiresConfiguredTemplate,
+                (env["VMLX_CHAT_TEMPLATE_FALLBACK_DISABLE"] ?? "0") != "1" else {
                 throw error
             }
             let isGemma = upstream.bosToken == "<bos>" && !hasZayaToolChatSentinel
@@ -668,178 +743,8 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
     static func normalizedToolsForChatTemplate(
         _ tools: [[String: any Sendable]]?
     ) -> [[String: any Sendable]]? {
-        tools?.map { normalizeChatTemplateTool($0) }
-    }
-
-    private static func normalizeChatTemplateTool(
-        _ tool: [String: any Sendable]
-    ) -> [String: any Sendable] {
-        // Some callers already came through `Tool.toTokenizerToolSpec`, while
-        // plugin/host dictionaries can arrive pre-shaped. Normalize again at
-        // the Jinja boundary so Gemma-style string filters never see booleans
-        // or array-valued schema types.
-        var normalized = tool
-        guard var function = normalized["function"] as? [String: any Sendable] else {
-            return normalized
-        }
-
-        if let parameters = function["parameters"] {
-            function["parameters"] = normalizeChatTemplateSchemaValue(
-                parameters,
-                inSchemaPosition: true
-            )
-        }
-        if let response = function["response"] {
-            function["response"] = normalizeChatTemplateSchemaValue(
-                response,
-                inSchemaPosition: true
-            )
-        }
-        normalized["function"] = function
-        return normalized
-    }
-
-    private static func normalizeChatTemplateSchemaValue(
-        _ value: any Sendable,
-        inSchemaPosition: Bool
-    ) -> any Sendable {
-        if let object = value as? [String: any Sendable] {
-            var normalized: [String: any Sendable] = [:]
-            normalized.reserveCapacity(object.count)
-
-            for (key, child) in object {
-                switch key {
-                case "properties":
-                    if let properties = child as? [String: any Sendable] {
-                        var normalizedProperties: [String: any Sendable] = [:]
-                        normalizedProperties.reserveCapacity(properties.count)
-                        for (propertyName, propertySchema) in properties {
-                            normalizedProperties[propertyName] = normalizeChatTemplateSchemaValue(
-                                propertySchema,
-                                inSchemaPosition: true
-                            )
-                        }
-                        normalized[key] = normalizedProperties
-                    } else {
-                        normalized[key] = normalizeChatTemplateSchemaValue(
-                            child,
-                            inSchemaPosition: false
-                        )
-                    }
-                case "items", "response":
-                    normalized[key] = normalizeChatTemplateSchemaValue(
-                        child,
-                        inSchemaPosition: true
-                    )
-                case "additionalProperties":
-                    if isJSONBoolean(child) { continue }
-                    normalized[key] = normalizeChatTemplateSchemaValue(
-                        child,
-                        inSchemaPosition: true
-                    )
-                case "oneOf", "anyOf", "allOf":
-                    if let branches = child as? [any Sendable] {
-                        normalized[key] =
-                            branches.map {
-                                normalizeChatTemplateSchemaValue(
-                                    $0,
-                                    inSchemaPosition: true
-                                )
-                            } as [any Sendable]
-                    } else {
-                        normalized[key] = normalizeChatTemplateSchemaValue(
-                            child,
-                            inSchemaPosition: false
-                        )
-                    }
-                default:
-                    normalized[key] = normalizeChatTemplateSchemaValue(
-                        child,
-                        inSchemaPosition: false
-                    )
-                }
-            }
-
-            if inSchemaPosition {
-                normalizeTemplateRenderableSchemaType(&normalized)
-            }
-            return normalized
-        }
-
-        if let array = value as? [any Sendable] {
-            return array.map {
-                normalizeChatTemplateSchemaValue($0, inSchemaPosition: inSchemaPosition)
-            } as [any Sendable]
-        }
-
-        if inSchemaPosition, isJSONBoolean(value) {
-            return ["type": "string"] as [String: any Sendable]
-        }
-
-        return value
-    }
-
-    private static func normalizeTemplateRenderableSchemaType(_ object: inout [String: any Sendable]) {
-        guard let typeValue = object["type"] else {
-            object["type"] = inferredFallbackType(for: object)
-            return
-        }
-
-        if typeValue is String { return }
-        if let entries = stringTypeArray(typeValue) {
-            normalizeTypeUnion(entries, in: &object)
-            return
-        }
-        object["type"] = inferredFallbackType(for: object)
-    }
-
-    private static func normalizeTypeUnion(
-        _ entries: [String],
-        in object: inout [String: any Sendable]
-    ) {
-        var hasNull = false
-        var scalarTypes: [String] = []
-        for entry in entries {
-            if entry == "null" {
-                hasNull = true
-            } else if !scalarTypes.contains(entry) {
-                scalarTypes.append(entry)
-            }
-        }
-
-        object["type"] = scalarTypes.first ?? "string"
-        if hasNull {
-            object["nullable"] = true
-        }
-    }
-
-    private static func inferredFallbackType(for object: [String: any Sendable]) -> String {
-        if object["properties"] != nil { return "object" }
-        if object["items"] != nil { return "array" }
-        return "string"
-    }
-
-    private static func stringTypeArray(_ value: (any Sendable)?) -> [String]? {
-        if let strings = value as? [String] {
-            return strings
-        }
-
-        if let entries = value as? [any Sendable] {
-            var strings: [String] = []
-            for entry in entries {
-                guard let string = entry as? String else { return nil }
-                strings.append(string)
-            }
-            return strings
-        }
-
-        return nil
-    }
-
-    private static func isJSONBoolean(_ value: Any) -> Bool {
-        if value is Bool { return true }
-        guard let number = value as? NSNumber else { return false }
-        return CFGetTypeID(number) == CFBooleanGetTypeID()
+        // The runtime owns the schema-preservation contract for all templates.
+        MLXLMCommon.normalizedToolsForChatTemplate(tools)
     }
 
     private static func contentContainsImage(_ content: Any?) -> Bool {
@@ -1080,13 +985,20 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
             effort = nil
         }
 
-        var prompt = MLXLMCommon.DeepseekV4ChatEncoder().encode(
+        // DeepSeek-V4.1 bundles use their own prompt contract (numeric
+        // `Reasoning Effort: N` inside <｜System｜>, V4.1 DSML tool tags);
+        // everything else stays on the DSV4-0731 contract.
+        let family = MLXLMCommon.DeepseekV4ChatFamily(modelType: modelType)
+        var prompt = MLXLMCommon.DeepseekV4ChatEncoder(family: family).encode(
             messages: dsv4Messages,
             thinkingMode: thinkingMode,
             reasoningEffort: effort,
             dropEarlierReasoning: true,
             toolChoiceRequired: toolChoiceRequired,
-            toolChoiceName: toolChoiceName
+            toolChoiceName: toolChoiceName,
+            reasoningBudget: family == .deepseekV41 && thinkingMode == .thinking
+                ? MLXLMCommon.DeepseekV4ChatEncoder.reasoningBudget(from: additionalContext)
+                : nil
         )
         if !addGenerationPrompt,
             let lastRole = dsv4Messages.last?.role,
@@ -1192,7 +1104,7 @@ private struct TokenizerBridge: MLXLMCommon.GenerationPromptControllableTokenize
         addGenerationPrompt: Bool
     ) throws -> [Int] {
         if (ProcessInfo.processInfo.environment["VMLX_CHAT_TEMPLATE_FALLBACK_LOG"] ?? "0") == "1" {
-            FileHandle.standardError.write(
+            RuntimeDiagnostics.write(
                 "[osaurus] chat-template fallback engaged: \(label)\n"
                     .data(using: .utf8)!
             )

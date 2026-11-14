@@ -60,7 +60,7 @@ struct AuthAccessKeyLifecycleServiceTests {
 private final class FakeAccessKeyLifecycleManager: AccessKeyLifecycleManaging {
     var keys: [AccessKeyInfo]
     var generatedLabels: [String] = []
-    var generatedAgentIndexes: [UInt32?] = []
+    var generatedAgentKeyPaths: [AgentKeyPath?] = []
     var deletedIds: [UUID] = []
     var reloadCount = 0
     var keepDeletedIdsInMetadata = false
@@ -72,10 +72,10 @@ private final class FakeAccessKeyLifecycleManager: AccessKeyLifecycleManaging {
     func generate(
         label: String,
         expiration: AccessKeyExpiration,
-        agentIndex: UInt32?
+        agentKeyPath: AgentKeyPath?
     ) throws -> (fullKey: String, info: AccessKeyInfo) {
         generatedLabels.append(label)
-        generatedAgentIndexes.append(agentIndex)
+        generatedAgentKeyPaths.append(agentKeyPath)
         let info = AccessKeyInfo.fixture(label: label, expiration: expiration)
         keys.append(info)
         return ("osk-v1.fake.\(info.id.uuidString)", info)

@@ -50,7 +50,54 @@ final class ForcedToolChoiceGate: @unchecked Sendable {
     }
 }
 
+/// How the last model step of an Orchestrator turn ended, for
+/// `ChatToolChoicePolicy.forceStateIfMissing`.
+enum StateStepEnding: Sendable, Equatable {
+    /// Plain text and no tool calls.
+    case finalText
+    /// The step cap, just before the tool-free wrap-up.
+    case iterationCap
+    /// A `clarify` question. The turn has no answer yet, by design.
+    case clarify
+    /// A parked `awaiting_user` handoff or workflow run.
+    case awaitingUser
+}
+
 enum ChatToolChoicePolicy {
+    /// One extra step that offers only `state` and forces it: on a turn
+    /// that must record state (the presenting turn after a host dispatch,
+    /// or one that got a `HandoffResult`), when the turn is ending and no
+    /// `state` write landed. Never after Stop, and never on a turn that
+    /// ended asking the user something (`clarify`, `awaiting_user`), which
+    /// has no answer to record yet.
+    static func forceStateIfMissing(
+        qualifying: Bool,
+        interrupted: Bool,
+        lastStepEndedOn ending: StateStepEnding,
+        stateWritten: Bool,
+        tools: [Tool]
+    ) -> (tools: [Tool], choice: ToolChoiceOption)? {
+        guard qualifying, !interrupted, !stateWritten, ending == .finalText || ending == .iterationCap,
+            let state = tools.first(where: { $0.function.name == StateTool.toolName })
+        else { return nil }
+        return ([state], .function(.init(type: "function", function: .init(name: StateTool.toolName))))
+    }
+
+    /// Resolve only from the actual task. App-added delivery instructions may
+    /// name tools without the caller requesting any tool invocation.
+    static func resolve(
+        tools: [Tool],
+        taskIntent: ChatTaskIntent,
+        attempt: Int
+    ) -> ToolChoiceOption? {
+        switch taskIntent {
+        case .userRequest(let text):
+            return resolve(tools: tools, userText: text, attempt: attempt)
+        case .hostContinuation:
+            return tools.isEmpty ? nil : .auto
+        }
+    }
+
     static func resolve(
         tools: [Tool],
         userText: String,
@@ -71,7 +118,8 @@ enum ChatToolChoicePolicy {
             tools.contains(where: { $0.function.name == "redact_file" })
         {
             return .function(
-                .init(type: "function", function: .init(name: "redact_file")))
+                .init(type: "function", function: .init(name: "redact_file"))
+            )
         }
 
         return requiresToolCall(tools: tools, userText: userText) ? .required : .auto
@@ -127,7 +175,12 @@ enum ChatToolChoicePolicy {
 
     private static func containsCallableName(_ name: String, in text: String) -> Bool {
         guard !name.isEmpty else { return false }
-        return text.contains(name)
+        // Tool names are identifiers, not word fragments: "completed" must not
+        // require the `complete` tool. Keep punctuation around explicit calls
+        // and backticked names valid, including names containing regex syntax.
+        let escapedName = NSRegularExpression.escapedPattern(for: name)
+        let pattern = #"(?<![\p{L}\p{N}_-])"# + escapedName + #"(?![\p{L}\p{N}_-])"#
+        return text.range(of: pattern, options: .regularExpression) != nil
     }
 
     private static func containsNegatedToolIntent(_ text: String) -> Bool {
@@ -141,6 +194,15 @@ enum ChatToolChoicePolicy {
             "do not call",
             "don't call",
             "dont call",
+            "without calling",
+            "do not run",
+            "don't run",
+            "dont run",
+            "without running",
+            "do not invoke",
+            "don't invoke",
+            "dont invoke",
+            "without invoking",
         ].contains { text.contains($0) }
     }
 

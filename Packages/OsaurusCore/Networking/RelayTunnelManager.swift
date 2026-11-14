@@ -17,6 +17,13 @@ public enum AgentRelayStatus: Equatable {
     case connecting
     case connected(url: String)
     case error(String)
+    /// The relay evicted this agent because a newer tunnel authenticated the
+    /// same address — another device sharing this identity is serving it
+    /// now. The manager stops reconnecting for the address (per the relay
+    /// contract: two auto-reconnecting sessions would evict each other
+    /// forever) until the user explicitly re-enables the tunnel here or the
+    /// app relaunches.
+    case servedElsewhere
 }
 
 // MARK: - Public URL Probe
@@ -195,6 +202,12 @@ public final class RelayTunnelManager: ObservableObject {
 
     private static let relayURL = URL(string: "wss://agent.osaurus.ai/tunnel/connect")!
 
+    /// Public HTTPS base URL the relay serves an agent address at
+    /// (docs/MOBILE_PROTOCOL.md §6.1).
+    nonisolated public static func publicURL(forAddress address: String) -> String {
+        "https://\(address.lowercased()).agent.osaurus.ai"
+    }
+
     // MARK: - Published State
 
     @Published public private(set) var agentStatuses: [UUID: AgentRelayStatus] = [:]
@@ -220,10 +233,25 @@ public final class RelayTunnelManager: ObservableObject {
     /// `addAgentToTunnel()` clobber the `connect()` handler, permanently
     /// stalling tunnel auth.
     private var pendingNonceHandlers: [(String) -> Void] = []
+    /// Agents waiting to be added to the live tunnel, one at a time (see
+    /// `RelayAddAgentQueue`), and the timer on the one in flight.
+    private var addQueue = RelayAddAgentQueue()
+    private var addTimeoutTask: Task<Void, Never>?
+    private static let addAgentTimeout: TimeInterval = 15
     /// Bounded retry budget for `auth_error` frames (e.g. transient clock
     /// skew). Reset on a successful auth.
     private var authErrorRetries = 0
     private static let maxAuthErrorRetries = 3
+    /// Agents the relay evicted with `reason: "superseded"` — a newer tunnel
+    /// (another device sharing this identity) now serves their address.
+    /// Excluded from every automatic auth/reconnect until a user-initiated
+    /// enable or an app relaunch clears them, so two devices that both hold
+    /// a legacy (v1) address can't ping-pong ownership.
+    private var supersededAgentIds: Set<UUID> = []
+    /// Superseded frames can arrive before the address→agent map is built
+    /// (or after it was torn down); remember the address so the next
+    /// `connect()` still honours the eviction.
+    private var supersededAddresses: Set<String> = []
     /// Public-link checks run after relay auth so green UI means the public
     /// HTTPS route, not just the WebSocket auth handshake, is usable.
     private let publicURLProbe = RelayPublicURLProbe.live()
@@ -268,13 +296,20 @@ public final class RelayTunnelManager: ObservableObject {
         RelayConfigurationStore.save(configuration)
 
         if enabled {
+            // A user-initiated enable is the one legitimate way to take an
+            // address back from the device that superseded us.
+            clearSuperseded(agentId)
             agentStatuses[agentId] = .connecting
             if isConnected {
-                Task { await addAgentToTunnel(agentId: agentId) }
+                addAgentToTunnel(agentId: agentId)
             } else {
                 Task { await connect() }
             }
         } else {
+            if addQueue.remove(agentId) {
+                addTimeoutTask?.cancel()
+                pumpAddQueue()
+            }
             if isConnected {
                 removeAgentFromTunnel(agentId: agentId)
             }
@@ -286,12 +321,98 @@ public final class RelayTunnelManager: ObservableObject {
         configuration.isEnabled(for: agentId)
     }
 
+    /// Turns the agent's tunnel off and records that it was kept off on
+    /// purpose, so a paired phone's turn-on for newly addressed agents skips
+    /// it. Turning the tunnel on again clears the record.
+    public func keepTunnelOff(for agentId: UUID) {
+        if configuration.isEnabled(for: agentId) {
+            setTunnelEnabled(false, for: agentId)
+        }
+        guard !configuration.isKeptOff(agentId) else { return }
+        configuration.setKeptOff(true, for: agentId)
+        RelayConfigurationStore.save(configuration)
+    }
+
+    public func isTunnelKeptOff(for agentId: UUID) -> Bool {
+        configuration.isKeptOff(agentId)
+    }
+
+    /// A duplicate agent moved off an address an older agent keeps
+    /// (`AgentManager.applyReassignedAddresses`). The shared address stays on
+    /// the tunnel only for a keeper whose tunnel is on, and the moved agent
+    /// keeps its own setting under its new address.
+    public func handleAddressReassigned(agentId: UUID, sharedAddress: String) {
+        let lower = sharedAddress.lowercased()
+        if isConnected, authenticatedAgents.contains(lower) {
+            if let keeper = findAgent(byAddress: lower), configuration.isEnabled(for: keeper.id) {
+                addressToAgentId[lower] = keeper.id
+            } else {
+                sendJSON(["type": "remove_agent", "address": sharedAddress])
+                authenticatedAgents.remove(lower)
+                addressToAgentId.removeValue(forKey: lower)
+            }
+        }
+        handleAddressRotated(agentId: agentId, previousAddress: nil)
+    }
+
+    /// The agent's address was rotated. The relay maps *addresses* to
+    /// tunnels, so the live tunnel keeps serving the OLD address until told
+    /// otherwise: drop it (`remove_agent`) and authenticate the new one
+    /// (`add_agent`) in place. A rotation is also a fresh claim, so any
+    /// `superseded` mark from the old address is cleared — the new address
+    /// has never been contested.
+    ///
+    /// No-op when the agent's tunnel is disabled. When enabled but not
+    /// connected, the next `connect()` picks the new address up from the
+    /// agent record on its own.
+    public func handleAddressRotated(agentId: UUID, previousAddress: String?) {
+        clearSuperseded(agentId)
+        if let previousAddress {
+            supersededAddresses.remove(previousAddress.lowercased())
+        }
+        guard configuration.isEnabled(for: agentId) else { return }
+        agentStatuses[agentId] = .connecting
+        guard isConnected else {
+            Task { await connect() }
+            return
+        }
+        if let previousAddress {
+            let lower = previousAddress.lowercased()
+            sendJSON(["type": "remove_agent", "address": previousAddress])
+            authenticatedAgents.remove(lower)
+            addressToAgentId.removeValue(forKey: lower)
+            cancelInFlightRequests(forAgentUUID: agentId.uuidString)
+            cancelPublicCheck(for: agentId)
+        }
+        addAgentToTunnel(agentId: agentId)
+    }
+
+    /// Whether the relay handed this agent's address to another device's
+    /// tunnel and we are deliberately not reconnecting for it.
+    public func isServedElsewhere(_ agentId: UUID) -> Bool {
+        supersededAgentIds.contains(agentId)
+    }
+
+    /// User-initiated "serve this agent from this device again" after a
+    /// `servedElsewhere` eviction. Equivalent to re-enabling the tunnel; the
+    /// other device receives the `superseded` frame and goes quiet.
+    public func reclaimTunnel(for agentId: UUID) {
+        setTunnelEnabled(true, for: agentId)
+    }
+
     /// Called when the local server starts -- reconnects tunnels for any previously-enabled agents.
     public func reconnectIfNeeded(port: Int) {
         localPort = port
         configuration = RelayConfigurationStore.load()
+        // A server (re)start is a fresh session; the relay contract allows an
+        // app restart to legitimately supersede a stale session elsewhere.
+        supersededAgentIds.removeAll()
+        supersededAddresses.removeAll()
         let enabled = configuration.enabledAgentIds
-        guard !enabled.isEmpty else { return }
+        guard !enabled.isEmpty else {
+            MobileConnectLog.write("relay: no agent has remote access on, not opening a tunnel")
+            return
+        }
 
         for id in enabled {
             agentStatuses[id] = .connecting
@@ -302,6 +423,7 @@ public final class RelayTunnelManager: ObservableObject {
 
     /// Called when the local server stops -- tears down the tunnel.
     public func disconnectAll() {
+        MobileConnectLog.write("relay: tunnel closed on purpose (server stopping)")
         shouldReconnect = false
         reconnectTask?.cancel()
         reconnectTask = nil
@@ -316,6 +438,9 @@ public final class RelayTunnelManager: ObservableObject {
         authenticatedAgents.removeAll()
         addressToAgentId.removeAll()
         pendingNonceHandlers.removeAll()
+        cancelAddQueue()
+        supersededAgentIds.removeAll()
+        supersededAddresses.removeAll()
         cancelAllPublicChecks()
         for id in agentStatuses.keys {
             agentStatuses[id] = .disconnected
@@ -339,8 +464,14 @@ public final class RelayTunnelManager: ObservableObject {
         // Re-checking against this identity catches the overlap exactly.
         let taskAtEntry = webSocketTask
 
-        let enabled = configuration.enabledAgentIds
-        guard !enabled.isEmpty else { return }
+        // Addresses another device now serves are never re-claimed
+        // automatically (relay contract). If that leaves nothing to
+        // authenticate, there is no tunnel to open.
+        let enabled = configuration.enabledAgentIds.filter { !isSupersededAgent($0) }
+        guard !enabled.isEmpty else {
+            MobileConnectLog.write("relay: every enabled agent is served from another device, not connecting")
+            return
+        }
 
         for id in enabled {
             ensureAgentIdentity(id)
@@ -350,6 +481,7 @@ public final class RelayTunnelManager: ObservableObject {
             enabled.contains(agent.id) && agent.agentAddress != nil && agent.agentIndex != nil
         }
         guard !agents.isEmpty else {
+            MobileConnectLog.write("relay: FAILED to connect, none of the \(enabled.count) enabled agents has an identity")
             for id in enabled {
                 let agent = AgentManager.shared.agent(for: id)
                 if agent?.agentAddress == nil {
@@ -360,6 +492,7 @@ public final class RelayTunnelManager: ObservableObject {
         }
 
         guard let masterKey = await obtainMasterKey() else {
+            MobileConnectLog.write("relay: FAILED to connect, the master key could not be read from the keychain")
             for agent in agents { agentStatuses[agent.id] = .error("No identity") }
             return
         }
@@ -384,6 +517,9 @@ public final class RelayTunnelManager: ObservableObject {
         self.urlSession = session
         self.webSocketTask = task
         task.resume()
+        MobileConnectLog.write(
+            "relay: connecting to \(Self.relayURL.host ?? "relay") for \(agents.count) agent(s): \(agents.compactMap(\.agentAddress).joined(separator: ", "))"
+        )
 
         // `keyBox` is captured by reference; the handler zeroes the key bytes
         // after signing so master-key material doesn't outlive its single use
@@ -405,14 +541,14 @@ public final class RelayTunnelManager: ObservableObject {
             var authAgents: [[String: Any]] = []
 
             for agent in agents {
-                guard let index = agent.agentIndex, let address = agent.agentAddress else { continue }
+                guard let keyPath = agent.agentKeyPath, let address = agent.agentAddress else { continue }
                 do {
                     let sigHex = try Self.signAgentAuth(
                         address: address,
                         nonce: nonce,
                         timestamp: timestamp,
                         masterKey: signingKey,
-                        agentIndex: index
+                        agentKeyPath: keyPath
                     )
                     authAgents.append(["address": address, "signature": sigHex])
                 } catch {
@@ -448,6 +584,9 @@ public final class RelayTunnelManager: ObservableObject {
                     self.handleMessage(message)
                 } catch {
                     guard self.webSocketTask === task else { break }
+                    MobileConnectLog.write(
+                        "relay: tunnel dropped: \(error.localizedDescription) (close code \(task.closeCode.rawValue))"
+                    )
                     self.handleDisconnect()
                     break
                 }
@@ -491,6 +630,12 @@ public final class RelayTunnelManager: ObservableObject {
         case "error":
             let errorMsg = json["error"] as? String ?? "unknown"
             print("[Relay] Error frame: \(errorMsg)")
+            MobileConnectLog.write("relay: error frame from the relay: \(errorMsg)")
+            // The only frame the relay answers an `add_agent` with besides
+            // `agent_added`. Counted only once that add has gone out: an
+            // error before then is about something else, and the timeout
+            // still covers an add that never gets an answer.
+            if addQueue.isAwaitingRelay { failInFlightAdd(errorMsg) }
         default:
             break
         }
@@ -509,6 +654,9 @@ public final class RelayTunnelManager: ObservableObject {
         authErrorRetries = 0
 
         guard let agents = json["agents"] as? [[String: Any]] else { return }
+        MobileConnectLog.write(
+            "relay: tunnel up, serving \(agents.compactMap { ($0["address"] as? String)?.lowercased() }.joined(separator: ", "))"
+        )
         for agentInfo in agents {
             guard let address = agentInfo["address"] as? String,
                 let url = agentInfo["url"] as? String
@@ -527,6 +675,7 @@ public final class RelayTunnelManager: ObservableObject {
     private func handleAuthError(_ json: [String: Any]) {
         let error = json["error"] as? String ?? "auth_failed"
         print("[Relay] Auth error: \(error)")
+        MobileConnectLog.write("relay: auth REFUSED by the relay: \(error) (retry \(authErrorRetries + 1) of \(Self.maxAuthErrorRetries))")
         for id in configuration.enabledAgentIds {
             agentStatuses[id] = .error(error)
         }
@@ -539,6 +688,7 @@ public final class RelayTunnelManager: ObservableObject {
         authenticatedAgents.removeAll()
         addressToAgentId.removeAll()
         pendingNonceHandlers.removeAll()
+        cancelAddQueue()
         cancelAllPublicChecks()
 
         // An auth_error used to permanently kill the tunnel: the receive loop
@@ -569,20 +719,69 @@ public final class RelayTunnelManager: ObservableObject {
 
         let lower = address.lowercased()
         authenticatedAgents.insert(lower)
+        MobileConnectLog.write("relay: now serving \(lower)")
         if let agent = findAgent(byAddress: lower) {
             addressToAgentId[lower] = agent.id
             beginPublicRouteCheck(for: agent.id, url: url)
         }
+        // Matched on the address the add was signed for, which is what the
+        // relay echoes, so a lookup miss can't stall the queue.
+        if addQueue.confirm(address: lower) != nil {
+            addTimeoutTask?.cancel()
+            pumpAddQueue()
+        }
     }
 
-    private func handleAgentRemoved(_ json: [String: Any]) {
+    /// Relay frame `{type:"agent_removed", address, reason?}`. Internal (not
+    /// private) so the supersession contract can be unit-tested without a
+    /// live socket.
+    func handleAgentRemoved(_ json: [String: Any]) {
         guard let address = json["address"] as? String else { return }
         let lower = address.lowercased()
+        let superseded = (json["reason"] as? String) == "superseded"
+        MobileConnectLog.write("relay: stopped serving \(lower)\(superseded ? ", another device took it over" : "")")
         authenticatedAgents.remove(lower)
-        if let agentId = addressToAgentId.removeValue(forKey: lower) {
-            cancelInFlightRequests(forAgentUUID: agentId.uuidString)
-            cancelPublicCheck(for: agentId)
+        if superseded {
+            supersededAddresses.insert(lower)
+        }
+        let agentId = addressToAgentId.removeValue(forKey: lower) ?? findAgent(byAddress: lower)?.id
+        guard let agentId else { return }
+        cancelInFlightRequests(forAgentUUID: agentId.uuidString)
+        cancelPublicCheck(for: agentId)
+        if superseded {
+            supersededAgentIds.insert(agentId)
+            agentStatuses[agentId] = .servedElsewhere
+            print("[Relay] \(lower) is now served from another device; not reconnecting for it")
+            // The relay closes the socket once it carries no agents; when
+            // every enabled agent was taken over, stop the reconnect loop
+            // proactively instead of re-opening a tunnel with nothing to auth.
+            if configuration.enabledAgentIds.allSatisfy({ isSupersededAgent($0) }) {
+                reconnectTask?.cancel()
+                reconnectTask = nil
+            }
+        } else {
             agentStatuses[agentId] = .disconnected
+        }
+    }
+
+    /// Superseded by agent id, or by the address the relay named when the
+    /// id map was not populated at the time.
+    func isSupersededAgent(_ agentId: UUID) -> Bool {
+        if supersededAgentIds.contains(agentId) { return true }
+        guard !supersededAddresses.isEmpty,
+            let address = AgentManager.shared.agent(for: agentId)?.agentAddress?.lowercased()
+        else { return false }
+        if supersededAddresses.contains(address) {
+            supersededAgentIds.insert(agentId)
+            return true
+        }
+        return false
+    }
+
+    func clearSuperseded(_ agentId: UUID) {
+        supersededAgentIds.remove(agentId)
+        if let address = AgentManager.shared.agent(for: agentId)?.agentAddress?.lowercased() {
+            supersededAddresses.remove(address)
         }
     }
 
@@ -974,34 +1173,102 @@ public final class RelayTunnelManager: ObservableObject {
 
     // MARK: - Mid-Session Agent Management
 
-    private func addAgentToTunnel(agentId: UUID) async {
+    /// Adds an agent to the live tunnel once those queued before it are done:
+    /// the relay holds one challenge per tunnel, so adds sent together all
+    /// but the last fail with `invalid_nonce`. Off the tunnel there is
+    /// nothing to queue: the next `connect()` authenticates every enabled
+    /// agent in one frame.
+    private func addAgentToTunnel(agentId: UUID) {
+        guard isConnected else { return }
+        let restarting = addQueue.inFlight?.agentId == agentId
+        addQueue.enqueue(agentId)
+        if restarting { addTimeoutTask?.cancel() }
+        pumpAddQueue()
+    }
+
+    /// Starts the next queued add if none is in flight.
+    private func pumpAddQueue() {
+        guard isConnected, let attempt = addQueue.start() else { return }
+        Task { await sendAddAgent(attempt) }
+    }
+
+    /// Fails the attempt if the relay hasn't answered it in time. Started
+    /// once the challenge is asked for, so a slow keychain read doesn't count.
+    private func startAddTimeout(_ token: UUID) {
+        addTimeoutTask?.cancel()
+        addTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(Self.addAgentTimeout * 1_000_000_000))
+            guard !Task.isCancelled, let self, self.addQueue.isCurrent(token) else { return }
+            self.failInFlightAdd("no answer in \(Int(Self.addAgentTimeout))s")
+        }
+    }
+
+    /// The relay refused the in-flight add or never answered: try it again
+    /// while attempts remain, then show the error and move on. Its challenge
+    /// handler, if still queued, sees its token is stale and signs nothing.
+    private func failInFlightAdd(_ reason: String) {
+        addTimeoutTask?.cancel()
+        guard let failure = addQueue.fail() else { return }
+        let agentId = failure.id
+        if failure.willRetry {
+            MobileConnectLog.write("relay: adding \(agentId.uuidString) failed (\(reason)), trying again")
+        } else {
+            MobileConnectLog.write(
+                "relay: FAILED to add \(agentId.uuidString) after \(RelayAddAgentQueue.maxAttempts) tries (\(reason))"
+            )
+            agentStatuses[agentId] = .error(reason)
+        }
+        pumpAddQueue()
+    }
+
+    /// An add that can't be sent at all: report it and move on to the next.
+    private func abandonAdd(_ attempt: RelayAddAgentQueue.Attempt, _ reason: String) {
+        guard addQueue.isCurrent(attempt.token) else { return }
+        addTimeoutTask?.cancel()
+        addQueue.finish(attempt.token)
+        agentStatuses[attempt.agentId] = .error(reason)
+        pumpAddQueue()
+    }
+
+    /// Drops every queued add when the tunnel goes away.
+    private func cancelAddQueue() {
+        addQueue.reset()
+        addTimeoutTask?.cancel()
+        addTimeoutTask = nil
+    }
+
+    private func sendAddAgent(_ attempt: RelayAddAgentQueue.Attempt) async {
+        let agentId = attempt.agentId
+        let token = attempt.token
         ensureAgentIdentity(agentId)
 
         guard let agent = AgentManager.shared.agent(for: agentId),
-            let index = agent.agentIndex,
+            let keyPath = agent.agentKeyPath,
             let address = agent.agentAddress
         else {
-            agentStatuses[agentId] = .error("No identity")
+            abandonAdd(attempt, "No identity")
             return
         }
 
         guard let masterKey = await obtainMasterKey() else {
-            agentStatuses[agentId] = .error("No identity")
+            abandonAdd(attempt, "No identity")
+            return
+        }
+        // The tunnel dropped, or the attempt was dropped, while the key was read.
+        var keyBox: Data? = masterKey
+        guard addQueue.isCurrent(token), isConnected else {
+            keyBox?.zeroOut()
             return
         }
 
-        var keyBox: Data? = masterKey
+        // Every handler takes its challenge, current or not, so the ones
+        // after it stay paired with their own requests.
         pendingNonceHandlers.append { [weak self] nonce in
-            guard let self else {
-                keyBox?.zeroOut()
-                keyBox = nil
-                return
-            }
             defer {
                 keyBox?.zeroOut()
                 keyBox = nil
             }
-            guard let signingKey = keyBox else { return }
+            guard let self, let signingKey = keyBox, self.addQueue.isCurrent(token) else { return }
 
             let timestamp = Int(Date().timeIntervalSince1970)
             do {
@@ -1010,8 +1277,9 @@ public final class RelayTunnelManager: ObservableObject {
                     nonce: nonce,
                     timestamp: timestamp,
                     masterKey: signingKey,
-                    agentIndex: index
+                    agentKeyPath: keyPath
                 )
+                guard self.addQueue.markSent(token, address: address) else { return }
                 self.sendJSON([
                     "type": "add_agent",
                     "address": address,
@@ -1020,10 +1288,11 @@ public final class RelayTunnelManager: ObservableObject {
                     "timestamp": timestamp,
                 ])
             } catch {
-                self.agentStatuses[agentId] = .error("Signing failed")
+                self.abandonAdd(attempt, "Signing failed")
             }
         }
 
+        startAddTimeout(token)
         sendJSON(["type": "request_challenge"])
     }
 
@@ -1037,6 +1306,7 @@ public final class RelayTunnelManager: ObservableObject {
             "address": address,
         ]
         sendJSON(frame)
+        MobileConnectLog.write("relay: remote access turned off for \(address.lowercased())")
         let lower = address.lowercased()
         authenticatedAgents.remove(lower)
         addressToAgentId.removeValue(forKey: lower)
@@ -1063,16 +1333,29 @@ public final class RelayTunnelManager: ObservableObject {
         authenticatedAgents.removeAll()
         addressToAgentId.removeAll()
         pendingNonceHandlers.removeAll()
+        cancelAddQueue()
         cancelAllPublicChecks()
 
-        for id in configuration.enabledAgentIds {
+        let stillOurs = configuration.enabledAgentIds.filter { !isSupersededAgent($0) }
+        for id in stillOurs {
             if agentStatuses[id] != .disconnected {
                 agentStatuses[id] = .connecting
             }
         }
 
-        guard shouldReconnect else { return }
+        guard shouldReconnect else {
+            MobileConnectLog.write("relay: not reconnecting, the tunnel was closed on purpose")
+            return
+        }
+        // Every enabled address is served from another device: the relay
+        // contract says do not reconnect for them, and there is nothing else
+        // to authenticate. A user-initiated enable or relaunch resumes.
+        guard !stillOurs.isEmpty else {
+            MobileConnectLog.write("relay: not reconnecting, every enabled agent is served from another device")
+            return
+        }
 
+        MobileConnectLog.write("relay: reconnecting in \(Int(reconnectDelay))s")
         reconnectTask?.cancel()
         reconnectTask = Task { [weak self] in
             guard let self else { return }
@@ -1102,10 +1385,11 @@ public final class RelayTunnelManager: ObservableObject {
         nonce: String,
         timestamp: Int,
         masterKey: Data,
-        agentIndex: UInt32
+        agentKeyPath: AgentKeyPath
     ) throws -> String {
         let message = "osaurus-tunnel:\(address):\(nonce):\(timestamp)"
-        let childKey = AgentKey.derive(masterKey: masterKey, index: agentIndex)
+        var childKey = AgentKey.derive(masterKey: masterKey, path: agentKeyPath)
+        defer { childKey.zeroOut() }
         let sig = try signEIP191Message(message, privateKey: childKey)
         return "0x" + sig.hexEncodedString
     }

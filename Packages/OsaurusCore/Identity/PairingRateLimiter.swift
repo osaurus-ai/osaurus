@@ -3,10 +3,10 @@
 //  osaurus
 //
 //  Per-source-IP rate limiting for the unauthenticated pairing endpoints
-//  (`GET /pair/challenge`, `POST /pair`). Without this an attacker on the LAN
-//  could spam approval prompts on the advertiser's Mac or brute the challenge
-//  store. A short cooldown is applied after a denial so a rejected device
-//  cannot immediately retry in a tight loop.
+//  (`/pair-invite`, `/secure/session`) and webhook proofs. Without this an
+//  attacker could mint challenges or probe invites in a tight loop. A short
+//  cooldown is applied after a failed proof or a denial so a rejected caller
+//  cannot immediately retry.
 //
 
 import Foundation
@@ -18,11 +18,23 @@ public final class PairingRateLimiter: @unchecked Sendable {
     private var hits: [String: [Date]] = [:]
     private var cooldownUntil: [String: Date] = [:]
 
-    private let window: TimeInterval = 60
-    private let maxPerWindow = 5
-    private let denialCooldown: TimeInterval = 30
+    private let window: TimeInterval
+    private let maxPerWindow: Int
+    private let denialCooldown: TimeInterval
 
-    private init() {}
+    private convenience init() {
+        self.init(window: 60, maxPerWindow: 5, denialCooldown: 30)
+    }
+
+    /// Dedicated limiter for another unauthenticated surface (for example
+    /// the Agent Channel webhook ingress) whose traffic profile differs from
+    /// pairing. Each instance keeps its own per-source ledger so a chatty
+    /// webhook cannot burn the pairing budget or vice versa.
+    public init(window: TimeInterval, maxPerWindow: Int, denialCooldown: TimeInterval) {
+        self.window = window
+        self.maxPerWindow = max(1, maxPerWindow)
+        self.denialCooldown = denialCooldown
+    }
 
     /// Record an attempt from `ip`. Returns `false` when the caller is inside a
     /// denial cooldown or has exceeded `maxPerWindow` attempts in the trailing

@@ -1,0 +1,58 @@
+{
+  "id": "workspace_delegation.address-and-key-forms",
+  "domain": "subagent",
+  "label": "Workspace delegation • 0x address and durable key resolve to the qualified name",
+  "query": "The pool's durable forms still address a shared agent.",
+  "notes": "Model-free. A `0x…` address (any case) and the `<workspace_id>:<address>` key both resolve to the same shared agent; the observation reports it as Name@Workspace, the spelling guidance and inspect rows use.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "workspace",
+      "workspaceDelegation": {
+        "scenario": {
+          "localAgents": [],
+          "sharedAgents": [
+            {
+              "name": "Research",
+              "workspaceId": "ws-acme",
+              "workspaceName": "Acme",
+              "address": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa01",
+              "online": true,
+              "lastSeenSecondsAgo": null
+            }
+          ],
+          "localPolicy": "always_allow",
+          "workspacePolicy": "ask",
+          "steps": [
+            {
+              "targets": [
+                "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA01",
+                "ws-acme:0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa01"
+              ],
+              "artifacts": null
+            }
+          ]
+        },
+        "expected": [
+          {
+            "resolutions": [
+              "workspace:Research@Acme",
+              "workspace:Research@Acme"
+            ],
+            "refusals": [
+              "",
+              ""
+            ],
+            "policy": "ask",
+            "cardKinds": [
+              "spawn_workspace"
+            ],
+            "cardDescription": "Let this agent run 2 subagents in parallel? They run on teammates' Macs and spend those workspaces' pools.",
+            "returnedArtifacts": [],
+            "omittedArtifacts": []
+          }
+        ]
+      }
+    }
+  }
+}

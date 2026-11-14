@@ -81,10 +81,23 @@ public enum PrivacyFilterStore {
         }
     }
 
+    /// Called by the model managers when a fresh download finishes.
+    /// Installing a privacy model is the user saying "use this", so
+    /// the AI layer switches on by itself instead of waiting for a
+    /// second toggle the user has no reason to expect. No-op when it
+    /// is already on, so the toggle stays a deliberate off switch.
+    public nonisolated static func enableAIDetectionAfterInstall() {
+        var config = snapshot()
+        guard !config.aiDetectionEnabled else { return }
+        config.aiDetectionEnabled = true
+        save(config)
+    }
+
     // MARK: - Snapshot
 
-    /// Latest configuration. Returns the default value when nothing
-    /// has been persisted yet. Safe to call from any actor context.
+    /// Latest configuration. Returns the fresh-install value (locale-
+    /// seeded `homeRegions` + their default presets) when nothing has
+    /// been persisted yet. Safe to call from any actor context.
     public nonisolated static func snapshot() -> PrivacyFilterConfiguration {
         snapshotLock.lock()
         if let cached = cachedSnapshot {
@@ -92,7 +105,7 @@ public enum PrivacyFilterStore {
             return cached
         }
         snapshotLock.unlock()
-        return load() ?? .default
+        return load() ?? .freshInstall()
     }
 
     /// Drop the in-memory cache. Tests use this so the next snapshot()

@@ -62,6 +62,7 @@ actor CapabilityLoadBuffer {
         // spawn specs so the orchestrator can run the new agent in the
         // SAME turn instead of waiting for the next compose.
         "osaurus_config",
+        "osaurus_import",
     ]
 
     static func shouldActivate(after toolName: String) -> Bool {
@@ -1203,8 +1204,12 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
 
             if !method.skillsUsed.isEmpty {
                 let skills: [(String, String)] = await MainActor.run {
-                    method.skillsUsed.compactMap { name in
-                        SkillManager.shared.skill(named: name).map { (name, $0.instructions) }
+                    let owner = ChatExecutionContext.currentAgentId.flatMap { AgentManager.shared.agent(for: $0) }
+                    return method.skillsUsed.compactMap { name in
+                        guard let skill = SkillManager.shared.skill(named: name),
+                            owner?.allowsSkill(skill) ?? true
+                        else { return nil }
+                        return (name, skill.instructions)
                     }
                 }
                 for (name, instructions) in skills {
@@ -1247,6 +1252,19 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 )
             }
         }
+        if ToolRegistry.readOnlyFolderBlockedToolNames.contains(toolId),
+            ChatExecutionContext.currentFolderRoot != nil
+        {
+            let agentId = ChatExecutionContext.currentAgentId
+            if await MainActor.run(body: { ToolRegistry.agentHasReadOnlyWorkingFolder(agentId) }) {
+                return .failure(
+                    LoadFailure(
+                        kind: .rejected,
+                        message: "Tool '\(toolId)' cannot be loaded: " + ToolRegistry.readOnlyFolderMessageSuffix
+                    )
+                )
+            }
+        }
         let allowedNames = await grantedToolNamesForCurrentAgent()
         let (availability, isEnabled, isBuiltIn, toolSpec, isWorkspaceTool) = await MainActor.run {
             (
@@ -1265,21 +1283,36 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         // under `isBuiltIn` was dead code, and depending on whether a folder
         // was ever mounted this process they'd otherwise hit "not registered",
         // "not enabled for this agent", or a false "loaded — callable NOW".
-        // Keyed on the NAME so the answer is state-independent. The refusal
-        // stands (the execution boundary does not move on a model's say-so);
-        // it just names the one real next step, which is user-facing.
+        // Keyed on the NAME and this request's exposure, never on registration
+        // state. The refusal stands (the execution boundary does not move on a
+        // model's say-so); it just names the one real next step, which is
+        // user-facing.
         if isWorkspaceTool {
+            // The session store can still list workspace tools from a turn
+            // whose folder was since cleared, so it is not consulted here.
+            let exposedToThisRequest =
+                ChatExecutionContext.toolExecutionScope?.permits(toolId)
+                ?? (ChatExecutionContext.currentFolderRoot != nil)
+            if exposedToThisRequest {
+                return .success("Tool '\(toolId)' is already loaded and callable — no action needed.\n")
+            }
+            let agentId = ChatExecutionContext.currentAgentId
+            if let refusal = await MainActor.run(body: {
+                ToolRegistry.sandboxNotReadyRefusal(tool: toolId, agentId: agentId)
+            }) {
+                return .failure(LoadFailure(kind: .rejected, message: refusal.message))
+            }
             return .failure(
                 LoadFailure(
                     kind: .rejected,
                     message:
                         "Tool '\(toolId)' is a workspace tool and cannot be loaded here — "
-                        + "it activates only when a workspace folder is attached to this "
-                        + "chat. An agent's Host Files folder (Agent → Abilities) does not "
-                        + "apply here: that grant is mounted only for authenticated remote "
-                        + "agent runs, never for in-app chat. Ask the user to attach a "
-                        + "folder via the Folder chip (or enable Autonomous execution); "
-                        + "deliver file content with share_artifact meanwhile."
+                        + "it activates only when a working folder is attached to this "
+                        + "chat, and this chat has none (no folder was picked, or it was "
+                        + "cleared). " + PromptWorkingFolderTool.attachFolderSteer
+                        + " An attached folder also becomes the agent's Working Folder for "
+                        + "future chats and background runs; enabling Autonomous execution is "
+                        + "the other option. Deliver file content with share_artifact meanwhile."
                 )
             )
         }
@@ -1292,19 +1325,24 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 )
             )
         }
-        // Idempotent re-load — checked BEFORE the enabled/grant guards. A
-        // tool already in this session's schema (the always-loaded baseline
-        // snapshot or an earlier capabilities_load) is ALREADY callable, so
-        // re-loading it must return success regardless of the current
-        // global-enabled or agent-grant state. Rejecting it here was a
-        // guard-ordering bug: the `isEnabled`/`allowedNames` guards fired
-        // first, so re-loading an already-baseline tool returned
-        // `{"ok":false,"kind":"rejected","message":"… is disabled"}` for a
-        // tool the model could already call — which derails the loop (the
-        // model believes a working capability failed). The early return also
-        // prevents re-buffering, which would re-trigger the deferred-schema
-        // bookkeeping and a redundant "callable now" notice.
+        // A loaded schema is not a permanent grant. Match dispatch before
+        // claiming that a previously loaded dynamic tool is still callable.
+        // Preserve first-load diagnostics and dedicated built-in policy below.
         if await isAlreadyLoadedInSession(toolId) {
+            let dynamicallyGranted = await MainActor.run {
+                ToolRegistry.shared.isDynamicToolGranted(
+                    toolId, agentId: ChatExecutionContext.currentAgentId
+                )
+            }
+            guard dynamicallyGranted else {
+                return .failure(
+                    LoadFailure(
+                        kind: .rejected,
+                        message: "Tool '\(toolId)' is not available in this conversation."
+                    )
+                )
+            }
+            // Never rebuffer an already-loaded schema.
             return .success("Tool '\(toolId)' is already loaded and callable — no action needed.\n")
         }
         // Built-ins are not dynamic capabilities. If the composer withheld one
@@ -1317,6 +1355,18 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
         let isDeferredDefaultConfigureWrite =
             isDefaultAgent && configureWrites.contains(toolId)
         let isOnDemandBuiltIn = ToolRegistry.onDemandBuiltInToolNames.contains(toolId)
+        if let app = AppleApp.app(forTool: toolId) {
+            // Never reachable when the app is on (the tool is already in the
+            // baseline and returned "already loaded" above); this is the
+            // off-agent path, so name the real switch.
+            return .failure(
+                LoadFailure(
+                    kind: .rejected,
+                    message:
+                        "Tool '\(toolId)' belongs to the built-in \(app.displayName) app, which is off for this agent and cannot be enabled with capabilities_load. Ask the user to turn on \(app.displayName) under this agent's Abilities → Tools → Apple Apps, or have the Orchestrator set capabilities.apple_apps for this agent."
+                )
+            )
+        }
         if isBuiltIn, !isDeferredDefaultConfigureWrite, !isOnDemandBuiltIn {
             return .failure(
                 LoadFailure(
@@ -1528,15 +1578,25 @@ final class CapabilitiesLoadTool: OsaurusTool, @unchecked Sendable {
                 )
             )
         }
-        let (skill, sameNamed) = await MainActor.run {
+        let (skill, sameNamed, owner) = await MainActor.run {
             (
                 SkillManager.shared.skill(named: skillName),
-                SkillManager.shared.skills(named: skillName)
+                SkillManager.shared.skills(named: skillName),
+                ChatExecutionContext.currentAgentId.flatMap { AgentManager.shared.agent(for: $0) }
             )
         }
         guard let skill = skill else {
             return .failure(
                 LoadFailure(kind: .notFound, message: "Skill '\(skillName)' not found.")
+            )
+        }
+        if let owner, !owner.allowsSkill(skill) {
+            return .failure(
+                LoadFailure(
+                    kind: .rejected,
+                    message: "Skill '\(skill.name)' is not enabled for this agent. "
+                        + "Use only the skills listed in your capabilities."
+                )
             )
         }
         var output = "## Skill: \(skill.name)\n"

@@ -86,7 +86,7 @@ struct AgentCapabilityRowBuilderTests {
 
         for row in rows {
             switch row {
-            case .groupHeader(let id, _, _, _, _, _):
+            case .groupHeader(let id, _, _, _, _, _, _):
                 #expect(id != "src:builtin", "Informational built-in group leaked into rows")
             case .tool(let id, _, _, _, _, _, _, _):
                 #expect(
@@ -95,6 +95,80 @@ struct AgentCapabilityRowBuilderTests {
                 )
             }
         }
+    }
+
+    // MARK: - Apple app groups
+
+    /// Apple tools are registered as built-ins but must land in their own
+    /// toggleable per-app group, ahead of the informational fallback.
+    @Test func appleToolClassifiesToItsAppGroup() {
+        let tool = makeToolEntry(name: "calendar_events")
+        let source = CapabilityRowBuilder.source(forTool: tool, pluginNameById: [:])
+
+        #expect(source == .appleApp(.calendar))
+        #expect(source.groupId == "src:apple:calendar")
+        #expect(source.isInformational == false)
+        #expect(source.togglesAsGroup == true)
+        #expect(CapabilitySource.appleApp(fromGroupId: source.groupId) == .calendar)
+        #expect(CapabilitySource.appleApp(fromGroupId: "src:plugin:osaurus.calendar") == nil)
+    }
+
+    /// Hosts that exclude Apple apps (the Default agent) get no Apple rows
+    /// at all — the tools fold into the hidden built-in bucket.
+    @Test func appleGroupsHiddenWhenHostExcludesThem() {
+        let input = CapabilityRowBuilder.Input(
+            visibleTools: [makeToolEntry(name: "calendar_events"), makeToolEntry(name: "mail_list")],
+            plugins: [],
+            enabledToolNames: ["calendar_events"],
+            toolMode: .auto,
+            searchQuery: "",
+            filter: .all,
+            expandedGroups: ["src:apple:calendar"],
+            includesAppleApps: false
+        )
+        #expect(CapabilityRowBuilder.build(input).isEmpty)
+    }
+
+    /// One header per app in catalog order, counts over the app's tools,
+    /// every row badged as a group toggle, and a "Permission needed" status
+    /// only on an enabled app with a missing grant.
+    @Test func appleGroupsRenderPerAppWithStatus() {
+        let tools = [
+            makeToolEntry(name: "mail_list"),
+            makeToolEntry(name: "calendar_events"),
+            makeToolEntry(name: "calendar_list"),
+        ]
+        let input = CapabilityRowBuilder.Input(
+            visibleTools: tools,
+            plugins: [],
+            enabledToolNames: AppleApp.toolNames(for: [.calendar]),
+            toolMode: .auto,
+            searchQuery: "",
+            filter: .all,
+            expandedGroups: ["src:apple:calendar"],
+            includesAppleApps: true,
+            appleAppMissingPermissions: [.calendar: [.calendar], .mail: [.automationMail]]
+        )
+        let rows = CapabilityRowBuilder.build(input)
+
+        let headers = rows.compactMap { row -> (id: String, enabled: Int, total: Int, status: CapabilityGroupStatus?)? in
+            guard case .groupHeader(let id, _, _, let enabled, let total, _, let status) = row else { return nil }
+            return (id, enabled, total, status)
+        }
+        #expect(headers.map(\.id) == ["src:apple:calendar", "src:apple:mail"])
+        #expect(headers[0].enabled == 2 && headers[0].total == 2)
+        #expect(headers[0].status?.isWarning == true)
+        #expect(headers[0].status?.isActionable == true)
+        // Mail is off, so macOS has not been asked yet — no badge.
+        #expect(headers[1].enabled == 0 && headers[1].total == 1)
+        #expect(headers[1].status == nil)
+
+        let toolRows = rows.compactMap { row -> (name: String, enabled: Bool, label: String?)? in
+            guard case .tool(_, let name, _, let enabled, _, let label, _, _) = row else { return nil }
+            return (name, enabled, label)
+        }
+        #expect(toolRows.map(\.name) == ["calendar_events", "calendar_list"])
+        #expect(toolRows.allSatisfy { $0.enabled && $0.label == CapabilityRowBuilder.appleGroupToggleLabel })
     }
 
     // MARK: - Count semantics
@@ -140,7 +214,7 @@ struct AgentCapabilityRowBuilderTests {
             let rows = CapabilityRowBuilder.build(input)
 
             let header = rows.compactMap { row -> (enabled: Int, total: Int)? in
-                guard case .groupHeader(_, _, _, let enabledCount, let totalCount, _) = row else {
+                guard case .groupHeader(_, _, _, let enabledCount, let totalCount, _, _) = row else {
                     return nil
                 }
                 return (enabledCount, totalCount)
@@ -168,7 +242,7 @@ struct AgentCapabilityRowBuilderTests {
             )
             let assignedRows = CapabilityRowBuilder.build(assignedInput)
             for row in assignedRows {
-                if case .groupHeader(_, _, _, let enabledCount, let totalCount, _) = row {
+                if case .groupHeader(_, _, _, let enabledCount, let totalCount, _, _) = row {
                     #expect(enabledCount == 1)
                     #expect(totalCount == 2)
                 }

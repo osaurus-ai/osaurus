@@ -105,8 +105,6 @@ struct PerChatFolderIsolationTests {
             contentsOf: rootB.appendingPathComponent("out.txt"), encoding: .utf8)
         #expect(contentA == "from-A")
         #expect(contentB == "from-B")
-
-        await FileOperationLog.shared.clearAll()
     }
 
     /// With no folder bound anywhere in scope, a canonical folder tool
@@ -121,11 +119,12 @@ struct PerChatFolderIsolationTests {
 
     // MARK: - Per-operation undo roots
 
-    /// Undo resolves against the root recorded ON THE OPERATION, so a
+    /// Undo resolves against the root recorded ON THE CHANGE SET, so a
     /// session can undo a write made under root A even while a different
     /// root (another chat's folder) is currently bound.
     @Test func undoUsesRootRecordedOnOperation() async throws {
-        await FileOperationLog.shared.clearAll()
+        let env = try FileHistoryTestEnv.make()
+        defer { env.cleanup() }
         let rootA = try makeRoot("undo-a")
         let rootB = try makeRoot("undo-b")
         defer {
@@ -136,28 +135,21 @@ struct PerChatFolderIsolationTests {
         try "original".write(to: file, atomically: true, encoding: .utf8)
 
         let sessionId = "undo-\(UUID().uuidString)"
-        let write = FileWriteTool()
-        let opId: String = try await ChatExecutionContext.$currentFolderRoot.withValue(rootA) {
-            try await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
-                let result = try await write.execute(
-                    argumentsJSON: #"{"path": "undo.txt", "content": "clobbered"}"#)
-                return try #require(
-                    EnvelopeAssertions.successPayload(result)?["operation_id"] as? String)
-            }
+        let written = try await ChatExecutionContext.$currentFolderRoot.withValue(rootA) {
+            try await env.run(
+                FileWriteTool(), #"{"path": "undo.txt", "content": "clobbered"}"#,
+                sessionId: sessionId, folder: rootA)
         }
+        let opId = try #require(EnvelopeAssertions.successPayload(written)?["operation_id"] as? String)
 
-        // Undo while a DIFFERENT root is bound — the operation's own root wins.
-        let undo = FileUndoTool()
+        // Undo while a DIFFERENT root is bound — the change set's own root wins.
+        let undo = FileUndoTool(journal: env.journal)
         let result = try await ChatExecutionContext.$currentFolderRoot.withValue(rootB) {
-            try await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
-                try await undo.execute(argumentsJSON: #"{"operation_id": "\#(opId)"}"#)
-            }
+            try await env.call(undo, #"{"operation_id": "\#(opId)"}"#, sessionId: sessionId)
         }
         #expect(ToolEnvelope.isSuccess(result), "got: \(result)")
         let after = try String(contentsOf: file, encoding: .utf8)
         #expect(after == "original")
-
-        await FileOperationLog.shared.clearAll()
     }
 
     // MARK: - Session tool-state fingerprint
@@ -224,29 +216,32 @@ struct PerChatFolderIsolationTests {
         #expect(legacy.folderPath == nil)
     }
 
-    /// The v10 columns round-trip through SQLite, and sessions without a
-    /// folder store NULLs.
-    @Test func databaseRoundTripsFolderFields() throws {
-        let db = ChatHistoryDatabase()
-        try db.openInMemory()
+    /// The folder fields round-trip through the conversation store, and
+    /// sessions without a folder have none.
+    @MainActor
+    @Test func storeRoundTripsFolderFields() async throws {
+        try await ChatHistoryTestStorage.run {
+            let store = SyncConversationStore.shared
+            let bookmark = Data([0x01, 0x02, 0x03, 0x04, 0x05])
+            var withFolder = ChatSessionData(
+                title: "folder chat", turns: [ChatTurnData(role: .user, content: "work here")])
+            withFolder.folderBookmark = bookmark
+            withFolder.folderPath = "/Users/example/repo"
+            ChatSessionStore.save(withFolder)
 
-        let bookmark = Data([0x01, 0x02, 0x03, 0x04, 0x05])
-        var withFolder = ChatSessionData(title: "folder chat")
-        withFolder.folderBookmark = bookmark
-        withFolder.folderPath = "/Users/example/repo"
-        try db.saveSession(withFolder)
+            let withoutFolder = ChatSessionData(
+                title: "plain chat", turns: [ChatTurnData(role: .user, content: "no folder")])
+            ChatSessionStore.save(withoutFolder)
 
-        let withoutFolder = ChatSessionData(title: "plain chat")
-        try db.saveSession(withoutFolder)
+            let loadedWith = store.loadSession(id: withFolder.id)
+            #expect(loadedWith?.folderBookmark == bookmark)
+            #expect(loadedWith?.folderPath == "/Users/example/repo")
 
-        let loadedWith = db.loadSession(id: withFolder.id)
-        #expect(loadedWith?.folderBookmark == bookmark)
-        #expect(loadedWith?.folderPath == "/Users/example/repo")
-
-        let loadedWithout = db.loadSession(id: withoutFolder.id)
-        #expect(loadedWithout != nil)
-        #expect(loadedWithout?.folderBookmark == nil)
-        #expect(loadedWithout?.folderPath == nil)
+            let loadedWithout = store.loadSession(id: withoutFolder.id)
+            #expect(loadedWithout != nil)
+            #expect(loadedWithout?.folderBookmark == nil)
+            #expect(loadedWithout?.folderPath == nil)
+        }
     }
 
     // MARK: - Session round-trip through ChatSession

@@ -2,8 +2,9 @@
 //  MemoryConsolidator.swift
 //  osaurus
 //
-//  Background consolidation loop. Runs every `consolidationIntervalHours`
-//  (default 24h) on a low-priority detached task. Performs:
+//  Background consolidation loop. Runs at most once every
+//  `consolidationIntervalHours` (default 24h) on a low-priority detached
+//  task. Performs:
 //
 //    1. Salience decay      — `score *= 0.5 ^ (Δdays / halfLife)` for pinned
 //                             facts and episodes.
@@ -19,8 +20,17 @@
 //    5. Transcript pruning  — turns older than `episodeRetentionDays` are
 //                             removed.
 //
-//  Consolidation runs in the background only; no user action triggers it
-//  except the explicit "Run Now" button in `MemoryView`.
+//  Scheduling: the last successful run is persisted in `UserDefaults`, and a
+//  short ticker (every 30 minutes, first tick ~1 minute after launch) runs a
+//  pass whenever `now - lastRun >= interval`. The interval therefore means
+//  "at most once per N hours" rather than "after N hours of continuous
+//  uptime". Pre-fix, the loop slept for the full interval before its first
+//  pass and the timestamp lived only in memory, so on any normal usage
+//  pattern (quit, update, reboot) the consolidator never fired at all.
+//
+//  Scheduled passes are deferred while inference or chat work is in flight
+//  and retried on the next tick. The explicit "Run Now" button in
+//  `MemoryView` bypasses both the interval and the idle gate.
 //
 
 import CryptoKit
@@ -30,11 +40,36 @@ import os
 public actor MemoryConsolidator {
     public static let shared = MemoryConsolidator()
 
+    /// Outcome of a `runOnce()` call, so callers (the "Run Now" button) can
+    /// tell the user why nothing happened instead of silently returning.
+    public enum RunOutcome: Sendable, Equatable {
+        case completed
+        case skippedAlreadyRunning
+        case skippedDisabled
+        case skippedDatabaseClosed
+    }
+
+    /// `UserDefaults` key holding the last successful pass as a Unix
+    /// timestamp. Persisted so restarts don't reset the schedule.
+    static let lastRunDefaultsKey = "memory.consolidation.lastRunAt"
+
+    /// Delay before the first scheduled check after launch, so a catch-up
+    /// pass doesn't compete with launch DB and embedding work.
+    static let launchGrace: Duration = .seconds(60)
+
+    /// How often the scheduler re-checks whether a pass is due.
+    static let tickInterval: Duration = .seconds(30 * 60)
+
     private var schedulerTask: Task<Void, Never>?
     private var lastRun: Date?
     private var isRunning = false
 
-    private init() {}
+    private init() {
+        lastRun = Self.loadPersistedLastRun()
+    }
+
+    /// When the last consolidation pass completed, or `nil` if it never has.
+    public var lastRunDate: Date? { lastRun }
 
     /// Start the periodic loop. Idempotent.
     public func start() {
@@ -50,29 +85,64 @@ public actor MemoryConsolidator {
         schedulerTask = nil
     }
 
+    /// Whether a scheduled pass should run now. Pure so it can be unit
+    /// tested; a consolidator that has never run is always due.
+    static func isDue(lastRun: Date?, intervalHours: Int, now: Date = Date()) -> Bool {
+        guard let lastRun else { return true }
+        let interval = TimeInterval(max(1, intervalHours) * 3600)
+        return now.timeIntervalSince(lastRun) >= interval
+    }
+
     private func scheduleLoop() async {
+        try? await Task.sleep(for: Self.launchGrace)
         while !Task.isCancelled {
             let config = MemoryConfigurationStore.load()
-            let intervalSeconds = max(1, config.consolidationIntervalHours) * 3600
-            try? await Task.sleep(for: .seconds(intervalSeconds))
-            guard !Task.isCancelled else { return }
-            await runOnce()
+            if Self.isDue(lastRun: lastRun, intervalHours: config.consolidationIntervalHours) {
+                if await Self.isIdleForBackgroundPass() {
+                    await runOnce()
+                } else {
+                    MemoryLogger.service.info("Consolidator: pass due but app busy; retrying next tick")
+                }
+            }
+            try? await Task.sleep(for: Self.tickInterval)
         }
+    }
+
+    /// Scheduled passes run O(n²) shingle comparisons on the memory DB's
+    /// serial queue, so only start one when no inference or chat work is in
+    /// flight. A deferred pass retries on the next tick because `lastRun`
+    /// is not advanced.
+    private static func isIdleForBackgroundPass() async -> Bool {
+        if HTTPInferenceAdmission.shared.inflightCount > 0 { return false }
+        if await InferenceLoadCoordinator.shared.activeCount > 0 { return false }
+        return true
+    }
+
+    // MARK: - Persisted last run
+
+    private static func loadPersistedLastRun() -> Date? {
+        let raw = UserDefaults.standard.double(forKey: lastRunDefaultsKey)
+        return raw > 0 ? Date(timeIntervalSince1970: raw) : nil
+    }
+
+    private func persistLastRun(_ date: Date) {
+        UserDefaults.standard.set(date.timeIntervalSince1970, forKey: Self.lastRunDefaultsKey)
     }
 
     /// Run a single consolidation pass. Safe to call from anywhere; serializes
     /// internally so concurrent triggers don't double-run.
-    public func runOnce() async {
+    @discardableResult
+    public func runOnce() async -> RunOutcome {
         guard !isRunning else {
             MemoryLogger.service.debug("Consolidator already running; skipping concurrent trigger")
-            return
+            return .skippedAlreadyRunning
         }
         isRunning = true
         defer { isRunning = false }
 
         let config = MemoryConfigurationStore.load()
-        guard config.enabled else { return }
-        guard MemoryDatabase.shared.isOpen else { return }
+        guard config.enabled else { return .skippedDisabled }
+        guard MemoryDatabase.shared.isOpen else { return .skippedDatabaseClosed }
 
         let started = Date()
         MemoryLogger.service.info("Consolidator: starting pass")
@@ -146,13 +216,16 @@ public actor MemoryConsolidator {
             MemoryLogger.service.warning("Consolidator: purge failed: \(error)")
         }
 
-        lastRun = Date()
-        let durationMs = Int(Date().timeIntervalSince(started) * 1000)
+        let finished = Date()
+        lastRun = finished
+        persistLastRun(finished)
+        let durationMs = Int(finished.timeIntervalSince(started) * 1000)
         MemoryLogger.service.info(
             "Consolidator: pass done (merged: \(mergedCount), promoted: \(promotedCount), \(durationMs)ms)"
         )
 
         await MemoryContextAssembler.shared.invalidateCache()
+        return .completed
     }
 
     // MARK: - Episode merge

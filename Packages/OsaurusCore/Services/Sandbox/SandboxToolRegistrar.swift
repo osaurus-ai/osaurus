@@ -22,6 +22,18 @@ public final class SandboxToolRegistrar {
     private var observers: [NSObjectProtocol] = []
     private var statusCancellable: AnyCancellable?
     var provisionAgentOverride: ((UUID) async throws -> Void)?
+    /// Test seam for `attemptRuntimeRecovery`'s guest liveness probe so the
+    /// classification of a `bootstrapExec` failure can be exercised without
+    /// a VM (and without the recovery path booting one).
+    var runtimeProbeOverride: (() async -> Bool)?
+    /// Test seam for the coalesced container start so the runtime-recovery
+    /// re-boot (and its success / failure attribution) can be pinned in the
+    /// SwiftPM harness, which has no VM entitlement.
+    var containerStartOverride: (() async throws -> Void)?
+
+    /// Set by `prepareForTermination()`. Once the app is quitting, no
+    /// registration may start or re-start the container.
+    private(set) var isTerminating = false
 
     /// Per-agent record of why sandbox tools are not currently available.
     /// Used by `SystemPromptComposer` to inject a "sandbox unavailable" notice
@@ -35,9 +47,95 @@ public final class SandboxToolRegistrar {
         }
         public let kind: Kind
         public let message: String
+        /// `vmnetOwnedByOtherProcess` only: who holds the VM lease, so the
+        /// UI can offer to quit that app or end orphaned holders.
+        var leaseOwner: LeaseOwner? = nil
+    }
+
+    /// The process blocking the VM lease, as shown to the user.
+    struct LeaseOwner: Sendable, Equatable {
+        let state: SandboxVMOwnershipLease.OwnerState
+        let owner: SandboxVMOwnershipLease.Owner?
+        /// Other processes with the lease file open.
+        let holders: [SandboxVMOwnershipLease.Holder]
+
+        init(state: SandboxVMOwnershipLease.OwnerState, owner: SandboxVMOwnershipLease.Owner?, holders: [SandboxVMOwnershipLease.Holder]) {
+            self.state = state
+            self.owner = owner
+            self.holders = holders.filter { $0.pid != getpid() }
+        }
+
+        /// Non-Osaurus processes keeping the lock held.
+        var orphanHolders: [SandboxVMOwnershipLease.Holder] { holders.filter { !$0.isOsaurus } }
     }
 
     private var unavailability: [UUID: UnavailabilityReason] = [:]
+
+    /// One cross-process lease conflict, from the first refusal until the
+    /// lease is acquired. Retries back off exponentially and never count
+    /// toward `maxStartupFailures`; telemetry is emitted once per episode.
+    private struct LeaseConflictEpisode {
+        var retryAfter: Date
+        var delay: TimeInterval
+        var forceStart: Bool
+    }
+
+    private var leaseConflict: LeaseConflictEpisode?
+
+    /// Polls the lease while a conflict episode is open and re-registers as
+    /// soon as it frees up.
+    private var leaseWatcher: Task<Void, Never>?
+
+    nonisolated static let leaseConflictInitialBackoff: TimeInterval = 15
+    nonisolated static let leaseConflictMaxBackoff: TimeInterval = 300
+    nonisolated static let leaseWatchInterval: TimeInterval = 3
+
+    nonisolated static func nextLeaseConflictBackoff(after delay: TimeInterval?) -> TimeInterval {
+        guard let delay else { return leaseConflictInitialBackoff }
+        return min(delay * 2, leaseConflictMaxBackoff)
+    }
+
+    /// Whether `trigger` may boot a set-up sandbox. Launch, status edges
+    /// and agent switches or edits happen without the user asking for the
+    /// sandbox, so they follow Auto-Start; a send or an explicit start
+    /// always may.
+    nonisolated static func mayWarmStart(on trigger: RegistrationTrigger, autoStart: Bool) -> Bool {
+        switch trigger {
+        case .launch, .statusChange, .agentSwitch, .agentUpdated: return autoStart
+        case .onDemand, .autoRetry, .runtimeRecovery, .external: return true
+        }
+    }
+
+    /// Why `registerTools` ran. Emitted as a closed telemetry token so a
+    /// failure can be tied to launch auto-start vs first-use provisioning
+    /// vs agent switching without any free-form context.
+    public enum RegistrationTrigger: String, Sendable, Equatable, CaseIterable {
+        case launch = "launch_autostart"
+        case onDemand = "on_demand"
+        case agentSwitch = "agent_switch"
+        case agentUpdated = "agent_updated"
+        case statusChange = "status_change"
+        case autoRetry = "auto_retry"
+        case runtimeRecovery = "runtime_recovery"
+        /// Chat send / warm-up / plugin host / eval runner callers.
+        case external
+    }
+
+    /// Bounded context attached to a recorded failure. Only closed tokens
+    /// derived from it ever leave the machine; the `error` is used to derive
+    /// an `error_class` token and is never serialized.
+    struct FailureContext {
+        var trigger: RegistrationTrigger
+        var coldStart: Bool
+        var error: Error?
+        var provisionStep: SandboxProvisionStepError.Step?
+    }
+
+    /// Agents for which a single runtime-recovery attempt (VM believed
+    /// running but the guest exec transport is dead) has been spent. Cleared
+    /// on the next successful registration so a genuine later loss can
+    /// recover again.
+    private var runtimeRecoveryAttempted: Set<UUID> = []
 
     /// Coalesces concurrent `startContainer()` attempts so multiple Work
     /// sessions / Chat sends don't pile up duplicate provision tasks (which
@@ -178,8 +276,34 @@ public final class SandboxToolRegistrar {
         Task { @MainActor in
             registerAllPluginTools()
             await autoStartContainerIfConfigured()
-            await registerTools(for: AgentManager.shared.activeAgent.id)
+            await registerTools(for: AgentManager.shared.activeAgent.id, trigger: .launch)
         }
+    }
+
+    /// Stop reacting to container lifecycle events because the app is
+    /// quitting. Must run before the quit chain calls `stopContainer()`:
+    /// the resulting `.running -> .stopped` status edge would otherwise
+    /// re-enter `registerTools`, which treats an already set-up sandbox as
+    /// warm-restartable and re-acquires the vmnet lease + re-boots the VM
+    /// while the process is exiting. That re-boot is what a relaunched
+    /// Osaurus (Sparkle update, manual restart) collides with as
+    /// `vmnet_in_use`.
+    public func prepareForTermination() {
+        isTerminating = true
+        leaseWatcher?.cancel()
+        leaseWatcher = nil
+        statusCancellable?.cancel()
+        statusCancellable = nil
+        for observer in observers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        observers.removeAll()
+    }
+
+    /// Test seam: undo `prepareForTermination()`'s flag (the process-wide
+    /// singleton outlives each test). Does not re-install observers.
+    func resetTerminationForTests() {
+        isTerminating = false
     }
 
     /// Refresh availability and, when the user has opted into auto-start,
@@ -200,12 +324,12 @@ public final class SandboxToolRegistrar {
         guard availability.isAvailable else { return }
         let config = SandboxConfigurationStore.load()
         guard config.autoStart, config.setupComplete else {
-            // The user consented to sandbox setup before (`setupComplete`)
-            // but isn't auto-booting the VM. Warm the runtime asset cache
-            // in the background — resumable, silent, no VM — so a later
-            // manual start (or an app update that rotated the pinned
-            // image/initfs) boots from cache instead of a cold download.
-            if config.setupComplete {
+            // Not booting the VM now. Warm the runtime asset cache in the
+            // background — resumable, silent, no VM — so the first
+            // sandboxed command (or a start after an app update rotated
+            // the pinned image/initfs) boots from cache instead of a cold
+            // download. Waits for onboarding, which kicks its own prefetch.
+            if !OnboardingService.shared.shouldShowOnboarding {
                 await SandboxManager.shared.prefetchRuntimeAssetsInBackground()
             }
             return
@@ -299,12 +423,32 @@ public final class SandboxToolRegistrar {
     /// provisioning. Failures are recorded in `unavailability[agentId]` so the
     /// system prompt can surface a clear message to the model instead of the
     /// model silently losing access to its sandbox tools.
-    public func registerTools(for agentId: UUID, forceStart: Bool = false) async {
-        let agent = AgentManager.shared.agent(for: agentId) ?? Agent.default
+    public func registerTools(
+        for agentId: UUID,
+        forceStart: Bool = false,
+        trigger: RegistrationTrigger = .external
+    ) async {
+        // Quitting: the container is being torn down on purpose; never
+        // start (or re-start) it from here.
+        guard !isTerminating else { return }
+        let agent = RegistrationTarget(
+            id: AgentManager.shared.agent(for: agentId)?.id
+                ?? (BuiltInWorker.worker(for: agentId) != nil ? agentId : Agent.defaultId))
         let agentIdStr = agent.id.uuidString
         let agentName = SandboxAgentProvisioner.linuxName(for: agentIdStr)
         let execConfig = AgentManager.shared.effectiveAutonomousExec(for: agent.id)
         let autonomousEnabled = execConfig?.enabled == true
+        // Read once: `setupComplete == false` means any start below is a
+        // first-run cold provision (multi-GB download) rather than a warm
+        // restart — the single most useful split for failure telemetry.
+        let sandboxConfig = SandboxConfigurationStore.load()
+        let setupComplete = sandboxConfig.setupComplete
+        var failureContext = FailureContext(
+            trigger: trigger,
+            coldStart: !setupComplete,
+            error: nil,
+            provisionStep: nil
+        )
 
         // Idempotent fast path (see `registeredBuiltins`): the desired end
         // state is already installed — same agent, same effective config,
@@ -370,8 +514,17 @@ public final class SandboxToolRegistrar {
             // the `defer` above) calls `provisionOnDemand`, or the user starts
             // it from the Sandbox tab. `forceStart` is that explicit opt-in;
             // `setupComplete` allows warm restarts of an already-provisioned
-            // sandbox (no download).
-            let mayColdStart = forceStart || SandboxConfigurationStore.load().setupComplete
+            // sandbox (no download) — except right after the user (or the
+            // quit chain) stopped it on purpose: the `.running -> .stopped`
+            // edge from that stop lands here, and re-booting would turn
+            // "Stop" into a restart. Explicit first use (`forceStart`) and
+            // the Sandbox tab's Start button still bring it back. With
+            // Auto-Start off, only a send or explicit start boots it.
+            let stoppedOnPurpose = await SandboxManager.shared.stoppedExplicitly
+            let mayColdStart =
+                forceStart
+                || (setupComplete && !stoppedOnPurpose
+                    && Self.mayWarmStart(on: trigger, autoStart: sandboxConfig.autoStart))
             guard mayColdStart else {
                 unavailability.removeValue(forKey: agent.id)
                 publishActiveAgentUnavailability(for: agent.id, reason: nil)
@@ -383,9 +536,14 @@ public final class SandboxToolRegistrar {
             // After `maxStartupFailures` give up entirely until the user
             // takes explicit action (toggling autonomous off/on, restarting
             // the app, or hitting "Start" in the Sandbox settings panel).
+            //
+            // Local-only: the underlying failure was already recorded (and
+            // emitted) by `recordStartupFailure`. Re-emitting here — which
+            // happens whenever a *different* agent registers during the
+            // lockout — double counted one boot failure per agent.
             if startupFailureCount >= Self.maxStartupFailures {
                 if unavailability[agent.id] == nil {
-                    recordUnavailability(
+                    noteUnavailability(
                         for: agent.id,
                         kind: preStartKind,
                         message:
@@ -400,9 +558,10 @@ public final class SandboxToolRegistrar {
             // hammered with a fresh provision attempt on every chat/work
             // send. The previous failure reason stays in `unavailability`
             // so the model gets the same notice without us re-trying.
+            // Local-only for the same reason as the lockout branch above.
             if let retryAfter = nextStartupRetryAfter, retryAfter > Date() {
                 if unavailability[agent.id] == nil {
-                    recordUnavailability(
+                    noteUnavailability(
                         for: agent.id,
                         kind: preStartKind,
                         message: "Sandbox container start is in cool-down after a recent failure"
@@ -411,26 +570,53 @@ public final class SandboxToolRegistrar {
                 return
             }
 
+            // Lease conflict back-off: skip the attempt (and its wait on
+            // the owner) unless the lease has freed up since.
+            if let episode = leaseConflict, episode.retryAfter > Date(),
+                !SandboxVMOwnershipLease.isAvailable()
+            {
+                leaseConflict?.forceStart = episode.forceStart || forceStart
+                if unavailability[agent.id] == nil,
+                    let reason = unavailability.values.first(where: { $0.kind == .vmnetOwnedByOtherProcess })
+                {
+                    noteUnavailability(
+                        for: agent.id, kind: reason.kind, message: reason.message, leaseOwner: reason.leaseOwner)
+                }
+                return
+            }
+
+            await SandboxManager.shared.requestMembership(
+                agentName: SandboxAgentProvisioner.linuxName(for: agent.id.uuidString)
+            )
             do {
                 try await ensureContainerStartedCoalesced()
             } catch {
+                failureContext.error = error
+                if error is CancellationError {
+                    // The user cancelled the start; not a failed boot.
+                    unavailability.removeValue(forKey: agent.id)
+                    publishActiveAgentUnavailability(for: agent.id, reason: nil)
+                    return
+                }
                 if let sandboxError = error as? SandboxError,
                     case .ownershipConflict = sandboxError
                 {
                     // This is an actionable cross-process blocker, not a
                     // failed boot. Do not increment attempts, arm cool-down,
                     // or scrub another process's shared sandbox state.
-                    recordUnavailability(
+                    recordLeaseConflict(
                         for: agent.id,
-                        kind: .vmnetOwnedByOtherProcess,
-                        message: error.localizedDescription
+                        message: error.localizedDescription,
+                        context: failureContext,
+                        forceStart: forceStart
                     )
                     return
                 }
                 await recordStartupFailure(
                     for: agent.id,
                     kind: preStartKind,
-                    message: "Sandbox container could not be started: \(error.localizedDescription)"
+                    message: "Sandbox container could not be started: \(error.localizedDescription)",
+                    context: failureContext
                 )
                 return
             }
@@ -439,7 +625,8 @@ public final class SandboxToolRegistrar {
                 await recordStartupFailure(
                     for: agent.id,
                     kind: .startupFailed,
-                    message: "Sandbox container did not reach running state"
+                    message: "Sandbox container did not reach running state",
+                    context: failureContext
                 )
                 return
             }
@@ -447,16 +634,69 @@ public final class SandboxToolRegistrar {
             // Successful start resets failure tracking.
             nextStartupRetryAfter = nil
             startupFailureCount = 0
+            endLeaseConflict()
         }
 
         if needsProvisioning {
             do {
                 try await ensureProvisioned(agentId: agent.id)
             } catch {
+                let stepError = error as? SandboxProvisionStepError
+                let underlying = stepError?.underlying ?? error
+                failureContext.error = underlying
+                failureContext.provisionStep = stepError?.step
+
+                if underlying is CancellationError {
+                    unavailability.removeValue(forKey: agent.id)
+                    publishActiveAgentUnavailability(for: agent.id, reason: nil)
+                    return
+                }
+
+                switch stepError?.step {
+                case .startReentry:
+                    // The provision path re-entered `startContainer()` and
+                    // it failed: the container was NOT actually usable even
+                    // though the cached status said so. Attribute this as a
+                    // runtime start failure, not an agent provision failure.
+                    if let sandboxError = underlying as? SandboxError,
+                        case .ownershipConflict = sandboxError
+                    {
+                        recordLeaseConflict(
+                            for: agent.id,
+                            message: underlying.localizedDescription,
+                            context: failureContext,
+                            forceStart: forceStart
+                        )
+                        return
+                    }
+                    await recordStartupFailure(
+                        for: agent.id,
+                        kind: .startupFailed,
+                        message:
+                            "Sandbox container could not be started: \(underlying.localizedDescription)",
+                        context: failureContext
+                    )
+                    return
+
+                case .bootstrapExec:
+                    // The exec transport failed while the cached status
+                    // still says `.running` — classic post-sleep / VM-died
+                    // symptom. Probe the guest once; if it is really gone,
+                    // mark the runtime lost and take the startup path (which
+                    // cleans up and re-boots) exactly once per agent.
+                    if await attemptRuntimeRecovery(for: agent.id, trigger: trigger) {
+                        return
+                    }
+
+                default:
+                    break
+                }
+
                 recordUnavailability(
                     for: agent.id,
                     kind: .provisioningFailed,
-                    message: "Failed to provision agent sandbox: \(error.localizedDescription)"
+                    message: "Failed to provision agent sandbox: \(underlying.localizedDescription)",
+                    context: failureContext
                 )
                 scheduleProvisioningAutoRetry(for: agent.id)
                 return
@@ -465,6 +705,7 @@ public final class SandboxToolRegistrar {
 
         unavailability.removeValue(forKey: agent.id)
         provisioningRetryScheduled.remove(agent.id)
+        runtimeRecoveryAttempted.remove(agent.id)
         publishActiveAgentUnavailability(for: agent.id, reason: nil)
         BuiltinSandboxTools.register(
             agentId: agentIdStr,
@@ -475,34 +716,184 @@ public final class SandboxToolRegistrar {
         realToolsRegistered = true
     }
 
+    /// When a guest exec failed but the cached container status is still
+    /// `.running`, decide whether the VM is actually gone. Returns `true`
+    /// when a recovery attempt was made (the recursive `registerTools` call
+    /// has already recorded any outcome); `false` when the caller should
+    /// record the original failure as a provision failure.
+    ///
+    /// Only the VM backend has a runtime that can die underneath us; the
+    /// Seatbelt backend has no guest, so its exec failures are real.
+    private func attemptRuntimeRecovery(
+        for agentId: UUID,
+        trigger: RegistrationTrigger
+    ) async -> Bool {
+        guard SandboxBackend.current == .virtualMachine else { return false }
+        guard SandboxManager.State.shared.status == .running else { return false }
+        guard !runtimeRecoveryAttempted.contains(agentId) else { return false }
+        let alive: Bool
+        if let runtimeProbeOverride {
+            alive = await runtimeProbeOverride()
+        } else {
+            alive = await SandboxManager.shared.probeRuntimeAlive()
+        }
+        guard !alive else { return false }
+
+        runtimeRecoveryAttempted.insert(agentId)
+        debugLog("[Sandbox] Guest exec transport is dead while status is running — recovering runtime")
+        await SandboxManager.shared.markRuntimeLost(
+            reason: "Guest stopped responding to exec"
+        )
+        // Recovery bypasses the cool-down: the previous failure (if any)
+        // was for a different boot, and the user has done nothing wrong.
+        nextStartupRetryAfter = nil
+        await registerTools(for: agentId, trigger: trigger == .runtimeRecovery ? trigger : .runtimeRecovery)
+        return true
+    }
+
+    /// Record a lease conflict: classify the holder, open or extend the
+    /// back-off episode, and start the lease watcher. Only the first
+    /// refusal of an episode is recorded as a failure sample + event.
+    private func recordLeaseConflict(
+        for agentId: UUID,
+        message: String,
+        context: FailureContext,
+        forceStart: Bool
+    ) {
+        let classified = SandboxVMOwnershipLease.classifyConflict()
+        let owner = LeaseOwner(
+            state: classified.state,
+            owner: SandboxVMOwnershipLease.readOwner(),
+            holders: classified.holders
+        )
+        let delay = Self.nextLeaseConflictBackoff(after: leaseConflict?.delay)
+        let firstInEpisode = leaseConflict == nil
+        leaseConflict = LeaseConflictEpisode(
+            retryAfter: Date().addingTimeInterval(delay),
+            delay: delay,
+            forceStart: forceStart || (leaseConflict?.forceStart ?? false)
+        )
+        if firstInEpisode {
+            recordUnavailability(
+                for: agentId,
+                kind: .vmnetOwnedByOtherProcess,
+                message: message,
+                context: context,
+                leaseOwner: owner,
+                lockHolders: classified.holders
+            )
+        } else {
+            noteUnavailability(for: agentId, kind: .vmnetOwnedByOtherProcess, message: message, leaseOwner: owner)
+        }
+        startLeaseWatcher()
+    }
+
+    private func endLeaseConflict() {
+        leaseConflict = nil
+        leaseWatcher?.cancel()
+        leaseWatcher = nil
+    }
+
+    /// Test seam: close any open conflict episode and stop its watcher.
+    func resetLeaseConflictForTests() { endLeaseConflict() }
+
+    var hasLeaseWatcherForTests: Bool { leaseWatcher != nil }
+
+    private func startLeaseWatcher() {
+        guard leaseWatcher == nil, !isTerminating else { return }
+        let interval = Self.leaseWatchInterval
+        leaseWatcher = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: UInt64(interval * 1_000_000_000))
+                guard let self, !Task.isCancelled, !self.isTerminating,
+                    let episode = self.leaseConflict
+                else { return }
+                guard SandboxVMOwnershipLease.isAvailable() else { continue }
+                debugLog("[Sandbox] VM lease freed — retrying sandbox start")
+                self.leaseWatcher = nil
+                self.leaseConflict?.retryAfter = .distantPast
+                await self.registerTools(
+                    for: AgentManager.shared.activeAgent.id,
+                    forceStart: episode.forceStart,
+                    trigger: .autoRetry
+                )
+                return
+            }
+        }
+    }
+
+    /// User-initiated retry after resolving a lease conflict (owner quit or
+    /// orphan ended): skip the back-off and try now.
+    func retryAfterLeaseConflict(for agentId: UUID) async {
+        let forceStart = leaseConflict?.forceStart ?? false
+        leaseConflict?.retryAfter = .distantPast
+        await registerTools(for: agentId, forceStart: forceStart, trigger: .external)
+    }
+
+    /// Update the per-agent unavailability record and the UI mirror WITHOUT
+    /// emitting a metrics sample or telemetry event. Used by the cool-down
+    /// and lockout branches, whose underlying failure was already recorded
+    /// once by `recordStartupFailure`.
+    private func noteUnavailability(
+        for agentId: UUID,
+        kind: UnavailabilityReason.Kind,
+        message: String,
+        leaseOwner: LeaseOwner? = nil
+    ) {
+        let prev = unavailability[agentId]
+        let next = UnavailabilityReason(kind: kind, message: message, leaseOwner: leaseOwner)
+        unavailability[agentId] = next
+        if prev != next {
+            debugLog("[Sandbox] \(message)")
+        }
+        publishActiveAgentUnavailability(for: agentId, reason: next)
+    }
+
     private func recordUnavailability(
         for agentId: UUID,
         kind: UnavailabilityReason.Kind,
-        message: String
+        message: String,
+        context: FailureContext,
+        leaseOwner: LeaseOwner? = nil,
+        lockHolders: [SandboxVMOwnershipLease.Holder] = []
     ) {
         // Only log when this is a NEW failure (kind+message changed). Without
         // this, every chat send / work iteration produces another identical
         // line in the system log.
         let prev = unavailability[agentId]
-        let next = UnavailabilityReason(kind: kind, message: message)
+        let next = UnavailabilityReason(kind: kind, message: message, leaseOwner: leaseOwner)
         unavailability[agentId] = next
         if prev != next {
             debugLog("[Sandbox] \(message)")
             let tokens = Self.failureTelemetryTokens(
                 kind: kind,
-                backend: SandboxBackend.current
+                backend: SandboxBackend.current,
+                provisionStep: context.provisionStep
             )
+            let errorClass = Self.failureErrorClass(for: context.error)
+            let bootstrapStep = (context.error as? SandboxProvisionStepError)?.bootstrapStep?.rawValue
             SandboxStartupMetricsStore.recordFailure(
                 SandboxStartupFailureSample(
                     category: tokens.category,
                     backend: tokens.backend,
-                    phase: tokens.phase
+                    phase: tokens.phase,
+                    errorClass: errorClass,
+                    trigger: context.trigger.rawValue,
+                    coldStart: context.coldStart,
+                    ownerState: leaseOwner?.state.rawValue,
+                    bootstrapStep: bootstrapStep,
+                    lockHolders: leaseOwner == nil ? nil : lockHolders.map(\.diagnostic)
                 )
             )
             FeatureTelemetry.sandboxProvisionFailure(
                 category: tokens.category,
                 backend: tokens.backend,
-                phase: tokens.phase
+                phase: tokens.phase,
+                errorClass: errorClass,
+                trigger: context.trigger.rawValue,
+                coldStart: context.coldStart,
+                ownerState: leaseOwner?.state.rawValue,
+                bootstrapStep: bootstrapStep
             )
         }
         publishActiveAgentUnavailability(for: agentId, reason: next)
@@ -510,21 +901,126 @@ public final class SandboxToolRegistrar {
 
     /// Convert internal failures to a privacy-safe, bounded telemetry
     /// vocabulary. The detailed user-facing message stays local.
+    ///
+    /// `provisionStep` refines the `agent_provision` phase into which step
+    /// of the per-agent bootstrap failed; it is ignored for other kinds.
     nonisolated static func failureTelemetryTokens(
         kind: UnavailabilityReason.Kind,
-        backend: SandboxBackend
+        backend: SandboxBackend,
+        provisionStep: SandboxProvisionStepError.Step? = nil
     ) -> (category: String, backend: String, phase: String) {
         let backendToken = backend == .virtualMachine ? "vm" : "seatbelt"
         switch kind {
         case .containerUnavailable:
             return ("container_unavailable", backendToken, "availability")
         case .provisioningFailed:
-            return ("agent_provision_failed", backendToken, "agent_provision")
+            let phase = provisionStep.map { "agent_provision.\($0.rawValue)" } ?? "agent_provision"
+            return ("agent_provision_failed", backendToken, phase)
         case .startupFailed:
             return ("runtime_start_failed", backendToken, "runtime_start")
         case .vmnetOwnedByOtherProcess:
             return ("vmnet_in_use", backendToken, "vm_ownership")
         }
+    }
+
+    /// Every value this can return. Kept as an explicit list so tests can
+    /// prove the telemetry dimension stays closed.
+    nonisolated static let failureErrorClasses: [String] = [
+        "none",
+        "sandbox_unavailable",
+        "sandbox_container_not_running",
+        "sandbox_provision_failed",
+        "sandbox_start_failed",
+        "sandbox_stop_failed",
+        "sandbox_remove_failed",
+        "sandbox_user_creation_failed",
+        "sandbox_exec_failed",
+        "sandbox_timeout",
+        "sandbox_ownership_conflict",
+        "sandbox_integrity_check_failed",
+        "cancelled",
+        "url_offline",
+        "url_timeout",
+        "url_dns",
+        "url_other",
+        "posix_eexist",
+        "posix_ebusy",
+        "posix_eaddrinuse",
+        "posix_eacces",
+        "posix_eperm",
+        "posix_enospc",
+        "posix_other",
+        "cocoa_file_exists",
+        "cocoa_out_of_space",
+        "cocoa_no_permission",
+        "cocoa_other",
+        "sdk_grpc",
+        "sdk_vmnet",
+        "other",
+    ]
+
+    /// Map an arbitrary error to one closed `error_class` token. Never
+    /// includes the message, a path, a host, or any other free text.
+    nonisolated static func failureErrorClass(for error: Error?) -> String {
+        guard let error else { return "none" }
+        if let sandboxError = error as? SandboxError {
+            switch sandboxError {
+            case .unavailable: return "sandbox_unavailable"
+            case .containerNotRunning: return "sandbox_container_not_running"
+            case .provisionFailed: return "sandbox_provision_failed"
+            case .startFailed(_, let underlying):
+                // `friendlyError` wrapped a POSIX/Cocoa/SDK error with a
+                // hint; classify the original so EEXIST, EADDRINUSE, GRPC
+                // and vmnet stay distinguishable.
+                if let underlying { return failureErrorClass(for: underlying) }
+                return "sandbox_start_failed"
+            case .stopFailed: return "sandbox_stop_failed"
+            case .removeFailed: return "sandbox_remove_failed"
+            case .userCreationFailed: return "sandbox_user_creation_failed"
+            case .execFailed: return "sandbox_exec_failed"
+            case .timeout: return "sandbox_timeout"
+            case .ownershipConflict: return "sandbox_ownership_conflict"
+            case .integrityCheckFailed: return "sandbox_integrity_check_failed"
+            case .busy: return "sandbox_busy"
+            }
+        }
+        if error is CancellationError { return "cancelled" }
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .notConnectedToInternet, .networkConnectionLost, .dataNotAllowed,
+                .internationalRoamingOff, .callIsActive:
+                return "url_offline"
+            case .timedOut: return "url_timeout"
+            case .cannotFindHost, .dnsLookupFailed: return "url_dns"
+            default: return "url_other"
+            }
+        }
+        let nsError = error as NSError
+        if nsError.domain == NSPOSIXErrorDomain {
+            switch Int32(nsError.code) {
+            case EEXIST: return "posix_eexist"
+            case EBUSY: return "posix_ebusy"
+            case EADDRINUSE: return "posix_eaddrinuse"
+            case EACCES: return "posix_eacces"
+            case EPERM: return "posix_eperm"
+            case ENOSPC: return "posix_enospc"
+            default: return "posix_other"
+            }
+        }
+        if nsError.domain == NSCocoaErrorDomain {
+            switch nsError.code {
+            case NSFileWriteFileExistsError: return "cocoa_file_exists"
+            case NSFileWriteOutOfSpaceError: return "cocoa_out_of_space"
+            case NSFileWriteNoPermissionError, NSFileReadNoPermissionError: return "cocoa_no_permission"
+            default: return "cocoa_other"
+            }
+        }
+        // SDK-internal errors don't bridge to a stable domain; classify
+        // by type description the same way `friendlyError` does.
+        let description = String(describing: error)
+        if description.contains("GRPC") { return "sdk_grpc" }
+        if description.lowercased().contains("vmnet") { return "sdk_vmnet" }
+        return "other"
     }
 
     /// Mirror per-agent unavailability into `SandboxManager.State.shared`
@@ -547,12 +1043,13 @@ public final class SandboxToolRegistrar {
     private func recordStartupFailure(
         for agentId: UUID,
         kind: UnavailabilityReason.Kind,
-        message: String
+        message: String,
+        context: FailureContext
     ) async {
         startupFailureCount += 1
         nextStartupRetryAfter = Date().addingTimeInterval(Self.startupRetryCooldown)
         await SandboxManager.shared.cleanupAfterFailure()
-        recordUnavailability(for: agentId, kind: kind, message: message)
+        recordUnavailability(for: agentId, kind: kind, message: message, context: context)
     }
 
     private func unavailabilityKind(for status: ContainerStatus) -> UnavailabilityReason.Kind {
@@ -567,7 +1064,12 @@ public final class SandboxToolRegistrar {
             try await inFlight.value
             return
         }
+        let startOverride = containerStartOverride
         let task = Task<Void, Error> {
+            if let startOverride {
+                try await startOverride()
+                return
+            }
             try await SandboxManager.shared.startContainer()
         }
         startupTask = task
@@ -601,7 +1103,7 @@ public final class SandboxToolRegistrar {
                 return
             }
             debugLog("[Sandbox] Auto-retrying provisioning for agent \(agentId)")
-            await self.registerTools(for: agentId)
+            await self.registerTools(for: agentId, trigger: .autoRetry)
         }
     }
 
@@ -613,12 +1115,15 @@ public final class SandboxToolRegistrar {
         // agent's state so the sandbox chip doesn't briefly show the prior
         // agent's failure while `registerTools` runs.
         publishActiveAgentUnavailability(for: newId, reason: unavailability[newId])
-        await registerTools(for: newId)
+        await registerTools(for: newId, trigger: .agentSwitch)
     }
 
     private func handleAgentUpdated(agentId: UUID?) async {
+        // Any agent's network settings can change the running VM's
+        // composed network, not only the active agent's.
+        Task { await SandboxManager.shared.networkPolicyChanged() }
         guard agentId == nil || agentId == AgentManager.shared.activeAgent.id else { return }
-        await registerTools(for: AgentManager.shared.activeAgent.id)
+        await registerTools(for: AgentManager.shared.activeAgent.id, trigger: .agentUpdated)
     }
 
     private func handlePluginInstalled(pluginId: String?) async {
@@ -660,10 +1165,50 @@ public final class SandboxToolRegistrar {
             // future hiccups can retry from scratch.
             startupFailureCount = 0
             nextStartupRetryAfter = nil
+            endLeaseConflict()
             await SandboxPluginManager.shared.verifyAndRepairAllPlugins()
         }
         registerAllPluginTools()
-        await registerTools(for: AgentManager.shared.activeAgent.id)
+        await registerTools(for: AgentManager.shared.activeAgent.id, trigger: .statusChange)
+        if newStatus.isRunning { await provisionStandingWorker() }
+    }
+
+    // MARK: - Code worker
+
+    /// The code worker has no chat to switch to, so nothing would provision
+    /// it: whenever the container runs it is provisioned as a standing
+    /// member. A failure is left for `prepareCodeWorker` to report on use.
+    private func provisionStandingWorker() async {
+        let id = BuiltInWorker.code.agentId
+        guard !isTerminating, AgentManager.shared.effectiveAutonomousExec(for: id)?.enabled == true else { return }
+        do {
+            try await ensureProvisioned(agentId: id)
+        } catch {
+            debugLog("[Sandbox] Standing code worker not provisioned: \(error.localizedDescription)")
+        }
+    }
+
+    /// Before a code worker step: the sandbox tools are registered and the
+    /// worker's own user (on Seatbelt, its host directory) exists, starting
+    /// the container on first use.
+    public func prepareCodeWorker() async throws {
+        let id = BuiltInWorker.code.agentId
+        guard AgentManager.shared.effectiveAutonomousExec(for: id) != nil else {
+            throw OnDemandProvisionError(
+                reason: UnavailabilityReason(
+                    kind: .containerUnavailable, message: "The sandbox is not available on this Mac."))
+        }
+        let toolsReady =
+            SandboxManager.State.shared.status == .running
+            && ToolRegistry.shared.builtInSandboxToolNamesSnapshot.contains("sandbox_exec")
+        if toolsReady {
+            try await ensureProvisioned(agentId: id)
+        } else {
+            try await provisionOnDemand(for: id)
+            // The chat's agent keeps the fallback identity for calls no
+            // request binds.
+            await registerTools(for: AgentManager.shared.activeAgent.id, trigger: .statusChange)
+        }
     }
 
     /// Reset the failure tracking so the next `registerTools` call is
@@ -702,7 +1247,7 @@ public final class SandboxToolRegistrar {
         let task = Task<Void, Error> { @MainActor [weak self] in
             guard let self else { throw CancellationError() }
             try Task.checkCancellation()
-            await self.registerTools(for: agentId, forceStart: true)
+            await self.registerTools(for: agentId, forceStart: true, trigger: .onDemand)
             try Task.checkCancellation()
 
             let hasRealTools =
@@ -727,6 +1272,12 @@ public final class SandboxToolRegistrar {
                 try await task.value
             } onCancel: {
                 task.cancel()
+                // Chat Stop during first-time setup also stops the
+                // download; nothing else can be using a sandbox that was
+                // never set up. Warm starts are short and may be shared.
+                if !SandboxConfigurationStore.load().setupComplete {
+                    Task { await SandboxManager.shared.cancelStart() }
+                }
             }
             if onDemandProvisionTask?.token == token {
                 onDemandProvisionTask = nil
@@ -738,4 +1289,10 @@ public final class SandboxToolRegistrar {
             throw error
         }
     }
+}
+
+/// The id `registerTools` works on: a chat agent's, a built-in worker's, or
+/// the Default agent's when the id names neither.
+private struct RegistrationTarget {
+    let id: UUID
 }

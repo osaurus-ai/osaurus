@@ -20,6 +20,8 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
 
     /// Where this session originated. Defaults to `.chat` for legacy rows.
     public var source: SessionSource
+    /// The trigger kind when `source == .automation`, otherwise nil.
+    public var automationKind: EventSourceKind?
     /// Plugin identifier when `source == .plugin`, otherwise nil.
     public var sourcePluginId: String?
     /// Stable external key (e.g. Telegram chat id, HTTP `X-Session-Id`) used
@@ -54,6 +56,22 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
     /// The project this session belongs to. nil = not in any project.
     /// Orthogonal to `agentId`: a project can group chats across agents.
     public var projectId: UUID?
+    /// Workspace (team) identity when this chat is with — or was served for —
+    /// a shared agent. nil for ordinary local chats. See
+    /// `WorkspaceSessionContext` for the client/host split.
+    public var workspace: WorkspaceSessionContext?
+    /// Workflow calls a Work Mode task was waiting on when it was saved.
+    /// Their runs resume on relaunch; a reopened chat picks them up again.
+    public var parkedWorkflowRuns: [ParkedWorkflowCall]
+    /// The Orchestrator's session state (goal, decisions, facts, open items,
+    /// in-flight runs). Nil for chats that never wrote one.
+    public var sessionState: SessionState?
+    /// Sync device id of the Mac that runs this chat's agent when it isn't
+    /// this one; `agentId` then names that Mac's agent. Nil = this device.
+    public var hostDevice: String?
+    /// Sync device id of the Mac that served this `.workspace` chat, from the
+    /// conversation's `servedBy` tag. Never encoded: only that Mac writes it.
+    public var servedBy: String?
 
     public init(
         id: UUID = UUID(),
@@ -64,6 +82,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         turns: [ChatTurnData] = [],
         agentId: UUID? = nil,
         source: SessionSource = .chat,
+        automationKind: EventSourceKind? = nil,
         sourcePluginId: String? = nil,
         externalSessionKey: String? = nil,
         dispatchTaskId: UUID? = nil,
@@ -73,7 +92,11 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         folderBookmark: Data? = nil,
         folderPath: String? = nil,
         conversationSummary: ConversationSummary? = nil,
-        projectId: UUID? = nil
+        projectId: UUID? = nil,
+        workspace: WorkspaceSessionContext? = nil,
+        parkedWorkflowRuns: [ParkedWorkflowCall] = [],
+        sessionState: SessionState? = nil,
+        hostDevice: String? = nil
     ) {
         self.id = id
         self.title = title
@@ -83,6 +106,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         self.turns = turns
         self.agentId = agentId
         self.source = source
+        self.automationKind = source == .automation ? automationKind : nil
         self.sourcePluginId = sourcePluginId
         self.externalSessionKey = externalSessionKey
         self.dispatchTaskId = dispatchTaskId
@@ -93,6 +117,10 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         self.folderPath = folderPath
         self.conversationSummary = conversationSummary
         self.projectId = projectId
+        self.workspace = workspace
+        self.parkedWorkflowRuns = parkedWorkflowRuns
+        self.sessionState = sessionState
+        self.hostDevice = hostDevice
     }
 
     // Custom decoder for backward compatibility with old sessions
@@ -108,6 +136,9 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
             try container.decodeIfPresent(UUID.self, forKey: .agentId)
             ?? container.decodeIfPresent(UUID.self, forKey: .personaId)
         source = try container.decodeIfPresent(SessionSource.self, forKey: .source) ?? .chat
+        automationKind =
+            source == .automation
+            ? (try? container.decodeIfPresent(EventSourceKind.self, forKey: .automationKind)) : nil
         sourcePluginId = try container.decodeIfPresent(String.self, forKey: .sourcePluginId)
         externalSessionKey = try container.decodeIfPresent(String.self, forKey: .externalSessionKey)
         dispatchTaskId = try container.decodeIfPresent(UUID.self, forKey: .dispatchTaskId)
@@ -119,6 +150,11 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         conversationSummary = try container.decodeIfPresent(
             ConversationSummary.self, forKey: .conversationSummary)
         projectId = try container.decodeIfPresent(UUID.self, forKey: .projectId)
+        workspace = try container.decodeIfPresent(WorkspaceSessionContext.self, forKey: .workspace)
+        parkedWorkflowRuns =
+            try container.decodeIfPresent([ParkedWorkflowCall].self, forKey: .parkedWorkflowRuns) ?? []
+        sessionState = try? container.decodeIfPresent(SessionState.self, forKey: .sessionState)
+        hostDevice = try container.decodeIfPresent(String.self, forKey: .hostDevice)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -131,6 +167,7 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         try container.encode(turns, forKey: .turns)
         try container.encodeIfPresent(agentId, forKey: .agentId)
         try container.encode(source, forKey: .source)
+        try container.encodeIfPresent(automationKind, forKey: .automationKind)
         try container.encodeIfPresent(sourcePluginId, forKey: .sourcePluginId)
         try container.encodeIfPresent(externalSessionKey, forKey: .externalSessionKey)
         try container.encodeIfPresent(dispatchTaskId, forKey: .dispatchTaskId)
@@ -141,26 +178,82 @@ public struct ChatSessionData: Codable, Identifiable, Sendable {
         try container.encodeIfPresent(folderPath, forKey: .folderPath)
         try container.encodeIfPresent(conversationSummary, forKey: .conversationSummary)
         try container.encodeIfPresent(projectId, forKey: .projectId)
+        try container.encodeIfPresent(workspace, forKey: .workspace)
+        if !parkedWorkflowRuns.isEmpty { try container.encode(parkedWorkflowRuns, forKey: .parkedWorkflowRuns) }
+        try container.encodeIfPresent(sessionState, forKey: .sessionState)
+        try container.encodeIfPresent(hostDevice, forKey: .hostDevice)
     }
 
     private enum CodingKeys: String, CodingKey {
         case id, title, createdAt, updatedAt, selectedModel, turns, agentId
         case personaId  // legacy key for migration
-        case source, sourcePluginId, externalSessionKey, dispatchTaskId
+        case source, automationKind, sourcePluginId, externalSessionKey, dispatchTaskId
         case archived
         case pinned
         case capabilities
         case folderBookmark, folderPath
         case conversationSummary
         case projectId
+        case workspace
+        case parkedWorkflowRuns
+        case sessionState
+        case hostDevice
     }
 
-    /// Generate a title from the first user message
-    public static func generateTitle(from turns: [ChatTurnData]) -> String {
+    /// Lowercased team-agent address when this is a chat with (or served for)
+    /// a shared agent; nil for local chats.
+    public var remoteAgentAddress: String? { workspace?.agentAddress }
+
+    /// See `SessionSource.runtimeSource(automationKind:)`.
+    public var runtimeSource: SessionSource { source.runtimeSource(automationKind: automationKind) }
+
+    /// Field-wise equality for list rows. Must cover every stored property;
+    /// `turns` compares by count because list rows carry none.
+    func sameListRow(as other: ChatSessionData) -> Bool {
+        id == other.id && title == other.title && createdAt == other.createdAt
+            && updatedAt == other.updatedAt && selectedModel == other.selectedModel
+            && turns.count == other.turns.count && agentId == other.agentId
+            && source == other.source && automationKind == other.automationKind
+            && sourcePluginId == other.sourcePluginId && externalSessionKey == other.externalSessionKey
+            && dispatchTaskId == other.dispatchTaskId && archived == other.archived
+            && pinned == other.pinned && capabilities == other.capabilities
+            && folderBookmark == other.folderBookmark && folderPath == other.folderPath
+            && conversationSummary == other.conversationSummary && projectId == other.projectId
+            && workspace == other.workspace && parkedWorkflowRuns == other.parkedWorkflowRuns
+            && sessionState == other.sessionState && hostDevice == other.hostDevice
+            && servedBy == other.servedBy
+    }
+
+    static func sameListRows(_ lhs: [ChatSessionData], _ rhs: [ChatSessionData]) -> Bool {
+        lhs.count == rhs.count && zip(lhs, rhs).allSatisfy { $0.sameListRow(as: $1) }
+    }
+}
+
+extension ChatSessionData {
+    /// Sessions the teammate had with a shared agent (client side). Host-side
+    /// rows served for a teammate are excluded — those belong to the local
+    /// shared agent's history, tagged with the caller.
+    public var isWorkspaceAgentChat: Bool {
+        guard let workspace else { return false }
+        return !workspace.isServedForTeammate
+    }
+
+    /// The Mac that served this chat when it isn't `me`.
+    func servedElsewhere(me: String?) -> String? {
+        guard let servedBy, !servedBy.isEmpty, servedBy != me else { return nil }
+        return servedBy
+    }
+
+    /// Generate a title from the first user message. Dispatch envelopes
+    /// (channel wrapper, delegation contract, …) are stripped first so a
+    /// machine header can never become the chat title; `source` (the
+    /// runtime source) gates the marker-less watcher framing.
+    public static func generateTitle(from turns: [ChatTurnData], source: SessionSource = .chat) -> String {
         guard let firstUserTurn = turns.first(where: { $0.role == .user }) else {
             return "New Chat"
         }
-        let content = firstUserTurn.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        let content = firstUserTurn.displayContent(sessionSource: source)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         if content.isEmpty {
             return "New Chat"
         }

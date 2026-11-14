@@ -111,7 +111,16 @@ public struct NativeMacDriver: MacDriver {
         case .failure(let error):
             return .failure(.appNotFound(error.message))
         case .success(let info):
-            return .success(CUAppInfo(pid: info.pid, bundleId: info.bundleId, name: info.name))
+            return .success(
+                CUAppInfo(pid: info.pid, bundleId: info.bundleId, name: info.name, ready: info.ready)
+            )
+        }
+    }
+
+    public func isRunning(pid: Int32) async -> Bool? {
+        await MainActor.run {
+            guard let app = NSRunningApplication(processIdentifier: pid) else { return false }
+            return !app.isTerminated
         }
     }
 

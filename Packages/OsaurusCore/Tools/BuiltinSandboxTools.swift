@@ -177,6 +177,8 @@ private struct SandboxInitPendingTool: OsaurusTool, @unchecked Sendable {
                 retryable: false
             )
         }
+        let progressTask = ChatExecutionContext.currentToolCallId.map(Self.publishStartupProgress)
+        defer { progressTask?.cancel() }
         do {
             try await SandboxToolRegistrar.shared.provisionOnDemand(for: requestAgentId)
             try Task.checkCancellation()
@@ -220,6 +222,27 @@ private struct SandboxInitPendingTool: OsaurusTool, @unchecked Sendable {
                 tool: name,
                 retryable: true
             )
+        }
+    }
+}
+
+extension SandboxInitPendingTool {
+    /// Mirrors the sandbox's startup progress onto this call's chat row
+    /// until cancelled, then clears it.
+    static func publishStartupProgress(toolCallId: String) -> Task<Void, Never> {
+        Task { @MainActor in
+            defer { MCPToolProgressRegistry.shared.clear(toolCallId: toolCallId) }
+            while !Task.isCancelled {
+                let state = SandboxManager.State.shared
+                let text =
+                    state.currentActivity.flatMap { $0.isEmpty ? nil : $0 }
+                    ?? state.journey?.inlineSummary(byteActivity: SandboxManager.formatByteActivity)
+                    ?? state.provisioningPhase
+                if let text, !text.isEmpty {
+                    MCPToolProgressRegistry.shared.update(toolCallId: toolCallId, text: text)
+                }
+                try? await Task.sleep(for: .milliseconds(500))
+            }
         }
     }
 }
@@ -322,6 +345,51 @@ internal func hostPathRedirectHint(path: String) -> String? {
 /// the "I tried to read my Desktop with sandbox_read_file" slip that
 /// `hostPathRedirectHint` misses because the path is a valid sandbox
 /// directory rather than a rejected host path.
+/// Refusal envelope for a raw sandbox read of a binary document package
+/// (PDF, Word, Excel, PowerPoint, …). The sandbox route has no document
+/// extraction — that lives on the host `file_read` route, which is
+/// unreachable while the sandbox is on — so the raw bytes would only
+/// produce an undecodable blob. Returns `nil` for anything else.
+internal func sandboxBinaryDocumentRefusal(path: String, tool: String) -> String? {
+    let ext = URL(fileURLWithPath: path).pathExtension.lowercased()
+    guard !ext.isEmpty, WorkspaceFileFormatPolicy.prefersDocumentExtraction(ext) else {
+        return nil
+    }
+    let label = ext == "pdf" ? "PDF" : ".\(ext) document"
+    let hostServed = WorkspaceShareRoute.servesRead(extension: ext)
+    let pivot: String
+    if hostServed {
+        // The format IS supported — the file just isn't where the host can
+        // reach it (outside `/workspace`, or missing).
+        pivot =
+            "Documents under `/workspace/...` (your sandbox home or `/workspace/shared`) are read "
+            + "directly — text is extracted from PDF/Word/PowerPoint and XLSX is previewed. "
+            + "This path is outside the share or does not exist: copy it under your sandbox home "
+            + "(`cp` via the shell tool) and read it from there. "
+    } else {
+        pivot = "No built-in reader exists for .\(ext); "
+    }
+    return ToolEnvelope.failure(
+        kind: .invalidArgs,
+        message:
+            "`\(path)` is a \(label). " + pivot
+            + "If this document belongs to a knowledge collection, "
+            + "read its text with `read_knowledge` using the collection-relative path from "
+            + "`search_knowledge` / `list_knowledge`. Otherwise extract the text inside the "
+            + "sandbox with the shell tool (e.g. `pdftotext`, or Python with `pypdf` / "
+            + "`python-docx` / `openpyxl`) and read the output file.",
+        field: "path",
+        expected:
+            "a text file, a document under `/workspace/...`, or a document read via `read_knowledge` / shell extraction",
+        tool: tool,
+        retryable: false,
+        metadata: [
+            "extension": ext,
+            "readable_formats": WorkspaceFileFormatPolicy.readableFormatsSummary,
+        ]
+    )
+}
+
 internal func sandboxDirectoryReadHint(stderr: String) -> String? {
     guard stderr.lowercased().contains("is a directory") else { return nil }
     var hint =
@@ -462,6 +530,19 @@ internal func sandboxBridgeRead(
         return try await sandboxBridgeList(bridge, path: path, maxDepth: maxDepth > 0 ? maxDepth : 3)
     }
     return normalizedFileEnvelope(raw, tool: "file_read", payloadKey: "content", emptyText: "(empty file)")
+}
+
+/// Whole-file sandbox read for `file_write`'s `source_path` on the
+/// `/workspace` route: the same `SandboxReadFileTool` `file_read` uses for
+/// text under `/workspace` (VM path sanitizer, agent-user permissions), in
+/// its `max_chars: 0` whole-file mode (plain `cat`) so nothing is truncated.
+/// Returns the reader's raw envelope; the caller re-attributes failures.
+internal func sandboxBridgeReadWholeFile(
+    _ bridge: SandboxReadBridge,
+    path: String
+) async throws -> String {
+    try await SandboxReadFileTool(agentName: bridge.agentName, home: bridge.home)
+        .execute(argumentsJSON: encodeBridgeArgs(["path": path, "max_chars": 0]))
 }
 
 /// List a sandbox directory for a combined-mode `file_read("/workspace/...")`
@@ -616,7 +697,10 @@ internal func sandboxBridgeWrite(
     let raw = try await SandboxWriteFileTool(agentName: bridge.agentName, home: bridge.home)
         .execute(argumentsJSON: encodeBridgeArgs(args))
     guard !ToolEnvelope.isError(raw) else { return relabelToolEnvelope(raw, tool: tool) }
-    return ToolEnvelope.success(tool: tool, result: ToolEnvelope.successPayload(raw))
+    // Warnings (relaxed-match notes, dry-run PREVIEW ONLY) are part of the
+    // edit contract; keep them when re-labelling.
+    let warnings = ToolEnvelope.warnings(raw)
+    return ToolEnvelope.success(tool: tool, result: ToolEnvelope.successPayload(raw), warnings: warnings.isEmpty ? nil : warnings)
 }
 
 /// Route the public `shell_run` contract to the VM executor.
@@ -1017,18 +1101,23 @@ private func agentNodeWorkdir(home: String) -> String {
     "\(home)/.osaurus/node_workspace"
 }
 
-/// The agent's raw secret env (key → value), for post-exec output
-/// scrubbing. Same source `agentShellEnvironment` injects, minus the
-/// non-secret additions (PATH / VIRTUAL_ENV).
+/// The agent's secret values (key → value), for post-exec output
+/// scrubbing. Same source `agentShellEnvironment` injects, minus variables
+/// and the non-secret additions (PATH / VIRTUAL_ENV).
 private func agentSecretValues(agentId: String) -> [String: String] {
-    guard let uuid = UUID(uuidString: agentId) else { return [:] }
-    return AgentSecretsKeychain.getFilteredSecrets(agentId: uuid)
+    let step = SandboxStepScope.secrets
+    guard let fallback = UUID(uuidString: agentId) else { return step }
+    let agent = CredentialResolver.credentialAgent(fallback: fallback)
+    return CredentialResolver.scrubValues(from: CredentialResolver.sandboxEnvironment(agentId: agent), agentId: agent)
+        .merging(step) { agentValue, _ in agentValue }
 }
 
 private func agentShellEnvironment(agentId: String, home: String, cwd: String? = nil) -> [String: String] {
-    var env: [String: String] = [:]
-    if let uuid = UUID(uuidString: agentId) {
-        env = AgentSecretsKeychain.getFilteredSecrets(agentId: uuid)
+    var env = SandboxStepScope.environment
+    if let fallback = UUID(uuidString: agentId) {
+        env.merge(CredentialResolver.sandboxEnvironment(agentId: CredentialResolver.credentialAgent(fallback: fallback))) {
+            step, _ in step
+        }
     }
     let venvPath = agentVenvPath(home: home)
     let nodeWorkdir = agentNodeWorkdir(home: home)
@@ -1088,6 +1177,7 @@ protocol SandboxToolCommandRunning: Sendable {
 
     func execAsRoot(
         command: String,
+        target: SandboxExecTarget,
         timeout: TimeInterval?,
         streamToLogs: Bool,
         logSource: String?,
@@ -1138,6 +1228,7 @@ private struct LiveSandboxToolCommandRunner: SandboxToolCommandRunning {
 
     func execAsRoot(
         command: String,
+        target: SandboxExecTarget,
         timeout: TimeInterval? = 60,
         streamToLogs: Bool = false,
         logSource: String? = nil,
@@ -1146,6 +1237,7 @@ private struct LiveSandboxToolCommandRunner: SandboxToolCommandRunning {
     ) async throws -> ContainerExecResult {
         try await SandboxManager.shared.execAsRoot(
             command: command,
+            target: target,
             timeout: timeout,
             streamToLogs: streamToLogs,
             logSource: logSource,
@@ -1222,6 +1314,7 @@ actor SandboxToolCommandRunnerRegistry {
 
     func execAsRoot(
         command: String,
+        target: SandboxExecTarget,
         timeout: TimeInterval? = 60,
         streamToLogs: Bool = false,
         logSource: String? = nil,
@@ -1230,6 +1323,7 @@ actor SandboxToolCommandRunnerRegistry {
     ) async throws -> ContainerExecResult {
         try await runner.execAsRoot(
             command: command,
+            target: target,
             timeout: timeout,
             streamToLogs: streamToLogs,
             logSource: logSource,
@@ -1564,8 +1658,12 @@ private enum InstallFailureClassifier {
 
 private struct SandboxReadFileTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_read_file"
+    var outputSchema: JSONValue? { SandboxToolOutputSchemas.readFile }
     let description =
         "Read a file's contents from the sandbox. **Use this instead of `cat`/`head`/`tail` in `sandbox_exec`.** "
+        + "Text is returned raw; PDF, Word, and PowerPoint documents are extracted to text, XLSX returns a cell "
+        + "preview, and images are shown to vision models (OCR text otherwise) — call it on the document itself, "
+        + "never `pdftotext`/`unzip` first. "
         + "Supports line ranges (`start_line` + `line_count`), log-style tails (`tail_lines`), and a per-call "
         + "character cap (`max_chars`). Pass either a path under the agent home (e.g. `notes.txt`) or an "
         + "absolute path inside the sandbox (e.g. `/workspace/shared/data.csv`). Surfaces stderr on failure."
@@ -1620,6 +1718,36 @@ private struct SandboxReadFileTool: OsaurusTool, @unchecked Sendable {
 
         let resolvedReq = requirePath(path, home: home, tool: name)
         guard case .value(let resolved) = resolvedReq else { return resolvedReq.failureEnvelope ?? "" }
+
+        // Documents and images under the VirtioFS share are served by the
+        // host extractors (PDF/Word/PowerPoint text, XLSX preview, image
+        // attach/OCR) — the same coverage as a trusted-folder `file_read`.
+        // Translate the sandbox `start_line`+`line_count` range to the host
+        // `start_line`/`end_line` convention first.
+        var hostArgs = args
+        hostArgs.removeValue(forKey: "line_count")
+        if let start = coerceInt(args["start_line"]), start > 0,
+            let count = coerceInt(args["line_count"]), count > 0
+        {
+            hostArgs["end_line"] = start + count - 1
+        }
+        if let served = try await FileReadTool.readFromWorkspaceShare(
+            path: resolved,
+            home: home,
+            args: hostArgs
+        ) {
+            return relabelToolEnvelope(served, tool: name)
+        }
+
+        // The sandbox read is a raw `head`/`sed`/`tail` over the bytes; a
+        // PDF / Office package outside the share (or in a format with no
+        // adapter) comes back as compressed streams that fail the UTF-8
+        // decode and collapse to an empty or garbage read. The model then
+        // saw an opaque failure and abandoned the document (osaurus#2680).
+        // Refuse up front and name the working paths instead.
+        if let refusal = sandboxBinaryDocumentRefusal(path: resolved, tool: name) {
+            return refusal
+        }
 
         let startLine = max(coerceInt(args["start_line"]) ?? 0, 0)
         let lineCount = max(coerceInt(args["line_count"]) ?? 0, 0)
@@ -1711,6 +1839,7 @@ private struct SandboxReadFileTool: OsaurusTool, @unchecked Sendable {
 
 private struct SandboxSearchFilesTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_search_files"
+    var outputSchema: JSONValue? { SandboxToolOutputSchemas.searchFiles }
     let description =
         "Search file contents OR find files by name. **Use this instead of `grep`/`rg`/`find`/`ls` "
         + "in `sandbox_exec`.** Pass `target=\"content\"` (default) for a regex search inside file "
@@ -1924,21 +2053,36 @@ private func shellEscapeSingleQuoted(_ s: String) -> String {
 // this tool via `sandboxBridgeWrite`.
 internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_write_file"
+    var outputSchema: JSONValue? { SandboxToolOutputSchemas.writeFile }
     let description =
         "Write a file, or edit it in place — always pass `path` (that exact key) as the FIRST argument. "
         + "Provide `content` to write/replace the whole file; use `mode: \"append\"` for additive changes. "
         + "For a large file, write a bounded first "
         + "chunk and use `mode: \"append\"` for later chunks; "
-        + "provide `old_string` (+`new_string`) to replace one exact match. **Use this instead of "
+        + "provide `old_string` (+`new_string`) to replace one match, or `edits` (array of {old_string, new_string}) "
+        + "to apply several replacements atomically in one call. **Use this instead of "
         + "`echo`/`cat` heredoc / `sed` / `awk` in `sandbox_exec`.** Creates parent directories as "
-        + "needed. For an edit, `old_string` must uniquely match one location — include surrounding "
-        + "context lines if needed; it fails if `old_string` is missing or matches multiple locations. "
-        + "Binary document/package extensions are rejected; this tool writes UTF-8 source only. "
+        + "needed. For an edit, `old_string` must match one location — include surrounding "
+        + "context lines if needed; it fails if `old_string` is missing or matches multiple locations "
+        + "(pass `replace_all: true` to change every occurrence). Small drift is tolerated when the match stays "
+        + "unique (indentation, tabs vs spaces, blank-line count, curly vs straight quotes) and the result "
+        + "reports `match_strategy`. `dry_run: true` previews the diff without writing. "
+        + "Text of any extension is written as UTF-8; `.xlsx` is generated from CSV/TSV or JSON rows and "
+        + "`.docx`/`.pdf` from Markdown or HTML, `.pptx` from Markdown (one slide per heading) — `content` only; "
+        + "to change part of an existing .docx/.xlsx/.pptx/.pdf, pass `operations` instead of `content` (edited in place, "
+        + "keeping formatting, styles and layout; e.g. .xlsx {\"op\": \"set_cells\", \"sheet\": \"Sheet1\", \"cells\": {\"B2\": 42}}; "
+        + "`sandbox_read_file` previews the cells). Replacing an existing formatted .xlsx with `content` is refused. "
         + "For runnable code, verify the result before claiming it works; a truncated diff is only a shortened review preview, not a partial mutation."
     let agentName: String
     let home: String
 
     var mutatesSandboxWorkspace: Bool { true }
+    /// `content: ""` truncates the file and `new_string: ""` deletes the match.
+    var preservedEmptyStringArguments: Set<String> { ["content", "new_string"] }
+
+    func declaredMutationTargets(argumentsJSON: String) -> [String]? {
+        FileChangeCapture.declaredPaths(argumentsJSON, keys: ["path"])
+    }
 
     var parameters: JSONValue? {
         .object([
@@ -1953,11 +2097,8 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
                 ]),
                 "content": .object([
                     "type": .string("string"),
-                    "maxLength": .number(
-                        Double(WorkspaceToolContract.maxWriteContentCharacters)
-                    ),
                     "description": .string(
-                        "Whole-file contents (maximum \(WorkspaceToolContract.maxWriteContentCharacters) characters per call; use append for more). Pass `\"\"` for an empty file. Omit when editing via `old_string`. Binary / NUL bytes are not safe — they ride a `printf` shell pipeline."
+                        "Whole-file contents (any length). Pass `\"\"` for an empty file. Omit when editing via `old_string`. Binary / NUL bytes are not safe — they ride a `printf` shell pipeline."
                     ),
                 ]),
                 "mode": .object([
@@ -1979,6 +2120,36 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
                         "Replacement text for the `old_string` edit. Use `\"\"` to delete the match."
                     ),
                 ]),
+                "edits": .object([
+                    "type": .string("array"),
+                    "description": .string(
+                        "Batch of {old_string, new_string} edits applied in order, atomically (all or none; max \(FileEditTool.maxBatchEdits)). Present ⇒ in-place edit; omit `old_string`/`new_string`."
+                    ),
+                    "items": .object([
+                        "type": .string("object"),
+                        "properties": .object([
+                            "old_string": .object(["type": .string("string")]),
+                            "new_string": .object(["type": .string("string")]),
+                        ]),
+                        "required": .array([.string("old_string"), .string("new_string")]),
+                    ]),
+                ]),
+                "operations": .object([
+                    "type": .string("array"),
+                    "description": .string(
+                        "Documents only (.docx/.xlsx/.pptx/.pdf): in-place edit operations, the same as `file_edit` `operations` "
+                            + "(e.g. .xlsx set_cells, insert_rows, delete_rows, add_sheet). Omit `content`."
+                    ),
+                    "items": .object(["type": .string("object")]),
+                ]),
+                "replace_all": .object([
+                    "type": .string("boolean"),
+                    "description": .string("Edit only: replace every occurrence instead of requiring a unique match (default false)."),
+                ]),
+                "dry_run": .object([
+                    "type": .string("boolean"),
+                    "description": .string("Edit only: preview the diff without writing (default false)."),
+                ]),
             ]),
             "required": .array([.string("path")]),
         ])
@@ -1986,7 +2157,16 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
 
     func execute(argumentsJSON: String) async throws -> String {
         let argsReq = requireArgumentsDictionary(argumentsJSON, tool: name)
-        guard case .value(let args) = argsReq else { return argsReq.failureEnvelope ?? "" }
+        guard case .value(let rawArgs) = argsReq else { return argsReq.failureEnvelope ?? "" }
+        // Same filler tolerance as host `file_edit`: an empty `edits` array
+        // next to `content` (whole-file write) or `old_string` is a
+        // constrained-decoder artifact, not a batch request.
+        var args = FileEditTool.droppingEditFormFillers(rawArgs)
+        if args["content"] != nil, let edits = args["edits"],
+            edits is NSNull || (edits as? [Any])?.isEmpty == true
+        {
+            args.removeValue(forKey: "edits")
+        }
 
         let pathReq = requireString(
             args,
@@ -1998,18 +2178,63 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
 
         let resolvedReq = requirePath(path, home: home, tool: name)
         guard case .value(let resolved) = resolvedReq else { return resolvedReq.failureEnvelope ?? "" }
+        let ext = URL(fileURLWithPath: resolved).pathExtension.lowercased()
+
+        // Generated documents (.xlsx/.docx/.pdf/.pptx) are rendered host-side into
+        // the VirtioFS share — the shell pipeline below only carries text.
+        // An in-place edit of a document is refused with the
+        // read-then-regenerate pivot, like host `file_edit`.
+        let isEdit = args["old_string"] != nil || args["edits"] != nil
+        if WorkspaceShareRoute.servesWrite(extension: ext) {
+            // Same in-place editor as host `file_edit` (`old_string` maps to run-aware text replacement on
+            // .docx/.pptx), run on the share copy so formatting and layout survive.
+            if args["operations"] != nil || isEdit, DocumentEditService.isEditable(ext) {
+                return try await FileEditTool.editDocumentInWorkspaceShare(
+                    path: resolved,
+                    home: home,
+                    args: args,
+                    ext: ext,
+                    dryRun: (args["dry_run"] as? Bool) ?? false,
+                    replaceAll: (args["replace_all"] as? Bool) ?? false,
+                    tool: name
+                )
+            }
+            if isEdit,
+                let rejection = WorkspaceWriteSafety.documentEditRejection(
+                    path: path,
+                    fileExtension: ext,
+                    toolName: name,
+                    regenerateHint: "call `\(name)` with `content` holding the complete new document."
+                )
+            {
+                return rejection
+            }
+            if let content = args["content"] as? String {
+                let mode = (args["mode"] as? String) ?? "overwrite"
+                if let served = try await FileWriteTool.writeDocumentToWorkspaceShare(
+                    path: resolved,
+                    home: home,
+                    content: content,
+                    mode: mode,
+                    dryRun: false,
+                    tool: name
+                ) {
+                    return served
+                }
+            }
+        }
         if let rejected = WorkspaceWriteSafety.structuredTextWriteRejection(
             path: path,
-            fileExtension: URL(fileURLWithPath: resolved).pathExtension.lowercased(),
+            fileExtension: ext,
             toolName: name
         ) {
             return rejected
         }
 
-        // The presence of `old_string` decides edit vs whole-file write —
-        // the model picks the behavior from an argument it already holds,
-        // not a separate tool name. (Decision-elimination test.)
-        if args["old_string"] != nil {
+        // The presence of `old_string` / `edits` decides edit vs whole-file
+        // write — the model picks the behavior from an argument it already
+        // holds, not a separate tool name. (Decision-elimination test.)
+        if isEdit {
             return try await editInPlace(args: args, resolved: resolved)
         }
 
@@ -2019,15 +2244,46 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
                 message:
-                    "Provide `content` to write the whole file, or `old_string` (+`new_string`) to "
-                    + "edit one exact match in place.",
+                    "Provide `content` to write the whole file, or `old_string` (+`new_string`) / `edits` to "
+                    + "edit matching text in place.",
                 field: "content",
-                expected: "`content` (whole-file write) or `old_string` + `new_string` (in-place edit)",
+                expected: "`content` (whole-file write) or `old_string` + `new_string` / `edits` (in-place edit)",
                 tool: name
             )
         }
 
         return try await writeWhole(args: args, resolved: resolved)
+    }
+
+    /// Largest quoted `printf` payload (UTF-8 bytes after single-quote
+    /// escaping) sent in one shell command. The whole command is one `sh -c`
+    /// argv string, and the Linux kernel refuses a single argv string above
+    /// 128 KiB (`MAX_ARG_STRLEN`) with "Argument list too long" — so a
+    /// larger `content` is written as a sequence of appends. This bounds one
+    /// shell command, not the content.
+    static let shellWritePartBytes = 96 * 1024
+
+    /// `content` split into consecutive parts whose escaped form each fit in
+    /// one `printf` command; splits fall on character boundaries so UTF-8
+    /// sequences are never cut. Empty content is one empty part.
+    static func shellWriteParts(_ content: String) -> [String] {
+        guard !content.isEmpty else { return [""] }
+        var parts: [String] = []
+        var current = ""
+        var currentBytes = 0
+        for character in content {
+            // `'` becomes `'\''` under `shellEscapeSingleQuoted`.
+            let bytes = character == "'" ? 4 : character.utf8.count
+            if currentBytes + bytes > shellWritePartBytes, !current.isEmpty {
+                parts.append(current)
+                current = ""
+                currentBytes = 0
+            }
+            current.append(character)
+            currentBytes += bytes
+        }
+        if !current.isEmpty { parts.append(current) }
+        return parts
     }
 
     /// Whole-file write branch. Empty content is legitimate (truncate-to-zero).
@@ -2079,19 +2335,26 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
         // Append must not depend on the best-effort diff pre-read. A transient
         // read failure used to turn `before` into an empty string and then
         // overwrite the existing file with only the new chunk.
-        let escaped = shellEscapeSingleQuoted(content)
-        let redirect = mode == "append" ? ">>" : ">"
-        let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
-            agentName,
-            command: "printf '%s' '\(escaped)' \(redirect) '\(resolved)'"
-        )
-        guard result.succeeded else {
-            return sandboxExecutionFailure(
-                tool: name,
-                message:
-                    "Failed to write `\(resolved)`: "
-                    + result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+        // The content rides the command line, which the VM kernel caps per
+        // argv string; a large write is issued as consecutive appends so the
+        // size of `content` never decides whether the write succeeds.
+        let parts = Self.shellWriteParts(content)
+        for (index, part) in parts.enumerated() {
+            let escaped = shellEscapeSingleQuoted(part)
+            let redirect = (index == 0 && mode != "append") ? ">" : ">>"
+            let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
+                agentName,
+                command: "printf '%s' '\(escaped)' \(redirect) '\(resolved)'"
             )
+            guard result.succeeded else {
+                let position = parts.count > 1 ? " (part \(index + 1) of \(parts.count))" : ""
+                return sandboxExecutionFailure(
+                    tool: name,
+                    message:
+                        "Failed to write `\(resolved)`\(position): "
+                        + result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+            }
         }
         return sandboxSuccess(
             tool: name,
@@ -2107,115 +2370,148 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
         )
     }
 
-    /// In-place edit branch: replace one exact `old_string` match with
-    /// `new_string`. `old_string` is already known present; `new_string`
-    /// is required here (its absence is the merge's only new validation).
+    /// In-place edit branch: the file is read back through the sandbox,
+    /// the edits are applied host-side with the same matcher as `file_edit`
+    /// (`FileEditTool.applyEdits`: tolerance cascade, atomic `edits`
+    /// batches, `replace_all`, `dry_run`), and the whole result is written
+    /// back in one shot. Nothing touches the file until every edit has
+    /// resolved, so a failing edit leaves it untouched.
     private func editInPlace(args: [String: Any], resolved: String) async throws -> String {
-        let oldReq = requireString(
-            args,
-            "old_string",
-            expected: "non-empty exact text that uniquely matches one location in the file",
-            tool: name
-        )
-        guard case .value(let oldString) = oldReq else { return oldReq.failureEnvelope ?? "" }
-
-        guard args["new_string"] != nil else {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs,
-                message:
-                    "`old_string` given without `new_string` — an in-place edit needs both. Use "
-                    + "`\"\"` for `new_string` to delete the match.",
-                field: "new_string",
-                expected: "replacement text (use `\"\"` to delete the match)",
-                tool: name
-            )
+        let requestedEdits: [(old: String, new: String)]
+        switch FileEditTool().parseRequestedEdits(args, tool: name) {
+        case .success(let edits): requestedEdits = edits
+        case .failureEnvelope(let envelope): return envelope
         }
-        // Allow empty new_string (used to delete the matched text).
-        let newReq = requireString(
-            args,
-            "new_string",
-            expected: "replacement text (use `\"\"` to delete the match)",
-            tool: name,
-            allowEmpty: true
-        )
-        guard case .value(let newString) = newReq else { return newReq.failureEnvelope ?? "" }
+        let isBatch = args["edits"] != nil
+        let replaceAll = coerceBool(args["replace_all"]) ?? false
+        let dryRun = coerceBool(args["dry_run"]) ?? false
 
-        // Capture pre-edit content for the diff card (best-effort).
-        let before = await readForDiff(resolved: resolved)
-
-        let tmpDir = "\(home)/.tmp"
-        _ = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
-            agentName,
-            command: "mkdir -p '\(tmpDir)'"
-        )
-
-        let suffix = String(UUID().uuidString.prefix(8))
-        let oldFile = "\(tmpDir)/.edit_old_\(suffix)"
-        let newFile = "\(tmpDir)/.edit_new_\(suffix)"
-
-        let escapedOld = shellEscapeSingleQuoted(oldString)
-        let escapedNew = shellEscapeSingleQuoted(newString)
-        _ = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
-            agentName,
-            command: "printf '%s' '\(escapedOld)' > '\(oldFile)'"
-        )
-        _ = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
-            agentName,
-            command: "printf '%s' '\(escapedNew)' > '\(newFile)'"
-        )
-
-        let script = """
-            import sys
-            target = sys.argv[1]
-            old_file = sys.argv[2]
-            new_file = sys.argv[3]
-            with open(target, 'r') as f:
-                content = f.read()
-            with open(old_file, 'r') as f:
-                old = f.read()
-            with open(new_file, 'r') as f:
-                new = f.read()
-            count = content.count(old)
-            if count == 0:
-                print('ERROR: old_string not found in file', file=sys.stderr)
-                sys.exit(1)
-            if count > 1:
-                print(f'ERROR: old_string matches {count} locations — include more context to make it unique', file=sys.stderr)
-                sys.exit(1)
-            content = content.replace(old, new, 1)
-            with open(target, 'w') as f:
-                f.write(content)
-            old_lines = old.count('\\n') + (0 if old.endswith('\\n') else 1)
-            new_lines = new.count('\\n') + (0 if new.endswith('\\n') else 1)
-            print(f'replaced {old_lines} line(s) with {new_lines} line(s)')
-            """
-
-        let escapedScript = shellEscapeSingleQuoted(script)
-        let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
-            agentName,
-            command:
-                "python3 -c '\(escapedScript)' '\(resolved)' '\(oldFile)' '\(newFile)'; EC=$?; rm -f '\(oldFile)' '\(newFile)'; exit $EC"
-        )
-
-        guard result.succeeded else {
+        guard let current = await readForDiff(resolved: resolved) else {
             return sandboxExecutionFailure(
                 tool: name,
-                message: result.stderr.trimmingCharacters(in: .whitespacesAndNewlines),
+                message: "Could not read `\(resolved)` from the sandbox to apply the edit; nothing was changed."
+            )
+        }
+        guard current.existed else {
+            return ToolEnvelope.failure(
+                kind: .notFound,
+                message: "`\(resolved)` does not exist, so there is nothing to edit. Use `content` to create it.",
+                field: "path",
+                expected: "an existing file (pass `content` to create a new one)",
+                tool: name,
                 retryable: false
             )
         }
 
-        // Read the applied result so the diff reflects what's actually on disk.
-        let after = await readForDiff(resolved: resolved)?.content
+        let applied: FileEditTool.AppliedEdits
+        switch FileEditTool.applyEdits(
+            requestedEdits, to: current.content, replaceAll: replaceAll, isBatch: isBatch,
+            relativePath: resolved, tool: name
+        ) {
+        case .success(let result): applied = result
+        case .failureEnvelope(let envelope): return envelope
+        }
+
+        var extra: [String: Any] = [
+            "replacements": applied.perEditReplacements.reduce(0, +),
+            "match_strategy": applied.overallStrategy.rawValue,
+            "matched_lines": applied.matchedLineLabels,
+            "summary": Self.editSummary(before: current.content, after: applied.content, edits: requestedEdits.count),
+        ]
+        if isBatch {
+            extra["edits_applied"] = applied.perEditReplacements
+            extra["edit_strategies"] = applied.perEditStrategies.map(\.rawValue)
+        }
+        var warnings = applied.warnings
+
+        if dryRun {
+            warnings.append(
+                "PREVIEW ONLY - nothing was written. The file is unchanged. "
+                    + "Repeat the same call WITHOUT dry_run to apply the edit.")
+            return sandboxSuccess(
+                tool: name,
+                result: writeResult(resolved: resolved, before: current, after: applied.content, extra: extra, dryRun: true),
+                warnings: warnings
+            )
+        }
+
+        if let failure = try await writeEditedContent(applied.content, to: resolved) {
+            return failure
+        }
         return sandboxSuccess(
             tool: name,
-            result: writeResult(
-                resolved: resolved,
-                before: before,
-                after: after,
-                extra: ["summary": result.stdout.trimmingCharacters(in: .whitespacesAndNewlines)]
-            )
+            result: writeResult(resolved: resolved, before: current, after: applied.content, extra: extra),
+            warnings: warnings.isEmpty ? nil : warnings
         )
+    }
+
+    /// Largest single `printf` argument we hand the sandbox shell. Linux
+    /// caps one argv string at 128 KiB (MAX_ARG_STRLEN); staying well under
+    /// it keeps edits to big files working.
+    private static let writeChunkBytes = 96 * 1024
+
+    /// Write the fully-edited text back: chunks into a sibling temp file,
+    /// then one `cat` into the target (keeps the target's inode, mode and
+    /// owner — a plain `mv` would reset an executable script's `+x`). A
+    /// failed chunk never reaches the target; the temp file is removed on
+    /// every path. Returns a failure envelope, or nil on success.
+    private func writeEditedContent(_ content: String, to resolved: String) async throws -> String? {
+        let tmp = "\(resolved).osaurus-edit-\(UUID().uuidString.prefix(8)).tmp"
+        var chunks: [String] = []
+        var current = ""
+        var currentBytes = 0
+        for scalar in content.unicodeScalars {
+            let width = String(scalar).utf8.count
+            if currentBytes + width > Self.writeChunkBytes, !current.isEmpty {
+                chunks.append(current)
+                current = ""
+                currentBytes = 0
+            }
+            current.unicodeScalars.append(scalar)
+            currentBytes += width
+        }
+        chunks.append(current)
+
+        for (index, chunk) in chunks.enumerated() {
+            let redirect = index == 0 ? ">" : ">>"
+            let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
+                agentName,
+                command: "printf '%s' '\(shellEscapeSingleQuoted(chunk))' \(redirect) '\(tmp)'"
+            )
+            guard result.succeeded else {
+                _ = try? await SandboxToolCommandRunnerRegistry.shared.execAsAgent(agentName, command: "rm -f '\(tmp)'")
+                return sandboxExecutionFailure(
+                    tool: name,
+                    message:
+                        "Failed to stage the edited `\(resolved)` (the file is unchanged): "
+                        + result.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+            }
+        }
+        let splice = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
+            agentName,
+            command: "cat '\(tmp)' > '\(resolved)'; EC=$?; rm -f '\(tmp)'; exit $EC"
+        )
+        guard splice.succeeded else {
+            return sandboxExecutionFailure(
+                tool: name,
+                message:
+                    "Failed to write the edited `\(resolved)`: "
+                    + splice.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            )
+        }
+        return nil
+    }
+
+    /// One-line human summary in the shape the old in-place edit printed
+    /// (`replaced N line(s) with M line(s)`), computed from the line-count
+    /// delta so it is honest for batches and `replace_all` too.
+    private static func editSummary(before: String, after: String, edits: Int) -> String {
+        let beforeLines = before.split(separator: "\n", omittingEmptySubsequences: false).count
+        let afterLines = after.split(separator: "\n", omittingEmptySubsequences: false).count
+        let delta = afterLines - beforeLines
+        let change = delta == 0 ? "same line count" : (delta > 0 ? "+\(delta) line\(delta == 1 ? "" : "s")" : "\(delta) line\(delta == -1 ? "" : "s")")
+        return "applied \(edits) edit\(edits == 1 ? "" : "s") (\(change))"
     }
 
     /// Best-effort read of the current file for diffing. Returns nil on any exec
@@ -2228,7 +2524,7 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
                 agentName,
                 command: command
             ),
-            result.succeeded,
+            result.succeeded, !result.outputTruncated,
             let newline = result.stdout.firstIndex(of: "\n")
         else { return nil }
         let existed = String(result.stdout[..<newline]) == "1"
@@ -2243,7 +2539,8 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
         resolved: String,
         before: (existed: Bool, content: String)?,
         after: String?,
-        extra: [String: Any]
+        extra: [String: Any],
+        dryRun: Bool = false
     ) -> [String: Any] {
         var dict: [String: Any] = [
             "path": resolved,
@@ -2254,6 +2551,9 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
             ],
         ]
         dict.merge(extra) { _, new in new }
+        if let setId = ChatExecutionContext.currentChangeSetId {
+            dict["operation_id"] = setId.uuidString
+        }
         var diffTruncated = false
         if let before, let after {
             let diff = WorkspaceWriteSafety.unifiedDiffText(
@@ -2265,7 +2565,7 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
             dict["diff"] = diff.text
             dict["diff_truncated"] = diff.truncated
             diffTruncated = diff.truncated
-            dict["dry_run"] = false
+            dict["dry_run"] = dryRun
             dict["action"] = before.existed ? "update" : "create"
             dict["content_sha256"] = WorkspaceWriteSafety.contentSHA256(after)
             if before.existed {
@@ -2276,7 +2576,7 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
         WorkspaceWriteSafety.annotateMutationResult(
             &dict,
             path: resolved,
-            dryRun: false,
+            dryRun: dryRun,
             diffTruncated: diffTruncated
         )
         return dict
@@ -2291,7 +2591,31 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
 // picking between two near-identical tool names.
 
 internal struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
+    /// A background job's log stops growing here; the job keeps running and
+    /// its later output is drained and discarded, so a chatty server can't
+    /// fill the shared disk.
+    static let backgroundLogCapBytes = 64 << 20
+
+    /// The detached job's spawn command. The user's command is single-quoted
+    /// inside a nested `bash -c` with `pipefail`, so a real upstream failure
+    /// surfaces as the rightmost non-zero exit instead of being masked by the
+    /// log cap. The command sits on its own line inside the group so a
+    /// trailing `# comment` can't swallow the closing brace. `setsid` makes
+    /// the wrapper a process-group leader so `kill -- -<pid>` takes down the
+    /// whole job tree rather than orphaning the workload.
+    static func backgroundCommand(_ command: String, cwd: String, logFile: String) -> String {
+        let escaped = command.replacingOccurrences(of: "'", with: "'\\''")
+        let cap = backgroundLogCapBytes
+        let capFilter =
+            "{ head -c \(cap); if IFS= read -r -n 1 _; then "
+            + "printf \"\\n[osaurus: log capped at \(cap >> 20) MB; later output discarded]\\n\"; "
+            + "cat > /dev/null; fi; }"
+        return "cd '\(cwd)' && nohup setsid bash -c 'set -o pipefail; {\n\(escaped)\n} 2>&1 | \(capFilter)' "
+            + "> \(logFile) 2>&1 & echo $!"
+    }
+
     let name = "sandbox_exec"
+    var outputSchema: JSONValue? { SandboxToolOutputSchemas.exec }
     let agentId: String
     let agentName: String
     let home: String
@@ -2399,6 +2723,26 @@ internal struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
     }
 
     func execute(argumentsJSON: String) async throws -> String {
+        // The process-wide instance was built for whichever agent registered
+        // last. A request for another agent runs as that agent (Linux user,
+        // home, keys and output scrubbing all follow the request).
+        let context = await SandboxToolRequestContext.resolve(fallbackAgentId: agentId, fallbackAgentName: agentName)
+        if context.isRequestBound, context.agentId != agentId {
+            if let rejection = context.rejection(for: .autonomous, tool: name) { return rejection }
+            return try await SandboxExecTool(
+                agentId: context.agentId,
+                agentName: context.agentName,
+                home: context.home,
+                maxCommandsPerTurn: context.config?.maxCommandsPerTurn ?? maxCommandsPerTurn,
+                backgroundEnabled: context.config?.backgroundProcessEnabled == true
+            ).execute(argumentsJSON: argumentsJSON)
+        }
+        return try await SandboxLogScrubbing.$secrets.withValue(agentSecretValues(agentId: agentId)) {
+            try await run(argumentsJSON: argumentsJSON)
+        }
+    }
+
+    private func run(argumentsJSON: String) async throws -> String {
         guard
             SandboxExecLimiter.shared.checkAndIncrement(
                 agentName: agentName,
@@ -2460,21 +2804,8 @@ internal struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
             // Detached job: start it, return pid + log path right away. The
             // 10s timeout here is just for the spawn shim — the spawned
             // process itself can run as long as it likes.
-            //
-            // `set -o pipefail` is wrapped around the user's command via a
-            // nested `bash -c` so a real upstream pipeline failure
-            // surfaces as the rightmost non-zero exit instead of being
-            // masked by `head` / `tee` / `cat`. The user's command is
-            // single-quoted; we escape any internal `'` per shell rules.
             let logFile = "\(home)/bg-\(UUID().uuidString.prefix(8)).log"
-            let escaped = command.replacingOccurrences(of: "'", with: "'\\''")
-            // `setsid` makes the wrapper a session/process-group leader so a
-            // later `kill -- -<pid>` can take down the whole job tree —
-            // signalling only the wrapper pid leaves its children (the actual
-            // workload) running as orphans.
-            let fullCmd =
-                "cd '\(cwd)' && nohup setsid bash -c 'set -o pipefail; \(escaped)' "
-                + "> \(logFile) 2>&1 & echo $!"
+            let fullCmd = Self.backgroundCommand(command, cwd: cwd, logFile: logFile)
 
             let result = try await SandboxToolCommandRunnerRegistry.shared.exec(
                 user: "agent-\(agentName)",
@@ -2493,17 +2824,20 @@ internal struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
                     logFile: logFile,
                     command: command
                 )
+                if SandboxBackend.current == .virtualMachine {
+                    await SandboxManager.shared.backgroundJobStarted(agentName: agentName)
+                }
                 // The job's file mutations land after this tool call
-                // returns, so the foreground checkpoint can't see them.
-                // Record a pending pre-manifest now; the tracker
-                // reconciles when the job exits/is killed (or after
-                // relaunch for jobs that died with the previous run).
+                // returns, so the foreground capture can't see them.
+                // Open a write-ahead capture now; the journal finalizes
+                // it when the job exits/is killed (or after relaunch for
+                // jobs that died with the previous run).
                 if let sessionId = ChatExecutionContext.currentSessionId, !sessionId.isEmpty {
-                    await SandboxWorkspaceChangeTracker.shared.registerBackgroundJob(
+                    await FileChangeJournal.shared.beginBackgroundJob(
                         sessionId: sessionId,
                         agentName: agentName,
                         pid: pid,
-                        sourceTool: name
+                        toolName: name
                     )
                 }
                 // Tee the log file into the chat UI so background jobs
@@ -2678,10 +3012,10 @@ private func registerBackgroundLiveExec(
     let prefix = OsaurusPaths.inContainerAgentHome(agentName) + "/"
     guard inContainerLogPath.hasPrefix(prefix) else { return }
     let relative = String(inContainerLogPath.dropFirst(prefix.count))
-    let hostLogURL = OsaurusPaths.containerAgentDir(agentName)
-        .appendingPathComponent(relative)
+    let agentDir = OsaurusPaths.containerAgentDir(agentName)
+    let hostLogURL = agentDir.appendingPathComponent(relative)
 
-    let tailer = LogFileTailer(path: hostLogURL.path)
+    let tailer = LogFileTailer(path: hostLogURL.path, confinedTo: agentDir)
     tailer.start()
 
     let statusBox = StatusSubjectBox()
@@ -2701,8 +3035,8 @@ private func registerBackgroundLiveExec(
                 statusBox.send(killedByUser ? .killed(reason: "user") : .exited(0))
                 tailer.stop()
                 // Fold the finished job's workspace mutations into the
-                // owning chat's tracked change set.
-                await SandboxWorkspaceChangeTracker.shared.finalizeBackgroundJob(
+                // owning chat's file history.
+                await FileChangeJournal.shared.finalizeBackgroundJob(
                     agentName: agentName,
                     pid: pid
                 )
@@ -2718,11 +3052,11 @@ private func registerBackgroundLiveExec(
 
     let terminate: @Sendable (Int) async -> Void = { graceSeconds in
         await userTerminated.set(true)
-        await BackgroundExecLiveness.kill(pid: pid, signal: "TERM")
+        await BackgroundExecLiveness.kill(pid: pid, signal: "TERM", agentName: agentName)
         if graceSeconds > 0 {
             try? await Task.sleep(nanoseconds: UInt64(graceSeconds) * 1_000_000_000)
         }
-        await BackgroundExecLiveness.kill(pid: pid, signal: "KILL")
+        await BackgroundExecLiveness.kill(pid: pid, signal: "KILL", agentName: agentName)
     }
 
     await LiveExecRegistry.shared.register(
@@ -2804,9 +3138,12 @@ internal enum BackgroundExecLiveness {
     }
 
     /// Used to signal background jobs when the user presses [Terminate].
-    static func kill(pid: String, signal: String) async {
+    /// Runs in the job's own container: each agent has its own PID
+    /// namespace, so the pid means nothing anywhere else.
+    static func kill(pid: String, signal: String, agentName: String) async {
         _ = try? await SandboxToolCommandRunnerRegistry.shared.execAsRoot(
             command: killCommand(pid: pid, signal: signal),
+            target: .agent(agentName),
             timeout: 5
         )
     }
@@ -2821,6 +3158,7 @@ internal enum BackgroundExecLiveness {
 
 private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_process"
+    var outputSchema: JSONValue? { SandboxToolOutputSchemas.process }
     let description =
         "Manage background jobs started by `shell_run(background:true)`. `action=\"poll\"` "
         + "returns whether the pid is still alive plus a tail of the log; `\"wait\"` blocks "
@@ -2926,7 +3264,7 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
             let tail = await tailIfTracked(job: job, lines: tailLines)
             if !alive {
                 await SandboxBackgroundJobs.shared.unregister(agentName: agentName, pid: pid)
-                await SandboxWorkspaceChangeTracker.shared.finalizeBackgroundJob(
+                await FileChangeJournal.shared.finalizeBackgroundJob(
                     agentName: agentName,
                     pid: pid
                 )
@@ -2961,7 +3299,7 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
             let tail = await tailIfTracked(job: job, lines: tailLines)
             if exited {
                 await SandboxBackgroundJobs.shared.unregister(agentName: agentName, pid: pid)
-                await SandboxWorkspaceChangeTracker.shared.finalizeBackgroundJob(
+                await FileChangeJournal.shared.finalizeBackgroundJob(
                     agentName: agentName,
                     pid: pid
                 )
@@ -2988,7 +3326,7 @@ private struct SandboxProcessTool: OsaurusTool, @unchecked Sendable {
             let dead = killResult.stdout.contains("dead")
             if dead {
                 await SandboxBackgroundJobs.shared.unregister(agentName: agentName, pid: pid)
-                await SandboxWorkspaceChangeTracker.shared.finalizeBackgroundJob(
+                await FileChangeJournal.shared.finalizeBackgroundJob(
                     agentName: agentName,
                     pid: pid
                 )
@@ -3073,6 +3411,12 @@ actor SandboxBackgroundJobs {
     func clear(agentName: String) {
         jobs.removeValue(forKey: agentName)
     }
+
+    /// Tracked pids per agent. Entries can outlive their process until
+    /// something polls them, so callers must check liveness.
+    func allJobs() -> [String: [String]] {
+        jobs.mapValues { Array($0.keys) }
+    }
 }
 
 /// Per-agent serialization for install operations (`sandbox_npm_install`,
@@ -3083,14 +3427,16 @@ actor SandboxBackgroundJobs {
 /// behind the previous one for the same `agentName`; calls on different
 /// agents still run concurrently.
 ///
-/// `apk` is global to the container, so all sandbox_install calls share
-/// the synthetic key `__sandbox_apk__`.
+/// Each agent's container has its own apk database, so `sandbox_install`
+/// calls serialize per agent on a synthetic key (`apkSerializationKey`).
 actor SandboxInstallLock {
     static let shared = SandboxInstallLock()
 
-    /// Synthetic agent key for `sandbox_install` (apk). All apk calls
-    /// across every agent serialize through this same slot.
-    static let apkSerializationKey = "__sandbox_apk__"
+    /// Synthetic key for one agent's `sandbox_install` (apk) calls, kept
+    /// apart from its pip/npm queue.
+    static func apkSerializationKey(agentName: String) -> String {
+        "__sandbox_apk__\(agentName)"
+    }
 
     /// The tail of each agent's queue. New callers chain themselves
     /// after this Task and replace it as the new tail before running.
@@ -3137,8 +3483,48 @@ actor SandboxInstallLock {
 /// command body, exec context (root for apk, agent for pip/npm), recovery
 /// signatures, and serialization key — the consolidation is purely at the
 /// dispatch layer.
-private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
+/// Package installs for a sandbox identity that is not a chat agent: the
+/// workflow setup wizard installs a workflow's declared dependencies into
+/// the workflow's own environment through the same apk/pip/npm bodies,
+/// lock, normalizer, and recovery harness as `sandbox_install`.
+enum SandboxPackageInstaller {
+    /// The `sandbox_install` result envelope for one manager.
+    static func install(
+        manager: WorkflowDependency.Manager, packages: [String], agentId: String, agentName: String, home: String
+    ) async throws -> String {
+        let tool = SandboxInstallTool(agentId: agentId, agentName: agentName, home: home)
+        let request: SandboxPackageRequest
+        do {
+            request = try SandboxPackageRequest.normalize(packages)
+        } catch {
+            return ToolEnvelope.failure(
+                kind: .invalidArgs, message: error.localizedDescription, field: "packages", tool: tool.name,
+                retryable: false)
+        }
+        switch manager {
+        case .apk:
+            guard SandboxBackend.current == .virtualMachine else {
+                return ToolEnvelope.failure(
+                    kind: .invalidArgs,
+                    message: "`apk` is only available in the Linux VM sandbox (macOS 26+).",
+                    tool: tool.name, retryable: false)
+            }
+            return try await tool.installApk(request: request)
+        case .pip: return try await tool.installPip(request: request)
+        case .npm: return try await tool.installNpm(request: request)
+        }
+    }
+
+    /// The shell environment an identity's commands run with: its venv and
+    /// npm workspace on PATH, so installed CLIs resolve from any cwd.
+    static func shellEnvironment(agentId: String, home: String, cwd: String? = nil) -> [String: String] {
+        agentShellEnvironment(agentId: agentId, home: home, cwd: cwd)
+    }
+}
+
+struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
     let name = "sandbox_install"
+    var outputSchema: JSONValue? { SandboxToolOutputSchemas.install }
     /// `apk` only exists in the Linux VM backend — on Seatbelt the schema
     /// and description omit it entirely so the model is never offered a
     /// manager that can only fail.
@@ -3360,7 +3746,7 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
 
     // MARK: apk (system, root-wide)
 
-    private func installApk(request: SandboxPackageRequest) async throws -> String {
+    fileprivate func installApk(request: SandboxPackageRequest) async throws -> String {
         let packages = request.packages
         let pkgList = request.shellArguments
         // `apk update` first refreshes the package index — cheap when the
@@ -3372,18 +3758,19 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
 
         let toolName = self.name
         let id = agentId
-        // apk is global to the container — every agent's install hits
-        // the same package database and apk's own lockfile. Serialize
-        // through a single synthetic key so cross-agent calls don't
-        // race each other.
+        let target = SandboxExecTarget.agent(agentName)
+        // apk runs as root in this agent's own container, against its own
+        // package database; serialize this agent's installs so two calls
+        // don't race apk's lockfile.
         return try await SandboxInstallLock.shared.serialize(
-            agentName: SandboxInstallLock.apkSerializationKey
+            agentName: SandboxInstallLock.apkSerializationKey(agentName: agentName)
         ) {
             @Sendable func runAsRoot(_ cmd: String, timeout: TimeInterval) async throws
                 -> ContainerExecResult
             {
                 try await SandboxToolCommandRunnerRegistry.shared.execAsRoot(
                     command: cmd,
+                    target: target,
                     timeout: timeout,
                     streamToLogs: true,
                     logSource: "apk"
@@ -3416,11 +3803,12 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
 
     // MARK: pip (Python venv)
 
-    private func installPip(request: SandboxPackageRequest) async throws -> String {
+    fileprivate func installPip(request: SandboxPackageRequest) async throws -> String {
         let packages = request.packages
         let venvPath = agentVenvPath(home: home)
         let checkResult = try await SandboxToolCommandRunnerRegistry.shared.execAsRoot(
             command: "test -x /usr/bin/python3",
+            target: .agent(agentName),
             timeout: 10
         )
         guard checkResult.succeeded else {
@@ -3454,14 +3842,16 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
             @Sendable func runAsAgent(_ cmd: String, timeout: TimeInterval) async throws
                 -> ContainerExecResult
             {
-                try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
-                    agent,
-                    command: cmd,
-                    env: agentShellEnvironment(agentId: id, home: root),
-                    timeout: timeout,
-                    streamToLogs: true,
-                    logSource: "pip"
-                )
+                try await SandboxLogScrubbing.$secrets.withValue(agentSecretValues(agentId: id)) {
+                    try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
+                        agent,
+                        command: cmd,
+                        env: agentShellEnvironment(agentId: id, home: root),
+                        timeout: timeout,
+                        streamToLogs: true,
+                        logSource: "pip"
+                    )
+                }
             }
 
             return try await runInstallWithRecovery(
@@ -3499,10 +3889,11 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
 
     // MARK: npm (Node workspace)
 
-    private func installNpm(request: SandboxPackageRequest) async throws -> String {
+    fileprivate func installNpm(request: SandboxPackageRequest) async throws -> String {
         let packages = request.packages
         let checkResult = try await SandboxToolCommandRunnerRegistry.shared.execAsRoot(
             command: "test -x /usr/bin/node && test -x /usr/bin/npm",
+            target: .agent(agentName),
             timeout: 10
         )
         guard checkResult.succeeded else {
@@ -3551,15 +3942,17 @@ private struct SandboxInstallTool: OsaurusTool, @unchecked Sendable {
             @Sendable func runAsAgent(_ cmd: String, timeout: TimeInterval) async throws
                 -> ContainerExecResult
             {
-                try await SandboxToolCommandRunnerRegistry.shared.exec(
-                    user: "agent-\(agent)",
-                    command: cmd,
-                    env: agentShellEnvironment(agentId: id, home: root, cwd: nodeWorkdir),
-                    cwd: nil,
-                    timeout: timeout,
-                    streamToLogs: true,
-                    logSource: "npm"
-                )
+                try await SandboxLogScrubbing.$secrets.withValue(agentSecretValues(agentId: id)) {
+                    try await SandboxToolCommandRunnerRegistry.shared.exec(
+                        user: "agent-\(agent)",
+                        command: cmd,
+                        env: agentShellEnvironment(agentId: id, home: root, cwd: nodeWorkdir),
+                        cwd: nil,
+                        timeout: timeout,
+                        streamToLogs: true,
+                        logSource: "npm"
+                    )
+                }
             }
 
             return try await runInstallWithRecovery(

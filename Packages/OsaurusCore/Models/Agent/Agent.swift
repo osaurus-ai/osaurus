@@ -22,12 +22,22 @@ public struct AgentQuickAction: Codable, Identifiable, Sendable, Equatable {
         self.prompt = prompt
     }
 
-    /// Built-in chat quick actions. Localized at access time (Option A):
-    /// defaults only appear in the UI as a read-only fallback when an agent
-    /// has `chatQuickActions == nil`; they are never persisted unless the
-    /// user explicitly customizes them. A new UUID is generated on each
-    /// access, matching the previous `static let` semantics for consumers.
+    /// Built-in chat quick actions. Localized at access time: defaults only
+    /// appear in the UI as a read-only fallback when an agent has
+    /// `chatQuickActions == nil`; they are never persisted unless the user
+    /// explicitly customizes them.
+    ///
+    /// Built once and reused. This used to mint a fresh `UUID` per element on
+    /// every access, and the chat empty state feeds it straight into a
+    /// `ForEach` keyed on `id` — so every render gave every pill a new
+    /// identity, tearing down and rebuilding each button (fresh `@State`) and
+    /// re-measuring the whole wrapping layout. Stable ids make the diff a
+    /// no-op, which is also what the original `static let` gave consumers.
     public static var defaultChatQuickActions: [AgentQuickAction] {
+        QuickActionDefaults.shared.chat
+    }
+
+    fileprivate static func buildDefaultChatQuickActions() -> [AgentQuickAction] {
         [
             AgentQuickAction(icon: "lightbulb", text: L("Explain a concept"), prompt: L("Explain ")),
             AgentQuickAction(icon: "doc.text", text: L("Summarize text"), prompt: L("Summarize the following: ")),
@@ -43,8 +53,67 @@ public struct AgentQuickAction: Codable, Identifiable, Sendable, Equatable {
     /// Setup-oriented quick actions for the built-in Osaurus configuration
     /// agent (`Agent.defaultId`). These nudge the user toward the two flows
     /// unique to this agent — configuring Osaurus and asking how it works —
-    /// instead of the generic chat prompts.
+    /// instead of the generic chat prompts. Built once and reused, for the
+    /// same identity-stability reason as `defaultChatQuickActions`.
     public static var defaultConfigurationQuickActions: [AgentQuickAction] {
+        QuickActionDefaults.shared.configuration
+    }
+
+    /// The Architect's starting points: common workflows to build, and an
+    /// open-ended one. Each prompt is a brief the user finishes.
+    public static var architectQuickActions: [AgentQuickAction] {
+        QuickActionDefaults.shared.architect
+    }
+
+    /// Starting points for an Architect chat that edits a saved workflow.
+    /// Fixed ids keep the empty state's pills stable across renders.
+    public static func architectEditQuickActions(workflowName name: String) -> [AgentQuickAction] {
+        let ids = [
+            "A7C1E7D0-0000-4000-8000-000000000001", "A7C1E7D0-0000-4000-8000-000000000002",
+            "A7C1E7D0-0000-4000-8000-000000000003", "A7C1E7D0-0000-4000-8000-000000000004",
+        ].compactMap(UUID.init(uuidString:))
+        return [
+            AgentQuickAction(
+                id: ids[0], icon: "list.bullet.rectangle", text: L("Change what it asks for"),
+                prompt: L("In \(name), change the form so it asks for ")),
+            AgentQuickAction(
+                id: ids[1], icon: "doc.text", text: L("Change what it gives back"),
+                prompt: L("In \(name), change the result so it ")),
+            AgentQuickAction(
+                id: ids[2], icon: "cpu", text: L("Run it on another model"),
+                prompt: L("In \(name), run the steps on ")),
+            AgentQuickAction(
+                id: ids[3], icon: "wand.and.stars", text: L("Something else…"),
+                prompt: L("In \(name), ")),
+        ]
+    }
+
+    fileprivate static func buildArchitectQuickActions() -> [AgentQuickAction] {
+        [
+            AgentQuickAction(
+                icon: "text.bubble",
+                text: L("Turn a brief into social posts"),
+                prompt: L("Build a workflow that turns a short brief into social media posts for ")
+            ),
+            AgentQuickAction(
+                icon: "checklist",
+                text: L("Meeting notes to action items"),
+                prompt: L("Build a workflow that turns meeting notes into a summary and action items with owners.")
+            ),
+            AgentQuickAction(
+                icon: "envelope",
+                text: L("Draft replies to emails"),
+                prompt: L("Build a workflow that drafts a reply to an email I paste in, in my tone.")
+            ),
+            AgentQuickAction(
+                icon: "wand.and.stars",
+                text: L("Something else…"),
+                prompt: L("Build a workflow that ")
+            ),
+        ]
+    }
+
+    fileprivate static func buildDefaultConfigurationQuickActions() -> [AgentQuickAction] {
         [
             AgentQuickAction(
                 icon: "questionmark.circle",
@@ -81,6 +150,105 @@ public struct AgentQuickAction: Codable, Identifiable, Sendable, Equatable {
 
 }
 
+/// Short-lived cache for avatar-file existence probes.
+///
+/// The probe is a `stat` issued from SwiftUI body getters, once per row per
+/// render. Entries expire after `ttl` so a file appearing or vanishing behind
+/// the app's back is picked up without any explicit signal, and
+/// `invalidateAll()` clears them immediately when the agent list changes —
+/// the path by which avatars are actually added and removed.
+public final class AvatarExistenceCache: @unchecked Sendable {
+    public static let shared = AvatarExistenceCache()
+
+    private let lock = NSLock()
+    private var entries: [String: (exists: Bool, checkedAt: Date)] = [:]
+    private let ttl: TimeInterval = 10
+
+    private init() {}
+
+    func exists(atPath path: String) -> Bool {
+        let now = Date()
+        lock.lock()
+        if let entry = entries[path], now.timeIntervalSince(entry.checkedAt) < ttl {
+            lock.unlock()
+            return entry.exists
+        }
+        lock.unlock()
+
+        let result = FileManager.default.fileExists(atPath: path)
+        lock.lock()
+        entries[path] = (result, now)
+        lock.unlock()
+        return result
+    }
+
+    /// Drop every entry. Called when the agent list changes.
+    public func invalidateAll() {
+        lock.lock()
+        entries.removeAll()
+        lock.unlock()
+    }
+}
+
+/// Holds the built-in quick-action defaults so their element ids stay stable
+/// for the lifetime of the process.
+///
+/// Identity stability is the point: the chat empty state renders these through
+/// a `ForEach` keyed on `id`, so regenerating ids per access made SwiftUI
+/// rebuild and re-measure every suggestion pill on every render. The localized
+/// text is rebuilt only when the user changes system locale, which is the only
+/// thing that can change it.
+private final class QuickActionDefaults: @unchecked Sendable {
+    static let shared = QuickActionDefaults()
+
+    private let lock = NSLock()
+    private var cachedChat: [AgentQuickAction]?
+    private var cachedConfiguration: [AgentQuickAction]?
+    private var cachedArchitect: [AgentQuickAction]?
+
+    private init() {
+        NotificationCenter.default.addObserver(
+            forName: NSLocale.currentLocaleDidChangeNotification,
+            object: nil,
+            queue: nil
+        ) { [weak self] _ in
+            guard let self else { return }
+            self.lock.lock()
+            self.cachedChat = nil
+            self.cachedConfiguration = nil
+            self.cachedArchitect = nil
+            self.lock.unlock()
+        }
+    }
+
+    var chat: [AgentQuickAction] {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cachedChat { return cachedChat }
+        let built = AgentQuickAction.buildDefaultChatQuickActions()
+        cachedChat = built
+        return built
+    }
+
+    var configuration: [AgentQuickAction] {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cachedConfiguration { return cachedConfiguration }
+        let built = AgentQuickAction.buildDefaultConfigurationQuickActions()
+        cachedConfiguration = built
+        return built
+    }
+
+    var architect: [AgentQuickAction] {
+        lock.lock()
+        defer { lock.unlock() }
+        if let cachedArchitect { return cachedArchitect }
+        let built = AgentQuickAction.buildArchitectQuickActions()
+        cachedArchitect = built
+        return built
+    }
+}
+
 /// Controls whether tools are selected automatically via RAG or manually by the user
 public enum ToolSelectionMode: String, Codable, Sendable {
     case auto
@@ -93,18 +261,38 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public let id: UUID
     /// Display name of the agent
     public var name: String
-    /// Brief description of what this agent does
+    /// Brief, optional, user-authored description of what this agent does.
     public var description: String
+    /// Routing summary generated in the background from `systemPrompt` when
+    /// `description` is blank. Never shown as the user's own text; see
+    /// `AgentDescriptionBackfill`.
+    public var generatedDescription: String?
+    /// `AgentDescriptionPolicy.promptHash` of the system prompt that
+    /// `generatedDescription` was produced from, so a prompt edit invalidates it.
+    public var generatedDescriptionPromptHash: String?
+    /// What the orchestrator and every agent picker see: the user's text when
+    /// present, otherwise the background-generated summary, otherwise "".
+    public var routingDescription: String {
+        let manual = AgentDescriptionPolicy.normalized(description)
+        if !manual.isEmpty { return manual }
+        return AgentDescriptionPolicy.normalized(generatedDescription ?? "")
+    }
     /// System prompt prepended to all chat sessions with this agent
     public var systemPrompt: String
-    /// Optional custom theme ID to apply when this agent is active
-    public var themeId: UUID?
     /// Optional default model for this agent
     public var defaultModel: String?
+    /// Chats always run on `defaultModel`: the chat picker is a fixed chip
+    /// and a missing model fails the turn instead of falling back. Set by
+    /// templates whose main model slot is `strictness: always`, or by the
+    /// Lock Model switch. Read through `AgentManager.lockedModel(for:)`.
+    public var modelLocked: Bool?
     /// Optional temperature override
     public var temperature: Float?
     /// Optional max tokens override
     public var maxTokens: Int?
+
+    /// Optional advanced generation defaults for this custom agent.
+    public var generationSettings: AgentGenerationSettings?
     /// Per-agent chat quick actions. nil = use defaults, empty = hidden, non-empty = custom list
     public var chatQuickActions: [AgentQuickAction]?
     /// User-authored override for the chat empty-state greeting line.
@@ -127,22 +315,37 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public var agentIndex: UInt32?
     /// Derived cryptographic address for this agent (nil = no address yet)
     public var agentAddress: String?
+    /// Device scope the address was minted under (the minting device's
+    /// `DeviceKey` ID). Selects the device-scoped v2 derivation so agents on
+    /// different devices that share one master get disjoint addresses.
+    /// `nil` = legacy v1 (master-global) derivation; every agent created
+    /// before device scoping decodes as v1 and keeps its address.
+    public var agentDeviceScope: String?
     /// Controls the agent's ability to run arbitrary commands in the sandbox.
     /// `nil` is an unconfigured custom agent and resolves default-on when a
     /// sandbox backend is available; `enabled: false` is an explicit opt-out.
     /// The built-in Default agent is always hard-off at effective resolution.
     public var autonomousExec: AutonomousExecConfig?
-    /// Behavior of the Claude Code subprocess backend when this agent is on a
-    /// `claude-code/…` model. Nil = defaults (agent mode, read-only tools).
+    /// Claude Code options, consulted when `runtime` is a Claude Code harness.
+    /// Nil = defaults (agent mode, read-only tools).
     public var claudeCode: ClaudeCodeAgentConfig?
+    /// Which loop runs this agent's chats. Nil = Osaurus's built-in loop.
+    public var runtime: AgentRuntime?
+    /// What happens when a teammate, invite-link peer or another person's
+    /// agent driving this shared agent reaches an `.ask` tool. Nil = deny
+    /// (the caller cannot answer the card); Ask Me parks the run for the
+    /// owner (`OwnerApprovalService`).
+    public var sharedToolApproval: SharedToolApprovalPolicy?
     /// Per-agent plugin instruction overrides keyed by plugin ID
     public var pluginInstructions: [String: String]?
-    /// Whether this agent is advertised via Bonjour on the local network
-    public var bonjourEnabled: Bool
     /// Controls whether tools are selected automatically (RAG preflight) or manually by the user
     public var toolSelectionMode: ToolSelectionMode?
     /// Tool names explicitly selected by the user when toolSelectionMode is .manual
     public var manualToolNames: [String]?
+    /// Skills this agent may see and load, by name (matched like
+    /// `SkillManager.skills(named:)`: display name or slug). `nil` means
+    /// every skill, which is what agents created before the allow-list get.
+    public var skillNames: [String]?
     /// Whether this agent may use tools / preflight context. Default true.
     /// Positive polarity (matches `AgentSettings.*Enabled`); the legacy
     /// negative `disableTools` key is read on decode for back-compat.
@@ -166,29 +369,55 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     public var settings: AgentSettings
     /// User-defined position. `nil` falls to the end, sorted alphabetically.
     public var order: Int?
-    /// Security-scoped bookmark (created on this machine) for a host folder
-    /// the agent may read/write inside. Persisted so the grant survives
-    /// relaunch. When set, an authenticated remote agent run (Secure Channel,
-    /// agent-scoped) gets host file tools (`file_read`/`file_write`/`file_edit`)
-    /// confined to this folder — shell/git stay denied. `nil` means no host
-    /// folder is granted and remote runs fall back to sandbox-only tools.
-    /// The bookmark is machine-local (it lives on the agent's own host); a
-    /// paired caller never sees it.
-    public var hostWorkspaceBookmark: Data?
-    /// Human-readable path of `hostWorkspaceBookmark` for display in the agent
-    /// editor. Advisory only — `hostWorkspaceBookmark` is the source of truth
-    /// for access; this can go stale if the folder is moved/renamed.
-    public var hostWorkspacePath: String?
+    /// Security-scoped bookmark (created on this machine) for the agent's
+    /// working folder — the ONE host folder this agent works inside. Sticky:
+    /// the composer folder chip and the agent editor both write it, so it
+    /// survives relaunch and follows the agent into
+    /// - every fresh chat opened for this agent (a project's own folder
+    ///   still wins for chats started inside that project),
+    /// - every background dispatch that names no folder of its own
+    ///   (schedules/watchers without a folder, self-schedules, delegation,
+    ///   channels, `/agents/{id}/dispatch`), and
+    /// - authenticated remote agent runs (Secure Channel, agent-scoped),
+    ///   which get host file tools (`file_read`/`file_write`/`file_edit`)
+    ///   confined to this folder — shell/git stay denied.
+    /// `nil` means no working folder: chats start folder-less and remote runs
+    /// fall back to sandbox-only tools. The bookmark is machine-local (it
+    /// lives on the agent's own host); a paired caller never sees it.
+    /// Persisted JSON key is `workingFolderBookmark`; the pre-rename
+    /// `hostWorkspaceBookmark` key is still decoded (see `init(from:)`).
+    public var workingFolderBookmark: Data?
+    /// Human-readable path of `workingFolderBookmark` for display. Advisory
+    /// only — the bookmark is the source of truth for access; this can go
+    /// stale if the folder is moved/renamed. It is also the plain-path
+    /// fallback when the bookmark no longer resolves (the app is not
+    /// App-Sandboxed, so a readable path works without a scope).
+    public var workingFolderPath: String?
+    /// Name of the agent template this agent was created from (Use
+    /// Template, or an orchestrator apply based on a template). Display
+    /// provenance only; the template may have been renamed or deleted since.
+    /// Carried over by Duplicate.
+    public var sourceTemplateName: String?
+    /// Id of that template, so Save as Template on this agent saves a new
+    /// version of the same template instead of a fork.
+    public var sourceTemplateID: UUID?
+    /// Set on agents a Claude plugin installed (`agents/*.md` without a
+    /// schedule), so updating or uninstalling the plugin replaces or
+    /// removes them.
+    public var pluginId: String?
 
     public init(
         id: UUID = UUID(),
         name: String,
         description: String = "",
+        generatedDescription: String? = nil,
+        generatedDescriptionPromptHash: String? = nil,
         systemPrompt: String = "",
-        themeId: UUID? = nil,
         defaultModel: String? = nil,
+        modelLocked: Bool? = nil,
         temperature: Float? = nil,
         maxTokens: Int? = nil,
+        generationSettings: AgentGenerationSettings? = nil,
         chatQuickActions: [AgentQuickAction]? = nil,
         chatGreeting: String? = nil,
         chatSubtitle: String? = nil,
@@ -197,12 +426,15 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         updatedAt: Date = Date(),
         agentIndex: UInt32? = nil,
         agentAddress: String? = nil,
+        agentDeviceScope: String? = nil,
         autonomousExec: AutonomousExecConfig? = nil,
         claudeCode: ClaudeCodeAgentConfig? = nil,
+        runtime: AgentRuntime? = nil,
+        sharedToolApproval: SharedToolApprovalPolicy? = nil,
         pluginInstructions: [String: String]? = nil,
-        bonjourEnabled: Bool = false,
         toolSelectionMode: ToolSelectionMode? = nil,
         manualToolNames: [String]? = nil,
+        skillNames: [String]? = nil,
         toolsEnabled: Bool = true,
         memoryEnabled: Bool = true,
         avatar: String? = nil,
@@ -211,17 +443,23 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         ttsVoice: String? = nil,
         settings: AgentSettings = .defaultDisabled,
         order: Int? = nil,
-        hostWorkspaceBookmark: Data? = nil,
-        hostWorkspacePath: String? = nil
+        workingFolderBookmark: Data? = nil,
+        workingFolderPath: String? = nil,
+        sourceTemplateName: String? = nil,
+        sourceTemplateID: UUID? = nil,
+        pluginId: String? = nil
     ) {
         self.id = id
         self.name = name
         self.description = description
+        self.generatedDescription = generatedDescription
+        self.generatedDescriptionPromptHash = generatedDescriptionPromptHash
         self.systemPrompt = systemPrompt
-        self.themeId = themeId
         self.defaultModel = defaultModel
+        self.modelLocked = modelLocked
         self.temperature = temperature
         self.maxTokens = maxTokens
+        self.generationSettings = generationSettings
         self.chatQuickActions = chatQuickActions
         self.chatGreeting = chatGreeting
         self.chatSubtitle = chatSubtitle
@@ -230,12 +468,15 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.updatedAt = updatedAt
         self.agentIndex = agentIndex
         self.agentAddress = agentAddress
+        self.agentDeviceScope = agentDeviceScope
         self.autonomousExec = autonomousExec
         self.claudeCode = claudeCode
+        self.runtime = runtime
+        self.sharedToolApproval = sharedToolApproval
         self.pluginInstructions = pluginInstructions
-        self.bonjourEnabled = bonjourEnabled
         self.toolSelectionMode = toolSelectionMode
         self.manualToolNames = manualToolNames
+        self.skillNames = skillNames
         self.toolsEnabled = toolsEnabled
         self.memoryEnabled = memoryEnabled
         self.avatar = avatar
@@ -244,8 +485,23 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
         self.ttsVoice = ttsVoice
         self.settings = settings
         self.order = order
-        self.hostWorkspaceBookmark = hostWorkspaceBookmark
-        self.hostWorkspacePath = hostWorkspacePath
+        self.workingFolderBookmark = workingFolderBookmark
+        self.workingFolderPath = workingFolderPath
+        self.sourceTemplateName = sourceTemplateName
+        self.sourceTemplateID = sourceTemplateID
+        self.pluginId = pluginId
+    }
+
+    // MARK: - Cryptographic identity
+
+    /// Where this agent's child key sits under the master, or `nil` when the
+    /// agent has no derived identity yet. Every derivation / signing site
+    /// must use this (via `AgentKey.derive(masterKey:path:)`) so legacy v1
+    /// and device-scoped v2 agents both re-derive the key their persisted
+    /// `agentAddress` was minted from.
+    public var agentKeyPath: AgentKeyPath? {
+        guard let agentIndex else { return nil }
+        return AgentKeyPath(index: agentIndex, deviceScope: agentDeviceScope)
     }
 
     // MARK: - Custom avatar resolution
@@ -253,12 +509,25 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     /// Absolute URL of the custom avatar image, if one is set and the file
     /// exists on disk. Returns nil when no custom avatar is configured or
     /// the file has been removed out from under us.
+    ///
+    /// Read from SwiftUI body getters — once per chat tab, sidebar row and
+    /// picker entry, on every render — and the existence probe is a `stat`.
+    /// On a slow or networked models volume that per-row syscall was enough to
+    /// trip the hang watchdog, so the answer is cached. `AvatarExistenceCache`
+    /// holds it briefly and is cleared whenever the agent list changes, which
+    /// is when an avatar is added or removed, so a newly set avatar still
+    /// appears immediately.
+    ///
+    /// The filename component is appended with `isDirectory: false`. Without
+    /// it, Foundation probes the filesystem (`getattrlist`) on every call to
+    /// decide whether to add a trailing slash — an uncached, blocking syscall
+    /// that bypassed `AvatarExistenceCache` and hung the main thread.
     public var customAvatarURL: URL? {
         guard let name = customAvatarFilename, !name.isEmpty else { return nil }
         let url = OsaurusPaths.agents()
             .appendingPathComponent("avatars", isDirectory: true)
-            .appendingPathComponent(name)
-        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+            .appendingPathComponent(name, isDirectory: false)
+        return AvatarExistenceCache.shared.exists(atPath: url.path) ? url : nil
     }
 
     // MARK: - Localized Display Helpers
@@ -267,14 +536,18 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     /// Default agent) resolve their English `name` through the localization
     /// catalog so the sidebar, pickers, menus, etc. render in the user's
     /// language. User-created agents always render their stored name verbatim.
+    /// Read from SwiftUI body getters once per tab, row and picker entry, so
+    /// the catalog lookup is memoized. Built-in names are a fixed set, which
+    /// is what makes caching them safe.
     public var displayName: String {
-        isBuiltIn ? L(String.LocalizationValue(name)) : name
+        isBuiltIn ? LCached(name) : name
     }
 
-    /// Display description for UI rendering. Same rules as `displayName`.
+    /// Display purpose without turning a generated summary into authored text.
+    /// Built-in authored descriptions follow the same localization as `displayName`.
     public var displayDescription: String {
-        guard isBuiltIn, !description.isEmpty else { return description }
-        return L(String.LocalizationValue(description))
+        if AgentDescriptionPolicy.normalized(description).isEmpty { return routingDescription }
+        return isBuiltIn ? LCached(description) : description
     }
 
     // MARK: - Built-in Agents
@@ -297,34 +570,122 @@ public struct Agent: Codable, Identifiable, Sendable, Equatable {
     /// it from any context; writes only happen on the main actor
     /// (the store is `@MainActor`), so reads never race a write.
     nonisolated(unsafe) public static var defaultAgentNameOverride: String?
+    /// Custom mascot / avatar image for the Orchestrator, mirrored the
+    /// same way from `DefaultAgentConfiguration`.
+    nonisolated(unsafe) public static var defaultAgentAvatarOverride: String?
+    nonisolated(unsafe) public static var defaultAgentCustomAvatarFilename: String?
+
+    /// Stock mascots for the built-ins, used when no override is set.
+    public static let defaultAgentStockAvatar = "green"
+    public static let architectStockAvatar = "blue"
 
     /// The default agent — the built-in Orchestrator that configures
-    /// Osaurus and delegates work. Renders as "Osaurus" in chat and the
-    /// picker unless the user set a custom name in Settings →
-    /// Orchestrator; subtitle nudges users toward the configure flow
-    /// that's unique to this agent. `avatar: "green"` resolves the
-    /// bundled `osaurus-avatar-green` asset in
-    /// `NativeMessageCellView`/`SharedHeaderComponents`.
+    /// Osaurus and delegates work. Renders as "Osaurus" with the green
+    /// dino unless the user set a custom name or avatar in Settings →
+    /// Orchestrator.
     public static var `default`: Agent {
         Agent(
             id: defaultId,
             name: defaultAgentNameOverride ?? "Osaurus",
-            description: L("Configures Osaurus and delegates work to your agents"),
+            description: L("Configures Osaurus settings and manages agents. Use for app setup; general tasks can stay in the current chat."),
             systemPrompt: "",
-            themeId: nil,
             defaultModel: nil,
             temperature: nil,
             maxTokens: nil,
             isBuiltIn: true,
             createdAt: Date.distantPast,
             updatedAt: Date.distantPast,
-            avatar: "green"
+            avatar: defaultAgentAvatarOverride ?? defaultAgentStockAvatar,
+            customAvatarFilename: defaultAgentCustomAvatarFilename
+        )
+    }
+
+    /// Well-known UUID for the Architect, the built-in workflow designer.
+    public static let architectId = UUID(uuidString: "00000000-0000-0000-0000-000000000002")!
+
+    /// Custom identity for the Architect, mirrored from
+    /// `ArchitectConfiguration` by `ArchitectConfigurationStore`.
+    nonisolated(unsafe) public static var architectNameOverride: String?
+    nonisolated(unsafe) public static var architectAvatarOverride: String?
+    nonisolated(unsafe) public static var architectCustomAvatarFilename: String?
+
+    /// The Architect designs, tests, and saves workflow templates. Its
+    /// persona and tools are fixed (`ArchitectSystemPromptBuilder`,
+    /// `ToolRegistry.architectAllowedToolNames`); its name, avatar, extra
+    /// instructions, and model are settings (`ArchitectConfigurationStore`).
+    /// Tools on, memory off, no sandbox, no follow-up suggestions (its turns
+    /// end on its own questions and forms, which a suggested reply would
+    /// compete with).
+    public static var architect: Agent {
+        var settings = AgentSettings.defaultDisabled
+        settings.followUp.enabled = false
+        return Agent(
+            id: architectId,
+            name: architectNameOverride ?? "Architect",
+            description: L("Designs, tests, and saves workflow templates."),
+            systemPrompt: "",
+            chatQuickActions: AgentQuickAction.architectQuickActions,
+            isBuiltIn: true,
+            createdAt: Date.distantPast,
+            updatedAt: Date.distantPast,
+            autonomousExec: AutonomousExecConfig(enabled: false),
+            toolSelectionMode: .auto,
+            toolsEnabled: true,
+            memoryEnabled: false,
+            avatar: architectAvatarOverride ?? architectStockAvatar,
+            customAvatarFilename: architectCustomAvatarFilename,
+            settings: settings
         )
     }
 
     /// All built-in agents
     public static var builtInAgents: [Agent] {
-        [.default]
+        [.default, .architect]
+    }
+
+    /// Well-known UUID for the Configurator, the hidden built-in that
+    /// explains and changes Osaurus's own settings.
+    public static let configuratorId = UUID(uuidString: "00000000-0000-0000-0000-000000000003")!
+
+    /// The Configurator. Never in `builtInAgents`, `AgentStore`, a picker,
+    /// the sidebar, or an external surface: the Orchestrator reaches it only
+    /// through `configurator_handoff`. Its persona and tools are fixed
+    /// (`ConfiguratorSystemPromptBuilder`, `ToolRegistry.configuratorAllowedToolNames`);
+    /// extra instructions, model, and temperature are settings
+    /// (`ConfiguratorConfigurationStore`).
+    public static var configurator: Agent {
+        Agent(
+            id: configuratorId,
+            name: "Configurator",
+            description: "Explains and changes Osaurus settings.",
+            systemPrompt: "",
+            isBuiltIn: true,
+            createdAt: Date.distantPast,
+            updatedAt: Date.distantPast,
+            autonomousExec: AutonomousExecConfig(enabled: false),
+            toolSelectionMode: .auto,
+            toolsEnabled: true,
+            memoryEnabled: false,
+            avatar: defaultAgentStockAvatar,
+            settings: .defaultDisabled
+        )
+    }
+
+    /// Well-known UUID for the Onboarding agent, the hidden built-in that
+    /// owns the first-run walkthrough inside the Orchestrator's chat. It has
+    /// no settings and runs on the Orchestrator's model.
+    public static let onboardingId = UUID(uuidString: "00000000-0000-0000-0000-000000000008")!
+
+    /// Built-in agents that only run behind a handoff, a wrapper workflow,
+    /// or the first-run walkthrough. They have no chat of their own and
+    /// never appear in agent lists.
+    public static var hiddenBuiltInAgentIds: Set<UUID> {
+        Set([configuratorId, onboardingId]).union(BuiltInWorker.allCases.map(\.agentId))
+    }
+
+    public static func isHiddenBuiltIn(_ id: UUID?) -> Bool {
+        guard let id else { return false }
+        return hiddenBuiltInAgentIds.contains(id)
     }
 }
 
@@ -336,6 +697,11 @@ extension Agent {
     private enum LegacyCodingKeys: String, CodingKey {
         case disableTools
         case disableMemory
+        /// Pre-rename keys for `workingFolderBookmark` / `workingFolderPath`.
+        /// Read when the new keys are absent so an agent's folder grant
+        /// survives the rename; never written (re-save emits the new keys).
+        case hostWorkspaceBookmark
+        case hostWorkspacePath
     }
 
     /// Custom decoder that provides default values for fields added after the initial release,
@@ -344,12 +710,16 @@ extension Agent {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decode(UUID.self, forKey: .id)
         name = try c.decode(String.self, forKey: .name)
-        description = try c.decode(String.self, forKey: .description)
+        description = try c.decodeIfPresent(String.self, forKey: .description) ?? ""
+        generatedDescription = try c.decodeIfPresent(String.self, forKey: .generatedDescription)
+        generatedDescriptionPromptHash = try c.decodeIfPresent(
+            String.self, forKey: .generatedDescriptionPromptHash)
         systemPrompt = try c.decode(String.self, forKey: .systemPrompt)
-        themeId = try c.decodeIfPresent(UUID.self, forKey: .themeId)
         defaultModel = try c.decodeIfPresent(String.self, forKey: .defaultModel)
+        modelLocked = try c.decodeIfPresent(Bool.self, forKey: .modelLocked)
         temperature = try c.decodeIfPresent(Float.self, forKey: .temperature)
         maxTokens = try c.decodeIfPresent(Int.self, forKey: .maxTokens)
+        generationSettings = try c.decodeIfPresent(AgentGenerationSettings.self, forKey: .generationSettings)
         chatQuickActions = try c.decodeIfPresent([AgentQuickAction].self, forKey: .chatQuickActions)
         chatGreeting = try c.decodeIfPresent(String.self, forKey: .chatGreeting)
         chatSubtitle = try c.decodeIfPresent(String.self, forKey: .chatSubtitle)
@@ -358,15 +728,20 @@ extension Agent {
         updatedAt = try c.decode(Date.self, forKey: .updatedAt)
         agentIndex = try c.decodeIfPresent(UInt32.self, forKey: .agentIndex)
         agentAddress = try c.decodeIfPresent(String.self, forKey: .agentAddress)
+        // Added with device-scoped (v2) derivation; absent for every agent
+        // minted before it, which is exactly the legacy v1 signal.
+        agentDeviceScope = try c.decodeIfPresent(String.self, forKey: .agentDeviceScope)
         autonomousExec = try c.decodeIfPresent(AutonomousExecConfig.self, forKey: .autonomousExec)
         // Added after initial release; absent in older agent JSON.
         claudeCode = try c.decodeIfPresent(ClaudeCodeAgentConfig.self, forKey: .claudeCode)
+        runtime = try? c.decodeIfPresent(AgentRuntime.self, forKey: .runtime)
+        sharedToolApproval = try? c.decodeIfPresent(SharedToolApprovalPolicy.self, forKey: .sharedToolApproval)
         pluginInstructions = try c.decodeIfPresent([String: String].self, forKey: .pluginInstructions)
-        bonjourEnabled = try c.decodeIfPresent(Bool.self, forKey: .bonjourEnabled) ?? false
         toolSelectionMode = try c.decodeIfPresent(ToolSelectionMode.self, forKey: .toolSelectionMode)
         manualToolNames = try c.decodeIfPresent([String].self, forKey: .manualToolNames)
-        // Legacy `manualSkillNames` keys are intentionally ignored: skills are
-        // universally available to custom agents.
+        // Legacy `manualSkillNames` keys are intentionally ignored; the
+        // allow-list uses its own key so those stale lists stay dead.
+        skillNames = try c.decodeIfPresent([String].self, forKey: .skillNames)
         // Positive polarity (`toolsEnabled` / `memoryEnabled`, default true).
         // Older agent JSON only has the negative `disableTools` /
         // `disableMemory` keys; read those from a legacy container and
@@ -389,19 +764,29 @@ extension Agent {
         ttsVoice = try c.decodeIfPresent(String.self, forKey: .ttsVoice)
         settings = try c.decodeIfPresent(AgentSettings.self, forKey: .settings) ?? .defaultDisabled
         order = try c.decodeIfPresent(Int.self, forKey: .order)
-        // Added after initial release; absent in older agent JSON.
-        hostWorkspaceBookmark = try c.decodeIfPresent(Data.self, forKey: .hostWorkspaceBookmark)
-        hostWorkspacePath = try c.decodeIfPresent(String.self, forKey: .hostWorkspacePath)
+        // Added after initial release; absent in older agent JSON. Renamed
+        // from `hostWorkspace*` once the folder became the agent-wide sticky
+        // working folder; fall back to the legacy keys so the grant persists
+        // across the rename.
+        workingFolderBookmark =
+            try c.decodeIfPresent(Data.self, forKey: .workingFolderBookmark)
+            ?? legacy.decodeIfPresent(Data.self, forKey: .hostWorkspaceBookmark)
+        workingFolderPath =
+            try c.decodeIfPresent(String.self, forKey: .workingFolderPath)
+            ?? legacy.decodeIfPresent(String.self, forKey: .hostWorkspacePath)
+        sourceTemplateName = try c.decodeIfPresent(String.self, forKey: .sourceTemplateName)
+        sourceTemplateID = try c.decodeIfPresent(UUID.self, forKey: .sourceTemplateID)
+        pluginId = try c.decodeIfPresent(String.self, forKey: .pluginId)
     }
 }
 
 // MARK: - Claude Code Configuration
 
-/// Per-agent behavior for the Claude Code subprocess backend.
+/// Per-agent behavior for the Claude Code harness runtime.
 ///
-/// Only consulted when the agent is running a `claude-code/…` model; agents on
-/// any other model ignore it entirely.
-public struct ClaudeCodeAgentConfig: Codable, Sendable, Equatable {
+/// Only consulted when the agent's runtime is a Claude Code harness; agents on
+/// the built-in loop or another harness ignore it entirely.
+public struct ClaudeCodeAgentConfig: Codable, Sendable, Equatable, Hashable {
     /// Whether Claude Code runs its own agent loop and tools, or is reduced to
     /// a plain text generator.
     ///
@@ -425,25 +810,45 @@ public struct ClaudeCodeAgentConfig: Codable, Sendable, Equatable {
     /// *change* configuration (agents, providers, models, plugins). Defaults
     /// `false`, so the grant starts read-only like every other switch here.
     public var allowOsaurusConfigWrites: Bool
+    /// `--model` value: an alias (`sonnet`, `opus`, `fable`, `haiku`) or a
+    /// full model id. Nil = `sonnet`.
+    public var model: String?
+    /// `--effort` value (`ClaudeCodeEffort`). Nil = the CLI's per-model default.
+    public var effort: String?
 
     public init(
         mode: ClaudeCodeMode = .agent,
         allowWrites: Bool = false,
         allowShell: Bool = false,
         allowOsaurusTools: Bool = false,
-        allowOsaurusConfigWrites: Bool = false
+        allowOsaurusConfigWrites: Bool = false,
+        model: String? = nil,
+        effort: String? = nil
     ) {
         self.mode = mode
         self.allowWrites = allowWrites
         self.allowShell = allowShell
         self.allowOsaurusTools = allowOsaurusTools
         self.allowOsaurusConfigWrites = allowOsaurusConfigWrites
+        self.model = model
+        self.effort = effort
     }
 
     public static let `default` = ClaudeCodeAgentConfig()
 
+    /// The `--model` value to launch with.
+    public var resolvedModel: String {
+        let trimmed = model?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? ClaudeCodeModel.sonnet.rawValue : trimmed
+    }
+
+    /// The `--effort` value to launch with, or nil to leave the CLI default.
+    public var resolvedEffort: ClaudeCodeEffort? {
+        effort.flatMap { ClaudeCodeEffort(rawValue: $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) }
+    }
+
     private enum CodingKeys: String, CodingKey {
-        case mode, allowWrites, allowShell, allowOsaurusTools, allowOsaurusConfigWrites
+        case mode, allowWrites, allowShell, allowOsaurusTools, allowOsaurusConfigWrites, model, effort
     }
 
     /// Custom decode so a missing key — or a `mode` written by a future build
@@ -461,6 +866,8 @@ public struct ClaudeCodeAgentConfig: Codable, Sendable, Equatable {
         allowOsaurusTools = try c.decodeIfPresent(Bool.self, forKey: .allowOsaurusTools) ?? false
         allowOsaurusConfigWrites =
             try c.decodeIfPresent(Bool.self, forKey: .allowOsaurusConfigWrites) ?? false
+        model = try c.decodeIfPresent(String.self, forKey: .model)
+        effort = try? c.decodeIfPresent(String.self, forKey: .effort)
     }
 }
 
@@ -476,21 +883,10 @@ public struct AutonomousExecConfig: Codable, Sendable, Equatable {
     public var enabled: Bool
     public var maxCommandsPerTurn: Int
     public var pluginCreate: Bool
-    /// Combined sandbox + host-read mode: allow the host read tools to
-    /// read secret files (`.env`, keys, credentials) inside the read-only
-    /// workspace. Defaults `false` (refuse) — the user opts in explicitly,
-    /// trading the exfiltration protection for convenience.
-    public var allowHostSecretReads: Bool
-    /// Combined mode: allow `file_write` / `file_edit` to mutate the
-    /// selected host folder (writes are change-tracked and undoable via
-    /// the Changes sheet; exec stays sandbox-only). Defaults `false` —
-    /// the folder rides along read-only until the user opts in.
-    public var allowHostFolderWrites: Bool
     /// Whether the sandbox VM gets outbound network. Defaults `true`
     /// (egress on) so a first-time user's sandbox can fetch packages and
     /// live data without an extra opt-in. Set `false` to cut the network
-    /// leg of the agent-as-bridge exfiltration path — pairs naturally with
-    /// combined mode (read-only host + no egress). Honored at VM boot.
+    /// leg of the agent-as-bridge exfiltration path. Honored at VM boot.
     public var sandboxNetworkEnabled: Bool
     /// Optional egress domain allowlist. When non-empty (and
     /// `sandboxNetworkEnabled` is on), the sandbox boots on a host-only
@@ -506,13 +902,18 @@ public struct AutonomousExecConfig: Codable, Sendable, Equatable {
     /// lean — the model isn't shown background affordances it can't reliably
     /// manage. Opt in for dev-server / watcher iteration loops.
     public var backgroundProcessEnabled: Bool
+    /// Whether code in the agent's sandbox may call Osaurus back through
+    /// the host bridge to run model completions, start agent tasks, or
+    /// register plugins (`osaurus-host inference`, `agent dispatch`,
+    /// `plugin create`). Defaults `false`: a command, or a prompt it read,
+    /// could otherwise spend model time, start unattended tasks, or add
+    /// tools without the approval the in-app tool asks for.
+    public var hostServicesEnabled: Bool
 
     public static let `default` = AutonomousExecConfig(
         enabled: false,
         maxCommandsPerTurn: 10,
         pluginCreate: true,
-        allowHostSecretReads: false,
-        allowHostFolderWrites: false,
         sandboxNetworkEnabled: true,
         backgroundProcessEnabled: false
     )
@@ -521,46 +922,44 @@ public struct AutonomousExecConfig: Codable, Sendable, Equatable {
         enabled: Bool = false,
         maxCommandsPerTurn: Int = 10,
         pluginCreate: Bool = true,
-        allowHostSecretReads: Bool = false,
-        allowHostFolderWrites: Bool = false,
         sandboxNetworkEnabled: Bool = true,
         sandboxAllowedDomains: [String]? = nil,
-        backgroundProcessEnabled: Bool = false
+        backgroundProcessEnabled: Bool = false,
+        hostServicesEnabled: Bool = false
     ) {
         self.enabled = enabled
         self.maxCommandsPerTurn = maxCommandsPerTurn
         self.pluginCreate = pluginCreate
-        self.allowHostSecretReads = allowHostSecretReads
-        self.allowHostFolderWrites = allowHostFolderWrites
         self.sandboxNetworkEnabled = sandboxNetworkEnabled
         self.sandboxAllowedDomains = sandboxAllowedDomains
         self.backgroundProcessEnabled = backgroundProcessEnabled
+        self.hostServicesEnabled = hostServicesEnabled
     }
 
     private enum CodingKeys: String, CodingKey {
         case enabled, maxCommandsPerTurn, pluginCreate
-        case allowHostSecretReads, allowHostFolderWrites, sandboxNetworkEnabled
+        case sandboxNetworkEnabled
         case sandboxAllowedDomains
         case backgroundProcessEnabled
+        case hostServicesEnabled
     }
 
     // Custom decode so agents persisted before these fields existed keep
-    // loading: missing keys fall back to the safe defaults (secrets
-    // refused, egress on) rather than failing the whole agent decode.
-    // A legacy `commandTimeout` key may still be present in older agent
-    // JSON; keyed decoding ignores it harmlessly (the field was unused).
+    // loading: missing keys fall back to the safe defaults (egress on)
+    // rather than failing the whole agent decode. Legacy keys may still be
+    // present in older agent JSON (`commandTimeout`, and the combined-mode
+    // `allowHostSecretReads` / `allowHostFolderWrites` grants removed with
+    // combined mode); keyed decoding ignores them harmlessly.
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
         maxCommandsPerTurn = try c.decodeIfPresent(Int.self, forKey: .maxCommandsPerTurn) ?? 10
         pluginCreate = try c.decodeIfPresent(Bool.self, forKey: .pluginCreate) ?? true
-        allowHostSecretReads = try c.decodeIfPresent(Bool.self, forKey: .allowHostSecretReads) ?? false
-        allowHostFolderWrites =
-            try c.decodeIfPresent(Bool.self, forKey: .allowHostFolderWrites) ?? false
         sandboxNetworkEnabled = try c.decodeIfPresent(Bool.self, forKey: .sandboxNetworkEnabled) ?? true
         sandboxAllowedDomains = try c.decodeIfPresent([String].self, forKey: .sandboxAllowedDomains)
         backgroundProcessEnabled =
             try c.decodeIfPresent(Bool.self, forKey: .backgroundProcessEnabled) ?? false
+        hostServicesEnabled = try c.decodeIfPresent(Bool.self, forKey: .hostServicesEnabled) ?? false
     }
 }
 
@@ -572,6 +971,16 @@ public struct AutonomousExecConfig: Codable, Sendable, Equatable {
 /// consumed by `AgentConfigSnapshot` so every gate reads one struct
 /// instead of calling a handful of `effective*` accessors.
 public struct AgentCapabilities: Sendable, Equatable {
+    /// Canonical tool-facing projection of the shared capability value.
+    /// Memory injection and ambient screen capture do not grant tools; changing
+    /// either must not discard the session's frozen tool catalog.
+    var toolExposureIdentity: Self {
+        var identity = self
+        identity.memoryEnabled = false
+        identity.screenContextEnabled = false
+        return identity
+    }
+
     /// Tools / preflight context are available to the model.
     public var toolsEnabled: Bool
     /// Memory is injected into prompts and recorded (per-agent AND global).
@@ -621,13 +1030,10 @@ public struct AgentCapabilities: Sendable, Equatable {
     /// Transitional in-memory payload for callers constructing a capability
     /// snapshot from legacy settings. It is never an authorization key.
     var legacySpawnableAgentNames: [String]
-    /// Raw model ids this agent may hand a task to via `spawn_model` (no agent).
-    /// Empty → the `spawn_model` tool stays hidden. The Default agent ignores
-    /// this and uses the global `SubagentConfiguration.spawnableModelNames` pool.
-    public var spawnableModelNames: [String]
-    /// Optional "when/how to use" note per spawnable model id, surfaced in the
-    /// spawn guidance descriptor. Pure metadata — the gate is `spawnableModelNames`.
-    public var spawnableModelNotes: [String: String]
+    /// Shared workspace agents this agent may delegate to via `spawn_agent`.
+    /// Empty → no workspace targets. The Default agent ignores this and uses
+    /// the global `SubagentConfiguration.spawnableWorkspaceAgents` pool.
+    public var spawnableWorkspaceAgents: [WorkspaceAgentRef]
     /// Knowledge tools (`search_knowledge` / `read_knowledge` /
     /// `list_knowledge`) exposed to the model — per-agent opt-in.
     public var knowledgeEnabled: Bool
@@ -640,6 +1046,22 @@ public struct AgentCapabilities: Sendable, Equatable {
     /// the proposal architecture. Kept so existing agent JSON still decodes;
     /// nothing reads it, and writing follows the collection grant instead.
     public var knowledgeCuratorEnabled: Bool
+    /// Built-in Apple app tool families (Calendar, Reminders, Mail, …) this
+    /// agent may use. Custom agents opt in per app; the Default agent is
+    /// always empty (it configures these on other agents via `osaurus_config`
+    /// rather than calling them itself).
+    public var enabledAppleApps: Set<AppleApp>
+    /// `calculate` (exact arithmetic) exposed to the model — per-agent opt-in.
+    public var calculatorEnabled: Bool
+    /// `detect_pii` / `redact_file` in host-folder chats — per-agent opt-in.
+    public var redactionToolsEnabled: Bool
+    /// `todo` + `complete` exposed to the model. Default on; the pair is one
+    /// switch because `todo` without `complete` cannot close tracked work.
+    public var taskChecklistEnabled: Bool
+    /// `clarify` exposed to the model. Default on.
+    public var clarifyEnabled: Bool
+    /// `share_artifact` exposed to the model. Default on.
+    public var artifactsEnabled: Bool
 
     public init(
         toolsEnabled: Bool,
@@ -659,11 +1081,16 @@ public struct AgentCapabilities: Sendable, Equatable {
         appleScriptEnabled: Bool = false,
         spawnableAgentIDs: [UUID] = [],
         spawnableAgentNames: [String] = [],
-        spawnableModelNames: [String] = [],
-        spawnableModelNotes: [String: String] = [:],
+        spawnableWorkspaceAgents: [WorkspaceAgentRef] = [],
         knowledgeEnabled: Bool = false,
         knowledgeCollectionIds: [UUID] = [],
-        knowledgeCuratorEnabled: Bool = false
+        knowledgeCuratorEnabled: Bool = false,
+        enabledAppleApps: Set<AppleApp> = [],
+        calculatorEnabled: Bool = false,
+        redactionToolsEnabled: Bool = false,
+        taskChecklistEnabled: Bool = true,
+        clarifyEnabled: Bool = true,
+        artifactsEnabled: Bool = true
     ) {
         self.toolsEnabled = toolsEnabled
         self.memoryEnabled = memoryEnabled
@@ -682,11 +1109,16 @@ public struct AgentCapabilities: Sendable, Equatable {
         self.appleScriptEnabled = appleScriptEnabled
         self.spawnableAgentIDs = SpawnableAgentIdentity.normalizedIDs(spawnableAgentIDs)
         self.legacySpawnableAgentNames = spawnableAgentNames
-        self.spawnableModelNames = spawnableModelNames
-        self.spawnableModelNotes = spawnableModelNotes
+        self.spawnableWorkspaceAgents = spawnableWorkspaceAgents
         self.knowledgeEnabled = knowledgeEnabled
         self.knowledgeCollectionIds = knowledgeCollectionIds
         self.knowledgeCuratorEnabled = knowledgeCuratorEnabled
+        self.enabledAppleApps = enabledAppleApps
+        self.calculatorEnabled = calculatorEnabled
+        self.redactionToolsEnabled = redactionToolsEnabled
+        self.taskChecklistEnabled = taskChecklistEnabled
+        self.clarifyEnabled = clarifyEnabled
+        self.artifactsEnabled = artifactsEnabled
     }
 }
 
@@ -845,9 +1277,10 @@ public struct AgentLimitsSettings: Codable, Sendable, Equatable {
     public static var defaults: AgentLimitsSettings { AgentLimitsSettings() }
 }
 
-/// Per-agent customization of the follow-up suggestions feature. This shapes
-/// the follow-ups an agent produces; it never enables them — the global
-/// `ChatConfiguration.generateFollowUpSuggestions` switch does that.
+/// Per-agent customization of the follow-up suggestions feature. The global
+/// `ChatConfiguration.generateFollowUpSuggestions` switch turns the feature
+/// on; `enabled` lets an agent opt its own chats out of it, and `model`
+/// shapes the follow-ups it does produce.
 ///
 /// Deliberately model-only: a per-agent *system prompt* for follow-ups is not
 /// offered because a distinct prompt prefill on the resident chat model would
@@ -856,6 +1289,11 @@ public struct AgentLimitsSettings: Codable, Sendable, Equatable {
 /// SEPARATE model (e.g. a small-model cluster), leaving the chat model's cache
 /// untouched. `.empty` means "use the shared core model".
 public struct AgentFollowUpConfig: Codable, Sendable, Equatable {
+    /// Whether this agent's chats show follow-up suggestions while the global
+    /// switch is on. Off for agents whose turns end on their own question or
+    /// form (the Architect), where a suggested reply would compete with it.
+    public var enabled: Bool
+
     /// Optional model-override identifier (same string form as an agent's
     /// default model, e.g. `"llama-3.2-3b"` or `"anthropic/claude-haiku-4-5"`).
     /// When non-empty, this agent's follow-ups generate on this model instead
@@ -870,11 +1308,21 @@ public struct AgentFollowUpConfig: Codable, Sendable, Equatable {
         return trimmed.isEmpty ? nil : trimmed
     }
 
-    public init(model: String = "") {
+    public init(enabled: Bool = true, model: String = "") {
+        self.enabled = enabled
         self.model = model
     }
 
     public static var empty: AgentFollowUpConfig { AgentFollowUpConfig() }
+
+    private enum CodingKeys: String, CodingKey { case enabled, model }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        // Agents saved before the switch existed keep showing follow-ups.
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        model = try c.decodeIfPresent(String.self, forKey: .model) ?? ""
+    }
 }
 
 /// Top-level opt-in feature settings for an agent. Currently bundles the DB
@@ -883,6 +1331,8 @@ public struct AgentFollowUpConfig: Codable, Sendable, Equatable {
 /// features should add fields here so a single migration surface stays
 /// consolidated.
 public struct AgentSettings: Codable, Sendable, Equatable {
+    /// Opt-in display of existing measured response statistics in this agent's chats.
+    public var showResponseMetrics: Bool
     /// Per-agent SQLite database opt-in (spec §5.5.1). When false, db.* tools
     /// are stripped from the model's tool list, the onboarding prompt + schema
     /// snapshot are not injected, and the DB tabs in the detail view are hidden.
@@ -912,12 +1362,11 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// sibling `search_and_extract`). Default ON: search works out of the box
     /// via the free providers, so agents get it unless explicitly switched off.
     public var webSearchEnabled: Bool
-    /// Per-agent customization of the follow-up suggestions feature (a custom
-    /// suggester system prompt, extra rules, and a model override for cheaper /
-    /// faster generation). Only takes effect while the GLOBAL
-    /// `ChatConfiguration.generateFollowUpSuggestions` switch is on — this
-    /// struct shapes the follow-ups, it does not enable them. `.empty` means
-    /// "use the built-in prompt and the shared core model".
+    /// Per-agent follow-up suggestions: an opt-out and a model override for
+    /// cheaper / faster generation. Only takes effect while the GLOBAL
+    /// `ChatConfiguration.generateFollowUpSuggestions` switch is on — an agent
+    /// can turn follow-ups off for its chats, never on past the global switch.
+    /// `.empty` means "on, using the shared core model".
     public var followUp: AgentFollowUpConfig
     /// Per-agent opt-in for the self-scheduling tools (`schedule_next_run`,
     /// `cancel_next_run`, `notify`). Decoupled from the schedule-mode picker
@@ -985,14 +1434,13 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// Decode-only compatibility payload for pre-UUID agent JSON. Runtime
     /// authorization never matches this list directly.
     var legacySpawnableAgentNames: [String]
-    /// Raw model ids this agent may hand a task to via `spawn_model` (no agent;
-    /// per-agent allow-list). Empty → the `spawn_model` tool stays hidden. The
-    /// Default agent ignores this and uses the global
-    /// `SubagentConfiguration.spawnableModelNames` pool.
-    public var spawnableModelNames: [String]
-    /// Optional "when/how to use" note per spawnable model id, surfaced in the
-    /// spawn guidance descriptor. Pure metadata — the gate is `spawnableModelNames`.
-    public var spawnableModelNotes: [String: String]
+    /// Teammates' shared workspace agents this agent may delegate to over the
+    /// relay via `spawn_agent` (per-agent allow-list, by durable
+    /// `(workspaceId, agentAddress)`). Opt-in, empty by default. The Default
+    /// agent ignores this and uses `SubagentConfiguration
+    /// .spawnableWorkspaceAgents`. Durable configuration only — live presence
+    /// is probed at spawn time and never edits this list.
+    public var spawnableWorkspaceAgents: [WorkspaceAgentRef]
     /// Per-agent backend-qualified image-generation model. Bare legacy ids
     /// migrate to local targets during decode.
     public var imageGenerationTarget: MediaModelTarget?
@@ -1019,10 +1467,6 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// Per-agent budgets for `spawn` jobs (token / turn / wall-clock caps). The
     /// Default agent uses the global `SubagentConfiguration.budgets` instead.
     public var subagentBudgets: SubagentBudgets
-    /// What tools this agent's spawned workers may reach (`none` = text-only,
-    /// `readOnly` = curated read-only set). Default `.none`; the Default agent
-    /// uses the global `SubagentConfiguration.spawnToolAccess` instead.
-    public var spawnToolAccess: SpawnToolAccess
     /// Per-agent model override for subagent kinds, keyed by capability id
     /// (`"computer_use"`, `"spawn"`). An entry supersedes the
     /// kind's default model source (the parent agent's model for computer_use;
@@ -1045,11 +1489,38 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// the proposal architecture. Kept so existing agent JSON still decodes;
     /// nothing reads it, and writing follows the collection grant instead.
     public var knowledgeCuratorEnabled: Bool
+    /// Per-agent opt-in for the built-in Apple app tools (Calendar,
+    /// Reminders, Contacts, Notes, Mail, Messages, Maps, Music,
+    /// Shortcuts). Empty by default; each enabled app gates its
+    /// `AppleApp.toolNames` into the model-visible schema. The Default agent
+    /// ignores this (it never calls Apple tools directly).
+    public var enabledAppleApps: Set<AppleApp>
+    /// Installed workflows (`InstalledWorkflow.id`) this agent may call.
+    /// Each one is its own tool in the agent's tool list. Default empty.
+    public var enabledWorkflowIDs: [UUID] = []
+    /// Per-agent opt-in for the `calculate` tool. Default off: agents whose
+    /// job involves numbers (finance, budgets, data analysis) enable it.
+    public var calculatorEnabled: Bool
+    /// Per-agent opt-in for `detect_pii` / `redact_file` in host-folder
+    /// chats. Default off.
+    public var redactionToolsEnabled: Bool
+    /// Per-agent gate for the `todo` checklist and its `complete` closer.
+    /// Default on.
+    public var taskChecklistEnabled: Bool
+    /// Per-agent gate for `clarify`. Default on.
+    public var clarifyEnabled: Bool
+    /// Per-agent gate for `share_artifact`. Default on.
+    public var artifactsEnabled: Bool
+    /// The agent's working folder is read only: the agent can read and
+    /// search it, and no tool writes, edits, copies, undoes, redacts, or
+    /// runs a command there. Default off.
+    public var workingFolderReadOnly: Bool = false
 
     public init(
         dbEnabled: Bool,
         schedule: AgentScheduleSettings,
         limits: AgentLimitsSettings = .defaults,
+        showResponseMetrics: Bool = false,
         renderChartEnabled: Bool = false,
         speakEnabled: Bool = false,
         searchMemoryEnabled: Bool = false,
@@ -1068,8 +1539,6 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         appleScriptExecutionMode: AppleScriptExecutionMode = .default,
         spawnableAgentIDs: [UUID] = [],
         spawnableAgentNames: [String] = [],
-        spawnableModelNames: [String] = [],
-        spawnableModelNotes: [String: String] = [:],
         imageGenerationModelId: String? = nil,
         imageGenerationTarget: MediaModelTarget? = nil,
         imageEditModelId: String? = nil,
@@ -1081,11 +1550,20 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         knowledgeEnabled: Bool = false,
         knowledgeCollectionIds: [UUID] = [],
         knowledgeCuratorEnabled: Bool = false,
-        spawnToolAccess: SpawnToolAccess = .none
+        spawnableWorkspaceAgents: [WorkspaceAgentRef] = [],
+        enabledAppleApps: Set<AppleApp> = [],
+        calculatorEnabled: Bool = false,
+        redactionToolsEnabled: Bool = false,
+        taskChecklistEnabled: Bool = true,
+        clarifyEnabled: Bool = true,
+        artifactsEnabled: Bool = true,
+        workingFolderReadOnly: Bool = false
     ) {
         self.dbEnabled = dbEnabled
         self.schedule = schedule
         self.limits = limits
+        self.workingFolderReadOnly = workingFolderReadOnly
+        self.showResponseMetrics = showResponseMetrics
         self.renderChartEnabled = renderChartEnabled
         self.speakEnabled = speakEnabled
         self.searchMemoryEnabled = searchMemoryEnabled
@@ -1104,8 +1582,6 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         self.appleScriptExecutionMode = appleScriptExecutionMode
         self.spawnableAgentIDs = SpawnableAgentIdentity.normalizedIDs(spawnableAgentIDs)
         self.legacySpawnableAgentNames = spawnableAgentNames
-        self.spawnableModelNames = spawnableModelNames
-        self.spawnableModelNotes = spawnableModelNotes
         self.imageGenerationTarget =
             imageGenerationTarget.flatMap { $0.isValid ? $0 : nil }
             ?? imageGenerationModelId.map {
@@ -1120,12 +1596,19 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         self.knowledgeEnabled = knowledgeEnabled
         self.knowledgeCollectionIds = knowledgeCollectionIds
         self.knowledgeCuratorEnabled = knowledgeCuratorEnabled
-        self.spawnToolAccess = spawnToolAccess
+        self.spawnableWorkspaceAgents = SubagentConfiguration.normalizedWorkspaceAgents(spawnableWorkspaceAgents)
+        self.enabledAppleApps = enabledAppleApps
+        self.calculatorEnabled = calculatorEnabled
+        self.redactionToolsEnabled = redactionToolsEnabled
+        self.taskChecklistEnabled = taskChecklistEnabled
+        self.clarifyEnabled = clarifyEnabled
+        self.artifactsEnabled = artifactsEnabled
     }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         dbEnabled = try c.decodeIfPresent(Bool.self, forKey: .dbEnabled) ?? false
+        showResponseMetrics = try c.decodeIfPresent(Bool.self, forKey: .showResponseMetrics) ?? false
         schedule =
             try c.decodeIfPresent(AgentScheduleSettings.self, forKey: .schedule)
             ?? AgentScheduleSettings.defaults(for: .ambient)
@@ -1170,12 +1653,6 @@ public struct AgentSettings: Codable, Sendable, Equatable {
             (try? c.decodeIfPresent([UUID].self, forKey: .spawnableAgentIDs)) ?? []
         legacySpawnableAgentNames =
             (try? c.decodeIfPresent([String].self, forKey: .spawnableAgentNames)) ?? []
-        // Raw model ids for `spawn_model` + their notes. Lenient (`try?`) so a
-        // malformed pool/notes map never discards the rest of the settings.
-        spawnableModelNames =
-            (try? c.decodeIfPresent([String].self, forKey: .spawnableModelNames)) ?? []
-        spawnableModelNotes =
-            (try? c.decodeIfPresent([String: String].self, forKey: .spawnableModelNotes)) ?? [:]
         // Optional; absent means no ceiling (user policy applies as-is).
         computerUseCeiling = try c.decodeIfPresent(
             AutonomyCeiling.self,
@@ -1200,9 +1677,12 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         subagentPermissions =
             (try? c.decodeIfPresent(SubagentPermissionDefaults.self, forKey: .subagentPermissions))
             ?? SubagentPermissionDefaults()
+        // Stored budgets equal to the pre-2026 defaults (2048 / 2 / 120) are
+        // upgraded to the current defaults once, so existing agents stop
+        // "ending too fast" (see `SubagentBudgets.migratingLegacyDefaults`).
         subagentBudgets =
-            (try? c.decodeIfPresent(SubagentBudgets.self, forKey: .subagentBudgets))
-            ?? SubagentBudgets()
+            ((try? c.decodeIfPresent(SubagentBudgets.self, forKey: .subagentBudgets))
+            ?? SubagentBudgets()).migratingLegacyDefaults
         // Normalize on decode (trim values, drop blanks) so the per-agent stored
         // shape matches the global `SubagentConfiguration.subagentModelOverrides`
         // — a cleared picker round-trips as "no override", never an empty-string
@@ -1218,10 +1698,25 @@ public struct AgentSettings: Codable, Sendable, Equatable {
             (try? c.decodeIfPresent([UUID].self, forKey: .knowledgeCollectionIds)) ?? []
         knowledgeCuratorEnabled =
             try c.decodeIfPresent(Bool.self, forKey: .knowledgeCuratorEnabled) ?? false
-        // Lenient enum decode: an invalid/renamed raw value falls back to the
-        // safe text-only default instead of failing the whole agent decode.
-        spawnToolAccess =
-            (try? c.decodeIfPresent(SpawnToolAccess.self, forKey: .spawnToolAccess)) ?? .none
+        // Absent for every agent written before workspace spawn targets
+        // existed; lenient so a malformed ref never discards the settings.
+        spawnableWorkspaceAgents = SubagentConfiguration.normalizedWorkspaceAgents(
+            (try? c.decodeIfPresent([WorkspaceAgentRef].self, forKey: .spawnableWorkspaceAgents)) ?? []
+        )
+        // Built-in Apple apps: absent for every agent written before they
+        // shipped → empty (off). Unknown names (a removed app) are dropped
+        // rather than failing the decode.
+        let rawAppleApps = (try? c.decodeIfPresent([String].self, forKey: .enabledAppleApps)) ?? []
+        enabledAppleApps = Set(rawAppleApps.compactMap(AppleApp.init(rawValue:)))
+        enabledWorkflowIDs = (try? c.decodeIfPresent([UUID].self, forKey: .enabledWorkflowIDs)) ?? []
+        // Specialist tools decode to off for agents written before the
+        // toggles existed; the agent-loop tools keep their always-on past.
+        calculatorEnabled = try c.decodeIfPresent(Bool.self, forKey: .calculatorEnabled) ?? false
+        redactionToolsEnabled = try c.decodeIfPresent(Bool.self, forKey: .redactionToolsEnabled) ?? false
+        taskChecklistEnabled = try c.decodeIfPresent(Bool.self, forKey: .taskChecklistEnabled) ?? true
+        clarifyEnabled = try c.decodeIfPresent(Bool.self, forKey: .clarifyEnabled) ?? true
+        artifactsEnabled = try c.decodeIfPresent(Bool.self, forKey: .artifactsEnabled) ?? true
+        workingFolderReadOnly = try c.decodeIfPresent(Bool.self, forKey: .workingFolderReadOnly) ?? false
     }
 
     /// Trim values and drop blank entries so a cleared override (empty string)
@@ -1252,6 +1747,7 @@ public struct AgentSettings: Codable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case dbEnabled
+        case showResponseMetrics
         case schedule
         case limits
         case renderChartEnabled
@@ -1273,8 +1769,6 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         case spawnableAgentIDs
         /// Legacy decode-only key.
         case spawnableAgentNames
-        case spawnableModelNames
-        case spawnableModelNotes
         case imageGenerationTarget
         /// Legacy decode-only key.
         case imageGenerationModelId
@@ -1287,12 +1781,21 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         case knowledgeEnabled
         case knowledgeCollectionIds
         case knowledgeCuratorEnabled
-        case spawnToolAccess
+        case spawnableWorkspaceAgents
+        case enabledAppleApps
+        case enabledWorkflowIDs
+        case calculatorEnabled
+        case redactionToolsEnabled
+        case taskChecklistEnabled
+        case clarifyEnabled
+        case artifactsEnabled
+        case workingFolderReadOnly
     }
 
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(dbEnabled, forKey: .dbEnabled)
+        try c.encode(showResponseMetrics, forKey: .showResponseMetrics)
         try c.encode(schedule, forKey: .schedule)
         try c.encode(limits, forKey: .limits)
         try c.encode(renderChartEnabled, forKey: .renderChartEnabled)
@@ -1315,8 +1818,6 @@ public struct AgentSettings: Codable, Sendable, Equatable {
             SpawnableAgentIdentity.normalizedIDs(spawnableAgentIDs),
             forKey: .spawnableAgentIDs
         )
-        try c.encode(spawnableModelNames, forKey: .spawnableModelNames)
-        try c.encode(spawnableModelNotes, forKey: .spawnableModelNotes)
         try c.encodeIfPresent(imageGenerationTarget, forKey: .imageGenerationTarget)
         try c.encodeIfPresent(imageEditModelId, forKey: .imageEditModelId)
         try c.encodeIfPresent(textToVideoTarget, forKey: .textToVideoTarget)
@@ -1327,7 +1828,20 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         try c.encode(knowledgeEnabled, forKey: .knowledgeEnabled)
         try c.encode(knowledgeCollectionIds, forKey: .knowledgeCollectionIds)
         try c.encode(knowledgeCuratorEnabled, forKey: .knowledgeCuratorEnabled)
-        try c.encode(spawnToolAccess, forKey: .spawnToolAccess)
+        if !spawnableWorkspaceAgents.isEmpty {
+            try c.encode(spawnableWorkspaceAgents, forKey: .spawnableWorkspaceAgents)
+        }
+        // Sorted for a stable on-disk shape.
+        try c.encode(AppleApp.sorted(enabledAppleApps).map(\.rawValue), forKey: .enabledAppleApps)
+        if !enabledWorkflowIDs.isEmpty {
+            try c.encode(enabledWorkflowIDs, forKey: .enabledWorkflowIDs)
+        }
+        try c.encode(calculatorEnabled, forKey: .calculatorEnabled)
+        try c.encode(redactionToolsEnabled, forKey: .redactionToolsEnabled)
+        try c.encode(taskChecklistEnabled, forKey: .taskChecklistEnabled)
+        try c.encode(clarifyEnabled, forKey: .clarifyEnabled)
+        try c.encode(artifactsEnabled, forKey: .artifactsEnabled)
+        if workingFolderReadOnly { try c.encode(workingFolderReadOnly, forKey: .workingFolderReadOnly) }
     }
 
     /// Default settings for newly created agents (and for back-compat decoding of

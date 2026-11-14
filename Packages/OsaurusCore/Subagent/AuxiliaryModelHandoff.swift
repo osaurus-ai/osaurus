@@ -1,0 +1,130 @@
+import Foundation
+
+/// Explicit invocation provenance survives deferred/detached jobs. A missing
+/// parent is intentional; never substitute the frontmost or resident model.
+struct ModelJobInvocation: Sendable, Equatable {
+    let parentModelName: String?
+    let source: SessionSource?
+    var ownershipToken: ModelResidencyOwnershipToken? = nil
+
+    static func current() -> Self {
+        Self(
+            parentModelName: ChatExecutionContext.currentModelName,
+            source: ChatExecutionContext.currentSessionSource,
+            ownershipToken: ModelResidencyOwnershipContext.childOwnershipToken
+        )
+    }
+
+    func withContext<Value: Sendable>(
+        isolation: isolated (any Actor)? = #isolation,
+        _ body: () async throws -> Value
+    ) async rethrows -> Value {
+        try await ChatExecutionContext.$currentModelName.withValue(parentModelName) {
+            try await ChatExecutionContext.$currentSessionSource.withValue(source) {
+                try await ModelResidencyOwnershipContext.$childOwnershipToken.withValue(ownershipToken) {
+                    try await body()
+                }
+            }
+        }
+    }
+}
+
+/// Non-tool local work must use the same parent policy and lifetime as a
+/// subagent. The caller puts this entire operation INSIDE any non-rejoining
+/// deadline: admission/cleanup must outlive the UI's timeout if the producer
+/// is still draining.
+enum AuxiliaryModelHandoff {
+    enum Phase: Sendable { case waiting, preparing, running, restoring }
+
+    static func run<Value: Sendable>(
+        targetModelName: String,
+        invocation: ModelJobInvocation,
+        sessionID: UUID?,
+        agentID: UUID,
+        operationName: String,
+        onPhase: (@Sendable (Phase, TimeInterval?) -> Void)? = nil,
+        body: () async throws -> Value
+    ) async throws -> Value {
+        try await invocation.withContext {
+            let installed = ModelManager.findInstalledModel(named: targetModelName)
+            let resolved = ResolvedModel(
+                name: installed?.name ?? targetModelName,
+                id: installed?.id ?? targetModelName,
+                isLocal: installed != nil
+            )
+            // Resolve the actual plan AFTER waiting. Local auxiliary work is
+            // exclusive because the setting may change to a swap while queued.
+            let admission: SubagentAdmissionClass = resolved.isLocal ? .localExclusive : .remote
+            try Task.checkCancellation()
+            onPhase?(.waiting, SubagentAdmission.defaultWaitTimeoutSeconds)
+            switch await SubagentAdmission.shared.admit(admission) {
+            case .cancelled:
+                throw CancellationError()
+            case .timedOut(let active):
+                throw SubagentError.unavailable("\(operationName) waited for local work to finish: \(active)")
+            case .admitted:
+                break
+            }
+            do {
+                try Task.checkCancellation()
+                let config = SubagentConfigurationStore.snapshot()
+                onPhase?(.preparing, Double(config.budgets.maxElapsedSeconds))
+                let plan = try await SubagentResidency.refreshedPlan(
+                    for: resolved,
+                    invokingParentModelName: invocation.parentModelName,
+                    idleWaitSeconds: config.budgets.maxElapsedSeconds,
+                    deniedMessage: "\(operationName) cannot hand off the invoking model."
+                )
+                let scope = SubagentScope(
+                    sessionId: sessionID?.uuidString ?? UUID().uuidString,
+                    toolCallId: UUID().uuidString,
+                    agentId: agentID,
+                    parentModelName: invocation.parentModelName
+                )
+                let feed = SubagentFeed(toolCallId: scope.toolCallId, kindId: operationName, title: operationName)
+                let value: Value
+                if plan.shouldUnload {
+                    let handoff = ResidencyHandoff.production { _ in plan }
+                    value = try await handoff.withResidency(
+                        scope: scope,
+                        resolved: resolved,
+                        feed: feed
+                    ) {
+                        try await observingBody(plan: plan, onPhase: onPhase, body: body)
+                    }
+                } else if plan.coexists {
+                    value = try await CoexistenceHandoff.production(plan: plan).withRetainedParent(
+                        scope: scope,
+                        resolved: resolved,
+                        feed: feed
+                    ) {
+                        try await observingBody(plan: plan, onPhase: onPhase, body: body)
+                    }
+                } else {
+                    value = try await observingBody(plan: plan, onPhase: onPhase, body: body)
+                }
+                await SubagentAdmission.shared.release(admission)
+                return value
+            } catch {
+                await SubagentAdmission.shared.release(admission)
+                throw error
+            }
+        }
+    }
+
+    /// Passive opt-in observation only. Keep the producer non-escaping and
+    /// inside the existing owned handoff, including when it throws/cancels.
+    private static func observingBody<Value: Sendable>(
+        plan: ResidencyPlan,
+        onPhase: (@Sendable (Phase, TimeInterval?) -> Void)?,
+        body: () async throws -> Value
+    ) async rethrows -> Value {
+        onPhase?(.running, nil)
+        defer {
+            if plan.shouldUnload || plan.coexists {
+                onPhase?(.restoring, Double(plan.maxElapsedSeconds))
+            }
+        }
+        return try await body()
+    }
+}

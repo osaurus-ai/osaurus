@@ -31,6 +31,30 @@ import os.log
 private let batchAdapterLog = Logger(subsystem: "ai.osaurus", category: "BatchAdapter")
 
 struct MLXBatchAdapter {
+    /// "No request-level ceiling": the adaptive top rung is vmlx's runtime top rung for the loaded model (its
+    /// verifier capability, `NativeMTPDepthPolicy.runtimeTopRung`). Equal to vmlx-swift's
+    /// `NativeMTPDepthPolicy.adaptiveToRuntimeCeiling` (`.adaptive(maximumDepth: .max)`).
+    static let nativeMTPAdaptiveNoHostCeiling = Int.max
+
+    /// No hard draft depth: Adaptive governs the draft depth. An explicit depth button pins it
+    /// (`.fixed`, the user's own choice); every other selection is Adaptive up to the runtime's top rung, which
+    /// vmlx resolves per request from the loaded model. The app sets no ceiling of its own: the former
+    /// `min(draftTokenLimit ?? 5, 5)` capped every model at depth 5, including a LiLiCorr block drafter whose
+    /// blocks verify 7 drafts. `draftTokenLimit` is not a ceiling either: no product control sets it (the
+    /// composer, Settings, the admin API and import all clear it through
+    /// `NativeMTPSelectionDefault.adaptiveSelection`), so a value here is a stale default, and vmlx's launch
+    /// resolver already applies it to the START depth only (`resolvedMTPLaunch`), and validates it there.
+    static func nativeMTPDepthPolicy(
+        _ settings: VMLXServerMTPSettings
+    ) -> NativeMTPDepthPolicy {
+        if settings.mode == .off
+            || (settings.mode == .forceOn && settings.explicitDepth != nil)
+        {
+            return .fixed
+        }
+        return .adaptive(maximumDepth: nativeMTPAdaptiveNoHostCeiling)
+    }
+
     /// Native MTP is tuned for real chat prefixes, not tiny cold-start
     /// prompts. A 19-token cold user-only prompt reproduced a native-MTP loop
     /// while the same request decoded correctly with AR greedy fallback.
@@ -76,15 +100,25 @@ struct MLXBatchAdapter {
     /// keyed by model. Completion-time (unlike `EffectiveGenerationSettings`,
     /// which is submit-time) so it can show what the ADAPTIVE controller
     /// actually settled on — e.g. a request that asked for depth 3 but ran
-    /// depth 1 because acceptance collapsed. Called only for turns that
-    /// produced native-MTP tokens; every other decode path leaves the readout
-    /// unchanged.
-    static func recordLastMTPStats(modelName: String, stats: MTPStatsSummary) async {
+    /// depth 1 because acceptance collapsed. Captured for turns that
+    /// produced native-MTP tokens. A failed/cancelled turn without stats clears
+    /// only its own model's stale readout. Successful non-MTP and background
+    /// turns leave it unchanged.
+    static func recordLastMTPStats(modelName: String, stats: MTPStatsSummary?) async {
         await Registry.shared.recordLastMTPStats(modelName: modelName, stats: stats)
     }
 
     static func lastMTPStatsSnapshot() async -> [String: MTPStatsSummary] {
         await Registry.shared.lastMTPStatsSnapshot()
+    }
+
+    /// Record how much of the just-prefilled real request came back from a
+    /// cache tier. Reported by the runtime's own `.cacheRestore` progress
+    /// event, so a cold request records zero restored tokens rather than
+    /// leaving the previous request's figure in place. Read back through
+    /// `snapshotDiagnostics()`.
+    static func recordLastCacheRestore(_ summary: CacheRestoreSummary) async {
+        await Registry.shared.recordLastCacheRestore(summary)
     }
 
     /// Result handed back to `ModelRuntime`. The `Generation` stream is
@@ -108,7 +142,7 @@ struct MLXBatchAdapter {
     struct EffectiveGenerationSettings: Equatable, Sendable {
         let stage: String
         let temperature: Float
-        let maxTokens: Int
+        var maxTokens: Int
         let topP: Float
         let topK: Int
         let minP: Float
@@ -124,21 +158,16 @@ struct MLXBatchAdapter {
         let draftStrategy: String?
         /// Why native MTP is NOT running when the user asked for it.
         ///
-        /// This string was already computed and written to the submit log, where
-        /// no user will ever see it. A model whose tuning artifact never asserted
-        /// `output_equivalent` cannot run MTP even on Force-On — correctly, since
-        /// that assertion is the output-equivalence proof — but without surfacing
-        /// the reason the setting just appears to do nothing.
+        /// Surface the actual load/request eligibility reason, rather than
+        /// making a requested depth appear active when the engine runs AR.
         let mtpFallbackReason: String?
         let compiledBatchDecode: Bool
-        /// True when native MTP forced this request's sampler to greedy —
-        /// the machine-readable form of the coercion, carried by the same
-        /// single resolution that builds the run parameters, the readout,
-        /// and the API diagnostics.
+        /// The bundle snapshot used for this request. Readouts must not try to
+        /// rediscover it by the short serving name after resolution or unload.
+        var modelDefaults: LocalGenerationDefaults.Defaults = .empty
+        /// Retained API diagnostic fields. Native MTP no longer substitutes
+        /// a sampler, so both remain false for this resolver.
         var mtpGreedyEnforced: Bool = false
-        /// True when that enforcement actually CHANGED the sampler (the
-        /// pre-coercion resolution was not already greedy) — the condition
-        /// for the surfaced log line.
         var samplerWasChanged: Bool = false
     }
 
@@ -149,16 +178,15 @@ struct MLXBatchAdapter {
         maxBatchSize: Int,
         modelDefaults: LocalGenerationDefaults.Defaults,
         draftStrategy: MLXLMCommon.DraftStrategy? = nil,
-        /// True when native MTP is active, which forces greedy decoding. The
-        /// readout has to show the COERCED sampler: reporting the request's
-        /// temp 1 / top-p 0.95 while argmax actually runs is the same
-        /// display-lie this readout exists to prevent.
-        forcesGreedyForNativeMTP: Bool = false,
         nativeMTPFallbackReason: String? = nil,
         nativeMTPRequestFallback: Bool = false,
         cacheTopology: ModelCacheTopologySnapshot? = nil,
+        thinkingEnabled: Bool? = nil,
         stage: String = "resolved"
     ) -> EffectiveGenerationSettings {
+        // INVARIANT: mode defaults come from the bundle and follow the same
+        // resolved thinking flag as the template. Explicit sampling still wins.
+        let modelDefaults = modelDefaults.resolvingThinking(thinkingEnabled)
         let defaultTemperature: Float? = {
             if modelDefaults.doSample == false {
                 return 0
@@ -167,9 +195,8 @@ struct MLXBatchAdapter {
         }()
         let engineDefaults = MLXLMCommon.GenerateParameters()
 
-        // Merge order (per-request always wins): per-request →
-        // model-shipped defaults → server runtime defaults → vmlx engine
-        // defaults. Osaurus must not invent sampler defaults.
+        // Explicit request and user settings outrank shipped defaults.
+        // Osaurus must not invent a sampler override for speculation.
         let runtimeTopP: Float? = runtimeDefaults.topP.map { Float($0) }
         let runtimeMinP: Float? = runtimeDefaults.minP.map { Float($0) }
         let runtimeTopK: Int? = runtimeDefaults.topK
@@ -221,32 +248,15 @@ struct MLXBatchAdapter {
                     modelName: modelName,
                     maxBatchSize: maxBatchSize,
                     cacheTopology: cacheTopology
-                )
+                ),
+            modelDefaults: modelDefaults
         )
-        // Native MTP forces greedy on the parameters that RUN, so the readout
-        // must say greedy too. Printing the request's temp 1 / top-p 0.95
-        // while argmax executes is the display-lie this readout exists to stop.
-        guard forcesGreedyForNativeMTP else { return resolved }
-        return EffectiveGenerationSettings(
-            stage: resolved.stage,
-            temperature: 0,
-            maxTokens: resolved.maxTokens,
-            topP: 1,
-            topK: 0,
-            minP: 0,
-            repetitionPenalty: resolved.repetitionPenalty,
-            presencePenalty: resolved.presencePenalty,
-            frequencyPenalty: resolved.frequencyPenalty,
-            draftStrategy: resolved.draftStrategy,
-            mtpFallbackReason: resolved.mtpFallbackReason,
-            compiledBatchDecode: resolved.compiledBatchDecode,
-            mtpGreedyEnforced: true,
-            samplerWasChanged: resolved.temperature != 0 || resolved.topP != 1
-                || resolved.topK != 0 || resolved.minP != 0)
+        return resolved
     }
 
     static func recordPendingEffectiveGenerationSettings(
         modelName: String,
+        modelId: String,
         generation: GenerationParameters,
         runtimeDefaults: VMLXServerGenerationDefaults,
         maxBatchSize: Int
@@ -257,13 +267,18 @@ struct MLXBatchAdapter {
         // the row makes the admin endpoint describe the warm-up instead of
         // the generation the user just observed.
         guard shouldRecordAsLastEffectiveGeneration(generation) else { return }
-        let modelDefaults = LocalGenerationDefaults.defaults(forModelId: modelName)
+        let modelDefaults = LocalGenerationDefaults.defaults(forModelId: modelId)
         let effective = Self.effectiveGenerationSettings(
             modelName: modelName,
             generation: generation,
             runtimeDefaults: runtimeDefaults,
             maxBatchSize: maxBatchSize,
             modelDefaults: modelDefaults,
+            thinkingEnabled: thinkingEnabledForSampling(
+                generation: generation,
+                modelName: modelName,
+                modelDefaults: modelDefaults
+            ),
             stage: "pending_preload"
         )
         await Registry.shared.recordEffectiveGenerationSettings(
@@ -295,12 +310,8 @@ struct MLXBatchAdapter {
         if disableNativeMTP {
             return nil
         }
-        // Sampling is NOT a reason to abandon MTP any more. The submit path
-        // coerces the running parameters to greedy whenever MTP is active, so
-        // the equivalence precondition holds by construction. Dropping MTP
-        // here meant an ordinary chat turn — which reports
-        // `samplingParametersAreImplicit` — never engaged it at all, while the
-        // UI still said "MTP depth 2".
+        // Preserve the resolved sampler. The engine selects greedy or exact
+        // sampled verification; capability fallback must not alter sampling.
         if let promptTokenCount,
             promptTokenCount < nativeMTPTinyPromptMinimumTokens
         {
@@ -440,9 +451,11 @@ struct MLXBatchAdapter {
         private var lastEffectiveGenerationSettings: [String: EffectiveGenerationSettings] = [:]
         /// Last native-MTP runtime stats per model, captured at completion.
         /// Populated only for turns the native-MTP iterator produced, so a
-        /// non-MTP family never appears here and the readout for an MTP model
-        /// reflects its most recent speculative turn.
+        /// non-MTP family never appears here. A failed/cancelled turn without
+        /// stats removes that model's previous value rather than misattributing it.
         private var lastMTPStats: [String: MTPStatsSummary] = [:]
+        /// Cache restore of the most recent real request, across models.
+        private var lastCacheRestore: CacheRestoreSummary?
         /// Counters from engines and cache coordinators that have left the
         /// live resident set. Before this accumulator, switching model A to B
         /// made process-level diagnostics decrease because A simply vanished
@@ -567,12 +580,16 @@ struct MLXBatchAdapter {
             lastEffectiveGenerationSettings
         }
 
-        func recordLastMTPStats(modelName: String, stats: MTPStatsSummary) {
+        func recordLastMTPStats(modelName: String, stats: MTPStatsSummary?) {
             lastMTPStats[modelName] = stats
         }
 
         func lastMTPStatsSnapshot() -> [String: MTPStatsSummary] {
             lastMTPStats
+        }
+
+        func recordLastCacheRestore(_ summary: CacheRestoreSummary) {
+            lastCacheRestore = summary
         }
 
         func turboQuantCacheTransitionsSnapshot() async
@@ -685,8 +702,20 @@ struct MLXBatchAdapter {
             // summing would multiply the reported size by the model count.
             var diskL2PayloadBytes = 0
             var diskL2MaxBytes = 0
-            // Per-instance counter, so this one genuinely accumulates.
+            // Per-instance counters, so these genuinely accumulate.
             var diskL2Evictions = 0
+            var diskL2EvictedBytes = 0
+            var diskL2QuotaPasses = 0
+            var diskL2FailedIndexWrites = 0
+            var diskL2PressureEventSeq = 0
+            // DispatchTime.uptimeNanoseconds is process-wide. Select readings
+            // by that clock; the summed report count is not an event identity.
+            var diskL2LastQuotaPassMs = 0.0
+            var diskL2PressureKind: String?
+            var diskL2PressureChainId: String?
+            var diskL2PressureTick: UInt64 = 0
+            var diskL2QuotaTick: UInt64 = 0
+            var diskRoots: [URL: (bytes: Int, cap: Int)] = [:]
             var ssmHits = 0
             var ssmMisses = 0
             var ssmReDerives = 0
@@ -707,14 +736,44 @@ struct MLXBatchAdapter {
                     diskL2Hits += diskStats.hits
                     diskL2Misses += diskStats.misses
                     diskL2Stores += diskStats.stores
-                    diskL2PayloadBytes = max(
-                        diskL2PayloadBytes, diskStats.currentPayloadBytes)
-                    diskL2MaxBytes = max(diskL2MaxBytes, diskStats.maxSizeBytes)
+                    if let directory = summary.cacheDiskDirectory {
+                        let root = directory.standardizedFileURL.resolvingSymlinksInPath()
+                        let prior = diskRoots[root] ?? (bytes: 0, cap: 0)
+                        diskRoots[root] = (
+                            max(prior.bytes, diskStats.currentPayloadBytes),
+                            max(prior.cap, diskStats.maxSizeBytes)
+                        )
+                    }
                     diskL2Evictions += diskStats.evictions
+                    diskL2EvictedBytes = Self.saturatingSum(
+                        diskL2EvictedBytes,
+                        Int(clamping: diskStats.evictedBytes)
+                    )
+                    diskL2QuotaPasses += diskStats.quotaPasses
+                    diskL2FailedIndexWrites += diskStats.failedIndexWrites
+                    diskL2PressureEventSeq = Self.saturatingSum(
+                        diskL2PressureEventSeq,
+                        Int(clamping: diskStats.pressureEventSeq)
+                    )
+                    if diskStats.lastQuotaPassTick > diskL2QuotaTick {
+                        diskL2QuotaTick = diskStats.lastQuotaPassTick
+                        diskL2LastQuotaPassMs = diskStats.lastQuotaPassMs
+                    }
+                    if let event = diskStats.lastPressureEvent,
+                        diskStats.lastPressureEventTick > diskL2PressureTick
+                    {
+                        diskL2PressureKind = event.kind.rawValue
+                        diskL2PressureChainId = event.chainId
+                        diskL2PressureTick = diskStats.lastPressureEventTick
+                    }
                 }
                 ssmHits += stats.ssmStats.hits
                 ssmMisses += stats.ssmStats.misses
                 ssmReDerives += stats.ssmStats.reDerives
+            }
+            for usage in diskRoots.values {
+                diskL2PayloadBytes = Self.saturatingSum(diskL2PayloadBytes, usage.bytes)
+                diskL2MaxBytes = Self.saturatingSum(diskL2MaxBytes, usage.cap)
             }
             for (modelName, engine) in entries {
                 let capacity = await engine.capacitySnapshot
@@ -760,9 +819,22 @@ struct MLXBatchAdapter {
                 ssmCompanionReDerives: ssmReDerives,
                 diskL2PayloadBytes: diskL2PayloadBytes,
                 diskL2MaxBytes: diskL2MaxBytes,
-                diskL2Evictions: diskL2Evictions
+                diskL2Evictions: diskL2Evictions,
+                diskL2EvictedBytes: diskL2EvictedBytes,
+                diskL2QuotaPasses: diskL2QuotaPasses,
+                diskL2LastQuotaPassMs: diskL2LastQuotaPassMs,
+                diskL2FailedIndexWrites: diskL2FailedIndexWrites,
+                diskL2PressureEventSeq: diskL2PressureEventSeq,
+                diskL2PressureKind: diskL2PressureKind,
+                diskL2PressureChainId: diskL2PressureChainId,
+                lastCacheRestore: lastCacheRestore
             )
             return processLifetimeCounters.mergingCounters(into: live)
+        }
+
+        private static func saturatingSum(_ lhs: Int, _ rhs: Int) -> Int {
+            let (sum, overflow) = lhs.addingReportingOverflow(max(0, rhs))
+            return overflow ? Int.max : sum
         }
 
         /// Fold one container's final cache-coordinator counters into the
@@ -891,10 +963,31 @@ struct MLXBatchAdapter {
     static func warmupNativeMTPAtLoad(
         modelName: String,
         container: ModelContainer,
+        modelDefaults: LocalGenerationDefaults.Defaults,
         draftStrategy: MLXLMCommon.DraftStrategy?,
         runtime: RuntimeConfig,
         maxBatchSize: Int
     ) async {
+        if case .uno(let adapterPath, _)? = draftStrategy {
+            await warmupUnoAtLoad(
+                modelName: modelName, container: container, adapterPath: adapterPath,
+                maxBatchSize: maxBatchSize)
+            return
+        }
+        // DeepSeek-V4.1 dSpark (`.dspark`) is deliberately not warmed here. Its head (~8.9 GB) is
+        // attached by vmlx on the first request that can use it and stays resident after, so a load
+        // warmup would only move that cost earlier, at the price of committing it before any request:
+        // a V4.1 JANG_2K bundle is ~206 GB resident on a 256 GB Mac, and the warmup generation also
+        // allocates its own KV and verify activations on top. Lazily, a session that never runs a
+        // dSpark-eligible request (media prefill, `VMLX_DSV41_DSPARK=0`, sampled with
+        // `VMLX_DSV41_DSPARK_SAMPLED=0`) never pays for the head. The first dSpark request therefore
+        // includes the head load.
+        if draftStrategy?.usesDFlash2 == true {
+            await warmupDFlash2AtLoad(
+                modelName: modelName, container: container, modelDefaults: modelDefaults,
+                draftStrategy: draftStrategy, runtime: runtime, maxBatchSize: maxBatchSize)
+            return
+        }
         guard draftStrategy?.usesNativeMTP == true else { return }
         guard !UserDefaults.standard.bool(forKey: mtpLoadWarmupDisabledKey) else { return }
         guard await !Registry.shared.isNativeMTPWarm(modelName: modelName) else { return }
@@ -905,6 +998,7 @@ struct MLXBatchAdapter {
                 let prepared = try await generate(
                     modelName: modelName,
                     container: container,
+                    modelDefaults: modelDefaults,
                     buildChat: {
                         [MLXLMCommon.Chat.Message(role: .user, content: nativeMTPLoadWarmupPrompt)]
                     },
@@ -940,6 +1034,120 @@ struct MLXBatchAdapter {
         }
     }
 
+    /// Whether a generation takes the model's solo lease before it is submitted.
+    ///
+    /// A drafted request whose speculation runs on the engine's exclusive solo path takes it even
+    /// under continuous batching (maxBatchSize > 1), so a second such request on the same model (a
+    /// spawned subagent, a parallel delegation) queues behind the first and drafts too, instead of
+    /// being cancelled (DFlash 2) or demoted to plain autoregressive decode (DeepSeek-V4.1 dSpark;
+    /// vmlx `BatchEngine.generate` drops `.dspark` when the solo path is busy). Ordinary batched
+    /// requests take no lease and still share the engine; the engine decodes a drafted request
+    /// autoregressively if it arrives while batched slots are active.
+    ///
+    /// Covers DFlash 2 (including MiniCPM's DSpark drafter, which runs on the DFlash 2 path) and
+    /// DeepSeek-V4.1's bundled dSpark head (`DraftStrategy.dspark`, a separate strategy).
+    static func requiresSoloLease(maxBatchSize: Int, draftStrategy: MLXLMCommon.DraftStrategy?) -> Bool {
+        maxBatchSize == 1 || draftStrategy?.usesDFlash2 == true || draftStrategy?.usesDSpark == true
+    }
+
+    /// DFlash 2 / DSpark: one short drafted generation right after load. The engine loads the
+    /// drafter lazily on the first drafted request and builds each verify width's graph on first use,
+    /// so without this the first chat paid it: MiniCPM-V 4.7 35B-A3B JANGH2, first image turn TTFT
+    /// 4.8 s and 16 tok/s against 0.7 s and 81 tok/s for AR; later turns are unaffected.
+    static let dflash2LoadWarmupTokens = 48
+
+    private static func warmupDFlash2AtLoad(
+        modelName: String,
+        container: ModelContainer,
+        modelDefaults: LocalGenerationDefaults.Defaults,
+        draftStrategy: MLXLMCommon.DraftStrategy?,
+        runtime: RuntimeConfig,
+        maxBatchSize: Int
+    ) async {
+        guard !UserDefaults.standard.bool(forKey: mtpLoadWarmupDisabledKey) else { return }
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        do {
+            let prepared = try await generate(
+                modelName: modelName,
+                container: container,
+                modelDefaults: modelDefaults,
+                buildChat: {
+                    [MLXLMCommon.Chat.Message(role: .user, content: nativeMTPLoadWarmupPrompt)]
+                },
+                buildToolsSpec: { nil },
+                generation: GenerationParameters(temperature: 0, maxTokens: dflash2LoadWarmupTokens),
+                toolChoice: nil,
+                stopSequences: [],
+                draftStrategy: draftStrategy,
+                runtime: runtime,
+                maxBatchSize: maxBatchSize
+            )
+            for await _ in prepared.stream {}
+            let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
+            batchAdapterLog.info(
+                "DFlash 2 load warmup: drafter loaded and verify graphs built for \(modelName, privacy: .public) in \(elapsedMs, privacy: .public)ms"
+            )
+            PrefillDebugLog.shared.log("==DFLASH2 WARMUP-DONE model=\(modelName) wallMs=\(elapsedMs)")
+        } catch {
+            batchAdapterLog.notice(
+                "DFlash 2 load warmup failed for \(modelName, privacy: .public): \(String(describing: error), privacy: .public) — the first request loads the drafter instead"
+            )
+        }
+    }
+
+    /// Uno (bundled self-speculation adapter): install the adapter and compile the speculative
+    /// shapes right after load, so chats never stall on a kernel compile (on K2 Horizon the first
+    /// 8+-row forward compiles the lane matmul, ~1.8 s on an M5 Max and longer on older chips; the
+    /// first long-context block compiles the multi-row attention's long variant). Runs in small
+    /// steps (`UnoWarmup.steps`), each under the same solo lease and exclusive Metal gate as a
+    /// generation, released between steps: a message sent during warm-up waits for at most one step
+    /// (~1 s), never the whole warm-up (all at once delayed the first message by 4.7 s). Steps not
+    /// reached before a request simply compile on use.
+    private static func warmupUnoAtLoad(
+        modelName: String,
+        container: ModelContainer,
+        adapterPath: URL,
+        maxBatchSize: Int
+    ) async {
+        guard !UserDefaults.standard.bool(forKey: mtpLoadWarmupDisabledKey) else { return }
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        PrefillDebugLog.shared.log("==UNO WARMUP-START model=\(modelName) adapter=\(adapterPath.path)")
+        var done: [String] = []
+        for step in UnoWarmup.steps(adapterDirectory: adapterPath) {
+            if Task.isCancelled { break }
+            let lease = maxBatchSize == 1
+                ? await Registry.shared.acquireSoloLease(for: modelName) : nil
+            do {
+                try await MetalGate.shared.enterMediaPrep(model: modelName)
+            } catch {
+                await lease?.release()
+                break
+            }
+            do {
+                let ms = try await container.perform { context in
+                    try UnoWarmup.prepare(
+                        step: step, model: context.model, adapterDirectory: adapterPath)
+                }
+                done.append("\(step)=\(ms.map(String.init) ?? "skip")")
+            } catch {
+                batchAdapterLog.notice(
+                    "Uno load warmup step \(String(describing: step), privacy: .public) failed for \(modelName, privacy: .public): \(String(describing: error), privacy: .public) — compiles on use"
+                )
+                await MetalGate.shared.exitMediaPrep(model: modelName)
+                await lease?.release()
+                break
+            }
+            await MetalGate.shared.exitMediaPrep(model: modelName)
+            await lease?.release()
+        }
+        let wallMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
+        PrefillDebugLog.shared.log(
+            "==UNO WARMUP-DONE model=\(modelName) steps=\(done.joined(separator: ",")) wallMs=\(wallMs)")
+        batchAdapterLog.info(
+            "Uno load warmup for \(modelName, privacy: .public): \(done.joined(separator: ","), privacy: .public) in \(wallMs, privacy: .public) ms"
+        )
+    }
+
     // MARK: - Image preprocessing
 
     private static let maxImageSize = CGSize(width: 1024, height: 1024)
@@ -953,12 +1161,15 @@ struct MLXBatchAdapter {
     /// Downscale CIImage attachments to a sane upper bound before tokenization.
     /// Pre-existing `URL` / `array` cases pass through untouched.
     ///
-    /// Preserves media plus `reasoningContent`, `toolCalls`, and `toolCallId`
-    /// through the rebuild. Dropping any of these fields silently unwinds the
-    /// structured handoff set up by `ModelRuntime.mapOpenAIChatToMLX`: ZAYA,
-    /// Nemotron-H/Omni, MiniMax, and DSV4 templates read
+    /// Preserves media plus `reasoningContent`, `toolCalls`, `toolCallId`, and
+    /// `contentParts` through the rebuild. Dropping any of these fields silently
+    /// unwinds the structured handoff set up by `ModelRuntime.makeMLXChatMessages`:
+    /// ZAYA, Nemotron-H/Omni, MiniMax, and DSV4 templates read
     /// `message.reasoning_content`; MiniMax and other templates read
-    /// `message.tool_calls[i]`; omni/VL processors read media arrays.
+    /// `message.tool_calls[i]`; omni/VL processors read media arrays; the
+    /// DeepSeek-V4.1 vision prompt and MiMo V2.6 read `contentParts` to keep
+    /// text and media in the order the client sent them (without it they put
+    /// every image before the text).
     private static func preprocessImages(in chat: [MLXLMCommon.Chat.Message]) -> [MLXLMCommon.Chat.Message] {
         chat.map { message in
             let processedImages = message.images.map { userInputImage -> UserInput.Image in
@@ -977,7 +1188,8 @@ struct MLXBatchAdapter {
                 audios: message.audios,
                 reasoningContent: message.reasoningContent,
                 toolCalls: message.toolCalls,
-                toolCallId: message.toolCallId
+                toolCallId: message.toolCallId,
+                contentParts: message.contentParts
             )
         }
     }
@@ -1091,13 +1303,32 @@ struct MLXBatchAdapter {
 
     // MARK: - Thinking template context
 
+    static func thinkingEnabledForSampling(
+        generation: GenerationParameters,
+        modelName: String,
+        modelDefaults: LocalGenerationDefaults.Defaults,
+        usesChatTemplate: Bool = true
+    ) -> Bool? {
+        guard usesChatTemplate else { return nil }
+        let context = additionalContext(for: generation, modelName: modelName)
+        if context.keys.contains("enable_thinking") {
+            return context["enable_thinking"] as? Bool
+        }
+        return modelDefaults.defaultThinkingEnabled
+    }
+
     static func additionalContext(
         for generation: GenerationParameters,
         modelName: String,
         toolChoice: ToolChoiceOption? = nil,
         toolChoiceName: String? = nil
     ) -> [String: any Sendable] {
-        var context: [String: any Sendable] = [:]
+        // Start with the complete request dictionary. Explicit typed reasoning
+        // and tool controls below win; omission leaves bundle defaults intact.
+        var context = generation.templateKwargs?.mapValues(\.templateContextValue) ?? [:]
+        if generation.templateKwargs?.isEmpty == false {
+            context[ChatTemplateParameters.explicitContextKey] = true
+        }
         if toolChoiceRequiresLocalCall(toolChoice) {
             context["tool_choice"] = "required"
         }
@@ -1139,7 +1370,19 @@ struct MLXBatchAdapter {
             switch DeclaredReasoningEffort.control(forModelId: modelName) {
             case .levels(let levels, let defaultLevel):
                 return DeclaredReasoningEffort.snapped(
-                    requested, ontoLevels: levels, defaultLevel: defaultLevel) ?? requested
+                    requested,
+                    ontoLevels: levels,
+                    defaultLevel: defaultLevel
+                ) ?? requested
+            case .modeKwargs:
+                // Mode bundles receive their declared kwargs below, including
+                // a native reasoning_effort transport when the bundle uses it.
+                return nil
+            case .fixedNativeEffort:
+                // The bundle exposes no picker, but its engine still owns a
+                // strict native effort contract. Preserve explicit input so
+                // incompatible requests are rejected there instead of ignored.
+                return requested
             case .noEffortControl:
                 return nil
             case nil:
@@ -1158,18 +1401,67 @@ struct MLXBatchAdapter {
             context["preserve_thinking"] = preserveThinking
         }
 
-        if DSV4ReasoningProfile.matches(modelId: modelName) {
+        // Omission means the bundle/template default, including on required
+        // tool turns. Do not close reasoning to compensate for a failed run.
+        guard normalizedReasoningEffort != nil || disableThinking != nil else {
+            return context
+        }
+
+        // Declared reasoning modes (Nemotron 3.5): send exactly the kwargs the
+        // bundle declares for the selected mode. Off = the declared `off` mode
+        // (else `enable_thinking: false`); an effort snaps onto the declared
+        // levels (high = on, medium = medium); the plain toggle selects the
+        // declared default when thinking is on.
+        if case .modeKwargs(let levels, let defaultLevel, let kwargs)? =
+            DeclaredReasoningEffort.control(forModelId: modelName)
+        {
+            let level: String?
+            if disableThinking == true || directRailReasoningEffort {
+                level = "none"
+            } else if let requested = normalizedReasoningEffort, hasPositiveReasoningEffort {
+                level = DeclaredReasoningEffort.mode(
+                    forNativeEffort: requested,
+                    control: .modeKwargs(levels, defaultLevel: defaultLevel, kwargs: kwargs))
+                    ?? DeclaredReasoningEffort.snapped(
+                        requested, ontoLevels: levels, defaultLevel: defaultLevel)
+            } else {
+                level = defaultLevel ?? levels.last
+            }
+            if let level, let declared = kwargs[level] {
+                for (key, value) in declared { context[key] = value.sendable }
+            } else if level == "none" {
+                context["enable_thinking"] = false
+            }
+            return context
+        }
+
+        // V4.1 from the bundle's `model_type` (as prompt rendering decides), so a
+        // renamed V4.1 bundle still gets V4.1 controls; the name is the fallback.
+        let isDSV41 = DSV41ModelDetection.isDSV41(modelId: modelName)
+        if DSV4ReasoningProfile.matches(modelId: modelName) || isDSV41 {
             guard normalizedReasoningEffort != nil || disableThinking != nil else {
                 return context
             }
+            // DeepSeek-V4.1: an explicit thinking-off request selects the chat rail
+            // even when an effort is also present (a profile default or a stale
+            // option must not reopen thinking). DSV4-0731 keeps effort precedence.
+            if disableThinking == true, isDSV41 {
+                context["enable_thinking"] = false
+                return context
+            }
             if let normalizedReasoningEffort {
-                if let effort = DSV4ReasoningProfile.normalizedEffort(normalizedReasoningEffort) {
+                // V4.1 accepts the full low/medium/high/xhigh/max ladder; 0731 only low/high/max.
+                let effort =
+                    isDSV41
+                    ? DSV41ReasoningProfile.normalizedEffort(normalizedReasoningEffort)
+                    : DSV4ReasoningProfile.normalizedEffort(normalizedReasoningEffort)
+                if let effort {
                     switch effort {
-                    case "low", "high", "max":
+                    case "instruct":
+                        context["enable_thinking"] = false
+                    default:
                         context["enable_thinking"] = true
                         context["reasoning_effort"] = effort
-                    default:
-                        context["enable_thinking"] = false
                     }
                 } else {
                     // Preserve invalid explicit values so vmlx's DSV4 policy
@@ -1248,124 +1540,6 @@ struct MLXBatchAdapter {
             }
             return context
         }
-        if ModelFamilyNames.isQwenFamily(modelName) {
-            if directRailReasoningEffort {
-                context["enable_thinking"] = false
-                return context
-            }
-            if hasPositiveReasoningEffort {
-                context["enable_thinking"] = true
-                if let dispatchReasoningEffort {
-                    context["reasoning_effort"] = dispatchReasoningEffort
-                }
-            } else {
-                context["enable_thinking"] = false
-            }
-            return context
-        }
-        if ModelFamilyNames.isNemotronThinkingFamily(modelName) {
-            if directRailReasoningEffort {
-                context["enable_thinking"] = false
-                return context
-            }
-            if hasPositiveReasoningEffort {
-                context["enable_thinking"] = true
-                if let dispatchReasoningEffort {
-                    context["reasoning_effort"] = dispatchReasoningEffort
-                }
-            } else {
-                context["enable_thinking"] = false
-            }
-            return context
-        }
-        if ModelFamilyNames.isZayaFamily(modelName) {
-            if directRailReasoningEffort {
-                context["enable_thinking"] = false
-                return context
-            }
-            if hasPositiveReasoningEffort {
-                context["enable_thinking"] = true
-                if let dispatchReasoningEffort {
-                    context["reasoning_effort"] = dispatchReasoningEffort
-                }
-            } else {
-                context["enable_thinking"] = false
-            }
-            return context
-        }
-        if ModelFamilyNames.isMiniMaxFamily(modelName) {
-            if directRailReasoningEffort {
-                context["enable_thinking"] = false
-                return context
-            }
-            if hasPositiveReasoningEffort {
-                context["enable_thinking"] = true
-                if let dispatchReasoningEffort {
-                    context["reasoning_effort"] = dispatchReasoningEffort
-                }
-            } else {
-                context["enable_thinking"] = false
-            }
-            return context
-        }
-
-        if ModelFamilyNames.isLFM2Family(modelName) {
-            if toolChoiceRequiresLocalCall(toolChoice) {
-                context["enable_thinking"] = false
-            } else if let disableThinking {
-                context["enable_thinking"] = !disableThinking
-            } else if normalizedReasoningEffort != nil {
-                context["enable_thinking"] = hasPositiveReasoningEffort
-            }
-            return context
-        }
-        if ModelFamilyNames.isStepFamily(modelName) {
-            if toolChoiceRequiresLocalCall(toolChoice) {
-                context["enable_thinking"] = false
-            } else if let disableThinking {
-                context["enable_thinking"] = !disableThinking
-            } else if normalizedReasoningEffort != nil {
-                context["enable_thinking"] = hasPositiveReasoningEffort
-            }
-            return context
-        }
-        if ModelFamilyNames.isMiMoOrN2JANGRuntimeFamily(modelName) {
-            if toolChoiceRequiresLocalCall(toolChoice) {
-                context["enable_thinking"] = false
-                return context
-            }
-            if directRailReasoningEffort {
-                context["enable_thinking"] = false
-                return context
-            }
-            if let disableThinking {
-                context["enable_thinking"] = !disableThinking
-            } else if hasPositiveReasoningEffort {
-                context["enable_thinking"] = true
-                if let dispatchReasoningEffort {
-                    context["reasoning_effort"] = dispatchReasoningEffort
-                }
-            } else if normalizedReasoningEffort != nil {
-                context["enable_thinking"] = false
-            }
-            return context
-        }
-        if ModelFamilyNames.isGemmaFamily(modelName) {
-            if directRailReasoningEffort {
-                context["enable_thinking"] = false
-                return context
-            }
-            if hasPositiveReasoningEffort {
-                context["enable_thinking"] = true
-                if let dispatchReasoningEffort {
-                    context["reasoning_effort"] = dispatchReasoningEffort
-                }
-            } else {
-                context["enable_thinking"] = false
-            }
-            return context
-        }
-
         if hasPositiveReasoningEffort {
             if let dispatchReasoningEffort {
                 context["reasoning_effort"] = dispatchReasoningEffort
@@ -1408,13 +1582,7 @@ struct MLXBatchAdapter {
     }
 
     private static func isDirectRailReasoningEffort(_ value: String?) -> Bool {
-        guard let value else { return false }
-        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "instruct", "chat", "none", "no_think", "nothink", "off", "disabled", "false":
-            return true
-        default:
-            return false
-        }
+        DeclaredReasoningEffort.isOffEffort(value)
     }
 
     /// Compiled B=1 decode eligibility. Architecture-driven when the REAL
@@ -1475,6 +1643,7 @@ struct MLXBatchAdapter {
     static func generate(
         modelName: String,
         container: ModelContainer,
+        modelDefaults: LocalGenerationDefaults.Defaults,
         buildChat: @Sendable () -> [MLXLMCommon.Chat.Message],
         buildToolsSpec: @Sendable () -> [[String: any Sendable]]?,
         buildRawPrompt: (@Sendable () -> String)? = nil,
@@ -1500,7 +1669,7 @@ struct MLXBatchAdapter {
             "==GEN GENERATE-ENTER model=\(modelName) maxBatch=\(maxBatchSize)"
         )
         let soloLease: SoloGenerationGate.Lease?
-        if maxBatchSize == 1 {
+        if Self.requiresSoloLease(maxBatchSize: maxBatchSize, draftStrategy: draftStrategy) {
             soloLease = await Registry.shared.acquireSoloLease(for: modelName)
         } else {
             soloLease = nil
@@ -1595,7 +1764,9 @@ struct MLXBatchAdapter {
         // request omits a field. This mirrors vmlx's direct-engine
         // `GenerateParameters(generationConfig:fallback:)` behavior for the
         // local app path instead of inventing osaurus-specific defaults.
-        let modelDefaults = LocalGenerationDefaults.defaults(forModelId: modelName)
+        // This snapshot was read from the exact directory used to load the
+        // container. A short-name lookup here loses defaults when two orgs
+        // install the same repo name, despite full-ID loading being valid.
         let nativeMTPColdWarmup = await Registry.shared.consumeNativeMTPColdWarmup(
             modelName: modelName,
             requested: draftStrategy?.usesNativeMTP == true
@@ -1621,19 +1792,36 @@ struct MLXBatchAdapter {
         // shape (hybrid companion slots deny compile) rather than only the
         // name matcher; also reused for the KV-mode resolution below.
         let cacheTopology = await container.cacheTopologySnapshot()
-        let effective = Self.effectiveGenerationSettings(
+        var effective = Self.effectiveGenerationSettings(
             modelName: modelName,
             generation: generation,
             runtimeDefaults: runtime.generation,
             maxBatchSize: maxBatchSize,
             modelDefaults: modelDefaults,
             draftStrategy: effectiveDraftStrategy,
-            forcesGreedyForNativeMTP: effectiveDraftStrategy?.usesNativeMTP == true,
             nativeMTPFallbackReason: nativeMTPFallbackReason,
             nativeMTPRequestFallback: nativeMTPRequestFallback,
             cacheTopology: cacheTopology,
+            thinkingEnabled: Self.thinkingEnabledForSampling(
+                generation: generation,
+                modelName: modelName,
+                modelDefaults: modelDefaults,
+                usesChatTemplate: buildRawPrompt == nil
+            ),
             stage: "submitted_to_batch_engine"
         )
+        do {
+            effective.maxTokens = try AdmissionPositionLimit.resolveOutputTokens(
+                promptTokens: prepared.promptTokens.count,
+                outputTokens: effective.maxTokens,
+                limit: generation.admissionPositionLimit,
+                isExplicit: (generation.maxTokensExplicit && !generation.admissionOutputTokensAreImplicit)
+                    || runtime.generation.maxTokens != nil
+            )
+        } catch {
+            if let soloLease { await soloLease.release() }
+            throw error
+        }
         if Self.shouldRecordAsLastEffectiveGeneration(generation) {
             await Registry.shared.recordEffectiveGenerationSettings(
                 modelName: modelName,
@@ -1646,18 +1834,12 @@ struct MLXBatchAdapter {
             topP: effective.topP,
             topK: effective.topK,
             minP: effective.minP,
+            suppressTokens: effective.modelDefaults.suppressTokens ?? [],
             repetitionPenalty: effective.repetitionPenalty,
-            // Per-request wins, then the bundle's shipped default — the same
-            // order the other sampling fields use. Before this, a bundle
-            // declaring `presence_penalty` had it adopted by vmlx's
-            // `GenerateParameters(generationConfig:fallback:)` and dropped here,
-            // because `LocalGenerationDefaults` (which osaurus uses instead of
-            // that initializer) did not read the key at all.
-            //
-            // A declared `0.0` stays inert: `makeGenerateParameters` treats 0 as
-            // "unset" per the OpenAI default.
-            presencePenalty: generation.presencePenalty ?? modelDefaults.presencePenalty,
-            frequencyPenalty: generation.frequencyPenalty ?? modelDefaults.frequencyPenalty,
+            // Use the same resolved mode and request precedence as the other
+            // sampler fields; never re-read the unselected bundle snapshot.
+            presencePenalty: effective.presencePenalty,
+            frequencyPenalty: effective.frequencyPenalty,
             randomSeed: generation.seed,
             stopSequences: stopSequences,
             draftStrategy: effectiveDraftStrategy,
@@ -1666,26 +1848,22 @@ struct MLXBatchAdapter {
             // 4× spread was measured between a small dense model and a 35B
             // MoE on the same machine), so a per-model measured value from
             // `osaurus bench --tune-prefill` beats the server-wide setting;
-            // the setting remains the fallback, then vmlx's default.
+            // the setting remains the fallback, then the architecture's own
+            // measured recommendation, then vmlx's default.
             prefillStepSize: ModelPrefillTuningStore.tunedStepSize(for: modelName)
-                ?? runtime.concurrency.prefillStepSize,
+                ?? runtime.concurrency.prefillStepSize
+                ?? container.recommendedPrefillStepSize,
             modelName: modelName
         )
-        // Native MTP verifies drafts against the target's own argmax, so its
-        // output-equivalence guarantee is only defined under greedy decoding —
-        // turning MTP on is a request for greedy decoding. That coercion is
-        // resolved ONCE, inside `effectiveGenerationSettings` above:
-        // `mlxParams` is built from the already-coerced values, the API's
-        // `last_effective_generation` shows them, and the flags carried on
-        // `effective` drive this log and the `mtp_greedy_enforced` diagnostic.
-        // Every other generation parameter (max tokens, stops, penalties,
-        // seed) follows the request/runtime/bundle resolution untouched, and
-        // non-MTP requests keep their sampler everywhere.
-        if effective.samplerWasChanged {
-            batchAdapterLog.info(
-                "native MTP active: greedy sampler enforced for this request model=\(modelName, privacy: .public) (bundle generation_config governs all non-MTP requests)"
-            )
-        }
+        mlxParams.nativeMTPDepthPolicy = Self.nativeMTPDepthPolicy(runtime.mtp)
+        // The chat this request belongs to. The engine tags every disk-cache
+        // row it stores with it, so the quota pass evicts OTHER chats' rows
+        // first and reports when it had to take this chat's. Subagent runs
+        // carry their own session id and so count as their own chats.
+        mlxParams.cacheChainId = generation.sessionId
+
+        // The engine chooses greedy or exact-p/q speculation from the resolved
+        // sampler. MTP eligibility may fall back to AR, never alter sampling.
 
         // Do not invent a reasoning budget from `max_tokens`. A wire client
         // choosing a finite output cap did not ask Osaurus to mask the model's
@@ -1757,7 +1935,7 @@ struct MLXBatchAdapter {
                     + "tokenizedPrompt=\(prepared.promptTokens.count) "
                     + "lcpVsPrev=\(lcp)/\(prevCount) "
                     + "toolsInSpec=\(toolsCount) toolChoice=\(String(describing: toolChoice)) "
-                    + "lastMsgRole=\(lastRole) \(cacheStr)"
+                    + "lastMsgRole=\(lastRole) prefillStep=\(mlxParams.prefillStepSize) \(cacheStr)"
             )
         }
 
@@ -1792,6 +1970,7 @@ struct MLXBatchAdapter {
             if let soloLease { await soloLease.release() }
             throw error
         }
+        mlxParams.jsonSchema = generation.jsonSchema
         let upstream = await engine.generate(
             input: prepared.input,
             parameters: mlxParams
@@ -1803,9 +1982,13 @@ struct MLXBatchAdapter {
         // `STREAM-DRAINED postSubmitMs` = this step's decode + KV store, and the
         // lease (which the next step waits on) releases right after.
         let producerSubmitAt = CFAbsoluteTimeGetCurrent()
+        // Relay attribution, captured as plain values so the producer task
+        // does not hold the whole parameter struct.
+        let relaySessionId = generation.sessionId
+        let relayActivitySource = generation.activitySource
+        let relayAuxiliary = generation.auxiliaryCacheIntent
         let producerTask = Task<Void, Never> {
             var terminalInfo: Generation?
-            var toolEarlyStopRequested = false
             await withTaskCancellationHandler {
                 for await event in upstream {
                     if case .info(let info) = event {
@@ -1822,35 +2005,26 @@ struct MLXBatchAdapter {
                         // completion on the relay so the chat can stop its
                         // cursor at the last letter; the run's ordering
                         // (lease, allocator window, send gate) is untouched.
+                        // Scoped to the producing request so a chat only
+                        // accepts completions for its own session (see
+                        // `Completion.matches`).
                         GenerationOutputRelay.shared.announce(
                             modelName: modelName,
-                            generationTokens: info.generationTokenCount)
+                            generationTokens: info.generationTokenCount,
+                            sessionId: relaySessionId,
+                            activitySource: relayActivitySource,
+                            auxiliary: relayAuxiliary
+                        )
                         terminalInfo = event
                         continue
                     }
                     if !Task.isCancelled {
                         continuation.yield(event)
                     }
-                    // A parsed tool call ends the useful part of this turn:
-                    // the host dispatches the tool the moment the event lands,
-                    // and everything the model decodes after it is discarded.
-                    // Request an early stop of the direct B=1 producer NOW —
-                    // vmlx finishes the generation with a natural `.stop`
-                    // (the loop's emitted-tool-call rule), runs its boundary
-                    // stores, and closes the upstream, so this drain loop
-                    // ends within a token instead of riding the model's
-                    // post-tool prose to EOS (up to maxTokens of zombie
-                    // decode at full GPU cost while the tool executes). All
-                    // ordering tails below — STREAM-DRAINED, onEngineDrained,
-                    // lease and Metal-gate release — are unchanged.
-                    if case .toolCall = event, soloLease != nil,
-                        !toolEarlyStopRequested
-                    {
-                        toolEarlyStopRequested = true
-                        Task {
-                            await engine.cancelActiveSoloGenerationAndWait()
-                        }
-                    }
+                    // A closed tool envelope is not a completed response.
+                    // Keep decoding: subsequent chunks may contain more calls
+                    // in the same batch. Only real consumer cancellation below
+                    // may cancel the producer; the engine owns EOS/token limits.
                 }
             } onCancel: {
                 // Breaking a wrapping AsyncStream's consumer is not itself an
@@ -1911,7 +2085,7 @@ struct MLXBatchAdapter {
         }
 
         batchAdapterLog.info(
-            "submit: model=\(modelName, privacy: .public) promptTokens=\(prepared.promptTokens.count, privacy: .public) temperature=\(effective.temperature, privacy: .public) topP=\(effective.topP, privacy: .public) topK=\(effective.topK, privacy: .public) minP=\(effective.minP, privacy: .public) maxTokens=\(effective.maxTokens, privacy: .public) draftStrategy=\(effectiveDraftStrategy?.kindName ?? "none", privacy: .public) nativeMTPFallback=\(nativeMTPFallbackReason ?? "none", privacy: .public) compiledBatchDecode=\(effective.compiledBatchDecode, privacy: .public)"
+            "submit: model=\(modelName, privacy: .public) promptTokens=\(prepared.promptTokens.count, privacy: .public) temperature=\(effective.temperature, privacy: .public) topP=\(effective.topP, privacy: .public) topK=\(effective.topK, privacy: .public) minP=\(effective.minP, privacy: .public) maxTokens=\(effective.maxTokens, privacy: .public) draftStrategy=\(effectiveDraftStrategy?.kindName ?? "none", privacy: .public) nativeMTPFallback=\(nativeMTPFallbackReason ?? "none", privacy: .public) compiledBatchDecodeRequested=\(effective.compiledBatchDecode, privacy: .public)"
         )
 
         return PreparedStream(
@@ -2222,6 +2396,38 @@ struct MLXBatchAdapter {
         return Array(with.dropFirst(without.count))
     }
 
+    /// A successfully rendered template is not evidence that attached images
+    /// survived preprocessing. Some processors return text-only input when a
+    /// template omits its image placeholders. Refuse that result before cache
+    /// lookup or generation, independently of the model's name or architecture.
+    static func validatePreparedImages(requestedImageCount: Int, input: LMInput) throws {
+        guard requestedImageCount > 0 else { return }
+        guard let image = input.image, image.pixels.size > 0 else {
+            throw NSError(
+                domain: "MLXBatchAdapter",
+                code: 6,
+                userInfo: [
+                    NSLocalizedDescriptionKey:
+                        "Image preprocessing produced no image pixels for \(requestedImageCount) attached image(s). Check the installed model's processor and chat template."
+                ]
+            )
+        }
+    }
+
+    /// Preserve typed request refusals for HTTP and streaming error mapping.
+    /// Other preparation failures retain their existing diagnostic wrapper.
+    static func templatePreparationError(_ error: Error) -> Error {
+        if error is K2HorizonTemplateContract.ContractError { return error }
+        let detail =
+            (error as? LocalizedError)?.errorDescription
+            ?? String(describing: error)
+        return NSError(
+            domain: "MLXBatchAdapter",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Chat template error: \(detail)"]
+        )
+    }
+
     private static func prepareInput(
         modelName: String,
         container: ModelContainer,
@@ -2233,6 +2439,7 @@ struct MLXBatchAdapter {
         cacheStableSystemPrefix: String?,
         trace: TTFTTrace?
     ) async throws -> PreparedInput {
+        try DeclaredReasoningEffort.validateModeRequest(modelId: modelName, options: generation.modelOptions)
         // Heap-allocated outbox so the throwing closure can hand a value back
         // across the actor boundary.
         final class OutBox: @unchecked Sendable {
@@ -2340,6 +2547,7 @@ struct MLXBatchAdapter {
                         lmInput = probeTruncated
                     } else {
                         let prepared = try await context.processor.prepare(input: userInput)
+                        try Self.validatePreparedImages(requestedImageCount: box.imageCount, input: prepared)
                         lmInput = prepared.withToolSchemas(toolsSpec)
                         if generation.warmupPrefill {
                             lmInput = Self.truncatingToCanonicalCacheBoundary(
@@ -2350,14 +2558,7 @@ struct MLXBatchAdapter {
                         }
                     }
                 } catch {
-                    let detail =
-                        (error as? LocalizedError)?.errorDescription
-                        ?? String(describing: error)
-                    throw NSError(
-                        domain: "MLXBatchAdapter",
-                        code: 1,
-                        userInfo: [NSLocalizedDescriptionKey: "Chat template error: \(detail)"]
-                    )
+                    throw Self.templatePreparationError(error)
                 }
                 box.processorDoneAt = CFAbsoluteTimeGetCurrent()
                 trace?.mark("batch_tokenization_done")
@@ -2389,6 +2590,16 @@ struct MLXBatchAdapter {
                 )
             }
 
+            if let schema = generation.jsonSchema {
+                var schemaParameters = MLXLMCommon.GenerateParameters()
+                schemaParameters.jsonSchema = schema
+                do {
+                    try MLXLMCommon.validateStructuredOutputRequest(
+                        input: lmInput, parameters: schemaParameters, context: context)
+                } catch {
+                    throw ChatEngine.EngineError(kind: .invalidStructuredOutput(error.localizedDescription))
+                }
+            }
             box.result = PreparedInput(input: lmInput, promptTokens: tokens)
         }
 
@@ -2425,6 +2636,7 @@ struct MLXBatchAdapter {
             guard
                 key == "enable_thinking" || key == "reasoning_effort" || key == "tool_choice"
                     || key == "tool_choice_name" || key == "preserve_thinking"
+                    || key == "medium_effort"
             else {
                 return nil
             }

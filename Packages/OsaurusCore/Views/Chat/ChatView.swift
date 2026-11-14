@@ -34,6 +34,9 @@ struct QueuedSend: Equatable {
     var text: String
     var attachments: [Attachment]
     var oneOffSkillId: UUID?
+    var taskIntent: ChatTaskIntent? = nil
+    var inferenceSourceOverride: RequestSource? = nil
+    var generationControls: ChatTurnGenerationControls? = nil
 }
 
 /// A manual model change made after a conversation already has content.
@@ -64,17 +67,25 @@ private struct EmptyStateContent: View, Equatable {
     let quickActions: [AgentQuickAction]
     let pendingLocalModelId: String?
     let temporaryCloudModelName: String?
-    let activeDiscoveredAgent: DiscoveredAgent?
     let activeRelayAgent: PairedRelayAgent?
     let remoteAgentAvatar: String?
     let remoteAgentDescription: String?
     let remoteAgentQuickActions: [AgentQuickAction]?
     let isConnecting: Bool
+    let sharedAgent: SharedAgentIdentity?
+    let sharedAgentStatus: SharedAgentStatus?
+    let hostedAgent: HostedAgentHero?
+    let discoveryCard: DiscoveryCard?
+    let setUpLeft: Int
 
     let onOpenModelManager: () -> Void
     let onUseFoundation: (() -> Void)?
     let onQuickAction: (String) -> Void
     let onUseHostedWhilePending: (() async -> Bool)?
+    let onOpenDiscovery: (DiscoveryItem) -> Void
+    let onDismissDiscovery: (DiscoveryItem) -> Void
+    let onOpenSetUp: () -> Void
+    let onSkipSetUp: () -> Void
 
     // `nonisolated` because Equatable's `==` is a non-isolated requirement but
     // this view type is main-actor-isolated. Every compared field is a Sendable
@@ -86,12 +97,16 @@ private struct EmptyStateContent: View, Equatable {
             && lhs.quickActions == rhs.quickActions
             && lhs.pendingLocalModelId == rhs.pendingLocalModelId
             && lhs.temporaryCloudModelName == rhs.temporaryCloudModelName
-            && lhs.activeDiscoveredAgent == rhs.activeDiscoveredAgent
             && lhs.activeRelayAgent == rhs.activeRelayAgent
             && lhs.remoteAgentAvatar == rhs.remoteAgentAvatar
             && lhs.remoteAgentDescription == rhs.remoteAgentDescription
             && lhs.remoteAgentQuickActions == rhs.remoteAgentQuickActions
             && lhs.isConnecting == rhs.isConnecting
+            && lhs.sharedAgent == rhs.sharedAgent
+            && lhs.sharedAgentStatus == rhs.sharedAgentStatus
+            && lhs.hostedAgent == rhs.hostedAgent
+            && lhs.discoveryCard == rhs.discoveryCard
+            && lhs.setUpLeft == rhs.setUpLeft
     }
 
     var body: some View {
@@ -108,12 +123,20 @@ private struct EmptyStateContent: View, Equatable {
             pendingLocalModelId: pendingLocalModelId,
             temporaryCloudModelName: temporaryCloudModelName,
             onUseHostedWhilePending: onUseHostedWhilePending,
-            activeDiscoveredAgent: activeDiscoveredAgent,
             activeRelayAgent: activeRelayAgent,
             remoteAgentAvatar: remoteAgentAvatar,
             remoteAgentDescription: remoteAgentDescription,
             remoteAgentQuickActions: remoteAgentQuickActions,
-            isConnecting: isConnecting
+            isConnecting: isConnecting,
+            sharedAgent: sharedAgent,
+            sharedAgentStatus: sharedAgentStatus,
+            hostedAgent: hostedAgent,
+            discoveryCard: discoveryCard,
+            onOpenDiscovery: onOpenDiscovery,
+            onDismissDiscovery: onDismissDiscovery,
+            setUpLeft: setUpLeft,
+            onOpenSetUp: onOpenSetUp,
+            onSkipSetUp: onSkipSetUp
         )
     }
 }
@@ -155,7 +178,74 @@ final class ChatSession: ObservableObject {
         .localModelsChanged,
     ]
 
-    @Published var turns: [ChatTurn] = []
+    @Published var turns: [ChatTurn] = [] {
+        didSet {
+            invalidateTranscriptTokenTotals()
+            _cachedRouterSpendMicro = turns.reduce(0) { sum, turn in
+                guard let raw = turn.routerBilling?.costMicro else { return sum }
+                let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                return sum + (Int(trimmed) ?? 0)
+            }
+            _cachedRouterCacheStats = turns.reduce((cachedInputTokens: 0, inputTokens: 0)) { acc, turn in
+                guard let billing = turn.routerBilling else { return acc }
+                return (
+                    acc.cachedInputTokens + max(0, billing.cachedInputTokens),
+                    acc.inputTokens + max(0, billing.inputTokens)
+                )
+            }
+        }
+    }
+
+    private var _cachedRouterSpendMicro: Int = 0
+
+    /// Memoized conversation/output token totals for the model-visible
+    /// transcript, read by `estimatedContextBreakdown` from the chat view
+    /// body. Walking every turn on each SwiftUI render stalled the main
+    /// thread on long conversations (APPLE-MACOS-2NW). Keyed on the session's
+    /// transcript revision (bumped when `turns` or `conversationSummary`
+    /// change) plus `ChatTurn.tokenEstimateRevision` (bumped on in-place
+    /// turn edits), so it never serves stale numbers.
+    private struct TranscriptTokenTotals {
+        let sessionRevision: UInt64
+        let turnRevision: UInt64
+        let outputTokens: Int
+        let conversationTokens: Int
+    }
+    private var transcriptRevision: UInt64 = 0
+    private var cachedTranscriptTokenTotals: TranscriptTokenTotals?
+
+    private func invalidateTranscriptTokenTotals() {
+        transcriptRevision &+= 1
+        cachedTranscriptTokenTotals = nil
+    }
+
+    /// Output and conversation (non-output) token estimates for the turns
+    /// the model will actually see on the next send. O(1) on cache hit.
+    private func transcriptTokenTotals() -> (outputTokens: Int, conversationTokens: Int) {
+        let turnRevision = ChatTurn.tokenEstimateRevision
+        if let cached = cachedTranscriptTokenTotals,
+            cached.sessionRevision == transcriptRevision,
+            cached.turnRevision == turnRevision
+        {
+            return (cached.outputTokens, cached.conversationTokens)
+        }
+        // With an LLM compaction summary, the model sees the summary message
+        // instead of the covered turns.
+        let coveredIds = summaryCoveredTurnIds
+        let modelVisibleTurns =
+            coveredIds.isEmpty ? turns : turns.filter { !coveredIds.contains($0.id) }
+        let outputTokens = ContextBudgetManager.estimateOutputTokens(for: modelVisibleTurns)
+        let conversationTokens =
+            ContextBudgetManager.estimateTokens(for: modelVisibleTurns) - outputTokens
+        cachedTranscriptTokenTotals = TranscriptTokenTotals(
+            sessionRevision: transcriptRevision,
+            turnRevision: turnRevision,
+            outputTokens: outputTokens,
+            conversationTokens: conversationTokens
+        )
+        return (outputTokens, conversationTokens)
+    }
+    private var _cachedRouterCacheStats: (cachedInputTokens: Int, inputTokens: Int) = (0, 0)
 
     /// The model's OUTPUT for the in-flight run is complete (vmlx emitted its
     /// terminal info) even though the RUN has not ended: the adapter keeps the
@@ -165,6 +255,11 @@ final class ChatSession: ObservableObject {
     /// gate keys on `isStreaming`, which still waits for the real end.
     @Published var outputComplete: Bool = false
 
+    /// True while a hibernated tab's transcript is being read from disk
+    /// (`ChatWindowState.wake`). The chat surface shows a loading state
+    /// instead of the empty-chat greeting for the gap.
+    @Published var isHydratingTranscript: Bool = false
+
     @Published var isStreaming: Bool = false {
         didSet {
             guard isStreaming != oldValue else { return }
@@ -172,81 +267,53 @@ final class ChatSession: ObservableObject {
                 outputComplete = false
                 ChatPerfTrace.shared.begin("stream-\(Int(Date().timeIntervalSince1970))")
                 beginRunProgressMonitor()
+                syncStreamer.runStarted(self)
             } else {
                 ChatPerfTrace.shared.end()
                 endRunProgressMonitor()
+                syncStreamer.runEnded()
             }
         }
     }
+
+    /// Streams this chat's replies to the user's other devices.
+    private let syncStreamer = SyncTurnStreamer()
 
     // MARK: - Run progress (slow / stalled surfacing)
 
-    /// Coarse liveness of the in-flight run, derived from time since the last
-    /// observed progress event (stream delta, tool event, image-generation
-    /// event). Drives a visible notice above the composer so a wedged
-    /// provider/model/tool reads as "stalled — Stop is right there" instead of
-    /// an indefinite shimmer the user can only interpret as a hang.
-    enum RunProgressState {
-        case active
-        /// No progress for `runSlowThreshold` — worth telling the user we're
-        /// still alive but waiting (long prefill, slow provider, big tool).
-        case slow
-        /// No progress for `runStalledThreshold` — likely wedged; surface
-        /// Stop as the recovery action. The run is NOT auto-killed: a huge
-        /// model load can legitimately take minutes, so the user decides.
-        case stalled
-    }
+    let runProgress = RunProgressMonitor()
 
-    @Published private(set) var runProgressState: RunProgressState = .active
-
-    private var lastRunProgressAt = Date()
-    private var runProgressMonitorTask: Task<Void, Never>?
-    private static let runSlowThreshold: TimeInterval = 30
-    private static let runStalledThreshold: TimeInterval = 120
-
-    /// Record run liveness. Called from every streaming/tool/image event
-    /// loop; must stay cheap (a Date store; the published state only changes
-    /// on an actual transition).
-    func noteRunProgress() {
-        lastRunProgressAt = Date()
-        if runProgressState != .active {
-            runProgressState = .active
-        }
+    func noteRunProgress(_ kind: RunProgressKind = .stream) {
+        runProgress.note(kind)
     }
 
     private func beginRunProgressMonitor() {
-        lastRunProgressAt = Date()
-        runProgressState = .active
-        runProgressMonitorTask?.cancel()
-        runProgressMonitorTask = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
-                guard let self, !Task.isCancelled else { return }
-                let idle = Date().timeIntervalSince(self.lastRunProgressAt)
-                let newState: RunProgressState =
-                    idle >= Self.runStalledThreshold
-                    ? .stalled
-                    : idle >= Self.runSlowThreshold ? .slow : .active
-                if newState != self.runProgressState {
-                    self.runProgressState = newState
-                    if newState == .stalled {
-                        CrashReportingService.recordBreadcrumb(
-                            category: "chat.run",
-                            message: "run stalled: no progress for \(Int(idle))s"
-                        )
-                    }
-                }
-            }
-        }
+        runProgress.start(
+            toolCallIds: { [weak self] in self?.sessionToolCallIds ?? [] },
+            sessionId: { [weak self] in self?.sessionId?.uuidString },
+            agentId: { [weak self] in self?.agentId }
+        )
     }
 
     private func endRunProgressMonitor() {
-        runProgressMonitorTask?.cancel()
-        runProgressMonitorTask = nil
-        runProgressState = .active
+        runProgress.stop()
+    }
+
+    private var sessionToolCallIds: Set<String> {
+        var ids = Set<String>()
+        for turn in turns {
+            if let calls = turn.toolCalls {
+                for call in calls { ids.insert(call.id) }
+            }
+            for call in turn.remoteToolActivity {
+                ids.insert(call.id)
+            }
+        }
+        return ids
     }
 
     @Published var lastStreamError: String?
+    var delegatedToolFailure = DelegatedToolFailureState()
 
     /// Set when an Osaurus Router send fails because the account is out of
     /// credits (HTTP 402 INSUFFICIENT_FUNDS). Drives the "out of credits"
@@ -274,6 +341,7 @@ final class ChatSession: ObservableObject {
     /// puts the text back in the input field so the user can edit and
     /// resend without retyping. Cleared on the next successful send.
     var savedDraftOnCancel: (text: String, attachments: [Attachment])? = nil
+    private var savedTurnOverridesOnCancel: ChatTurnOverrides? = nil
 
     /// Single-slot FIFO queue for in-chat prompt overlays (secrets,
     /// clarify, …). Both prompt types share the same on-screen real
@@ -290,7 +358,21 @@ final class ChatSession: ObservableObject {
     /// the parsed payload to the source plugin, and suppress the spurious
     /// COMPLETED that would otherwise fire when `isStreaming` goes false
     /// on the intercept.
-    @Published var awaitingClarify: ClarifyPayload?
+    @Published var awaitingClarify: ClarifyPayload? {
+        didSet { syncClarifyAttention() }
+    }
+    /// The attention item mirroring `awaitingClarify` on notifications and
+    /// the phone.
+    var clarifyAttentionId: UUID?
+
+    /// Work Mode workflow calls parked on forms, by run. The task waits in
+    /// `.waitingForInput`; as each run ends its result replaces that call's
+    /// tool result, and the chat continues once the set is empty.
+    @Published var awaitingWorkflowRuns: [UUID: ParkedWorkflowCall] = [:]
+    nonisolated(unsafe) var workflowRunObservers: [UUID: NSObjectProtocol] = [:]
+    /// False while a re-parked set includes a run the user cancelled: its
+    /// results land in the transcript but the task does not go on by itself.
+    var resumesAfterParkedWorkflowRuns = true
 
     /// This chat's working-folder state (context, security-scoped access,
     /// persistable bookmark). Owned per session so picking/refreshing/
@@ -306,6 +388,11 @@ final class ChatSession: ObservableObject {
     /// Lives on the session so state survives NSTableView cell reuse.
     let expandedBlocksStore = ExpandedBlocksStore()
 
+    /// Where the reader was in this session's thread when its table last
+    /// unmounted (tab switch), so the next mount restores it. `var` so a
+    /// hibernated tab's stand-in can share the live session's store.
+    var scrollPositionStore = ThreadScrollPositionStore()
+
     /// Thinking-block ids already auto-expanded once for a completed
     /// reasoning-only turn. Seeding the shared `expandedBlocksStore` (rather
     /// than force-expanding in the cell) lets the user collapse the block
@@ -319,6 +406,24 @@ final class ChatSession: ObservableObject {
     /// phase ends.
     private var streamingAutoExpandedThinkingBlockIds: Set<String> = []
     @Published var input: String = ""
+    /// Mirror of what the composer currently shows. The card keeps
+    /// keystrokes local and only writes `input` on send, so this is the
+    /// only place the unsent draft is visible to the session. Deliberately
+    /// not `@Published`: a keystroke must not re-render the chat.
+    private(set) var composerDraft: String = ""
+    /// True once the composer has reported a keystroke since `input` was
+    /// last assigned by the draft machinery. While set, `composerDraft` is
+    /// newer than `input` (which may still hold a restored draft the user
+    /// has since edited or deleted).
+    private var composerDraftIsAuthoritative = false
+    /// Bumped every time the draft machinery re-bases `input` (new chat,
+    /// agent switch, session load). The composer keeps its own copy of the
+    /// text and only syncs from `input` when the binding value changes, so
+    /// an in-place agent switch that leaves `input` at the same string (for
+    /// example `""` -> restored old draft -> `""` within one run loop) would
+    /// otherwise keep showing the previous agent's keystrokes. Observing
+    /// this counter lets the card force a resync regardless of the string.
+    @Published private(set) var composerGeneration: Int = 0
     @Published var pendingAttachments: [Attachment] = []
     @Published var selectedModel: String? = nil
     @Published var modelSwitchContinuityWarning: ModelSwitchContinuityWarning?
@@ -326,6 +431,21 @@ final class ChatSession: ObservableObject {
     let warmupController = ChatWarmupController()
     @Published var pickerItems: [ModelPickerItem] = []
     @Published var activeModelOptions: [String: ModelOptionValue] = [:]
+    @Published var nextTurnOverrides = ChatTurnOverrides()
+    @Published var turnParametersError: String?
+
+    func captureGenerationControls(overrides: ChatTurnOverrides? = nil) -> ChatTurnGenerationControls {
+        var controls = ChatTurnGenerationControls.capture(activeModelOptions: activeModelOptions)
+        controls.temperature = AgentManager.shared.effectiveTemperature(for: agentId ?? Agent.defaultId)
+        controls.topP = ChatConfigurationStore.load().topPOverride
+        controls.agentSettings = AgentManager.shared.effectiveGenerationSettings(for: agentId ?? Agent.defaultId)
+        controls.maxOutputTokens = AgentManager.shared.effectiveMaxTokens(for: agentId ?? Agent.defaultId)
+        controls.agentDefaultsCaptured = true
+        controls.overrides = overrides ?? nextTurnOverrides
+        controls.storedExplicitOptions = selectedModel.flatMap { ModelOptionsStore.shared.storedExplicitOptions(for: $0) }
+        return controls
+    }
+
     @Published var imageComposerSettings = ImageComposerSettings()
     @Published var hasAnyModel: Bool = false
     @Published var isDiscoveringModels: Bool = true
@@ -341,6 +461,12 @@ final class ChatSession: ObservableObject {
     /// Skill ID to inject as one-off context for the next outgoing message.
     /// Set when the user selects a skill from the slash command popup; cleared after send.
     @Published var pendingOneOffSkillId: UUID?
+    /// Instructions for the next run only (a phone's voice-call note),
+    /// appended to its system prompt and never saved. Cleared at send.
+    var pendingRunInstructions: String?
+    /// A hosted image run's settings from the requesting device, applied over
+    /// the image composer's for the next run only.
+    var pendingHostedImageSettings: HostRunRequest.ImageSettings?
 
     /// Single-slot queued send. Non-nil when the user has pressed Send while
     /// `isStreaming` is true. The chip in `FloatingInputCard` shows a preview
@@ -350,8 +476,33 @@ final class ChatSession: ObservableObject {
     /// user turn.
     @Published var queuedSend: QueuedSend?
 
+    /// Text from a remote surface (a channel message) that arrived while a
+    /// run was streaming. Joined into the next iteration boundary like a
+    /// composer steer, but never flushed at run end: whoever queued it owns
+    /// the follow-up turn and drains leftovers with
+    /// `BackgroundTaskManager.takeRemoteSteers`, so it can wait for that reply.
+    var remoteSteers: [String] = []
+
+    /// Who writes the next user turn `send` appends, when it isn't the
+    /// person at this Mac (a channel sender, the owner speaking in a hosted
+    /// chat). One-shot: consumed by that turn.
+    var nextSendAuthor: ParticipantRef?
+
     // MARK: - Persistence Properties
-    @Published var sessionId: UUID?
+    @Published var sessionId: UUID? {
+        didSet {
+            // One harness process per open chat: the chat this session
+            // showed before is resumed on its next send.
+            if let oldValue, oldValue != sessionId { closeHarnessSession(for: oldValue) }
+            if watchedSyncSessionId != sessionId {
+                if let watchedSyncSessionId { SyncInboundApplier.shared.unwatch(watchedSyncSessionId) }
+                if let sessionId { SyncInboundApplier.shared.watch(sessionId) }
+                watchedSyncSessionId = sessionId
+            }
+        }
+    }
+    /// The session this chat follows for other devices' changes.
+    private var watchedSyncSessionId: UUID?
     @Published var title: String = "New Chat"
     /// One-shot latch for the AI-generated title. Set when a generation is
     /// kicked off for the current session so later runs in the same chat
@@ -365,6 +516,19 @@ final class ChatSession: ObservableObject {
     /// (plugin / HTTP / scheduler / watcher) runs, defaults to `.chat` for
     /// user-driven UI sessions.
     var source: SessionSource = .chat
+    /// Trigger kind of an `.automation` session.
+    var automationKind: EventSourceKind?
+    /// The source each turn binds for its gates
+    /// (`SessionSource.runtimeSource(automationKind:)`).
+    var runtimeSource: SessionSource { source.runtimeSource(automationKind: automationKind) }
+    /// Tool-call ids of `background: true` spawns the CURRENT run launched.
+    /// Their workers run in unstructured tasks outside this run's task tree,
+    /// so cancelling `currentTask` cannot reach them; `stop()` trips their
+    /// interrupt tokens (the same path as the Activity row's Stop) so a user
+    /// Stop on the launching turn does not leave orphaned workers. Cleared
+    /// when the run ends normally — workers then outlive the turn by design
+    /// and report back later.
+    private var backgroundSpawnCallIdsThisRun: [String] = []
     /// True when this session's folder was restored from a bookmark that a
     /// background DISPATCH supplied (a Watcher's watched folder, a scheduled
     /// task's folder, or a plugin's `folder_bookmark`), as opposed to a
@@ -375,6 +539,13 @@ final class ChatSession: ObservableObject {
     /// (`preferHostFolder`); an interactive folder keeps the historical
     /// sandbox-priority contract, where the user toggles sandbox off instead.
     var folderContextFromDispatchBookmark: Bool = false
+    /// True while this fresh chat's folder is only the AGENT's sticky
+    /// working folder, seeded by `ChatWindowState.adoptAgentWorkingFolder`
+    /// rather than picked in this chat or inherited from a project. A
+    /// project's own folder may still replace it (a project is the more
+    /// specific context), which the plain `hasActiveFolder` guard would
+    /// otherwise block. Cleared by any user pick/clear and by `reset()`.
+    var folderFromAgentDefault: Bool = false
     /// Whether this session's model loads may evict a model someone else is using.
     ///
     /// Set from `DispatchRequest.loadIntent` at the trigger boundary. Headless
@@ -394,6 +565,13 @@ final class ChatSession: ObservableObject {
     /// every ordinary chat. Consumed at the two loop-limit sites below —
     /// RAM admission prices delegated children from exactly these values.
     var delegationBudget: DelegatedRunContract?
+    /// Request-scoped identity priced by admission; never an agent preference.
+    var delegationModel: String?
+
+    private var admittedDelegationModel: String? {
+        guard source == .delegation else { return nil }
+        return delegationModel
+    }
     var sourcePluginId: String?
     var externalSessionKey: String?
     var dispatchTaskId: UUID?
@@ -404,12 +582,39 @@ final class ChatSession: ObservableObject {
     /// `archived`.
     var pinned: Bool = false
     /// Mirrors `ChatSessionData.projectId`, for the same round-trip reason
-    /// as `archived`. Published because the toolbar's back-to-project
-    /// button shows/hides with it across chat switches.
+    /// as `archived`. Published because the tab strip's project label
+    /// shows/hides with it across chat switches.
     @Published var projectId: UUID?
+    /// Mirrors `ChatSessionData.workspace`: set when this tab is a chat with
+    /// a workspace teammate's shared agent (client side) so the session is
+    /// keyed under that agent's history rather than the hosting local
+    /// agent. Published because the sidebar's selected row and the composer
+    /// lock both follow it.
+    @Published var workspaceContext: WorkspaceSessionContext?
+    /// Mirrors `ChatSessionData.hostDevice`: the sync device that runs this
+    /// chat's agent. Another Mac's id makes this a hosted chat, whose turns
+    /// that Mac answers (`ChatSession+HostedRun`). Published because the tab
+    /// scope, sidebar selection and composer follow it.
+    @Published var hostDevice: String?
+    /// Mirrors `ChatSessionData.servedBy`: the Mac that served this chat for
+    /// a teammate, an invite-link caller or the paired iPhone.
+    @Published var servedBy: String?
+    /// The stream carrying a reply to the user's other devices. Saves leave
+    /// that reply out until the stream commits it, or it would be written twice.
+    weak var syncStream: SyncTurnStreamer?
+    /// The host's `ai.osaurus.host-run/1` for this chat, from
+    /// `SyncHostedRunMonitor`.
+    @Published var hostRunState: SyncHostedRunContract.HostRun?
+    /// Tool calls the host is waiting on the user to approve here.
+    @Published var hostApprovals: [SyncHostedRunContract.PendingApproval] = []
+    /// Secrets the host's run is asking this device for.
+    @Published var hostPrompts: [SyncHostedRunContract.PendingPrompt] = []
+    /// When Stop was pressed for a hosted turn; the composer unlocks once
+    /// the host confirms, or after `hostStopGrace` if it never does.
+    @Published var hostStopRequest: HostStopRequest?
 
     /// Tracks if session has unsaved content changes
-    private var isDirty: Bool = false
+    var isDirty: Bool = false
     /// Session id whose first persisted turn belongs to the active send.
     /// Used to undo transient rows on privacy-review cancels, including
     /// pre-minted empty session ids.
@@ -438,6 +643,14 @@ final class ChatSession: ObservableObject {
     /// long model switch instead of presenting a second ordinary Send button.
     var isSendActiveForComposer: Bool {
         isStreaming || awaitingPreSendHandshake
+    }
+
+    /// Grouped background dispatch must not take over a live turn, a paused
+    /// permission/clarify exchange, or a compaction mutating this transcript.
+    var isAvailableForDispatchReattachment: Bool {
+        !isSendActiveForComposer && activeRunId == nil
+            && awaitingClarify == nil && promptQueue.current == nil
+            && !compactionState.isRunning
     }
 
     /// Session id whose activity was last pushed to `SessionActivityMonitor`,
@@ -471,6 +684,14 @@ final class ChatSession: ObservableObject {
     /// Privacy review cancel restores the draft instead of committing the run;
     /// it must not auto-dispatch a queued follow-up during cleanup.
     private var suppressQueuedSendFlushForCurrentRun = false
+    /// Set by the `prompt_working_folder` intercept after the user picked a
+    /// folder mid-run. The run ends there (the folder root, execution mode
+    /// and tool schema are all frozen per turn), and `completeRunCleanup`
+    /// immediately continues the conversation with `send("")` so the model
+    /// resumes with the folder bound — without the user typing anything.
+    /// Cleared by every fresh send / stop / reset so a stale flag can never
+    /// auto-continue an unrelated run.
+    private var pendingWorkingFolderContinuation = false
 
     // MARK: - Memoization Cache
     private let blockMemoizer = BlockMemoizer()
@@ -528,7 +749,9 @@ final class ChatSession: ObservableObject {
     /// visible transcript is untouched). Persisted with the session;
     /// invalidated when covered turns are edited/regenerated away (see
     /// `validateConversationSummary`).
-    @Published var conversationSummary: ConversationSummary?
+    @Published var conversationSummary: ConversationSummary? {
+        didSet { invalidateTranscriptTokenTotals() }
+    }
 
     /// Live compaction progress, rendered by the Context Budget popover
     /// (inline) and the compaction dialog.
@@ -547,12 +770,10 @@ final class ChatSession: ObservableObject {
     /// auto-compaction gate.
     private var skipAutoCompactionForNextSend = false
 
-    /// In-flight compaction run, if any. Kept so `reset()` can cancel it
-    /// (compaction never overlaps a streaming run — manual is gated on
-    /// `!isStreaming` and the auto-trigger fires pre-send — so `stop()`
-    /// has nothing to cancel; a run that outlives its transcript is
-    /// dropped by the `summaryIsValid` check before it can apply).
+    /// Pre-send/manual compaction task. Tool-loop compaction is awaited by
+    /// `currentTask` at a drained iteration boundary and cancels with Stop.
     private var compactionTask: Task<Void, Never>?
+    private var toolLoopCompactionRunId: UUID?
 
     /// Per-session always-loaded + capabilities_load tool kit lives in the
     /// process-wide `SessionToolStateStore` so chat sessions and the
@@ -560,13 +781,13 @@ final class ChatSession: ObservableObject {
     private var sessionStateKey: (UUID) -> String { { $0.uuidString } }
 
     /// Prompt/scope agreement tripwire (advisory, never a block): the
-    /// Orchestrator addendum tells the model to ALWAYS call `osaurus_help` /
-    /// `osaurus_inspect` / `osaurus_config`; if this turn's schema does not
-    /// expose one of them the scope refuses it with `tool_not_found` and the
-    /// model has been set up to loop (seen live after an agent-chip switch
-    /// before the agent joined the session fingerprint). Logged so a live
-    /// proof can see the disagreement. Only the Default agent carries the
-    /// addendum, so other agents are skipped.
+    /// Orchestrator persona names its routing tools (`status`, `state`, the
+    /// handoffs) unconditionally; if this turn's schema does not expose one
+    /// of them the scope refuses it with `tool_not_found` and the model has
+    /// been set up to loop (seen live after an agent-chip switch before the
+    /// agent joined the session fingerprint). Logged so a live proof can see
+    /// the disagreement. Only the Default agent carries the persona, so other
+    /// agents are skipped.
     static func logOrchestratorScopeDisagreement(agentId: UUID, scope: ToolExecutionScope) {
         guard agentId == Agent.defaultId else { return }
         let missing = DefaultAgentSystemPromptBuilder.missingRequiredToolNames(
@@ -583,6 +804,15 @@ final class ChatSession: ObservableObject {
     /// `AgentTodoStore` via `.agentTodoChanged`. Read-only from the UI's
     /// perspective — only the `todo` tool writes to it.
     @Published var currentTodo: AgentTodo?
+
+    /// The Orchestrator's session state as of the last finished turn;
+    /// persisted with the session and injected beside the next user turn.
+    var sessionState: SessionState?
+    /// How this turn's last model step ended, as the forced `state` step saw
+    /// it. Nil when the turn ended any other way (a `clarify`, an error).
+    var orchestratorTurnEnding: StateStepEnding?
+    /// The finished turn a running `SessionStateExtraction` belongs to.
+    private var stateExtractionToken: UUID?
 
     /// Last `complete(summary)` payload from the agent. Populated when
     /// the engine intercepts `complete` and breaks the loop. The chat
@@ -608,10 +838,13 @@ final class ChatSession: ObservableObject {
     /// forward the prompt overlay wouldn't appear/disappear when the
     /// inner queue mutates `current`.
     nonisolated(unsafe) private var promptQueueCancellable: AnyCancellable?
+    nonisolated(unsafe) private var workflowDialogCancellable: AnyCancellable?
+    nonisolated(unsafe) private var runProgressCancellable: AnyCancellable?
 
     /// Bridges this session's live activity (streaming / awaiting input) into
     /// `SessionActivityMonitor` keyed by session id, for the History sidebar.
     nonisolated(unsafe) private var activityMonitorCancellable: AnyCancellable?
+    nonisolated(unsafe) private var modelLoadCancellable: AnyCancellable?
 
     /// Callback when session needs to be saved (called after streaming completes)
     var onSessionChanged: (() -> Void)?
@@ -638,6 +871,16 @@ final class ChatSession: ObservableObject {
     /// generation for the same turn. A failed attempt clears it (see
     /// `maybeGenerateFollowUps`) so the next clean completion may retry.
     private var followUpGenerationStarted = false
+    /// Bumped by every `clearFollowUpSuggestions()`. An in-flight follow-up
+    /// generation captures the value it started under and drops its result
+    /// when the value moved. See the INVARIANT notes in
+    /// `maybeGenerateFollowUps`.
+    private var followUpGeneration = 0
+    /// In-flight background utility generations (auto title, follow-ups).
+    /// A new send cancels them so they stop sharing the GPU with the user's
+    /// turn; both re-arm on failure and retry after the next clean completion.
+    private var autoTitleTask: Task<Void, Never>?
+    private var followUpTask: Task<Void, Never>?
 
     /// Weak back-reference to the owning window state (set by ChatWindowState).
     /// Single-slot by design, last-writer-wins: when two windows attach the
@@ -646,21 +889,64 @@ final class ChatSession: ObservableObject {
     /// the published transcript. Known, accepted limitation.
     weak var windowState: ChatWindowState?
 
-    /// True when this window is pointed at a paired/discovered remote Osaurus
+    /// True when this window is pointed at a paired remote Osaurus
     /// *agent* (Mode 2 — "talk to the agent"). The signal is the selected
-    /// relay/discovered agent provider, which is set only by
-    /// `connectToRelayAgent` / `connectToDiscoveredAgent` and cleared by
+    /// relay agent provider, which is set only by
+    /// `connectToRelayAgent` and cleared by
     /// `adoptAgent`. Plain model picks (Mode 1 — "use the device" for
     /// inference) never set it, so an `.osaurus` device model chosen on a local
     /// agent stays in Mode 1. Drives bare-request composition and `/run`
     /// routing in `send(...)`.
     var isRemoteAgentTarget: Bool {
-        windowState?.selectedDiscoveredAgentProviderId != nil
+        remoteAgentProviderId != nil
+    }
+
+    /// Mode 2 binding for a session with NO window: a headless run
+    /// dispatched against a teammate's shared workspace agent (spawn,
+    /// schedule, watcher, channel). `WorkspaceAgentRunClient.prepare`
+    /// produces it after the liveness probe; `ExecutionContext` installs it.
+    /// Windowed sessions never set this — their binding lives on
+    /// `ChatWindowState` so a tab switch can re-point it.
+    struct HeadlessRemoteAgentBinding: Equatable, Sendable {
+        let providerId: UUID
+        /// Host-reported model, for Insights attribution only (never on the
+        /// wire — the host decides its own model).
+        let effectiveModel: String?
+        /// The local agent that sent this run (a helper or schedule of one of
+        /// this Mac's agents). Its key signs `osaurus_caller` so the host
+        /// shows the agent, not just its owner.
+        var callingAgentId: UUID? = nil
+    }
+
+    var headlessRemoteAgentBinding: HeadlessRemoteAgentBinding?
+
+    /// The local agent a Mode 2 run speaks for; nil when a person is chatting.
+    var remoteAgentCallingAgentId: UUID? {
+        guard windowState?.selectedRemoteAgentProviderId == nil else { return nil }
+        return headlessRemoteAgentBinding?.callingAgentId
+    }
+
+    /// The single source of the Mode 2 provider id: the window's selected
+    /// relay agent when there is a window, else the headless
+    /// binding. Every request-build site reads this so a headless and a
+    /// windowed remote-agent send compose identically.
+    var remoteAgentProviderId: UUID? {
+        windowState?.selectedRemoteAgentProviderId ?? headlessRemoteAgentBinding?.providerId
+    }
+
+    /// The remote agent's live effective model for Insights logging.
+    var remoteAgentEffectiveModel: String? {
+        windowState?.pinnedRemoteAgentEffectiveModel ?? headlessRemoteAgentBinding?.effectiveModel
     }
 
     private var currentTask: Task<Void, Never>?
+    /// Tests capture the task before Stop clears session state, then await
+    /// its actual unwind rather than treating composer unlock as termination.
+    var currentSendTaskForTesting: Task<Void, Never>? { currentTask }
     private var activeRunId: UUID?
     private var activeRunContext: RunContext?
+    /// A native image progress row still awaiting its terminal event.
+    private var pendingNativeImageTurnId: UUID?
     /// Outer task that parks a send behind an in-flight model-switch/warm-up
     /// handshake. Retaining it is required for lifecycle cancellation: a
     /// fire-and-forget task can otherwise resume after Stop, reset, or a
@@ -674,7 +960,9 @@ final class ChatSession: ObservableObject {
     /// Set to true at the start of `stop()` so `completeRunCleanup` knows the
     /// run was cancelled by the user (or by `sendNowInterrupting`) and must
     /// not auto-flush a queued send. Reset to false at the top of `send(...)`.
-    private var stopRequested: Bool = false
+    // Background-task observers read this before interpreting streaming=false:
+    // the child's own chat Stop must not look like successful completion.
+    private(set) var stopRequested: Bool = false
     /// Takes the session's own inference provenance. It used to hardcode
     /// `.chatUI` and ignore `source` entirely, so every headless run -- cron
     /// schedule, file watcher, agent self-wake -- reached the model claiming to
@@ -701,6 +989,9 @@ final class ChatSession: ObservableObject {
     /// remote provider shows up in the picker live, without reopening the
     /// window (mirrors `AgentsView`'s `$items` subscription).
     nonisolated(unsafe) private var modelCacheCancellable: AnyCancellable?
+    /// Lock Model, or the locked model, can change while the chat is open.
+    /// Provider connects also decide whether a locked model is available.
+    nonisolated(unsafe) private var modelLockCancellable: AnyCancellable?
     /// Runtime residency changes can originate outside this window (HTTP,
     /// plugins, subagents, other chats). Observe them so a model evicted behind
     /// the window's back cannot keep a stale green warm indicator.
@@ -715,8 +1006,15 @@ final class ChatSession: ObservableObject {
     /// over the user's in-flight load). A manual pick outranks the agent
     /// default for as long as it remains a valid option.
     private var lastManualModelSelection: String?
+    /// A restored window can hydrate before its model reaches the picker.
+    /// Retain its choice across discovery without changing the agent default.
+    /// A later manual pick or a different conversation replaces this intent.
+    private var restoredWindowModelSelection: String?
 
     nonisolated(unsafe) private var localModelsObserver: NSObjectProtocol?
+    /// Observer for `.modelOptionsChanged`: the paired phone stored a model
+    /// option, so reload the options when it's this window's model.
+    nonisolated(unsafe) private var modelOptionsObserver: NSObjectProtocol?
     /// Observer for `.privacyFilterRedactionsApproved`. Folds every
     /// approved (original, placeholder) pair into this window's
     /// `sessionRedactions` dict so user + assistant bubbles can
@@ -812,6 +1110,16 @@ final class ChatSession: ObservableObject {
             .sink { [weak self] _ in
                 self?.objectWillChange.send()
             }
+        runProgressCancellable = runProgress.objectWillChange
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+        workflowDialogCancellable = DialogCoordinator.shared.$pending
+            .combineLatest($sessionId)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.syncWorkflowDialogs()
+            }
 
         // Mirror live activity into the shared sidebar monitor. `@Published`
         // publishers emit the NEW value on willSet, so the closure computes
@@ -833,6 +1141,19 @@ final class ChatSession: ObservableObject {
             )
         }
 
+        // Label this chat's typing row "Loading model…" only while a cold load
+        // was requested by this session's own request.
+        modelLoadCancellable = InferenceProgressManager.shared.$loadingSessionIDs
+            .combineLatest($sessionId)
+            .sink { [weak self] loading, sessionId in
+                guard let self, let turn = self.turns.last, turn.role == .assistant else { return }
+                let isLoading =
+                    self.isStreaming && (sessionId.map { loading[$0.uuidString] != nil } ?? false)
+                guard turn.isLoadingModel != isLoading else { return }
+                turn.isLoadingModel = isLoading
+                self.rebuildVisibleBlocks()
+            }
+
         // Same bridge for the per-session folder state: the folder chip and
         // context previews render from `folderState`, whose mutations must
         // surface through the session object SwiftUI actually observes.
@@ -850,7 +1171,10 @@ final class ChatSession: ObservableObject {
         // turn). Folder mutations are rare click-driven events, so a direct
         // save (already async via `saveAsync`) needs no debounce.
         folderState.onFolderMutated = { [weak self] in
-            guard let self, !self.turns.isEmpty else { return }
+            guard let self else { return }
+            // A user pick/clear makes the folder this chat's own choice.
+            self.folderFromAgentDefault = false
+            guard !self.turns.isEmpty else { return }
             self.isDirty = true
             self.save()
         }
@@ -860,7 +1184,11 @@ final class ChatSession: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in await self?.refreshPickerItems() }
+            Task { @MainActor in
+                guard let self else { return }
+                await self.refreshPickerItems()
+                self.loadActiveModelOptions(for: self.selectedModel)
+            }
         }
 
         localModelsObserver = NotificationCenter.default.addObserver(
@@ -868,7 +1196,25 @@ final class ChatSession: ObservableObject {
             object: nil,
             queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in await self?.refreshPickerItems() }
+            Task { @MainActor in
+                guard let self else { return }
+                await self.refreshPickerItems()
+                // Capability discovery can finish without changing the model
+                // list. Rehydrate explicit controls even in that case.
+                self.loadActiveModelOptions(for: self.selectedModel)
+            }
+        }
+
+        modelOptionsObserver = NotificationCenter.default.addObserver(
+            forName: .modelOptionsChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            let model = notification.object as? String
+            Task { @MainActor in
+                guard let self, model == self.selectedModel else { return }
+                self.loadActiveModelOptions(for: model)
+            }
         }
 
         storageMutationObserver = NotificationCenter.default.addObserver(
@@ -890,6 +1236,15 @@ final class ChatSession: ObservableObject {
             .sink { [weak self] items in
                 Task { @MainActor in self?.applyPickerItems(items) }
             }
+
+        modelLockCancellable = Publishers.Merge(
+            NotificationCenter.default.publisher(for: .agentUpdated).map { @Sendable _ in () },
+            NotificationCenter.default.publisher(for: .remoteProviderStatusChanged).map { @Sendable _ in () }
+        )
+        .receive(on: RunLoop.main)
+        .sink { [weak self] _ in
+            Task { @MainActor in self?.applyModelLockChange() }
+        }
 
         runtimeResidencyObserver = NotificationCenter.default.addObserver(
             forName: .modelRuntimeResidencyChanged,
@@ -1010,40 +1365,58 @@ final class ChatSession: ObservableObject {
             .sink { [weak self] newModel in
                 guard let self = self, !self.isLoadingModel else { return }
                 guard let model = newModel else { return }
-                let previousModel = self.selectedModel
-                if Self.shouldWarnAboutModelSwitch(
+                // Sending dismisses the advisory, so while one is up no turn
+                // has run on a newer model and the conversation still belongs
+                // to the model it was raised for.
+                // Compare against that one, so further hops keep naming it and
+                // switching back to it clears the advisory.
+                let previousModel = self.modelSwitchContinuityWarning?.previousModelId ?? self.selectedModel
+                // A shared-agent tab is remote for the whole switch, not only
+                // once the provider is bound: `adoptAgent` clears the provider
+                // id and applies the local default model before the rebind
+                // pins the remote one, and a pairing repair swaps providers
+                // mid-connect. The stamped workspace context is the stable
+                // signal, so those pin transitions never read as a user
+                // switching models.
+                let isRemoteAgentTarget = self.isRemoteAgentTarget || self.workspaceContext != nil
+                let pid = self.agentId ?? Agent.defaultId
+                let isLocked = AgentManager.shared.lockedModel(for: pid) != nil
+                if !isLocked, Self.shouldWarnAboutModelSwitch(
                     previousModel: previousModel,
                     newModel: model,
-                    hasConversation: self.hasVisibleThreadMessages
+                    hasConversation: self.hasVisibleThreadMessages,
+                    isRemoteAgentTarget: isRemoteAgentTarget,
+                    previousModelIsLocal: previousModel.map(self.isLocalChatModel) ?? false,
+                    newModelIsMedia: self.isMediaModel(model)
                 ), let previousModel
                 {
                     self.modelSwitchContinuityWarning = ModelSwitchContinuityWarning(
                         previousModelId: previousModel,
                         newModelId: model
                     )
-                } else if previousModel == nil || !self.hasVisibleThreadMessages {
+                } else {
+                    // Any non-warning switch leaves an earlier advisory naming
+                    // models that are no longer both in play.
                     self.modelSwitchContinuityWarning = nil
                 }
                 self.lastManualModelSelection = model
-                let pid = self.agentId ?? Agent.defaultId
+                self.restoredWindowModelSelection = nil
                 // Mode 2 (remote agent run): the model is pinned to the remote
                 // agent's own model. Don't write that pin into the LOCAL agent's
                 // saved default — otherwise selecting a remote agent would
                 // silently overwrite the local agent's preferred model. Mode 1
                 // (plain model picks on a local agent) still persists normally.
-                if self.windowState?.selectedDiscoveredAgentProviderId == nil {
+                // A locked agent's model changes only in its settings.
+                if self.remoteAgentProviderId == nil, !isLocked {
                     AgentManager.shared.updateDefaultModel(for: pid, model: model)
                 }
 
                 self.loadActiveModelOptions(for: model)
                 self.applyImageModelDefaults(for: model)
 
-                // Clear pending image attachments when switching to a non-VLM
-                // model. Computed against the NEW model id, since `@Published`
-                // emits before `selectedModel` updates.
-                if !Self.modelSupportsImages(modelId: model, pickerItems: self.pickerItems) {
-                    self.pendingAttachments = []
-                }
+                // Keep the user's draft attachments across model changes.
+                // Send validates their modalities against the new model and
+                // reports incompatibility instead of silently deleting files.
 
                 // Selection only records the choice (and re-evaluates the
                 // residency dot). Loading, eviction and prefill happen on
@@ -1151,29 +1524,67 @@ final class ChatSession: ObservableObject {
         }
     }
 
+    /// Whether a `selectedModel` change mid-conversation deserves the cache /
+    /// continuity advisory. Never in Mode 2 (`isRemoteAgentTarget`): the chip
+    /// there is pinned to whatever the remote workspace/shared agent reports
+    /// as its effective model, the user didn't pick anything, and inference
+    /// (and any cache) lives on the remote host — so a pin refresh, or the
+    /// host owner changing their agent's model, is not a local model switch.
+    /// Only a switch away from an on-device MLX model drops an Osaurus-held
+    /// prefix/KV cache, so remote, Foundation, Claude Code and media models
+    /// never warn, and neither does a switch into a media model (it never
+    /// reads the transcript).
     nonisolated static func shouldWarnAboutModelSwitch(
         previousModel: String?,
         newModel: String,
-        hasConversation: Bool
+        hasConversation: Bool,
+        isRemoteAgentTarget: Bool = false,
+        previousModelIsLocal: Bool,
+        newModelIsMedia: Bool
     ) -> Bool {
-        guard hasConversation, let previousModel else { return false }
+        guard !isRemoteAgentTarget, hasConversation, let previousModel else { return false }
+        guard previousModelIsLocal, !newModelIsMedia else { return false }
         return previousModel.caseInsensitiveCompare(newModel) != .orderedSame
+    }
+
+    /// True when `modelId` is an on-device MLX chat model in the picker.
+    /// Unknown ids (uninstalled, provider gone) count as not local.
+    private func isLocalChatModel(_ modelId: String) -> Bool {
+        guard let item = pickerItems.first(where: { $0.id == modelId }) else { return false }
+        if case .local = item.source, item.mediaModel == nil { return true }
+        return false
+    }
+
+    private func isMediaModel(_ modelId: String) -> Bool {
+        pickerItems.first(where: { $0.id == modelId })?.isMediaGeneration == true
     }
 
     deinit {
         print("[ChatSession] deinit")
+        if let watched = watchedSyncSessionId {
+            Task { @MainActor in SyncInboundApplier.shared.unwatch(watched) }
+        }
+        if let clarifyId = clarifyAttentionId {
+            // Nothing can answer the question once its chat is gone.
+            Task { @MainActor in AttentionCenter.shared.retract(id: clarifyId) }
+        }
         preSendHandshakeEpoch &+= 1
         preSendHandshakeTask?.cancel()
         currentTask?.cancel()
+        ForegroundReservationCenter.shared.release(foregroundReservation)
         if let observer = remoteModelsObserver {
             NotificationCenter.default.removeObserver(observer)
         }
         if let observer = localModelsObserver {
             NotificationCenter.default.removeObserver(observer)
         }
+        if let observer = modelOptionsObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
         if let observer = agentTodoObserver {
             NotificationCenter.default.removeObserver(observer)
         }
+        removeAllWorkflowRunObservers()
         if let observer = privacyRedactionsObserver {
             NotificationCenter.default.removeObserver(observer)
         }
@@ -1190,9 +1601,13 @@ final class ChatSession: ObservableObject {
         modelOptionsCancellable = nil
         agentAutoSpeakCancellable = nil
         promptQueueCancellable = nil
+        workflowDialogCancellable = nil
+        runProgressCancellable = nil
         activityMonitorCancellable = nil
+        modelLoadCancellable = nil
         contextEstimateCancellable = nil
         modelCacheCancellable = nil
+        modelLockCancellable = nil
         screenContextCancellable = nil
         // Belt-and-suspenders: a session shouldn't dealloc while marked
         // active, but a stale sidebar indicator with no live session to
@@ -1214,10 +1629,7 @@ final class ChatSession: ObservableObject {
         // per-model toggles do not leak into families whose option surface
         // changed. This runs for both user-picked and programmatic model
         // selection paths.
-        activeModelOptions = ModelProfileRegistry.normalizedOptions(
-            for: model,
-            persisted: ModelOptionsStore.shared.loadOptions(for: model)
-        )
+        activeModelOptions = ModelOptionsStore.shared.loadOptions(for: model) ?? [:]
     }
 
     /// Stable session id used as the AgentTodoStore key. Falls back to a
@@ -1257,10 +1669,30 @@ final class ChatSession: ObservableObject {
     /// model never took effect on ongoing channel conversations — and a
     /// cold-start fallback pick became permanent. The persisted model stays
     /// as the fallback when the agent's default isn't available yet (remote
-    /// catalog still loading, model uninstalled). Never touches window
-    /// chats (`source == .chat`), where a manual pick must survive.
-    func applyAgentDefaultModelForDispatch() {
-        guard source != .chat else { return }
+    /// catalog still loading, model uninstalled). Leaves window chats
+    /// (`source == .chat`) alone, where a manual pick must survive, unless
+    /// `inWindowChat`.
+    func applyAgentDefaultModelForDispatch(inWindowChat: Bool = false) {
+        if admittedDelegationModel == nil, let locked = Self.lockedModelSelection(for: agentId, in: pickerItems) {
+            guard selectedModel != locked else { return }
+            isLoadingModel = true
+            selectedModel = locked
+            loadActiveModelOptions(for: locked)
+            applyImageModelDefaults(for: locked)
+            isLoadingModel = false
+            return
+        }
+        guard inWindowChat || source != .chat else { return }
+        if let admitted = admittedDelegationModel {
+            // Preserve an unavailable target for the runtime's ordinary error,
+            // rather than loading different weights than admission priced.
+            isLoadingModel = true
+            selectedModel = Self.resolvePickerModelId(admitted, in: pickerItems) ?? admitted
+            loadActiveModelOptions(for: selectedModel)
+            applyImageModelDefaults(for: selectedModel)
+            isLoadingModel = false
+            return
+        }
         guard
             let configured = AgentManager.shared.effectiveModel(for: agentId ?? Agent.defaultId),
             let model = Self.resolvePickerModelId(configured, in: pickerItems),
@@ -1273,6 +1705,25 @@ final class ChatSession: ObservableObject {
         isLoadingModel = false
     }
 
+    /// Selects `model` for the next run without saving it as the agent's
+    /// choice. Returns false when the picker has no such model, or when the
+    /// agent is locked to a different one (the locked model is selected).
+    @discardableResult
+    func pinModelForRun(_ model: String) -> Bool {
+        if admittedDelegationModel == nil, Self.lockedModelSelection(for: agentId, in: pickerItems) != nil {
+            applyAgentDefaultModelForDispatch()
+            return selectedModel == (Self.resolvePickerModelId(model, in: pickerItems) ?? model)
+        }
+        guard let id = Self.resolvePickerModelId(model, in: pickerItems) else { return false }
+        guard selectedModel != id else { return true }
+        isLoadingModel = true
+        selectedModel = id
+        loadActiveModelOptions(for: id)
+        applyImageModelDefaults(for: id)
+        isLoadingModel = false
+        return true
+    }
+
     /// Pick the picker item that best matches the agent's preferred model
     /// (falling back to the first chat-capable item). Wrapped in
     /// `isLoadingModel = true` so the auto-persist sink in `init()` does
@@ -1280,25 +1731,67 @@ final class ChatSession: ObservableObject {
     /// user had manually changed it.
     private func applyEffectiveModel(for agentId: UUID?) {
         isLoadingModel = true
-        let effectiveModel = AgentManager.shared.effectiveModel(for: agentId ?? Agent.defaultId)
-        if let configured = effectiveModel,
-            let model = Self.resolvePickerModelId(configured, in: pickerItems)
+        selectedModel = Self.initialModel(for: agentId, in: pickerItems)
+        loadActiveModelOptions(for: selectedModel)
+        applyImageModelDefaults(for: selectedModel)
+        isLoadingModel = false
+        notifySessionBecameActive()
+    }
+
+    /// The model a new session for `agentId` starts on: the locked model, or
+    /// the agent's effective model when the picker has it, else a fallback
+    /// pick.
+    static func initialModel(for agentId: UUID?, in items: [ModelPickerItem]) -> String? {
+        if let locked = lockedModelSelection(for: agentId, in: items) { return locked }
+        if let configured = AgentManager.shared.effectiveModel(for: agentId ?? Agent.defaultId),
+            let model = resolvePickerModelId(configured, in: items)
         {
-            selectedModel = model
-        } else if Self.pendingLocalDefaultModelId(for: agentId, in: pickerItems.map(\.id)) != nil {
+            return model
+        }
+        if pendingLocalDefaultModelId(for: agentId, in: items.map(\.id)) != nil {
             // First-run local setup includes temporary Osaurus Cloud access:
             // select the lower-cost capable Router model while the pinned
             // private model downloads. This is session-only — the agent's
             // durable default remains local, so the next picker rebuild
             // switches over as soon as that bundle lands.
-            selectedModel = Self.osaurusRouterValueCandidate(in: pickerItems)?.id
-        } else {
-            selectedModel = pickerItems.firstChatCapable?.id
+            return osaurusRouterValueCandidate(in: items)?.id
         }
-        loadActiveModelOptions(for: selectedModel)
-        applyImageModelDefaults(for: selectedModel)
-        isLoadingModel = false
-        notifySessionBecameActive()
+        return items.firstChatCapable?.id
+    }
+
+    /// The lock state the composer last rendered: the locked model and
+    /// whether it was unavailable.
+    private var renderedModelLock: (model: String?, unavailable: String?) = (nil, nil)
+
+    /// Follow Lock Model and provider changes: a locked agent's session moves
+    /// onto its model, and the chip and notice re-render when they change.
+    private func applyModelLockChange() {
+        let locked = AgentManager.shared.lockedModel(for: agentId)
+        if locked != nil, !isStreaming { applyAgentDefaultModelForDispatch() }
+        let state = (model: locked, unavailable: lockedModelUnavailable)
+        guard state != renderedModelLock else { return }
+        renderedModelLock = state
+        objectWillChange.send()
+    }
+
+    /// What a locked agent's session selects: the picker's id for the locked
+    /// model, or the locked id itself when the picker lacks it, so the turn
+    /// fails instead of running on another model. Nil when not locked.
+    static func lockedModelSelection(for agentId: UUID?, in items: [ModelPickerItem]) -> String? {
+        guard let locked = AgentManager.shared.lockedModel(for: agentId) else { return nil }
+        return resolvePickerModelId(locked, in: items) ?? locked
+    }
+
+    /// The locked model when this session's agent is locked to a model that
+    /// is not available now. Nil while models are still being discovered or
+    /// a provider is still connecting, when it cannot be told yet.
+    var lockedModelUnavailable: String? {
+        guard admittedDelegationModel == nil, let locked = AgentManager.shared.lockedModel(for: agentId),
+            Self.resolvePickerModelId(locked, in: pickerItems) == nil,
+            !isDiscoveringModels, ModelPickerItemCache.shared.isLoaded,
+            !RemoteProviderManager.shared.providerStates.values.contains(where: \.isConnecting)
+        else { return nil }
+        return locked
     }
 
     /// Resolve an agent-configured model string to a picker item id.
@@ -1353,7 +1846,7 @@ final class ChatSession: ObservableObject {
     }
 
     /// The temporary first-run Cloud model used while a pinned local model is
-    /// downloading. DeepSeek V4 Flash is the product-selected experience;
+    /// downloading. The newest DeepSeek Flash is the product-selected experience;
     /// Foundation, local, and BYOK models never qualify.
     ///
     /// "Lower-cost but capable" is catalog-driven rather than a hardcoded model
@@ -1371,9 +1864,9 @@ final class ChatSession: ObservableObject {
             return false
         }
         guard !routerItems.isEmpty else { return nil }
-        if let deepSeek = routerItems.first(where: {
-            RemoteProviderManager.isFirstRunOsaurusModelId($0.id)
-        }) {
+        if let newest = RemoteProviderManager.newestFirstRunOsaurusModelId(in: routerItems.map(\.id)),
+            let deepSeek = routerItems.first(where: { $0.id == newest })
+        {
             return deepSeek
         }
 
@@ -1520,6 +2013,7 @@ final class ChatSession: ObservableObject {
                 }
                 if previousSelectedFamily != refreshedSelectedFamily {
                     cachedPreviewContext = nil
+                    PreviewContextCache.shared.invalidate()
                     cachedContext = nil
                     warmupController.invalidateWarmState()
                     objectWillChange.send()
@@ -1537,10 +2031,18 @@ final class ChatSession: ObservableObject {
         let effectiveModel = AgentManager.shared.effectiveModel(for: agentId ?? Agent.defaultId)
         let newSelected: String?
 
-        if let manual = lastManualModelSelection, selectedModel == manual,
+        if let admitted = admittedDelegationModel {
+            newSelected = Self.resolvePickerModelId(admitted, in: newOptions) ?? admitted
+        } else if let locked = Self.lockedModelSelection(for: agentId, in: newOptions) {
+            newSelected = locked
+        } else if let manual = lastManualModelSelection, selectedModel == manual,
             newOptionIds.contains(manual)
         {
             newSelected = manual
+        } else if source == .chat, let restored = restoredWindowModelSelection,
+            newOptionIds.contains(restored)
+        {
+            newSelected = restored
         } else if let model = effectiveModel, newOptionIds.contains(model) {
             newSelected = model
         } else if let prev = selectedModel, newOptionIds.contains(prev) {
@@ -1578,9 +2080,11 @@ final class ChatSession: ObservableObject {
     /// outbound request while the UI still displayed them in the bubble —
     /// far worse than the alternative failure, where a text-only remote
     /// model rejects the image part with a visible provider error.
-    static func modelSupportsImages(modelId: String, pickerItems: [ModelPickerItem]) -> Bool {
+    nonisolated static func modelSupportsImages(modelId: String, pickerItems: [ModelPickerItem]) -> Bool {
         if modelId.lowercased() == "foundation" { return false }
-        if ModelMediaCapabilities.from(modelId: modelId).supportsImage { return true }
+        if let local = ModelManager.findInstalledMLXModelFromCache(named: modelId) {
+            return local.mediaCapabilities.supportsImage
+        }
         guard let option = pickerItems.first(where: { $0.id == modelId }) else { return false }
         // Image-edit models accept image input (osaurus image-edit feature).
         if option.imageCapabilities?.imageEdit == true { return true }
@@ -1621,7 +2125,8 @@ final class ChatSession: ObservableObject {
             modelId: model,
             fallbackSupportsImages: selectedModelSupportsImages,
             localModelType: localModel?.modelType,
-            localHasAudioTensors: localModel?.hasAudioTensors ?? false
+            localHasAudioTensors: localModel?.hasAudioTensors ?? false,
+            localCapabilities: localModel?.mediaCapabilities
         )
     }
 
@@ -1670,14 +2175,11 @@ final class ChatSession: ObservableObject {
     }
 
     /// Friendly name for the temporary first-run Cloud status shown alongside
-    /// local download progress. Router ids are slug-like; preserve the product
-    /// spelling for DeepSeek V4 Flash.
+    /// local download progress. Router ids are slug-like; DeepSeek Flash gets
+    /// its product spelling ("DeepSeek V4.1 Flash").
     var temporaryCloudModelDisplayName: String? {
         guard isOsaurusRouterSession, let item = selectedPickerItem else { return nil }
-        if RemoteProviderManager.isFirstRunOsaurusModelId(item.id) {
-            return "DeepSeek V4 Flash"
-        }
-        return item.displayName
+        return RemoteProviderManager.firstRunOsaurusModelDisplayName(item.id) ?? item.displayName
     }
 
     /// Total micro-USD billed by the Osaurus Router across this session's turns.
@@ -1685,11 +2187,16 @@ final class ChatSession: ObservableObject {
     /// live run and a reloaded session. The on-device ledger remains the exact
     /// source of truth if a single turn ever carried more than one charge.
     var sessionRouterSpendMicro: Int {
-        turns.reduce(0) { sum, turn in
-            guard let raw = turn.routerBilling?.costMicro else { return sum }
-            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            return sum + (Int(trimmed) ?? 0)
-        }
+        _cachedRouterSpendMicro
+    }
+
+    /// Router prompt-cache telemetry for this session: total input tokens
+    /// billed and how many of them the upstream served from cache (billed at
+    /// the discounted rate). Summed from each turn's persisted `routerBilling`
+    /// alongside `sessionRouterSpendMicro`. Both are `0` for sessions billed
+    /// by a pre-cache router, which omits the split.
+    var sessionRouterCacheStats: (cachedInputTokens: Int, inputTokens: Int) {
+        _cachedRouterCacheStats
     }
 
     /// True when the selected model is a local model — the kind that runs on
@@ -1700,7 +2207,9 @@ final class ChatSession: ObservableObject {
     /// don't contend. Resolved against the catalog so it doesn't depend on
     /// `pickerItems` being populated.
     var selectedModelIsLocal: Bool {
-        guard let model = selectedModel else { return false }
+        // A harness agent never generates on the local runtime, whatever
+        // model the picker last held.
+        guard let model = selectedModel, !isHarnessAgentActive else { return false }
         // Cache-only: this getter runs in main-actor/view contexts where the
         // blocking lookup can park on the cold-cache disk scan for seconds.
         return ModelManager.findInstalledModelFromCache(named: model) != nil
@@ -1716,7 +2225,10 @@ final class ChatSession: ObservableObject {
     /// and loading this model could evict (and cancel) the active one — so the
     /// caller surfaces an alert and refuses the send instead.
     var localModelBusyInOtherWindow: Bool {
-        selectedModelIsLocal
+        // Mode 2 (remote agent run) never touches the local runtime — the
+        // host executes the turn — so another window's local stream is not
+        // a conflict, whatever the pinned model string says.
+        !isRemoteAgentTarget && selectedModelIsLocal
             && ChatWindowManager.shared.isOtherWindowStreamingLocalModel(
                 excluding: windowState?.windowId
             )
@@ -1815,6 +2327,11 @@ final class ChatSession: ObservableObject {
         // the thread; otherwise fall back to the local agent's name.
         let displayName = threadAgentDisplayName ?? localName
         var streamingTurnId = (isStreaming && !outputComplete) ? turns.last?.id : nil
+        // The run-open id: stays on the last turn through `outputComplete`, so
+        // the pending tool chip / finishing indicator survive the engine tail
+        // (see `ContentBlock.generateBlocks(activeTurnId:)`). Nil once the
+        // run closes and Stop disappears.
+        var activeTurnId = isStreaming ? turns.last?.id : nil
 
         // While a send waits on the pre-send warm-up handshake there is no
         // assistant turn yet; render a placeholder typing-indicator group so
@@ -1824,6 +2341,18 @@ final class ChatSession: ObservableObject {
         if awaitingPreSendHandshake, !isStreaming, !turns.isEmpty {
             effectiveTurns.append(preSendHandshakePlaceholderTurn)
             streamingTurnId = preSendHandshakePlaceholderTurn.id
+        }
+        // An authored line typing out draws as a live reply: a same-id copy
+        // holding the words shown so far, typing dots while that is none.
+        if let typeOut = authoredTypeOut, !isStreaming, let last = effectiveTurns.last, last.id == typeOut.turnId {
+            let shown = ChatTurn(
+                role: last.role, content: String(last.content.prefix(typeOut.shown)), id: last.id,
+                createdAt: last.createdAt)
+            shown.origin = last.origin
+            shown.modelContextExcluded = last.modelContextExcluded
+            effectiveTurns[effectiveTurns.count - 1] = shown
+            streamingTurnId = last.id
+            activeTurnId = last.id
         }
 
         if MockChatData.isEnabled {
@@ -1846,12 +2375,18 @@ final class ChatSession: ObservableObject {
         // Display-time only, like coalescing/rollup: the LLM compaction
         // divider never enters the memoizer cache, so per-turn incremental
         // regeneration keeps its stable ids.
-        let newBlocks = insertFollowUpSuggestionsIfNeeded(
-            into: insertCompactionMarkerIfNeeded(
-                into: blockMemoizer.blocks(
-                    from: effectiveTurns,
-                    streamingTurnId: streamingTurnId,
-                    agentName: displayName
+        let newBlocks = insertConversationEventsIfNeeded(
+            into: insertOnboardingBlocksIfNeeded(
+                into: insertFollowUpSuggestionsIfNeeded(
+                    into: insertCompactionMarkerIfNeeded(
+                        into: blockMemoizer.blocks(
+                            from: effectiveTurns,
+                            streamingTurnId: streamingTurnId,
+                            activeTurnId: activeTurnId,
+                            agentName: displayName,
+                            sessionSource: runtimeSource
+                        )
+                    )
                 )
             )
         )
@@ -1868,6 +2403,16 @@ final class ChatSession: ObservableObject {
             visibleBlocksStore.blocks = newBlocks
             visibleBlocksStore.groupHeaderMap = newHeaderMap
         }
+    }
+
+    /// Approvals, timeouts and who-joined rows, placed by time between
+    /// turns. Display-time only, like the compaction marker.
+    private func insertConversationEventsIfNeeded(into blocks: [ContentBlock]) -> [ContentBlock] {
+        guard let sessionId else { return blocks }
+        let events = ConversationEventLog.shared.events(for: sessionId)
+        guard !events.isEmpty else { return blocks }
+        let dates = Dictionary(turns.map { ($0.id, $0.createdAt) }, uniquingKeysWith: { first, _ in first })
+        return ConversationEventLog.interleave(events, into: blocks, turnDates: dates)
     }
 
     /// Inject the compaction-boundary divider right after the last block of
@@ -1906,6 +2451,46 @@ final class ChatSession: ObservableObject {
         return result
     }
 
+    /// The first run's run-location label under each reply that has one, and
+    /// its cards and buttons under the latest authored line. Display-time
+    /// only, like the follow-up suggestions.
+    private func insertOnboardingBlocksIfNeeded(into blocks: [ContentBlock]) -> [ContentBlock] {
+        guard OnboardingFirstRun.shared.ownsSession(self) else {
+            guard let (turnId, panel) = DiscoveryCenter.shared.panel(for: self) else { return blocks }
+            var result = withoutAuthoredActions(blocks)
+            guard let index = result.lastIndex(where: { $0.turnId == turnId }) else { return blocks }
+            result.insert(.onboardingPanel(turnId: turnId, panel: panel), at: index + 1)
+            return result
+        }
+        var result = withoutAuthoredActions(blocks)
+        let streamingId = isStreaming ? turns.last?.id : nil
+        for turn in turns.reversed() where turn.role == .assistant && turn.id != streamingId {
+            guard let location = turn.runLocation,
+                let index = result.lastIndex(where: { $0.turnId == turn.id })
+            else { continue }
+            let label = location.label(tokensPerSecond: turn.generationTokensPerSecond)
+            result.insert(.runLocation(turnId: turn.id, text: label), at: index + 1)
+        }
+        // After the walkthrough, this chat can hold a discovery's panel too.
+        if let (turnId, panel) = OnboardingFirstRun.shared.panel(for: self) ?? DiscoveryCenter.shared.panel(for: self),
+            let index = result.lastIndex(where: { $0.turnId == turnId })
+        {
+            result.insert(.onboardingPanel(turnId: turnId, panel: panel), at: index + 1)
+        }
+        return result
+    }
+
+    /// A walkthrough's own lines are scripted: nothing to regenerate, read
+    /// back, or inspect, so they carry no action row.
+    private func withoutAuthoredActions(_ blocks: [ContentBlock]) -> [ContentBlock] {
+        let authored = Set(turns.lazy.filter { $0.origin == .authored }.map(\.id))
+        guard !authored.isEmpty else { return blocks }
+        return blocks.filter { block in
+            if case let .assistantActions(turnId, _, _) = block.kind { return !authored.contains(turnId) }
+            return true
+        }
+    }
+
     /// Auto-expand the thinking block of a completed reasoning-only turn so the
     /// reasoning the user was (often) billed for is visible instead of a
     /// collapsed "Thought for Xs" they have to click. Seeds the shared
@@ -1913,13 +2498,16 @@ final class ChatSession: ObservableObject {
     /// turns); the user can collapse it afterward.
     private func seedAutoExpandedReasoningBlocks(streamingTurnId: UUID?) {
         for turn in turns where turn.role == .assistant {
+            // Cheap checks first: this runs for every assistant turn on every
+            // streaming sync, and already-seeded turns must not re-scan text.
             guard turn.id != streamingTurnId,
-                turn.hasRenderableThinking,
-                turn.contentIsBlank,
                 (turn.toolCalls ?? []).isEmpty
             else { continue }
             let blockId = ContentBlock.thinkingBlockId(turnId: turn.id)
-            guard !autoExpandedReasoningBlockIds.contains(blockId) else { continue }
+            guard !autoExpandedReasoningBlockIds.contains(blockId),
+                turn.hasRenderableThinking,
+                turn.contentIsBlank
+            else { continue }
             autoExpandedReasoningBlockIds.insert(blockId)
             expandedBlocksStore.expand(blockId)
         }
@@ -2007,18 +2595,15 @@ final class ChatSession: ObservableObject {
 
         // With an LLM compaction summary, the model sees the summary message
         // instead of the covered turns — price the next send accordingly and
-        // surface the summary's own cost as a dedicated row.
-        let coveredIds = summaryCoveredTurnIds
-        let modelVisibleTurns =
-            coveredIds.isEmpty ? turns : turns.filter { !coveredIds.contains($0.id) }
+        // surface the summary's own cost as a dedicated row. The per-turn
+        // walk is memoized (see `transcriptTokenTotals`) because this runs
+        // inside view-body evaluation.
         let summaryTokens =
             conversationSummary.map {
                 ContextBudgetManager.estimateTokens(for: $0.contextMessageText)
             } ?? 0
 
-        let outputTokens = ContextBudgetManager.estimateOutputTokens(for: modelVisibleTurns)
-        let conversationTokens =
-            ContextBudgetManager.estimateTokens(for: modelVisibleTurns) - outputTokens
+        let (outputTokens, conversationTokens) = transcriptTokenTotals()
         var inputTokens = 0
         if !input.isEmpty { inputTokens += ContextBudgetManager.estimateTokens(for: input) }
         for attachment in pendingAttachments { inputTokens += attachment.estimatedTokens }
@@ -2129,13 +2714,30 @@ final class ChatSession: ObservableObject {
         // showed a smaller context than the send then composed, which read as
         // "dynamic tools appeared" when the send's manifest replaced the
         // estimate.
-        return ChatExecutionContext.$currentSessionSource.withValue(source) {
-            SystemPromptComposer.composePreviewContext(
-                agentId: effectiveId,
-                executionMode: estimatedChatExecutionMode(agentId: effectiveId),
-                model: selectedModel,
-                modelType: selectedPickerItem?.modelType
-            )
+        //
+        // Every open session recomposes on the same debounced signal; the
+        // shared cache collapses identical-input composes in one burst into
+        // a single main-thread compose (APPLE-MACOS-3E9 app hang).
+        let executionMode = estimatedChatExecutionMode(agentId: effectiveId)
+        let model = selectedModel
+        let modelType = selectedPickerItem?.modelType
+        let source = runtimeSource
+        let key = PreviewContextCache.key(
+            agentId: effectiveId,
+            executionMode: executionMode,
+            model: model,
+            modelType: modelType,
+            source: source
+        )
+        return PreviewContextCache.shared.context(forKey: key) {
+            ChatExecutionContext.$currentSessionSource.withValue(source) {
+                SystemPromptComposer.composePreviewContext(
+                    agentId: effectiveId,
+                    executionMode: executionMode,
+                    model: model,
+                    modelType: modelType
+                )
+            }
         }
     }
 
@@ -2151,7 +2753,7 @@ final class ChatSession: ObservableObject {
 
         var parts: [String] = []
         for doc in docs {
-            if let name = doc.filename, let text = doc.documentContent {
+            if let name = doc.filename, let text = doc.loadDocumentContent() {
                 let attributes = attachedDocumentAttributes(for: doc, rawName: name)
                 let safeText = xmlEscape(text)
                 parts.append("<attached_document \(attributes)>\n\(safeText)\n</attached_document>")
@@ -2199,11 +2801,24 @@ final class ChatSession: ObservableObject {
         return ChatMessage(role: "user", content: messageText)
     }
 
+    /// Whether a turn is part of what the model reads. Display-only turns
+    /// (a remote participant's line, an abandoned reasoning attempt) stay in
+    /// the transcript but never reach a request, warm-up, compaction, or
+    /// follow-up prompt, whatever their role.
+    nonisolated static func isModelVisible(_ turn: ChatTurn) -> Bool {
+        !turn.modelContextExcluded
+    }
+
     /// Render one assistant transcript turn into model-visible history.
     /// A trailing empty turn is the live streaming buffer and must stay out of
     /// the next request; a preserved progress turn immediately before it must
     /// appear exactly once. Kept as a pure helper so continuation history is
     /// testable without launching a model.
+    private static func hasAssistantReplayState(_ turn: ChatTurn) -> Bool {
+        turn.reasoningItemId?.isEmpty == false || turn.reasoningEncrypted?.isEmpty == false
+            || !turn.responsesOutputItems.isEmpty || !turn.anthropicThinkingBlocks.isEmpty
+    }
+
     static func modelVisibleAssistantMessage(
         _ turn: ChatTurn,
         isLastTurn: Bool,
@@ -2213,13 +2828,15 @@ final class ChatSession: ObservableObject {
         if isLastTurn,
             turn.contentIsBlank,
             turn.thinkingIsBlank,
-            turn.toolCalls == nil
+            turn.toolCalls == nil,
+            !hasAssistantReplayState(turn)
         {
             return nil
         }
         if turn.contentIsBlank,
             turn.thinkingIsBlank,
-            (turn.toolCalls == nil || turn.toolCalls!.isEmpty)
+            (turn.toolCalls == nil || turn.toolCalls!.isEmpty),
+            !hasAssistantReplayState(turn)
         {
             return nil
         }
@@ -2233,7 +2850,8 @@ final class ChatSession: ObservableObject {
             reasoning_item_id: turn.reasoningItemId,
             reasoning_encrypted: turn.reasoningEncrypted,
             responses_output_items: turn.responsesOutputItems.isEmpty
-                ? nil : turn.responsesOutputItems
+                ? nil : turn.responsesOutputItems,
+            anthropic_thinking_blocks: turn.anthropicThinkingBlocks.isEmpty ? nil : turn.anthropicThinkingBlocks
         )
     }
 
@@ -2266,6 +2884,19 @@ final class ChatSession: ObservableObject {
             tool_calls: message.tool_calls,
             tool_call_id: message.tool_call_id
         )
+    }
+
+    /// A user turn as sent: its frozen prefix, then (on the latest user
+    /// message only) the Orchestrator's session state, then the text. State
+    /// is never frozen with a turn, so the prompt holds exactly one copy.
+    static func userMessage(
+        _ base: ChatMessage,
+        frozenPrefix: String?,
+        sessionState: String?
+    ) -> ChatMessage {
+        let state = sessionState?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let withState = state.isEmpty ? base : applyingFrozenInjectedPrefix(state + "\n\n", to: base)
+        return applyingFrozenInjectedPrefix(frozenPrefix, to: withState)
     }
 
     private static func audioPayload(from attachment: Attachment) -> (
@@ -2351,7 +2982,9 @@ final class ChatSession: ObservableObject {
         }
     }
 
-    func sendCurrent() {
+    func sendCurrent(directUserSend: Bool = false) {
+        do { try nextTurnOverrides.validate(); turnParametersError = nil }
+        catch { turnParametersError = error.localizedDescription; return }
         // A normal UI send can arrive before SwiftUI has redrawn the composer
         // into its queue/Stop state. Preserve that draft in the existing
         // single-slot queue instead of clearing it and dropping it behind the
@@ -2361,6 +2994,21 @@ final class ChatSession: ObservableObject {
             return
         }
         guard !isStreaming else { return }
+        // The phone is replying in this chat: held until its turns are in
+        // (`sendHeldForPhone`), so the two never interleave.
+        if let sessionId, RemoteSessionContinuation.isPhoneReplying(sessionId) {
+            enqueueSend(input, attachments: pendingAttachments)
+            return
+        }
+        // Another Mac answers: nothing runs here, so no compaction or local
+        // model check. The draft stays when the host can't take it yet.
+        if let host = hostDeviceElsewhere {
+            if sendToHost(input, attachments: pendingAttachments, host: host) {
+                input = ""
+                pendingAttachments = []
+            }
+            return
+        }
         // One local generation at a time across all windows: the shared
         // inference context can't run two, and loading a second would evict and
         // cancel the active one. Surface the alert and keep the draft intact.
@@ -2384,7 +3032,7 @@ final class ChatSession: ObservableObject {
         let attachments = pendingAttachments
         input = ""
         pendingAttachments = []
-        send(text, attachments: attachments)
+        send(text, attachments: attachments, directUserSend: directUserSend)
     }
 
     /// Pre-send warm-up handshake: wait for an in-flight model switch
@@ -2420,6 +3068,10 @@ final class ChatSession: ObservableObject {
     /// dying is a side effect the user never chose; those keep the historical
     /// clean trim so no ghost "cancelled" row appears in the transcript.
     func stop(preservesCancelledMarker: Bool = true) {
+        if toolLoopCompactionRunId != nil {
+            toolLoopCompactionRunId = nil
+            compactionState = .idle
+        }
         stopPreservesCancelledMarker = preservesCancelledMarker
         // Capture BEFORE any cancellation: whether a send was in flight when
         // the user hit Stop. The marker decision below must not depend on
@@ -2438,7 +3090,18 @@ final class ChatSession: ObservableObject {
         // would leave that continuation suspended forever, the overlay
         // mounted, and the input bar hit-test disabled.
         promptQueue.drainAll()
+        if preservesCancelledMarker { cancelParkedWorkflowRuns() }
         stopRequested = true
+        if preservesCancelledMarker, let turnId = pendingNativeImageTurnId,
+            let turn = turns.first(where: { $0.id == turnId && $0.role == .assistant })
+        {
+            turn.content = L("Image generation cancelled.")
+            isDirty = true
+        }
+        pendingNativeImageTurnId = nil
+        // Background workers this run launched sit outside the task tree:
+        // stop them explicitly before the run's own cancellation.
+        interruptBackgroundSpawnsOfCurrentRun()
         let task = currentTask
         task?.cancel()
         if let runId = activeRunId {
@@ -2462,6 +3125,17 @@ final class ChatSession: ObservableObject {
             turns.append(cancelledTurn)
             isDirty = true
             rebuildVisibleBlocks()
+        }
+    }
+
+    /// Trip the interrupt token of every `background: true` worker the
+    /// current run launched (`SubagentSession.dispatchInBackground` registers
+    /// one per tool call id). Idempotent; the list is cleared either way.
+    private func interruptBackgroundSpawnsOfCurrentRun() {
+        let callIds = backgroundSpawnCallIdsThisRun
+        backgroundSpawnCallIdsThisRun.removeAll()
+        for callId in callIds {
+            _ = SubagentInterruptCenter.shared.interrupt(callId)
         }
     }
 
@@ -2508,14 +3182,33 @@ final class ChatSession: ObservableObject {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         let hasContent = !trimmed.isEmpty || !attachments.isEmpty
         guard hasContent else { return }
+        do { try nextTurnOverrides.validate(); turnParametersError = nil }
+        catch { turnParametersError = error.localizedDescription; return }
+        if let replaced = queuedSend {
+            Self.announceQueuedSendReplaced(replaced)
+        }
         queuedSend = QueuedSend(
             text: trimmed,
             attachments: attachments,
-            oneOffSkillId: pendingOneOffSkillId
+            oneOffSkillId: pendingOneOffSkillId,
+            inferenceSourceOverride: ChatExecutionContext.inferenceSourceOverride,
+            generationControls: captureGenerationControls()
         )
+        nextTurnOverrides = ChatTurnOverrides()
         input = ""
         pendingAttachments = []
         pendingOneOffSkillId = nil
+    }
+
+    /// The queue holds one message, so a second one replaces the first;
+    /// say so rather than dropping it silently.
+    private static func announceQueuedSendReplaced(_ replaced: QueuedSend) {
+        let text = replaced.text
+        let preview = text.count > 80 ? String(text.prefix(80)) + "…" : text
+        _ = ToastManager.shared.info(
+            L("Replaced your queued message"),
+            message: preview.isEmpty ? nil : preview
+        )
     }
 
     /// Drop the queued send without dispatching it.
@@ -2528,20 +3221,42 @@ final class ChatSession: ObservableObject {
     /// — no Stop required. Called by the agent loop's `buildMessages` hook
     /// at each iteration boundary.
     ///
-    /// Only text-only payloads are eligible: attachments and one-off skills
+    /// Only text-only payloads with the active run's controls are eligible: attachments and one-off skills
     /// need the full `send(...)` path (media gating, skill compose), so they
     /// stay queued for the run-end flush / Send Now. The injected text rides
     /// the normal outbound request pipeline, so the privacy filter scrubs it
     /// exactly like any other user message.
+    ///
+    /// Remote steers (`remoteSteers`) join the same turn ahead of the
+    /// composer's, in arrival order.
     @discardableResult
     func injectQueuedSteerIfEligible() -> Bool {
-        guard let pending = queuedSend,
+        guard queuedSend != nil || !remoteSteers.isEmpty else { return false }
+        let activeControls = turns.last(where: { $0.role == .user && $0.generationControls != nil })?.generationControls
+        let controlsMatch: Bool
+        if let pendingControls = queuedSend?.generationControls, let activeControls {
+            controlsMatch = pendingControls.matchesForSteering(activeControls)
+        } else {
+            // Preserve legacy sends/chats that predate captured controls.
+            controlsMatch = true
+        }
+        var texts = remoteSteers
+        remoteSteers = []
+        if let pending = queuedSend,
             pending.attachments.isEmpty,
             pending.oneOffSkillId == nil,
+            pending.generationControls?.overrides.isEmpty != false,
+            controlsMatch,
             !pending.text.isEmpty
-        else { return false }
-        queuedSend = nil
-        let turn = ChatTurn(role: .user, content: pending.text)
+        {
+            queuedSend = nil
+            texts.append(pending.text)
+        }
+        guard !texts.isEmpty else { return false }
+        let turn = ChatTurn(role: .user, content: texts.joined(separator: "\n\n"))
+        // A steered user turn becomes the regeneration anchor. Preserve the
+        // active snapshot instead of re-reading changed defaults on retry.
+        turn.generationControls = activeControls
         appendMidRunUserTurn(turn)
         isDirty = true
         rebuildVisibleBlocks()
@@ -2597,7 +3312,59 @@ final class ChatSession: ObservableObject {
         if let skillId = pending.oneOffSkillId {
             pendingOneOffSkillId = skillId
         }
-        send(pending.text, attachments: pending.attachments)
+        ChatExecutionContext.$inferenceSourceOverride.withValue(pending.inferenceSourceOverride) {
+            send(pending.text, attachments: pending.attachments, taskIntent: pending.taskIntent, generationControls: pending.generationControls)
+        }
+    }
+
+    /// The remote agent's owner spoke in this conversation: mid-run (shown
+    /// ahead of the reply it interrupted) or between runs (collected from
+    /// the host's mailbox and appended). Never replayed to the host, which
+    /// already has it in its transcript. Returns false for one already shown.
+    @discardableResult
+    func insertRemoteParticipantTurn(
+        _ message: StreamingParticipantMessageHint.Message, before turn: ChatTurn?
+    ) -> Bool {
+        guard !turns.contains(where: { $0.remoteParticipantMessageId == message.id }) else { return false }
+        let inserted = ChatTurn(role: .user, content: message.text)
+        inserted.author = Participant(
+            kind: message.authorKind == ParticipantKind.owner.rawValue ? .agentOwner : .teammate,
+            handle: message.authorHandle,
+            wallet: message.authorWallet
+        )
+        inserted.modelContextExcluded = true
+        inserted.remoteParticipantMessageId = message.id
+        if let turn, let index = turns.firstIndex(where: { $0 === turn }) {
+            turns.insert(inserted, at: index)
+        } else {
+            turns.append(inserted)
+        }
+        isDirty = true
+        if let author = inserted.author {
+            AttentionCenter.shared.raise(
+                AttentionItem(
+                    kind: .inboundMessage,
+                    requester: author,
+                    sessionId: sessionId,
+                    turnId: inserted.id,
+                    title: L("\(ParticipantFormatter.short(author)) wrote in your conversation"),
+                    body: String(message.text.prefix(240)),
+                    actions: [.open, .dismiss],
+                    hasInlineCard: false,
+                    link: sessionId.map(AttentionLink.session)
+                )
+            )
+        }
+        return true
+    }
+
+    /// Owner messages collected from the host's mailbox between runs.
+    func appendRemoteParticipantMessages(_ messages: [StreamingParticipantMessageHint.Message]) {
+        var added = false
+        for message in messages where insertRemoteParticipantTurn(message, before: nil) { added = true }
+        guard added else { return }
+        rebuildVisibleBlocks()
+        if !isStreaming { save() }
     }
 
     /// Appends a `user`-role turn carrying a plugin-supplied interrupt
@@ -2610,6 +3377,42 @@ final class ChatSession: ObservableObject {
         turns.append(turn)
         isDirty = true
         rebuildVisibleBlocks()
+    }
+
+    /// Replace the transcript of a hosted conversation (a remote caller's
+    /// run of one of this instance's shared agents, mirrored here read-only
+    /// by `InboundSharedRunBridge`). The caller's request carries the whole
+    /// conversation, so each new run re-syncs the transcript instead of
+    /// appending blindly. No inference or per-turn UI state is touched.
+    func replaceHostedTranscript(_ data: [ChatTurnData]) {
+        turns = data.map { ChatTurn(from: $0) }
+        isDirty = true
+        rebuildVisibleBlocks()
+    }
+
+    /// Mark streamed host output for the next persistence checkpoint.
+    func markHostedTranscriptChanged() { isDirty = true }
+
+    /// Append turns the host produced while serving a hosted conversation
+    /// (assistant step, tool calls, tool results). See
+    /// `replaceHostedTranscript`.
+    func appendHostedTurns(_ data: [ChatTurnData]) {
+        guard !data.isEmpty else { return }
+        turns.append(contentsOf: data.map { ChatTurn(from: $0) })
+        isDirty = true
+        rebuildVisibleBlocks()
+    }
+
+    /// Drop `turnId` and every turn after it, for a paired phone retrying a
+    /// reply (`POST /sessions/{id}/truncate`). Returns how many turns went,
+    /// or nil when the turn is not in this transcript. The caller saves.
+    func truncateHostedTurns(fromTurnId turnId: UUID) -> Int? {
+        guard let index = turns.firstIndex(where: { $0.id == turnId }) else { return nil }
+        let removed = turns.count - index
+        turns = Array(turns.prefix(index))
+        isDirty = true
+        rebuildVisibleBlocks()
+        return removed
     }
 
     /// Append the clarify question as a visible assistant turn when the
@@ -2751,12 +3554,22 @@ final class ChatSession: ObservableObject {
     }
 
     func reset() {
+        discoveryCard = nil
+        setUpLeft = 0
+        discoveryDrawn = false
+        nextTurnOverrides = ChatTurnOverrides()
+        turnParametersError = nil
+        savedTurnOverridesOnCancel = nil
+        stashDraft()
         stop()
+        lastManualModelSelection = nil
+        restoredWindowModelSelection = nil
         turns.removeAll()
         input = ""
         pendingAttachments = []
         pendingOneOffSkillId = nil
         queuedSend = nil
+        remoteSteers = []
         modelSwitchContinuityWarning = nil
         voiceInputState = .idle
         showVoiceOverlay = false
@@ -2765,6 +3578,7 @@ final class ChatSession: ObservableObject {
         awaitingPreSendHandshake = false
         turnsRollbackOnCancel = nil
         suppressQueuedSendFlushForCurrentRun = false
+        pendingWorkingFolderContinuation = false
         // Clear session identity for new chat
         if let prev = sessionId {
             let key = sessionStateKey(prev)
@@ -2780,18 +3594,30 @@ final class ChatSession: ObservableObject {
         createdAt = Date()
         updatedAt = Date()
         source = .chat
+        automationKind = nil
         sourcePluginId = nil
         externalSessionKey = nil
         dispatchTaskId = nil
+        servedBy = nil
         archived = false
         pinned = false
         // Cleared like the other per-session flags; the sidebar's New Chat
         // path re-stamps the active project right after startNewChat().
         projectId = nil
+        // Kept: a fresh chat inside a team-agent or hosted tab stays with
+        // that agent (`ChatWindowState.adoptWorkspaceAgent` / `adoptAgent`
+        // own the change). The host's run state belonged to the old chat.
+        hostRunState = nil
+        hostApprovals = []
+        hostPrompts = []
+        hostStopRequest = nil
         isDirty = false
         // A new chat starts folder-less; the outgoing session's folder stays
         // persisted on its own row and does not leak into the fresh one.
+        // (`ChatWindowState` re-seeds the agent's sticky working folder
+        // right after, when the agent has one.)
         folderState.clearFolder()
+        folderFromAgentDefault = false
 
         // Reset agent-loop UI state.
         currentTodo = nil
@@ -2800,6 +3626,7 @@ final class ChatSession: ObservableObject {
         // A fresh chat starts uncompacted.
         compactionTask?.cancel()
         compactionTask = nil
+        toolLoopCompactionRunId = nil
         conversationSummary = nil
         compactionState = .idle
         showCompactionDialog = false
@@ -2808,6 +3635,9 @@ final class ChatSession: ObservableObject {
         promptQueue.drainAll()
         let oldSid = expectedTodoSessionId
         Task { await AgentTodoStore.shared.clear(for: oldSid) }
+        sessionState = nil
+        SessionStateRegistry.shared.discardPending(sessionId: oldSid)
+        SessionStateRegistry.shared.seed(sessionId: expectedTodoSessionId, state: nil)
         // Keep current agentId - don't reset when creating new chat within same agent
 
         // Clear caches
@@ -2825,6 +3655,7 @@ final class ChatSession: ObservableObject {
 
         applyEffectiveModel(for: agentId)
         rebuildVisibleBlocks()
+        restoreDraft()
     }
 
     /// Reset for a specific agent
@@ -2833,11 +3664,87 @@ final class ChatSession: ObservableObject {
         // stop() → completeRunCleanup() preserves the current session's
         // identity instead of stamping the new agent on it. See #1005.
         reset()
+        // reset() brought back the OLD agent's new-chat draft (text and
+        // attachments); put it back and pick up the one typed under the
+        // incoming agent instead.
+        stashDraft()
+        input = ""
+        pendingAttachments = []
         agentId = newAgentId
+        restoreDraft()
         // reset() picked a model for the OLD agent; re-resolve for the
         // new one now that turns/sessionId are cleared.
         applyEffectiveModel(for: newAgentId)
         Task { [weak self] in await self?.refreshContextEstimates() }
+    }
+
+    // MARK: - Composer Drafts
+
+    /// Key under which this session's unsent composer text is remembered
+    /// while another chat or agent is shown in its place.
+    var draftKey: ChatDraftStore.Key {
+        if let sessionId { return .session(sessionId) }
+        return .newChat(agentId: agentId)
+    }
+
+    /// Remember the current composer text for `draftKey` so it can come
+    /// back when the user returns to this chat (#2708).
+    func stashDraft() {
+        ChatDraftStore.shared.stash(
+            ChatDraftStore.Draft(text: unsentComposerText, attachments: pendingAttachments),
+            for: draftKey
+        )
+        composerDraft = ""
+        composerDraftIsAuthoritative = false
+    }
+
+    /// The text the composer currently shows, whichever of the two layers
+    /// is fresher: the keystroke mirror once the card has typed into it,
+    /// otherwise the published `input`. The mirror is only ever written by
+    /// a keystroke (authoritative) or alongside `input` (equal), so when it
+    /// is not authoritative `input` is the whole truth, including a
+    /// programmatic clear.
+    var unsentComposerText: String {
+        composerDraftIsAuthoritative ? composerDraft : input
+    }
+
+    /// Composer callback: record the card's current text without touching
+    /// `input`, so a keystroke never re-renders the chat.
+    func noteComposerDraft(_ text: String) {
+        composerDraft = text
+        composerDraftIsAuthoritative = true
+    }
+
+    /// Bring `input` up to date with the keystroke mirror so a composer
+    /// that remounts (tab switch, window re-layout) rehydrates from the
+    /// binding with the current unsent text, including an empty string
+    /// when the user deleted a previously restored draft.
+    func promoteComposerDraft() {
+        let text = unsentComposerText
+        guard input != text else { return }
+        input = text
+        composerDraft = text
+        composerDraftIsAuthoritative = false
+    }
+
+    /// Bring back the composer text remembered for `draftKey`, if any.
+    /// Never overwrites text the user has already typed. Always bumps
+    /// `composerGeneration`: every caller has just re-based `input` for a
+    /// different chat or agent, and the composer must resync to it even
+    /// when the string happens to be unchanged.
+    func restoreDraft() {
+        defer { composerGeneration &+= 1 }
+        guard unsentComposerText.isEmpty,
+            let draft = ChatDraftStore.shared.take(for: draftKey)
+        else { return }
+        input = draft.text
+        composerDraft = draft.text
+        composerDraftIsAuthoritative = false
+        if !draft.attachments.isEmpty {
+            // Anything already attached (a quick action, a drop that landed
+            // before the restore) stays; the remembered ones join it.
+            pendingAttachments.append(contentsOf: draft.attachments.filter { !pendingAttachments.contains($0) })
+        }
     }
 
     // MARK: - LLM Context Compaction
@@ -2880,31 +3787,119 @@ final class ChatSession: ObservableObject {
         return Double(total) / Double(effective)
     }
 
-    /// Popover-button gate: utilization crossed the manual threshold (~70%)
-    /// and there's an uncovered older span a summary could reclaim.
+    /// Popover-button gate: there's an uncovered older span a summary could
+    /// reclaim. Deliberately NOT gated on utilization — a user who wants to
+    /// free context early (before the auto threshold) can, and hiding the
+    /// button until ~70% read as "compaction doesn't exist".
     var canManuallyCompactConversation: Bool {
-        guard hasCompactableConversation,
-            let fraction = contextUsageFractionEstimate
-        else { return false }
-        return fraction >= ContextCompactionService.manualTriggerThreshold
+        hasCompactableConversation
     }
 
-    /// One-shot suppression after the user dismisses the first-run dialog
-    /// without picking a model: stop auto-prompting for the rest of this
-    /// session (the manual popover button remains available).
+    /// The model the next compaction run will use (configured compaction
+    /// model, else this chat's current model). Nil when neither is known.
+    var effectiveCompactionModelIdentifier: String? {
+        ContextCompactionService.effectiveModelIdentifier(fallback: selectedModel)
+    }
+
+    /// True when a stashed auto-triggered send is waiting on the compaction
+    /// outcome (drives the "Send without compacting" dialog action).
+    var hasPendingSendAfterCompaction: Bool { resumeSendAfterCompaction }
+
+    /// One-shot suppression after the user dismisses the model-selection
+    /// dialog without picking a model: stop auto-prompting for the rest of
+    /// this session. Only reachable when there is no chat model to fall
+    /// back to, so it no longer disables auto compaction in normal chats.
     private var compactionDeclinedForSession = false
 
     /// Auto-trigger gate, checked at send time: the estimated next send is
     /// at ≥85% of the usable budget (the same near-limit signal that turns
     /// the context chip amber) and there is an uncovered span to summarize.
+    /// The Orchestrator's bounded context (`OrchestratorContextPolicy`): a
+    /// local Default-agent chat that is not a delegated child.
+    var usesOrchestratorContextPolicy: Bool {
+        (agentId ?? Agent.defaultId) == Agent.defaultId && !isRemoteAgentTarget && delegationBudget == nil
+    }
+
     private var shouldAutoCompactBeforeSend: Bool {
-        guard !skipAutoCompactionForNextSend,
-            !compactionDeclinedForSession,
+        // A harness keeps (and compacts) its own context; the Orchestrator
+        // drops old turns instead of summarizing them.
+        guard !isHarnessAgentActive, !usesOrchestratorContextPolicy,
+            !skipAutoCompactionForNextSend,
             compactionState == .idle,
             hasCompactableConversation,
             let fraction = contextUsageFractionEstimate
         else { return false }
-        return fraction >= 0.85
+        // Without a usable model the only outcome is the picker dialog; a
+        // user who already declined it once shouldn't be re-prompted on
+        // every send this session.
+        if effectiveCompactionModelIdentifier == nil, compactionDeclinedForSession {
+            return false
+        }
+        return fraction >= ContextCompactionService.autoCompactionUsageThreshold
+    }
+
+    /// INVARIANT: LLM compaction during an agent run happens only after the
+    /// model stream and every tool-result slot have drained, before rebuilding
+    /// the next request. It never competes with generation or edits the stored
+    /// transcript. Failure stops this continuation with the original history.
+    func compactBeforeToolContinuation(
+        runId: UUID,
+        assistantTurnId: UUID,
+        historyTokens: Int,
+        historyBudget: Int,
+        invocation: ModelJobInvocation,
+        agentId: UUID
+    ) async throws {
+        guard isRunActive(runId), !isHarnessAgentActive, !usesOrchestratorContextPolicy,
+            !compactionState.isRunning,
+            historyBudget > 0,
+            Double(historyTokens) / Double(historyBudget)
+                >= ContextCompactionService.autoCompactionUsageThreshold,
+            let placeholder = turns.last, placeholder.id == assistantTurnId,
+            placeholder.role == .assistant, placeholder.content.isEmpty,
+            placeholder.thinkingLength == 0, placeholder.toolCalls?.isEmpty != false
+        else { return }
+        let snapshot = Array(turns.dropLast())
+        guard ContextCompactionService.compactionCutIndex(
+            turns: snapshot, existingSummary: conversationSummary, afterToolBatch: true
+        ) != nil else { return }
+
+        let existing = conversationSummary
+        toolLoopCompactionRunId = runId
+        defer {
+            if toolLoopCompactionRunId == runId {
+                toolLoopCompactionRunId = nil
+                if compactionState.isRunning { compactionState = .idle }
+            }
+        }
+        compactionState = .running(.preparing)
+        do {
+            let summary = try await ContextCompactionService.shared.summarize(
+                turns: snapshot, existingSummary: existing, sessionId: sessionId,
+                invocation: invocation, agentId: agentId, afterToolBatch: true,
+                onPhase: { [weak self] phase in
+                    guard let self, self.isRunActive(runId),
+                        self.toolLoopCompactionRunId == runId else { return }
+                    self.compactionState = .running(phase)
+                }
+            )
+            try Task.checkCancellation()
+            guard isRunActive(runId), toolLoopCompactionRunId == runId,
+                ContextCompactionService.summaryIsValid(summary, for: turns)
+            else { return }
+            conversationSummary = summary
+            save()
+            rebuildVisibleBlocks()
+            invalidateWarmupAfterContextShapeChange()
+            compactionState = .completed(savedTokens: summary.savedTokensEstimate)
+            finishCompaction(success: true)
+        } catch {
+            if isRunActive(runId), toolLoopCompactionRunId == runId {
+                compactionState = error is CancellationError
+                    ? .idle : .failed(message: error.localizedDescription)
+            }
+            throw error
+        }
     }
 
     /// Manual entry point (Context Budget popover). Runs inline — progress
@@ -2949,9 +3944,10 @@ final class ChatSession: ObservableObject {
     private func beginCompaction(resumeSend: Bool, showDialogWhileRunning: Bool) {
         validateConversationSummary()
         resumeSendAfterCompaction = resumeSend
-        guard ContextCompactionService.configuredModelIdentifier() != nil else {
-            // First run: no model configured. Open the explainer dialog and
-            // let the user pick one (or decline).
+        guard effectiveCompactionModelIdentifier != nil else {
+            // No compaction model configured AND no chat model to fall back
+            // to. Open the explainer dialog and let the user pick one (or
+            // decline).
             compactionState = .needsModelSelection
             showCompactionDialog = true
             return
@@ -2961,11 +3957,13 @@ final class ChatSession: ObservableObject {
     }
 
     private func runCompaction() {
-        guard !compactionState.isRunning else { return }
+        guard !isStreaming, !compactionState.isRunning else { return }
         compactionTask?.cancel()
         let turnsSnapshot = turns
         let existing = conversationSummary
         let sid = sessionId
+        let invocation = ModelJobInvocation(parentModelName: selectedModel, source: runtimeSource)
+        let compactionAgentID = agentId ?? Agent.defaultId
         compactionState = .running(.preparing)
         compactionTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -2974,6 +3972,8 @@ final class ChatSession: ObservableObject {
                     turns: turnsSnapshot,
                     existingSummary: existing,
                     sessionId: sid,
+                    invocation: invocation,
+                    agentId: compactionAgentID,
                     onPhase: { [weak self] phase in
                         self?.compactionState = .running(phase)
                     }
@@ -3026,21 +4026,29 @@ final class ChatSession: ObservableObject {
         }
     }
 
-    /// Post-run bookkeeping: resume a stashed auto-triggered send, and let
-    /// transient states (completed badge) settle back to idle.
+    /// Post-run bookkeeping: resume a stashed auto-triggered send after a
+    /// success, and let transient states (completed badge) settle back to
+    /// idle.
+    ///
+    /// A FAILED auto run does not resume on its own. Proceeding silently
+    /// made compaction look like it never ran — the only trace was a
+    /// six-second row in the hover popover. Instead the dialog stays (or
+    /// comes back, if the user hid it mid-run) in its failed state so the
+    /// user sees why, and chooses Retry or "Send without compacting"
+    /// (`cancelCompactionDialog`, which resumes the stashed send with the
+    /// deterministic trimmer as the safety net).
     private func finishCompaction(success: Bool) {
         let shouldResume = resumeSendAfterCompaction
+        if shouldResume, !success {
+            showCompactionDialog = true
+            return
+        }
         resumeSendAfterCompaction = false
         if shouldResume {
             Task { @MainActor [weak self] in
                 // Let the user read the "done" state briefly before the
-                // dialog closes and the send proceeds. Failures resume
-                // immediately — the deterministic trimmer still protects
-                // the request, and the failed state stays visible in the
-                // budget popover.
-                if success {
-                    try? await Task.sleep(nanoseconds: 900_000_000)
-                }
+                // dialog closes and the send proceeds.
+                try? await Task.sleep(nanoseconds: 900_000_000)
                 guard let self else { return }
                 self.showCompactionDialog = false
                 self.skipAutoCompactionForNextSend = true
@@ -3048,12 +4056,15 @@ final class ChatSession: ObservableObject {
             }
         }
         // Settle transient completed/failed badges back to idle so the
-        // popover button doesn't stay stuck on an old outcome.
+        // popover button doesn't stay stuck on an old outcome. A failure
+        // the dialog is still presenting is left alone — the dialog's
+        // Close/Retry actions own that transition.
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 6_000_000_000)
             guard let self else { return }
             switch self.compactionState {
-            case .completed, .failed: self.compactionState = .idle
+            case .completed: self.compactionState = .idle
+            case .failed where !self.showCompactionDialog: self.compactionState = .idle
             default: break
             }
         }
@@ -3073,6 +4084,7 @@ final class ChatSession: ObservableObject {
         cachedContext = nil
         if !preservingPromptShapeBaseline {
             cachedPreviewContext = nil
+            PreviewContextCache.shared.invalidate()
         }
         budgetTracker.clear()
         objectWillChange.send()
@@ -3124,8 +4136,8 @@ final class ChatSession: ObservableObject {
 
     /// Convert current state to persistable data
     func toSessionData() -> ChatSessionData {
-        let turnData = turns.map { ChatTurnData(from: $0) }
-        return ChatSessionData(
+        let turnData = turns.filter { !$0.isRemotePreview }.map { ChatTurnData(from: $0) }
+        var data = ChatSessionData(
             id: sessionId ?? UUID(),
             title: title,
             createdAt: createdAt,
@@ -3134,6 +4146,7 @@ final class ChatSession: ObservableObject {
             turns: turnData,
             agentId: agentId,
             source: source,
+            automationKind: automationKind,
             sourcePluginId: sourcePluginId,
             externalSessionKey: externalSessionKey,
             dispatchTaskId: dispatchTaskId,
@@ -3143,8 +4156,14 @@ final class ChatSession: ObservableObject {
             folderBookmark: folderState.persistedBookmark,
             folderPath: folderState.persistedPath,
             conversationSummary: conversationSummary,
-            projectId: projectId
+            projectId: projectId,
+            workspace: workspaceContext,
+            parkedWorkflowRuns: parkedWorkflowCalls,
+            sessionState: sessionState,
+            hostDevice: hostDevice
         )
+        data.servedBy = servedBy
+        return data
     }
 
     /// Save current session state
@@ -3168,10 +4187,12 @@ final class ChatSession: ObservableObject {
         // Auto-generate title from first user message if still default
         if title == "New Chat" {
             let turnData = turns.map { ChatTurnData(from: $0) }
-            title = ChatSessionData.generateTitle(from: turnData)
+            title = ChatSessionData.generateTitle(from: turnData, source: runtimeSource)
         }
 
-        let data = toSessionData()
+        syncStream?.commitIfSuperseded()
+        var data = toSessionData()
+        if let streaming = syncStream?.streamingTurnId { data.turns.removeAll { $0.id == streaming } }
         // Persist off the main actor: serializing a long conversation and
         // running the DB transaction synchronously here (this runs on the main
         // actor, and `completeRunCleanup`/`stop` call it during run teardown)
@@ -3180,10 +4201,43 @@ final class ChatSession: ObservableObject {
         // `saveAsync`, so the UI stays consistent.
         ChatSessionsManager.shared.saveAsync(data)
         onSessionChanged?()
+        spillLiveAttachments()
+    }
+
+    private var attachmentSpillInFlight = false
+
+    /// Moves large inline attachment bytes on live turns into the blob store
+    /// and keeps only the reference, as a reloaded chat already does, so a
+    /// warm session doesn't hold every pasted image and file in memory.
+    /// Readers resolve refs through `loadImageData()` / `loadImages()`.
+    private func spillLiveAttachments() {
+        guard !attachmentSpillInFlight else { return }
+        let candidates = turns.compactMap { turn -> (UUID, [Attachment])? in
+            turn.attachments.contains(where: \.hasSpillableInlinePayload) ? (turn.id, turn.attachments) : nil
+        }
+        guard !candidates.isEmpty else { return }
+        attachmentSpillInFlight = true
+        Task { [weak self] in
+            let spilled = await Task.detached(priority: .utility) {
+                candidates.map { (id: $0.0, ids: $0.1.map(\.id), attachments: AttachmentBlobStore.spillIfNeeded($0.1)) }
+            }.value
+            guard let self else { return }
+            self.attachmentSpillInFlight = false
+            for entry in spilled {
+                guard let turn = self.turns.first(where: { $0.id == entry.id }),
+                    turn.attachments.map(\.id) == entry.ids,
+                    turn.attachments.contains(where: \.hasSpillableInlinePayload)
+                else { continue }
+                turn.attachments = entry.attachments
+            }
+        }
     }
 
     /// Load session from persisted data
     func load(from data: ChatSessionData) {
+        nextTurnOverrides = ChatTurnOverrides()
+        turnParametersError = nil
+        stashDraft()
         // Switching sessions discards the current thread's UI, so suppress the
         // outgoing-session block rebuild that `stop()` would trigger. Cleared
         // before the single rebuild for the incoming session below.
@@ -3201,12 +4255,20 @@ final class ChatSession: ObservableObject {
         updatedAt = data.updatedAt
         agentId = data.agentId
         source = data.source
+        automationKind = data.automationKind
         sourcePluginId = data.sourcePluginId
         externalSessionKey = data.externalSessionKey
         dispatchTaskId = data.dispatchTaskId
         archived = data.archived
         pinned = data.pinned
         projectId = data.projectId
+        workspaceContext = data.workspace
+        hostDevice = data.hostDevice
+        servedBy = data.servedBy
+        hostRunState = nil
+        hostApprovals = []
+        hostPrompts = []
+        hostStopRequest = nil
 
         // Restore THIS session's persisted folder (fire-and-forget: the
         // bookmark resolve + context build happen off the main actor and
@@ -3217,18 +4279,13 @@ final class ChatSession: ObservableObject {
         // fall back to the agent's preferred model. `isLoadingModel`
         // suppresses the auto-persist sink so a load doesn't look like
         // the user just picked a model.
-        if let savedModel = data.selectedModel,
-            pickerItems.contains(where: { $0.id == savedModel })
-        {
-            isLoadingModel = true
-            selectedModel = savedModel
-            loadActiveModelOptions(for: selectedModel)
-            isLoadingModel = false
-        } else {
-            applyEffectiveModel(for: data.agentId)
-        }
+        lastManualModelSelection = nil
+        restorePersistedModelSelection(data.selectedModel)
 
-        turns = data.turns.map { ChatTurn(from: $0) }
+        // Folded so a chat written from raw messages before its tool results
+        // were recorded on the call (a phone or HTTP run) doesn't draw those
+        // calls as still running; a no-op for the Mac's own chats.
+        turns = ChatHistoryWriter.foldingToolResults(data.turns).map { ChatTurn(from: $0) }
         // Restore the LLM compaction summary and drop it immediately when it
         // no longer lines up with the restored transcript.
         conversationSummary = data.conversationSummary
@@ -3241,8 +4298,10 @@ final class ChatSession: ObservableObject {
         showVoiceOverlay = false
         input = ""
         pendingAttachments = []
+        restoreDraft()
         pendingOneOffSkillId = nil
         queuedSend = nil
+        remoteSteers = []
         transientSessionIdForCurrentRun = nil
         appendedUserTurnForCurrentRun = false
         awaitingPreSendHandshake = false
@@ -3261,9 +4320,130 @@ final class ChatSession: ObservableObject {
         rebuildVisibleBlocks()
         warmupController.reset()
 
+        // Workflow calls this chat was waiting on when it was last saved
+        // (the runs resume on relaunch); any that ended land now.
+        if !data.parkedWorkflowRuns.isEmpty { reparkWorkflowRuns(data.parkedWorkflowRuns) }
+
+        sessionState = data.sessionState
+        SessionStateRegistry.shared.seed(sessionId: data.id.uuidString, state: data.sessionState)
+
         Task { [weak self] in
             await self?.refreshContextEstimates()
             self?.notifySessionBecameActive()
+        }
+    }
+
+    /// Brings this idle session up to date with a copy another device
+    /// changed, keeping the draft, model and folder. Returns false while a
+    /// run, a pre-send handshake or unsaved edits make it unsafe; the caller
+    /// retries once the session settles.
+    var canApplyRemoteChanges: Bool {
+        !isSendActiveForComposer && activeRunId == nil && !isDirty
+    }
+
+    @discardableResult
+    func applyRemoteChanges(from data: ChatSessionData) -> Bool {
+        guard data.id == sessionId else { return true }
+        guard canApplyRemoteChanges else { return false }
+        applyRemoteMetadata(from: data)
+        let current = turns.map { ChatTurnData(from: $0) }
+        guard Self.remoteFingerprint(current) != Self.remoteFingerprint(data.turns) else { return true }
+        var restored = ChatHistoryWriter.foldingToolResults(data.turns).map { ChatTurn(from: $0) }
+        if let remoteReply { restored.append(Self.remotePreviewTurn(remoteReply.text)) }
+        turns = restored
+        conversationSummary = data.conversationSummary
+        validateConversationSummary()
+        blockMemoizer.clear()
+        cachedContext = nil
+        cachedPreviewContext = nil
+        rebuildVisibleBlocks()
+        Task { [weak self] in await self?.refreshContextEstimates() }
+        return true
+    }
+
+    /// Takes the title and flags another device changed, even mid-run: a
+    /// full save from this copy writes them back over the newer values.
+    func applyRemoteMetadata(from data: ChatSessionData) {
+        guard data.id == sessionId else { return }
+        if title != data.title { title = data.title }
+        archived = data.archived
+        pinned = data.pinned
+        if projectId != data.projectId { projectId = data.projectId }
+        if hostDevice != data.hostDevice { hostDevice = data.hostDevice }
+        if let served = data.servedBy, servedBy != served { servedBy = served }
+        updatedAt = max(updatedAt, data.updatedAt)
+    }
+
+    /// A reply another device is writing into this chat.
+    struct RemoteReply: Equatable {
+        var messageId: String
+        var deviceName: String
+        var text: String
+    }
+
+    /// Set while another device streams a reply here; sending waits for it.
+    @Published private(set) var remoteReply: RemoteReply?
+
+    /// Messages in this chat that haven't reached another of the user's
+    /// devices yet.
+    @Published var syncPendingCount = 0
+
+    /// Shows another device's streaming reply as a bubble at the end of the
+    /// chat. Ignored while this chat runs a turn of its own.
+    func showRemoteReply(_ reply: RemoteReply) {
+        guard canApplyRemoteChanges || remoteReply != nil else { return }
+        remoteReply = reply
+        if let preview = turns.last, preview.isRemotePreview {
+            preview.content = reply.text
+            preview.objectWillChange.send()
+        } else {
+            turns.append(Self.remotePreviewTurn(reply.text))
+        }
+        rebuildVisibleBlocks()
+    }
+
+    /// The reply ended: its message replaces the bubble on the next reload,
+    /// or it was abandoned.
+    func endRemoteReply() {
+        guard remoteReply != nil else { return }
+        remoteReply = nil
+        if turns.contains(where: \.isRemotePreview) {
+            turns.removeAll { $0.isRemotePreview }
+            rebuildVisibleBlocks()
+        }
+    }
+
+    private static func remotePreviewTurn(_ text: String) -> ChatTurn {
+        let turn = ChatTurn(role: .assistant, content: text)
+        turn.isRemotePreview = true
+        return turn
+    }
+
+    /// What a person sees of each turn: enough to tell whether another
+    /// device's copy differs from the one on screen.
+    private static func remoteFingerprint(_ turns: [ChatTurnData]) -> [String] {
+        turns.map { turn in
+            [
+                turn.id.uuidString, turn.role.rawValue, turn.content, turn.thinking,
+                "\(turn.toolCalls?.count ?? 0)", turn.toolResults.keys.sorted().joined(separator: ","),
+                "\(turn.attachments.count)",
+            ].joined(separator: "\u{1F}")
+        }
+    }
+
+    /// Restore only model selection after picker discovery, without loading a
+    /// second copy of the transcript or resetting an attached window's draft.
+    func restorePersistedModelSelection(_ savedModel: String?) {
+        restoredWindowModelSelection = source == .chat ? savedModel : nil
+        if let savedModel, AgentManager.shared.lockedModel(for: agentId) == nil,
+            pickerItems.contains(where: { $0.id == savedModel })
+        {
+            isLoadingModel = true
+            selectedModel = savedModel
+            loadActiveModelOptions(for: selectedModel)
+            isLoadingModel = false
+        } else {
+            applyEffectiveModel(for: agentId)
         }
     }
 
@@ -3455,6 +4635,10 @@ final class ChatSession: ObservableObject {
     func editAndRegenerate(turnId: UUID, newContent: String) {
         guard let index = turns.firstIndex(where: { $0.id == turnId }) else { return }
         guard turns[index].role == .user else { return }
+        // Enveloped dispatch turns (channel / delegated / scheduled / watcher)
+        // hide Edit in the UI; refuse here too so the wire envelope can never
+        // be swapped for hand-edited text through any other path.
+        guard turns[index].dispatchEnvelope(sessionSource: runtimeSource) == nil else { return }
 
         turnsRollbackOnCancel = snapshotTurnsForCancelRollback()
 
@@ -3468,7 +4652,7 @@ final class ChatSession: ObservableObject {
         isDirty = true
         rebuildVisibleBlocks()
         save()
-        send("")  // Empty send to trigger regeneration with existing history
+        send("", taskIntent: ChatTaskIntent(userText: newContent))  // Regenerate the edited user task with existing history
     }
 
     /// Delete a turn and all subsequent turns
@@ -3572,7 +4756,7 @@ final class ChatSession: ObservableObject {
         rebuildVisibleBlocks()
 
         // Regenerate
-        send("")
+        send("", taskIntent: .hostContinuation)
     }
 
     // MARK: - Share Artifact Processing
@@ -3600,13 +4784,10 @@ final class ChatSession: ObservableObject {
         // Extract the marker block from the envelope. Older shapes (raw
         // marker-only string from before the envelope migration) are
         // accepted too so plugin authors who emit raw markers keep working.
-        let markerText: String
-        if let payload = ToolEnvelope.successPayload(toolResult) as? [String: Any],
-            let text = payload["text"] as? String
-        {
-            markerText = text
-        } else {
-            markerText = toolResult
+        // The tool's own failures (invalid args, ...) carry no marker block
+        // and must reach the model as-is.
+        guard let markerText = SharedArtifact.shareArtifactMarkerText(fromToolResult: toolResult) else {
+            return toolResult
         }
 
         // `processToolResultDetailed` performs a `FileManager.copyItem` that can
@@ -3676,31 +4857,73 @@ final class ChatSession: ObservableObject {
     /// render as first-class chat cards.
     private func processNativeImageToolResult(
         toolName: String,
-        toolResult: String
+        toolResult: String,
+        owner: ChatTurn
     ) async -> String {
         guard let sessionId else { return toolResult }
         let contextId = sessionId.uuidString
-        let outcome = await Task.detached(priority: .userInitiated) {
-            GeneratedMediaToolArtifactBridge.processFirstMediaArtifact(
-                toolName: toolName,
-                toolResult: toolResult,
-                contextId: contextId,
-                contextType: .chat
-            )
+        let outcomes = await Task.detached(priority: .userInitiated) {
+            GeneratedMediaToolArtifactBridge.processMediaArtifacts(
+                toolName: toolName, toolResult: toolResult,
+                contextId: contextId, contextType: .chat)
         }.value
-
-        guard let outcome else { return toolResult }
-        switch outcome {
-        case .success(let processed):
-            return ToolEnvelope.success(tool: toolName, text: processed.enrichedToolResult)
-        case .failure(let reason):
-            NSLog(
-                "[NativeImageToolArtifactBridge] artifact promotion failed for %@: %@",
-                toolName,
-                String(describing: reason)
-            )
-            return toolResult
+        var first: SharedArtifact.ProcessingResult?
+        for outcome in outcomes {
+            switch outcome {
+            case .success(let processed):
+                if first == nil { first = processed }
+                else {
+                    // The first image retains the existing tool card. Remaining
+                    // outputs use typed attachments, including child-chat harvest.
+                    owner.sharedArtifacts.append(processed.artifact)
+                    await PluginManager.shared.notifyArtifactHandlers(artifact: processed.artifact)
+                }
+            case .failure(let reason):
+                NSLog("[NativeImageToolArtifactBridge] artifact promotion failed for %@: %@",
+                    toolName, String(describing: reason))
+            }
         }
+        if outcomes.count > 1 { isDirty = true; rebuildVisibleBlocks() }
+        guard let first else { return toolResult }
+        return ToolEnvelope.success(tool: toolName, text: first.enrichedToolResult)
+    }
+
+    /// Card-only enrichment for a `file_read` image result: stage the
+    /// blob bytes as a context artifact so the tool card renders a
+    /// thumbnail. Returns the input unchanged on any failure.
+    private func processFileReadImageResult(
+        toolName: String,
+        toolResult: String
+    ) async -> String {
+        guard let sessionId,
+            let payload = ToolEnvelope.successPayload(toolResult) as? [String: Any],
+            let ref = payload["image_ref"] as? [String: Any],
+            let hash = ref["hash"] as? String
+        else { return toolResult }
+        let path = (payload["path"] as? String) ?? "image"
+        let contextId = sessionId.uuidString
+        let outcome: Result<SharedArtifact.ProcessingResult, SharedArtifact.ResolutionFailure>? =
+            await Task.detached(priority: .utility) {
+                guard let bytes = try? AttachmentBlobStore.read(hash) else { return nil }
+                let mime = (ref["mime"] as? String) ?? "image/png"
+                let ext = mime.split(separator: "/").last.map(String.init) ?? "png"
+                let baseName = URL(fileURLWithPath: path).deletingPathExtension().lastPathComponent
+                let stagingDir = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("osaurus-file-read-\(UUID().uuidString)", isDirectory: true)
+                try? FileManager.default.createDirectory(at: stagingDir, withIntermediateDirectories: true)
+                defer { try? FileManager.default.removeItem(at: stagingDir) }
+                let staged = stagingDir.appendingPathComponent("\(baseName).\(ext == "jpeg" ? "jpg" : ext)")
+                guard (try? bytes.write(to: staged)) != nil else { return nil }
+                return SharedArtifact.processTrustedLocalFileResult(
+                    fileURL: staged,
+                    mimeType: mime,
+                    description: "Read by \(toolName): \(path)",
+                    contextId: contextId,
+                    contextType: .chat
+                )
+            }.value
+        guard case .success(let processed)? = outcome else { return toolResult }
+        return ToolEnvelope.success(tool: toolName, text: processed.enrichedToolResult)
     }
 
     /// Translate a `SharedArtifact.ResolutionFailure` into a model-readable
@@ -3716,15 +4939,23 @@ final class ChatSession: ObservableObject {
     private struct RunContext {
         let hasContent: Bool
         let userContent: String
+        /// True when `userContent` is a host-authored helper report rather
+        /// than something the user typed. Memory must never record it as a
+        /// user turn: the distiller reads every buffered `userMessage` as
+        /// "User:", so a report became pinned "facts" about the delegated task.
+        let userContentIsHostAuthored: Bool
         let memoryAgentId: String
         let memoryConversationId: String
+        /// Snapshot the real session origin; detached finalization must not
+        /// reinterpret delegated instructions as the user's own statements.
+        let memorySource: SessionSource
         /// Project membership captured at send time, so memory records the
         /// project the turn actually happened in — a later session reset or
         /// agent switch can't retroactively change it.
         let memoryProjectId: UUID?
     }
 
-    private func isRunActive(_ runId: UUID) -> Bool {
+    func isRunActive(_ runId: UUID) -> Bool {
         activeRunId == runId && !Task.isCancelled
     }
 
@@ -3739,7 +4970,7 @@ final class ChatSession: ObservableObject {
     /// the cell shows nothing until the steady-state read is meaningful —
     /// avoids the prior "shows 12 tok/s for the first half-second then
     /// jumps to 60 tok/s" jitter users complained about.
-    private func refreshLiveRate(
+    func refreshLiveRate(
         rolling: inout RollingTokenRate,
         lastRefreshAt: inout Date,
         now: Date,
@@ -3878,6 +5109,7 @@ final class ChatSession: ObservableObject {
             lastTurn.contentIsBlank,
             lastTurn.toolCalls == nil,
             !lastTurn.hasRenderableThinking,
+            !Self.hasAssistantReplayState(lastTurn),
             lastTurn.generationTokenCount == nil,
             lastTurn.generationTokensPerSecond == nil,
             // Never drop a turn the router billed — even a zero-output charge
@@ -3914,9 +5146,23 @@ final class ChatSession: ObservableObject {
     }
 
     private func beginRun(_ runId: UUID, context: RunContext) {
+        delegatedToolFailure.begin(runID: runId)
         activeRunId = runId
         activeRunContext = context
+        // An interactive turn holds a foreground reservation so queued
+        // background work that would swap its local model out waits.
+        // Dispatched (background) sessions are tasks themselves.
+        ForegroundReservationCenter.shared.release(foregroundReservation)
+        foregroundReservation =
+            ChatExecutionContext.currentBackgroundId == nil
+            ? ForegroundReservationCenter.shared.reserve(
+                owner: (sessionId ?? runId).uuidString, kind: .chat, model: selectedModel)
+            : nil
     }
+
+    /// The reservation the current interactive turn holds. Released by
+    /// run cleanup, or by `deinit` when the session goes away mid-turn.
+    nonisolated(unsafe) private var foregroundReservation: UUID?
 
     /// Best-effort estimate of the execution mode the next send will use.
     /// Prefers the registry's actual registered state (matches what
@@ -3927,46 +5173,22 @@ final class ChatSession: ObservableObject {
     /// container). When the user has a host folder mounted but sandbox is
     /// off, that wins — folder tools must enter the schema or
     /// `excludedToolNames(.none)` will hide them entirely.
-    /// Folder context to thread into an agent's execution mode. The Default
-    /// (configuration) agent never works against a host folder, so it resolves
-    /// to nil even when a folder is globally active — keeping the budget
-    /// preview and the sent prompt folder-less and consistent.
+    /// Folder context to thread into an agent's execution mode. The
+    /// Orchestrator (Default agent) carries a folder too: it reads it
+    /// (`file_read` / `file_search`) and subagents without their own folder
+    /// inherit it read/write; the composer strips the write tools for the
+    /// Orchestrator itself.
     private func activeFolderContext(for agentId: UUID) -> FolderContext? {
-        agentId == Agent.defaultId ? nil : folderState.context
-    }
-
-    /// Per-run options for the Claude Code subprocess backend.
-    ///
-    /// The working directory starts Claude Code in the folder the user picked
-    /// for this chat. It is not an Osaurus sandbox; enabled Claude Code tools
-    /// retain the macOS user's normal filesystem access. `agentId` travels
-    /// with the run because the
-    /// subprocess is out of process: the `@TaskLocal` chat identity cannot
-    /// follow it, so the MCP bridge mints a grant naming this agent instead.
-    private func claudeCodeRunOptions(for agentId: UUID) -> ClaudeCodeRunOptions {
-        let config = AgentManager.shared.effectiveClaudeCodeConfig(for: agentId)
-        let root = activeFolderContext(for: agentId)?.rootPath
-        return ClaudeCodeRunOptions(
-            mode: config.mode,
-            allowWrites: config.allowWrites,
-            allowShell: config.allowShell,
-            allowOsaurusTools: config.allowOsaurusTools,
-            allowOsaurusConfigWrites: config.allowOsaurusConfigWrites,
-            osaurusCLIPath: ClaudeCodeConfiguration.embeddedCLIPath(),
-            workingDirectory: root,
-            agentId: agentId
-        )
+        folderState.context
     }
 
     private func estimatedChatExecutionMode(agentId: UUID) -> ExecutionMode {
         let folder = activeFolderContext(for: agentId)
         let config = AgentManager.shared.effectiveAutonomousExec(for: agentId)
         let autonomous = config?.enabled == true
-        let hostWrites = config?.allowHostFolderWrites == true
         let resolved = ToolRegistry.shared.resolveExecutionMode(
             folderContext: folder,
-            autonomousEnabled: autonomous,
-            allowHostFolderWrites: hostWrites
+            autonomousEnabled: autonomous
         )
         // Optimistic estimate: when autonomous is on but sandbox tools haven't
         // registered yet, report `.sandbox` so the budget preview matches what
@@ -3979,8 +5201,15 @@ final class ChatSession: ObservableObject {
     }
 
     private func completeRunCleanup() {
+        // `stop()` also lands here when idle (every session switch / reset).
+        let hadLiveRun = isStreaming || currentTask != nil
         currentTask = nil
         isStreaming = false
+        ForegroundReservationCenter.shared.release(foregroundReservation)
+        foregroundReservation = nil
+        // The run ended; background workers it launched now outlive it on
+        // purpose (they report back later) and stop only from Activity.
+        backgroundSpawnCallIdsThisRun.removeAll()
         // Successful run finished — drop the saved draft so a later
         // unrelated cancel doesn't accidentally repopulate the input
         // with a turn the user already sent.
@@ -3996,14 +5225,154 @@ final class ChatSession: ObservableObject {
         trimTrailingEmptyAssistantTurn()
         consolidateAssistantTurns()
         markUnfinishedToolCallsInterrupted()
+        finishOrchestratorTurn(turnRan: hadLiveRun)
         rebuildVisibleBlocks()
         save()
+        OnboardingFirstRun.shared.runEnded(in: self)
+        DiscoveryCenter.shared.runEnded(in: self)
+        if let sid = sessionId, let sessionState {
+            // A new chat gets its id in `save()`; the next turn's `state`
+            // calls and handoffs address that id.
+            SessionStateRegistry.shared.seed(sessionId: sid.uuidString, state: sessionState)
+        }
         maybeGenerateAutoTitle()
-        maybeGenerateFollowUps()
+        // INVARIANT: follow-up suggestions appear only once the agent is truly
+        // done with the user's request. A clean run end is NOT always that:
+        // when `prompt_working_folder` attached a folder, this same cleanup
+        // immediately starts a host continuation run below
+        // (`continueAfterWorkingFolderAttachIfEligible`). Generating here would
+        // render the "Follow up" rows mid-turn, between the folder attach and
+        // the rest of the agent's work (regression introduced by #2918). Do
+        // not remove this guard or reorder it after the continuation without
+        // an equivalent check, and exclude any future "keep going after the
+        // run ended" path here too. The apply-time guard inside
+        // `maybeGenerateFollowUps` is the second line of defense, not a
+        // replacement for this one.
+        if !pendingWorkingFolderContinuation {
+            maybeGenerateFollowUps()
+        }
+        maybeBackfillAgentDescriptions()
         if !suppressQueuedSendFlushForCurrentRun {
             flushQueuedSendIfEligible()
         }
         suppressQueuedSendFlushForCurrentRun = false
+        continueAfterWorkingFolderAttachIfEligible()
+    }
+
+    /// The user stopped this turn. Its pending `state` write is dropped,
+    /// and the forced `state` step never runs on it.
+    var orchestratorTurnInterrupted: Bool { stopRequested }
+
+    /// End an Orchestrator turn's session state: commit this turn's last
+    /// `state` write, or keep the previous object marked stale, and set
+    /// `inFlight` from the runs this chat is waiting on.
+    /// Without `turnRan` nothing is committed: marking the session dirty
+    /// would make the next save re-stamp `updatedAt` on a chat the user only
+    /// navigated away from.
+    private func finishOrchestratorTurn(turnRan: Bool) {
+        let ending = orchestratorTurnEnding
+        orchestratorTurnEnding = nil
+        stateExtractionToken = nil
+        guard turnRan, (agentId ?? Agent.defaultId) == Agent.defaultId, !isRemoteAgentTarget else { return }
+        let key = expectedTodoSessionId
+        let interrupted = orchestratorTurnInterrupted
+        if interrupted { SessionStateRegistry.shared.discardPending(sessionId: key) }
+        let stateWritten = SessionStateRegistry.shared.hasPendingWrite(sessionId: key)
+        let finished = SessionStateRegistry.shared.finishTurn(
+            sessionId: key,
+            inFlight: orchestratorInFlightRuns(sessionKey: key)
+        )
+        sessionState = finished
+        isDirty = true
+        guard
+            SessionStateExtraction.applies(
+                interrupted: interrupted, lastStepEndedOn: ending, stateWritten: stateWritten),
+            let model = selectedModel
+        else { return }
+        extractSessionState(previous: finished, turn: orchestratorTurnLines(), model: model)
+    }
+
+    /// `SessionStateExtraction` after a turn without a `state` call. Its
+    /// object lands only while that turn is still the latest finished one.
+    private func extractSessionState(previous: SessionState, turn: [SessionStateExtraction.Line], model: String) {
+        let token = UUID()
+        stateExtractionToken = token
+        Task { @MainActor [weak self] in
+            let extracted = await SessionStateExtraction.extract(previous: previous, turn: turn, model: model)
+            guard let self, self.stateExtractionToken == token else { return }
+            self.stateExtractionToken = nil
+            guard let extracted,
+                let next = SessionStateRegistry.shared.applyExtracted(
+                    sessionId: self.expectedTodoSessionId, state: extracted)
+            else { return }
+            print("[Osaurus][State] extracted the session state after a turn without `state`")
+            self.sessionState = next
+            self.isDirty = true
+            if !self.isStreaming { self.save() }
+        }
+    }
+
+    /// The last user message and everything after it, for extraction.
+    func orchestratorTurnLines() -> [SessionStateExtraction.Line] {
+        guard let start = turns.lastIndex(where: { $0.role == .user }) else { return [] }
+        var lines: [SessionStateExtraction.Line] = []
+        for turn in turns[start...] {
+            switch turn.role {
+            case .user:
+                lines.append(.init(speaker: "User", text: turn.content))
+            case .assistant:
+                if !turn.contentIsBlank { lines.append(.init(speaker: "Assistant", text: turn.content)) }
+                for call in turn.toolCalls ?? [] {
+                    lines.append(.init(speaker: "Tool call", text: "\(call.function.name) \(call.function.arguments)"))
+                    if let result = turn.toolResults[call.id] {
+                        lines.append(.init(speaker: "Tool result", text: result))
+                    }
+                }
+            default:
+                break
+            }
+        }
+        return lines
+    }
+
+    /// Runs this chat is waiting on: parked workflow calls first, then live
+    /// runs it started that have not parked.
+    func orchestratorInFlightRuns(sessionKey: String) -> [RunRef] {
+        var refs: [RunRef] = []
+        var seen = Set<UUID>()
+        for call in parkedWorkflowCalls {
+            seen.insert(call.runID)
+            let run = WorkflowRunStore.shared.run(id: call.runID)
+            refs.append(
+                RunRef(
+                    runId: call.runID.uuidString,
+                    workflow: run?.workflowName ?? call.toolName,
+                    status: run?.status.rawValue ?? "awaiting_user"
+                ))
+        }
+        let live = WorkflowRunStore.shared.live.values
+            .filter { $0.caller.sessionID == sessionKey && !seen.contains($0.id) }
+            .sorted { $0.startedAt < $1.startedAt }
+        for run in live {
+            refs.append(RunRef(runId: run.id.uuidString, workflow: run.workflowName, status: run.status.rawValue))
+        }
+        return refs
+    }
+
+    /// Auto-continue after a mid-run `prompt_working_folder` pick. Runs
+    /// AFTER the queued-send flush: a user message the user queued while the
+    /// picker was up already carries the conversation forward (and `send`
+    /// clears the flag), so the continuation only fires when nothing else
+    /// did. Stopped or errored runs leave the transcript as-is — the folder
+    /// is attached, the user decides what happens next.
+    private func continueAfterWorkingFolderAttachIfEligible() {
+        guard pendingWorkingFolderContinuation else { return }
+        pendingWorkingFolderContinuation = false
+        guard !stopRequested, lastStreamError == nil else { return }
+        guard activeRunId == nil, !isStreaming else { return }
+        guard folderState.hasActiveFolder else { return }
+        debugLog("send: continuing after prompt_working_folder attached a folder")
+        send("", taskIntent: .hostContinuation)
     }
 
     /// Outcome of the auto-title eligibility check for one clean run
@@ -4063,6 +5432,14 @@ final class ChatSession: ObservableObject {
     /// attempt — but a failed generation re-arms it, so a transient miss
     /// (timeout, background-load refusal while another model is resident,
     /// open breaker) gets one fresh attempt on each later clean completion.
+    /// A clean chat run means a model is resident (or remote) right now, which
+    /// is the cheapest moment to summarize legacy agents that still have no
+    /// description. Best-effort housekeeping; see `AgentDescriptionBackfill`.
+    private func maybeBackfillAgentDescriptions() {
+        guard source == .chat, !stopRequested, lastStreamError == nil else { return }
+        AgentDescriptionBackfill.shared.scheduleAll(fallbackModel: selectedModel)
+    }
+
     private func maybeGenerateAutoTitle() {
         guard let sid = sessionId else { return }
         let decision = Self.autoTitleDecision(
@@ -4082,14 +5459,14 @@ final class ChatSession: ObservableObject {
             autoTitleGenerationStarted = true
         case .generate(let userText, let assistantText, let previewTitle):
             autoTitleGenerationStarted = true
-            let fallbackModel = selectedModel
-            Task { [weak self] in
+            let fallbackModel = isHarnessAgentActive ? nil : selectedModel
+            autoTitleTask = Task { [weak self] in
                 guard
                     let generated = await ChatTitleService.shared.generateTitle(
                         userMessage: userText,
                         assistantResponse: assistantText,
                         fallbackModel: fallbackModel
-                    )
+                    ), !Task.isCancelled
                 else {
                     // Transient failure — re-arm for the next clean run
                     // completion, but only while this ChatSession still
@@ -4124,12 +5501,35 @@ final class ChatSession: ObservableObject {
     /// current turn is cancelled/errors before we'd want to suggest anything.
     private func clearFollowUpSuggestions() {
         followUpGenerationStarted = false
+        // Invalidate any generation still in flight. Resetting the latch alone
+        // is not enough: the background Task started by the previous
+        // completion keeps running and would otherwise inject its result into
+        // the turn that is starting now. Do not remove.
+        followUpGeneration &+= 1
+        followUpTask?.cancel()
+        followUpTask = nil
         followUpTurnId = nil
         let hadSuggestions = !followUpSuggestions.isEmpty
         if hadSuggestions { followUpSuggestions = [] }
         // Drop the injected row from the thread. Guarded by
         // `rebuildVisibleBlocks`'s own suppression during session switches.
         if hadSuggestions { rebuildVisibleBlocks() }
+    }
+
+    /// Pure eligibility check for `maybeGenerateFollowUps`. The global switch
+    /// turns follow-ups on and the agent may opt its chats out (the Architect
+    /// always does). A turn that ended on the agent's own question, prompt
+    /// card, or workflow form is waiting on the user's answer: a suggested
+    /// message there would compete with it and send something unrelated.
+    nonisolated static func followUpsEligible(
+        settingEnabled: Bool,
+        agentEnabled: Bool,
+        isChatSource: Bool,
+        runCompletedCleanly: Bool,
+        waitingOnUser: Bool,
+        isAgentDraft: Bool
+    ) -> Bool {
+        settingEnabled && agentEnabled && isChatSource && runCompletedCleanly && !waitingOnUser && !isAgentDraft
     }
 
     /// Kick off a background follow-up suggestion generation after a clean run
@@ -4139,21 +5539,25 @@ final class ChatSession: ObservableObject {
     /// completion of the *same* turn (e.g. after a regeneration) may retry.
     /// Mirrors `maybeGenerateAutoTitle`'s eligibility and re-arm contract.
     private func maybeGenerateFollowUps() {
-        // Follow-ups are enabled by the GLOBAL switch; each agent then shapes
-        // them via its own `AgentFollowUpConfig` (prompt / rules / model).
+        let agent = AgentManager.shared.agent(for: agentId ?? Agent.defaultId)
         guard
             !followUpGenerationStarted,
-            AppConfiguration.shared.chatConfig.generateFollowUpSuggestions,
-            source == .chat,
-            // A cancelled or errored run isn't a representative exchange.
-            !stopRequested,
-            lastStreamError == nil,
-            let sid = sessionId
+            let sid = sessionId,
+            Self.followUpsEligible(
+                settingEnabled: AppConfiguration.shared.chatConfig.generateFollowUpSuggestions,
+                agentEnabled: agent?.settings.followUp.enabled ?? true,
+                isChatSource: source == .chat,
+                runCompletedCleanly: !stopRequested && lastStreamError == nil,
+                waitingOnUser: awaitingClarify != nil || promptQueue.current != nil
+                    || !parkedWorkflowCalls.isEmpty,
+                // A New Agent chat's next step is on its agent card.
+                isAgentDraft: AgentDraftStore.shared.draft(forSession: sid.uuidString) != nil
+            )
         else { return }
 
         // Suggest from the last user message and the assistant reply it
         // produced — the same "last exchange" the reference design keys on.
-        let turnData = turns.map { ChatTurnData(from: $0) }
+        let turnData = turns.filter(Self.isModelVisible).map { ChatTurnData(from: $0) }
         guard
             let assistantTurn = turnData.last(where: {
                 $0.role == .assistant
@@ -4167,14 +5571,14 @@ final class ChatSession: ObservableObject {
         else { return }
 
         followUpGenerationStarted = true
+        let generation = followUpGeneration
         let userText = userTurn.content
         let assistantText = assistantTurn.content
-        let fallbackModel = selectedModel
-        // Per-agent model override (the only follow-up config). The Default
-        // agent carries none, so it falls back to `.empty` → shared core model.
-        let followUpModelOverride =
-            agentId.flatMap { AgentManager.shared.agent(for: $0)?.settings.followUp.modelIdentifier }
-        Task { [weak self] in
+        let fallbackModel = isHarnessAgentActive ? nil : selectedModel
+        // The Default agent carries no override, so it falls back to `.empty`
+        // → shared core model.
+        let followUpModelOverride = agent?.settings.followUp.modelIdentifier
+        followUpTask = Task { [weak self] in
             let suggestions = await FollowUpSuggestionService.shared.generateSuggestions(
                 userMessage: userText,
                 assistantResponse: assistantText,
@@ -4182,6 +5586,19 @@ final class ChatSession: ObservableObject {
                 modelOverride: followUpModelOverride
             )
             guard let self, self.sessionId == sid else { return }
+            // INVARIANT: never inject suggestions while a run is in progress.
+            // Generation takes seconds, and in that window a new run can start
+            // (user send, queued send, working-folder continuation, channel
+            // steer). Those paths clear suggestions and bump
+            // `followUpGeneration`, but they cannot cancel this Task. The
+            // "still the last assistant message" check further down does NOT
+            // cover this case: a new run that is only thinking or calling
+            // tools has no visible content yet, so the old turn still looks
+            // current and the rows land in the middle of the live turn. That
+            // exact bug shipped once already. Keep all three conditions.
+            guard generation == self.followUpGeneration,
+                !self.isStreaming, self.activeRunId == nil
+            else { return }
             guard !suggestions.isEmpty else {
                 // Transient miss (no resident model, timeout, open breaker):
                 // re-arm for the next clean completion of this session.
@@ -4211,6 +5628,119 @@ final class ChatSession: ObservableObject {
         let trimmed = suggestion.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !isStreaming, activeRunId == nil else { return }
         send(trimmed)
+    }
+
+    /// The host's call for the next send, set by an ask button: the label
+    /// it was set for and the `run_workflow` call by workflow id.
+    private var pendingHostDispatch: (label: String, call: ServiceToolInvocation)?
+
+    /// Sends an ask's label as the person's message; the host makes the
+    /// ask's call in place of the first model step. Returns false when a
+    /// run is open.
+    @discardableResult
+    func sendPreparedAsk(label: String, dispatch: ServiceToolInvocation?) -> Bool {
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !isStreaming, activeRunId == nil, preSendHandshakeTask == nil else { return false }
+        pendingHostDispatch = dispatch.map { (trimmed, $0) }
+        bypassesOnboardingRouter = true
+        send(trimmed)
+        return true
+    }
+
+    /// Set for one send the first run already routed.
+    private var bypassesOnboardingRouter = false
+
+    /// This new chat's discovery card, drawn once by `DiscoveryCenter`.
+    @Published var discoveryCard: DiscoveryCard?
+    /// What is left in Set Up Osaurus when this new chat was drawn; the
+    /// greeting links to the list while it is above zero.
+    @Published var setUpLeft = 0
+    var discoveryDrawn = false
+
+    /// A message the first run handed to the Orchestrator.
+    func sendBypassingOnboarding(_ text: String, attachments: [Attachment]) {
+        bypassesOnboardingRouter = true
+        send(text, attachments: attachments, directUserSend: true)
+    }
+
+    /// The runtime's state for the Orchestrator's next turn.
+    func seedSessionState(_ state: SessionState) {
+        sessionState = state
+        isDirty = true
+        if let sid = sessionId {
+            SessionStateRegistry.shared.seed(sessionId: sessionStateKey(sid), state: state)
+        }
+    }
+
+    /// Appends a line the runtime wrote (the first run's opening, step
+    /// lines) and saves, which gives a new chat its id.
+    func appendAuthoredTurn(_ turn: ChatTurn) {
+        finishTypingOutAuthoredLine()
+        turns.append(turn)
+        isDirty = true
+        rebuildVisibleBlocks()
+        save()
+    }
+
+    /// The authored line being typed out, and how many characters of it
+    /// show. Display only: the turn already holds, and has saved, all of it.
+    private var authoredTypeOut: (turnId: UUID, shown: Int)?
+    private var authoredTypeOutTask: Task<Void, Never>?
+
+    /// True until the line being typed out shows in full; what sits under
+    /// it waits until then.
+    var isTypingOutAuthoredLine: Bool { authoredTypeOut != nil }
+
+    /// Appends an authored line the way a reply arrives: a beat of typing
+    /// dots, then its words. Shown whole under Reduce Motion.
+    func appendAuthoredTurnTypingOut(_ turn: ChatTurn) {
+        appendAuthoredTurn(turn)
+        guard !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+        let text = turn.content
+        authoredTypeOut = (turn.id, 0)
+        rebuildVisibleBlocks()
+        authoredTypeOutTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: Self.authoredTypingPause)
+            var shown = text.startIndex
+            while shown < text.endIndex, !Task.isCancelled, let self, self.turns.last?.id == turn.id {
+                shown = text[shown...].dropFirst().firstIndex(where: \.isWhitespace) ?? text.endIndex
+                self.authoredTypeOut = (turn.id, text.distance(from: text.startIndex, to: shown))
+                self.rebuildVisibleBlocks()
+                let next = shown < text.endIndex ? text[shown] : nil
+                let last = text[text.index(before: shown)]
+                try? await Task.sleep(for: Self.authoredPause(after: last, before: next))
+            }
+            // Cancelled means a newer line took over and owns the state.
+            guard !Task.isCancelled else { return }
+            self?.finishTypingOutAuthoredLine()
+        }
+    }
+
+    private static let authoredTypingPause: Duration = .milliseconds(700)
+
+    /// The beat after a word: longer at a paragraph's end, a sentence's,
+    /// and a comma's, the rhythm of a reply read as it arrives.
+    static func authoredPause(after last: Character, before next: Character?) -> Duration {
+        if next?.isNewline == true { return .milliseconds(260) }
+        if ".?!:".contains(last) { return .milliseconds(200) }
+        if ",;".contains(last) { return .milliseconds(90) }
+        return .milliseconds(30)
+    }
+
+    /// Shows the line being typed out in full, at once.
+    func finishTypingOutAuthoredLine() {
+        authoredTypeOutTask?.cancel()
+        authoredTypeOutTask = nil
+        guard authoredTypeOut != nil else { return }
+        authoredTypeOut = nil
+        rebuildVisibleBlocks()
+    }
+
+    /// The ask's call, once, for the message it was set for.
+    private func takePendingHostDispatch(for message: String) -> ServiceToolInvocation? {
+        defer { pendingHostDispatch = nil }
+        guard let pending = pendingHostDispatch, pending.label == message else { return nil }
+        return pending.call
     }
 
     /// Generate an AI title on demand from the `/title` slash command. Unlike
@@ -4285,6 +5815,18 @@ final class ChatSession: ObservableObject {
     private func markUnfinishedToolCallsInterrupted() {
         guard stopRequested || lastStreamError != nil else { return }
         for turn in turns where turn.role == .assistant {
+            turn.finalizeRemoteToolActivity(endedBy: stopRequested ? .cancelled : .failed)
+            // A tool the model was still naming/arguing (or whose parsed
+            // invocation was withheld by the engine tail) never became a
+            // call. Drop the ephemeral placeholder: with the run closed the
+            // pending chip no longer renders, and leaving the name set also
+            // suppressed the cancelled turn's "Interrupted" notice — a
+            // header-only row until a reload (which never restores this
+            // field) made the record visible.
+            if turn.pendingToolName != nil {
+                turn.pendingToolName = nil
+                turn.clearPendingToolArgs()
+            }
             guard let calls = turn.toolCalls, !calls.isEmpty else { continue }
             for call in calls where turn.toolResults[call.id] == nil {
                 // `setToolResult` also records the elapsed-until-stop duration.
@@ -4300,6 +5842,17 @@ final class ChatSession: ObservableObject {
         }
     }
 
+    /// The phone's run in this chat ended and its turns are in: the send held
+    /// for it goes now (see `RemoteSessionContinuation.isPhoneReplying`).
+    func sendHeldForPhone() {
+        guard !isStreaming, activeRunId == nil, preSendHandshakeTask == nil, let pending = queuedSend else { return }
+        queuedSend = nil
+        if let skillId = pending.oneOffSkillId {
+            pendingOneOffSkillId = skillId
+        }
+        send(pending.text, attachments: pending.attachments)
+    }
+
     /// Dispatch any queued send when the run ended naturally (no `stop()`
     /// in-flight, no streaming error). Cancelled or errored runs leave the
     /// queue in place so the user can re-decide via the chip or Send Now.
@@ -4311,7 +5864,9 @@ final class ChatSession: ObservableObject {
         if let skillId = pending.oneOffSkillId {
             pendingOneOffSkillId = skillId
         }
-        send(pending.text, attachments: pending.attachments)
+        ChatExecutionContext.$inferenceSourceOverride.withValue(pending.inferenceSourceOverride) {
+            send(pending.text, attachments: pending.attachments, taskIntent: pending.taskIntent, generationControls: pending.generationControls)
+        }
     }
 
     /// Reused across runs so we don't pay the ICU date-symbol allocation that a
@@ -4331,6 +5886,7 @@ final class ChatSession: ObservableObject {
             return
         }
 
+        delegatedToolFailure.finish(runID: runId)
         let context = activeRunContext
         let runCompletedCleanly = !stopRequested && lastStreamError == nil
 
@@ -4396,31 +5952,34 @@ final class ChatSession: ObservableObject {
             // synchronously here (against the database's serial
             // queue), which blocked the chat view's main-thread
             // post-stream cleanup. The companion Vectura calls were
-            // already detached.
-            Task.detached {
-                let db = MemoryDatabase.shared
-                do {
-                    try db.insertTranscriptTurn(
-                        agentId: aid,
+            // already detached. A helper report is not indexed as a user
+            // turn; the assistant's reply to it still is.
+            if !context.userContentIsHostAuthored {
+                Task.detached {
+                    let db = MemoryDatabase.shared
+                    do {
+                        try db.insertTranscriptTurn(
+                            agentId: aid,
+                            conversationId: convId,
+                            chunkIndex: userChunkIndex,
+                            role: "user",
+                            content: userContent,
+                            tokenCount: userTokenCount,
+                            title: conversationTitle
+                        )
+                    } catch {
+                        MemoryLogger.database.warning("Failed to insert user transcript turn: \(error)")
+                    }
+                    let userTurn = TranscriptTurn(
                         conversationId: convId,
                         chunkIndex: userChunkIndex,
                         role: "user",
                         content: userContent,
                         tokenCount: userTokenCount,
-                        title: conversationTitle
+                        agentId: aid
                     )
-                } catch {
-                    MemoryLogger.database.warning("Failed to insert user transcript turn: \(error)")
+                    await MemorySearchService.shared.indexTranscriptTurn(userTurn)
                 }
-                let userTurn = TranscriptTurn(
-                    conversationId: convId,
-                    chunkIndex: userChunkIndex,
-                    role: "user",
-                    content: userContent,
-                    tokenCount: userTokenCount,
-                    agentId: aid
-                )
-                await MemorySearchService.shared.indexTranscriptTurn(userTurn)
             }
 
             if let assistantContent, !assistantContent.isEmpty {
@@ -4466,16 +6025,18 @@ final class ChatSession: ObservableObject {
             let conversationTitle = title
             let userContent = context.userContent
             let userTokenCount = TokenEstimator.estimate(userContent)
-            Task.detached {
-                await MemoryService.shared.mirrorTranscriptToProject(
-                    projectId: projectId,
-                    conversationId: convId,
-                    chunkIndex: userChunkIndex,
-                    role: "user",
-                    content: userContent,
-                    tokenCount: userTokenCount,
-                    title: conversationTitle
-                )
+            if !context.userContentIsHostAuthored {
+                Task.detached {
+                    await MemoryService.shared.mirrorTranscriptToProject(
+                        projectId: projectId,
+                        conversationId: convId,
+                        chunkIndex: userChunkIndex,
+                        role: "user",
+                        content: userContent,
+                        tokenCount: userTokenCount,
+                        title: conversationTitle
+                    )
+                }
             }
             if let assistantContent, !assistantContent.isEmpty {
                 let assistantTokenCount = TokenEstimator.estimate(assistantContent)
@@ -4493,7 +6054,9 @@ final class ChatSession: ObservableObject {
             }
         }
 
-        if bufferForMemory, context.hasContent {
+        // Distillation reads each buffered `userMessage` as the user's words,
+        // so a helper-report turn is never buffered.
+        if bufferForMemory, context.hasContent, !context.userContentIsHostAuthored {
             let formatter = Self.sessionDateFormatter
             formatter.timeZone = .current
             let today = formatter.string(from: Date())
@@ -4504,7 +6067,8 @@ final class ChatSession: ObservableObject {
                     agentId: context.memoryAgentId,
                     conversationId: context.memoryConversationId,
                     sessionDate: today,
-                    projectId: context.memoryProjectId
+                    projectId: context.memoryProjectId,
+                    provenance: context.memorySource == .delegation ? .delegated : .user
                 )
             }
         }
@@ -4523,8 +6087,7 @@ final class ChatSession: ObservableObject {
         }
         return resolveExecutionModeForSend(
             agentId: agentId,
-            autonomousEnabled: autonomous,
-            allowHostFolderWrites: config?.allowHostFolderWrites == true
+            autonomousEnabled: autonomous
         )
     }
 
@@ -4537,13 +6100,11 @@ final class ChatSession: ObservableObject {
     /// Interactive folders keep sandbox priority.
     func resolveExecutionModeForSend(
         agentId: UUID,
-        autonomousEnabled: Bool,
-        allowHostFolderWrites: Bool = false
+        autonomousEnabled: Bool
     ) -> ExecutionMode {
         ToolRegistry.shared.resolveExecutionMode(
             folderContext: activeFolderContext(for: agentId),
             autonomousEnabled: autonomousEnabled,
-            allowHostFolderWrites: allowHostFolderWrites,
             preferHostFolder: folderContextFromDispatchBookmark
         )
     }
@@ -4583,8 +6144,28 @@ final class ChatSession: ObservableObject {
         }
     }
 
+    /// Mark the start of one model generation step inside a run and return
+    /// its `streamStartTime`.
+    ///
+    /// `outputComplete` is set by the relay when a step's engine finishes and
+    /// is otherwise only cleared when `isStreaming` flips on — which happens
+    /// once per RUN, not per step. A tool-call continuation therefore started
+    /// with the flag still true from the previous step: `streamingTurnId`
+    /// resolved to nil, the fresh assistant turn rendered as finished (no
+    /// typing indicator during its load/prefill, so no "Loading Model..."),
+    /// and every delta took the non-streaming table path (per-token height
+    /// notes — the visible jump). Clear it BEFORE awaiting `streamResponses`, which
+    /// may span the whole model load, so the indicator covers that wait.
+    private func beginModelStep() -> Date {
+        if outputComplete {
+            outputComplete = false
+            rebuildVisibleBlocks()
+        }
+        return Date()
+    }
+
     private func processStreamDeltas(
-        stream: AsyncThrowingStream<String, Error>,
+        stream: AsyncThrowingStream<ResponsesGenerationEvent, Error>,
         assistantTurn: ChatTurn,
         runId: UUID,
         streamStartTime: Date,
@@ -4597,7 +6178,7 @@ final class ChatSession: ObservableObject {
         // write anything: the run's cleanup already finished, so every
         // mutation here would ghost into the transcript — starting with the
         // reset below erasing the `cancelled` stamp finalizeRun recorded.
-        guard activeRunId == runId else { throw CancellationError() }
+        guard isRunActive(runId) else { throw CancellationError() }
         // A continuation or transient retry may reuse this stream processor
         // after the prior assistant step set terminal metadata. Each model
         // generation owns fresh terminal state; carrying `stop` or an
@@ -4607,15 +6188,29 @@ final class ChatSession: ObservableObject {
         currentTurn.unclosedReasoning = false
         currentTurn.completedAt = nil
         currentTurn.lastOutputAt = nil
-        // Output-complete relay: the adapter announces the instant vmlx's
-        // terminal info arrives (before the cache-store tail it withholds the
-        // stream end for). Stop the cursor and stamp completion right then.
+        currentTurn.prefillProgress = nil
+        // Same contract for the session-level flag: the previous step's
+        // typed completion set it, and `isStreaming` (which resets it) stays
+        // true across the whole run. Callers already reset it before awaiting
+        // `streamResponses` (see `beginModelStep`); this covers any path that
+        // reaches the processor without it.
+        if outputComplete {
+            outputComplete = false
+            rebuildVisibleBlocks()
+        }
+        // The request's ordered typed completion separates finished output
+        // from the producer/cache tail without a process-wide relay.
         // On every exit — clean end, cancel, tool-invocation throw, or a
         // mid-stream error — drop a tool-call-progress placeholder if it never
         // resolved to a committed tool name, so the "Preparing tool call" card
         // can't persist on the finalized turn. No-op for real pending calls
         // (the committed `\u{FFFE}tool:` name overwrites the sentinel first).
-        defer { Self.clearPendingToolCallProgressPlaceholder(on: currentTurn) }
+        defer {
+            currentTurn.prefillProgress = nil
+            currentTurn.finalizeThinkingDuration()
+            currentTurn.finalizeRemoteToolActivity()
+            Self.clearPendingToolCallProgressPlaceholder(on: currentTurn)
+        }
         var uiDeltaCount = 0
         var uiReasoningDeltaCount = 0
         var uiToolSentinelCount = 0
@@ -4664,59 +6259,69 @@ final class ChatSession: ObservableObject {
         var processor = StreamingDeltaProcessor(turn: currentTurn) { [weak self] in
             self?.rebuildVisibleBlocks()
         }
-        // The relay fires when the ENGINE is done; the last deltas may still
-        // be in flight to this loop and the smooth-streaming pacer may still be
-        // painting them (live: "…247 248 249 2" shown as complete for the
-        // whole tail — the "50" was in the pacing buffer). So completion is
-        // settled, not stamped: wait for a quiet window with no new delta,
-        // drain the processor so every character is painted, THEN stop the
-        // cursor and stamp. No engine output can follow `.info`, so the quiet
-        // window only ever waits on delivery, never on generation.
-        var lastDeltaAt = Date()
-        let outputCompleteSub = GenerationOutputRelay.shared.$lastCompletion
-            .compactMap { $0 }
-            .filter { $0.at >= streamStartTime }
-            .first()
-            .receive(on: RunLoop.main)
-            .sink { [weak self, weak currentTurn] completion in
-                guard let self else { return }
-                Task { @MainActor [weak self, weak currentTurn] in
-                    let quiet: TimeInterval = 0.15
-                    var waited: TimeInterval = 0
-                    while Date().timeIntervalSince(lastDeltaAt) < quiet, waited < 3 {
-                        try? await Task.sleep(nanoseconds: 50_000_000); waited += 0.05
-                    }
-                    await processor.finalize()
-                    guard let self, self.activeRunId == runId else { return }
-                    let at = Date()
-                    if let turn = currentTurn {
-                        if turn.completedAt == nil { turn.completedAt = at }
-                        if turn.lastOutputAt == nil { turn.lastOutputAt = at }
-                    }
-                    self.outputComplete = true
-                    self.rebuildVisibleBlocks()
-                    print("[Osaurus][UI] output complete at \(String(format: "%.2f", at.timeIntervalSince(streamStartTime)))s (engine done at \(String(format: "%.2f", completion.at.timeIntervalSince(streamStartTime)))s; run end pending on the engine tail)")
-                }
-            }
-        defer { outputCompleteSub.cancel() }
+        defer { processor.finishImmediately() }
+        // Completion is ordered in this request's typed event stream. A
+        // process-wide relay plus a quiet-time guess can run ahead of buffered
+        // content/reasoning, or finish a different step in the same session.
+        var receivedCompletion = false
 
-        // The engine surfaces parsed tool calls by *throwing* a
-        // `ServiceToolInvocation` (or `ServiceToolInvocations`) at end-of-
-        // stream. Catch them so this function can return them as data —
-        // letting the throw escape would surface as an "Error: …
-        // ServiceToolInvocation error 1" string in the UI.
+        // Parsed calls are previews until the typed response completion
+        // publishes the complete ordered batch. Tool execution is data, never
+        // an exception that can be mistaken for a failed model response.
         var capturedInvocations: [ServiceToolInvocation] = []
 
         debugLog("send: got stream, entering delta loop")
         do {
-            for try await delta in stream {
-                noteRunProgress()
+            responseLoop: for try await event in stream {
+                noteRunProgress(.stream)
                 if !isRunActive(runId) {
-                    await processor.finalize()
+                    processor.finishImmediately()
                     // Cancelled mid-run: don't leave a remote tool chip
                     // shimmering forever — settle any still-running rows.
-                    currentTurn.finalizeRemoteToolActivity()
-                    return ([], currentTurn)
+                    currentTurn.finalizeRemoteToolActivity(endedBy: .cancelled)
+                    WaitingOnOthers.shared.clear(sessionId: sessionId)
+                    throw CancellationError()
+                }
+                if receivedCompletion {
+                    switch event {
+                    case .outputTextDelta, .reasoningDelta, .providerOutputItem, .reasoningItem, .anthropicThinkingBlock:
+                        throw ResponsesGenerationResult.CollectionError.outputAfterCompletion
+                    default: break
+                    }
+                } else {
+                    switch event {
+                    case .drained, .compatibilityStreamClosed:
+                        throw ResponsesGenerationResult.CollectionError.drainBeforeCompletion
+                    default: break
+                    }
+                }
+                if event.isGeneratedOutput {
+                    currentTurn.prefillProgress = nil
+                    let now = Date()
+                    if firstDeltaTime == nil {
+                        firstDeltaTime = now
+                        ttftTrace?.set("first_chunk_ms", Int(now.timeIntervalSince(streamStartTime) * 1000))
+                        ttftTrace?.mark("first_generated_delta")
+                        ttftTrace?.set("model", selectedModel ?? "unknown")
+                        ttftTrace?.emit()
+                    }
+                    currentTurn.lastOutputAt = now
+                }
+                if case .functionPreviewReset = event {
+                    let hadPreview = currentTurn.pendingToolName != nil || currentTurn.pendingToolArgSize > 0
+                    currentTurn.pendingToolName = nil
+                    currentTurn.clearPendingToolArgs()
+                    if hadPreview { rebuildVisibleBlocks() }
+                    continue
+                }
+                if case .functionCallAdded(let call) = event {
+                    currentTurn.finalizeThinkingDuration()
+                    uiToolSentinelCount += 1
+                    currentTurn.pendingToolName = call.name
+                    currentTurn.clearPendingToolArgs()
+                    currentTurn.appendToolArgFragment(call.arguments)
+                    rebuildVisibleBlocks()
+                    continue
                 }
                 // Mode 2 (remote agent run): the remote device executes the
                 // tools and streams back only a sanitized trace (name + phase +
@@ -4726,7 +6331,30 @@ final class ChatSession: ObservableObject {
                 // (running → done/failed), instead of a chip that vanished the
                 // instant the tool finished. The activity is display-only and is
                 // never re-sent as history (see `ChatTurn.remoteToolActivity`).
-                if let trace = StreamingAgentToolHint.decode(delta) {
+                if case .participantMessage(let spoken) = event {
+                    insertRemoteParticipantTurn(spoken, before: currentTurn)
+                    RemoteAgentRunLog.client("participant message kind=\(spoken.authorKind)")
+                    rebuildVisibleBlocks()
+                    continue
+                }
+                if case .ownerApproval(let approval) = event {
+                    currentTurn.noteRemoteOwnerApproval(approval)
+                    let address = workspaceContext?.agentAddress
+                    WaitingOnOthers.shared.note(
+                        approvalId: approval.approvalId,
+                        phase: approval.phase,
+                        sessionId: sessionId,
+                        agentAddress: address,
+                        agentName: address.flatMap { RemoteAgentManager.shared.remoteAgent(forAddress: $0)?.name }
+                            ?? L("Shared agent"),
+                        owner: approval.owner,
+                        tool: approval.name
+                    )
+                    RemoteAgentRunLog.client("owner approval phase=\(approval.phase) name=\(approval.name)")
+                    rebuildVisibleBlocks()
+                    continue
+                }
+                if case .agentTool(let trace) = event {
                     let callKey =
                         (trace.callId?.isEmpty == false) ? trace.callId! : trace.name
                     switch trace.phase {
@@ -4752,7 +6380,7 @@ final class ChatSession: ObservableObject {
                     continue
                 }
                 // Server-side tool call complete: add the call card + result turn to the chat log
-                if let done = StreamingToolHint.decodeDone(delta) {
+                if case .remoteToolCompleted(let done) = event {
                     uiToolSentinelCount += 1
                     await processor.finalize()
                     let call = ToolCall(
@@ -4779,7 +6407,7 @@ final class ChatSession: ObservableObject {
                     rebuildVisibleBlocks()
                     continue
                 }
-                if let toolName = StreamingToolHint.decode(delta) {
+                if case .functionNamePreview(let toolName) = event {
                     uiToolSentinelCount += 1
                     // Local models stream the raw envelope as args fragments
                     // BEFORE the parsed call's name hint. When the hint lands
@@ -4816,7 +6444,7 @@ final class ChatSession: ObservableObject {
                 // the real tool name once the envelope closes. The raw envelope
                 // text itself is intentionally NOT rendered (it isn't parsed args
                 // and could be any format), so it never leaks as message text.
-                if let envelopeDelta = StreamingToolCallProgressHint.decode(delta) {
+                if case .toolEnvelopeDelta(let envelopeDelta) = event {
                     uiToolSentinelCount += 1
                     // Also accumulate the raw envelope: the live diff preview
                     // extracts path/content from it mid-stream, and the tool
@@ -4835,14 +6463,6 @@ final class ChatSession: ObservableObject {
                     if currentTurn.pendingToolName == nil {
                         currentTurn.pendingToolName = ToolDisplayName.pendingToolSentinel
                     }
-                    if currentTurn.pendingToolArgSize
-                        > AgentToolLoop.maxStreamingToolArgumentCharacters
-                    {
-                        throw OversizedStreamingToolCall(
-                            toolName: currentTurn.pendingToolName,
-                            argumentCharacters: currentTurn.pendingToolArgSize
-                        )
-                    }
                     let count = currentTurn.pendingToolArgFragmentCount
                     let now = Date()
                     if count <= 3 || now.timeIntervalSince(lastToolArgRebuildAt) >= 0.08 {
@@ -4854,20 +6474,24 @@ final class ChatSession: ObservableObject {
                 // Preserve the complete provider-authored Responses output Item
                 // for exact stateless replay (phase, ids, reasoning, and future
                 // fields), independently of the flattened visible transcript.
-                if let responseItem = StreamingResponsesOutputItemHint.decode(delta) {
+                if case .providerOutputItem(let responseItem) = event {
                     currentTurn.responsesOutputItems.append(responseItem)
                     continue
                 }
                 // Captured OpenAI Responses reasoning item (id + encrypted blob).
                 // Not visible text — stash it on the turn so the next request
                 // re-emits it before this turn's function_call(s).
-                if let reasoningItem = StreamingReasoningItemHint.decode(delta) {
+                if case .anthropicThinkingBlock(let block) = event {
+                    currentTurn.anthropicThinkingBlocks.append(block)
+                    continue
+                }
+                if case .reasoningItem(let reasoningItem) = event {
                     uiReasoningItemCount += 1
                     currentTurn.reasoningItemId = reasoningItem.id
                     currentTurn.reasoningEncrypted = reasoningItem.encryptedContent
                     continue
                 }
-                if let argFragment = StreamingToolHint.decodeArgs(delta) {
+                if case .functionArgumentsPreview(let argFragment) = event {
                     uiToolSentinelCount += 1
                     currentTurn.appendToolArgFragment(argFragment)
                     // Envelope-first flow (local models): the tool name rides
@@ -4880,14 +6504,6 @@ final class ChatSession: ObservableObject {
                     {
                         currentTurn.pendingToolName = name
                     }
-                    if currentTurn.pendingToolArgSize
-                        > AgentToolLoop.maxStreamingToolArgumentCharacters
-                    {
-                        throw OversizedStreamingToolCall(
-                            toolName: currentTurn.pendingToolName,
-                            argumentCharacters: currentTurn.pendingToolArgSize
-                        )
-                    }
                     // Always rebuild for the first few fragments so the chip
                     // appears immediately; afterwards cap at ~12 rebuilds/sec
                     // so the table stays responsive during long arg streams
@@ -4898,7 +6514,15 @@ final class ChatSession: ObservableObject {
                         lastToolArgRebuildAt = now
                         rebuildVisibleBlocks()
                     }
-                } else if let stats = StreamingStatsHint.decode(delta) {
+                } else if case .inputTokenCount(let inputTokenCount) = event {
+                    // Prepared input is metadata, not the first output token.
+                    // Keep it out of text/history and the TTFT/rolling-rate path.
+                    currentTurn.inputTokenCount = inputTokenCount
+                } else if case .responseCompleted(let stats) = event {
+                    guard !receivedCompletion else {
+                        throw ResponsesGenerationResult.CollectionError.duplicateCompletion
+                    }
+                    receivedCompletion = true
                     uiStatsHintCount += 1
                     // Final stats from vmlx — captured for the post-loop stamp.
                     // We do NOT overwrite the live rolling rate here: while the
@@ -4909,19 +6533,56 @@ final class ChatSession: ObservableObject {
                     // available for replies too short for the window to converge
                     // — the case that used to be filled in with an average over
                     // the delivery burst and render as `2397.3 tok/s • 7 tokens`.
-                    if stats.tokensPerSecond.isFinite, stats.tokensPerSecond > 0 {
-                        engineTokensPerSecond = stats.tokensPerSecond
+                    if let rate = stats.tokensPerSecond, rate.isFinite, rate > 0 {
+                        engineTokensPerSecond = rate
                     }
-                    currentTurn.generationTokenCount = stats.tokenCount
+                    currentTurn.generationTokenCount = stats.tokenCount ?? currentTurn.generationTokenCount
                     currentTurn.terminalStopReason = stats.stopReason
-                    currentTurn.inputTokenCount = stats.inputTokenCount
-                    currentTurn.cachedInputTokenCount = stats.cachedInputTokenCount
+                    currentTurn.inputTokenCount = stats.inputTokenCount ?? currentTurn.inputTokenCount
+                    currentTurn.cachedInputTokenCount = stats.cachedInputTokenCount ?? currentTurn.cachedInputTokenCount
                     // Vmlx tells us the model never closed `</think>` before
                     // EOS / max_tokens. Persist on the turn so the bubble
                     // renderer can surface a one-line banner suggesting
                     // the user toggle Disable Thinking for this prompt class.
                     currentTurn.unclosedReasoning = stats.unclosedReasoning
-                } else if let billing = StreamingBillingHint.decode(delta) {
+                    // Paint every already-delivered character before removing
+                    // the cursor. The producer's independent drain is still
+                    // represented by the finishing row and live Stop control.
+                    if stats.dispatchableFunctionCalls.isEmpty {
+                        await processor.finalize()
+                    } else {
+                        // A ready tool must not wait for a decorative text
+                        // reveal. Paint its received preamble now, then let
+                        // the complete batch dispatch without a pacing tail.
+                        processor.finishImmediately()
+                    }
+                    guard isRunActive(runId) else { throw CancellationError() }
+                    currentTurn.finalizeThinkingDuration()
+                    currentTurn.prefillProgress = nil
+                    if case .cancelled = stats.status { throw CancellationError() }
+                    capturedInvocations = stats.dispatchableFunctionCalls.map {
+                        ServiceToolInvocation(
+                            toolName: $0.name,
+                            jsonArguments: $0.arguments,
+                            toolCallId: $0.callID,
+                            geminiThoughtSignature: $0.geminiThoughtSignature
+                        )
+                    }
+                    // A parsed preview that was not in the completed batch
+                    // must not leave a live chip. Keep a length-truncated
+                    // argument buffer until the outer loop records its exact
+                    // truncated-tool diagnostic.
+                    if stats.stopReason != "length" {
+                        currentTurn.pendingToolName = nil
+                        currentTurn.clearPendingToolArgs()
+                    }
+                    if currentTurn.completedAt == nil { currentTurn.completedAt = Date() }
+                    outputComplete = true
+                    rebuildVisibleBlocks()
+                    // Execute the complete ordered batch at logical completion;
+                    // the engine keeps draining its GPU/cache lease independently.
+                    if !capturedInvocations.isEmpty { break responseLoop }
+                } else if case .billing(let billing) = event {
                     uiBillingHintCount += 1
                     // Osaurus Router billed this turn. Stamp it so the run can't
                     // silently drop a billed-but-empty turn (see
@@ -4929,19 +6590,33 @@ final class ChatSession: ObservableObject {
                     // explain the charge. Adopt the server-authoritative output
                     // token count over our rolling estimate.
                     recordRouterBilling(billing, on: currentTurn)
-                } else if let progress = StreamingPrefillProgressHint.decode(delta) {
+                } else if case .prefillProgress(let progress) = event {
                     uiPrefillHintCount += 1
-                    InferenceProgressManager.shared.prefillDidUpdateAsync(progress)
-                } else if let reasoning = StreamingReasoningHint.decode(delta) {
+                    if !receivedCompletion {
+                        currentTurn.prefillProgress = progress.stage == .complete ? nil : progress
+                        rebuildVisibleBlocks()
+                    }
+                } else if case .artifacts(let remoteArtifacts) = event {
+                    // A teammate's host returned the small files its agent
+                    // shared: import them into THIS session's store and show
+                    // them on the turn exactly like local `share_artifact`
+                    // cards. A delegated (spawn) session's parent adopts them
+                    // from `sharedArtifacts` afterwards.
+                    if let sid = sessionId {
+                        let imported = SharedArtifact.importRemoteArtifacts(
+                            remoteArtifacts,
+                            contextId: sid.uuidString
+                        )
+                        if !imported.isEmpty {
+                            currentTurn.sharedArtifacts.append(contentsOf: imported)
+                            for artifact in imported {
+                                await PluginManager.shared.notifyArtifactHandlers(artifact: artifact)
+                            }
+                        }
+                    }
+                } else if case .reasoningDelta(let reasoning) = event {
                     uiReasoningDeltaCount += 1
                     let now = Date()
-                    if firstDeltaTime == nil {
-                        firstDeltaTime = now
-                        ttftTrace?.set("first_chunk_ms", Int(now.timeIntervalSince(streamStartTime) * 1000))
-                        ttftTrace?.mark("first_text_delta")
-                        ttftTrace?.set("model", selectedModel ?? "unknown")
-                        ttftTrace?.emit()
-                    }
                     // Reasoning tokens count toward the rolling rate so
                     // thinking-ON and thinking-OFF show the same decode
                     // rate at steady state. See RollingTokenRate doc.
@@ -4955,17 +6630,16 @@ final class ChatSession: ObservableObject {
                     )
                     currentTurn.lastOutputAt = now
                     processor.receiveReasoning(reasoning)
-                } else if !delta.isEmpty {
+                } else if case .drainFailed(let message) = event {
+                    throw NSError(
+                        domain: "OsaurusResponseDrain",
+                        code: 1,
+                        userInfo: [NSLocalizedDescriptionKey: message]
+                    )
+                } else if case .outputTextDelta(let delta) = event, !delta.isEmpty {
                     let now = Date()
-                    if firstDeltaTime == nil {
-                        firstDeltaTime = now
-                        ttftTrace?.set("first_chunk_ms", Int(now.timeIntervalSince(streamStartTime) * 1000))
-                        ttftTrace?.mark("first_text_delta")
-                        ttftTrace?.set("model", selectedModel ?? "unknown")
-                        ttftTrace?.emit()
-                    }
+                    currentTurn.finalizeThinkingDuration(at: now)
                     uiDeltaCount += 1
-                    lastDeltaAt = now
                     // Content delta — counted uniformly with reasoning.
                     let tokens = ContextBudgetManager.estimateTokens(for: delta)
                     rollingRate.observe(tokens: tokens, at: now)
@@ -4977,20 +6651,6 @@ final class ChatSession: ObservableObject {
                     )
                     currentTurn.lastOutputAt = now
                     processor.receiveDelta(delta)
-
-                    // The model has collapsed into a phrase-repetition loop.
-                    // Leaving the stream running spends the entire output
-                    // budget on one repeated sentence and floods the
-                    // transcript with it (osaurus#2439, turn 144: ~200 copies
-                    // of "Let me continue:"). Stop consuming — the normal
-                    // end-of-stream path below finalises whatever was already
-                    // revealed, and the turn is classified as a loop so the
-                    // driver can nudge instead of presenting it as an answer.
-                    if processor.hasDetectedRepetitionLoop {
-                        currentTurn.repetitionLoopPhrase =
-                            processor.repeatedPhrase ?? ""
-                        break
-                    }
                 }
 
                 // Hand the main run loop a turn so SwiftUI can actually paint
@@ -5006,24 +6666,40 @@ final class ChatSession: ObservableObject {
                     try? await Task.sleep(nanoseconds: 1_000_000)
                 }
             }
-        } catch let invs as ServiceToolInvocations {
-            capturedInvocations = invs.invocations
-        } catch let inv as ServiceToolInvocation {
-            capturedInvocations = [inv]
+        } catch {
+            // Cancelling an AsyncThrowingStream may end its iterator
+            // normally, or a compatibility adapter may report its missing
+            // terminal after that cancellation. Neither is a fresh provider
+            // error belonging in the already-stopped transcript.
+            WaitingOnOthers.shared.clear(sessionId: sessionId)
+            guard isRunActive(runId) else {
+                currentTurn.finalizeRemoteToolActivity(endedBy: .cancelled)
+                throw CancellationError()
+            }
+            currentTurn.finalizeRemoteToolActivity(
+                endedBy: error is CancellationError ? .cancelled : .failed
+            )
+            throw error
         }
 
+        guard isRunActive(runId) else { throw CancellationError() }
+        guard receivedCompletion else {
+            throw ResponsesGenerationResult.CollectionError.missingCompletion
+        }
         // Flush any remaining buffered content (including partial tags).
         // In smooth-streaming mode this awaits until the pacing tail
         // finishes typing out — keeping the processor alive past
         // `send()`'s return so the residual buffer is rendered, not
         // dropped on dealloc.
         await processor.finalize()
+        guard isRunActive(runId) else { throw CancellationError() }
 
         // Mode 2 safety net: if the stream ended without an explicit
         // `endRun` trace (clean end, network cutoff, or a peer that doesn't
         // send one), settle any remote tool rows still marked "running" so
         // none shimmer indefinitely. No-op for non-remote turns.
         currentTurn.finalizeRemoteToolActivity()
+        WaitingOnOthers.shared.clear(sessionId: sessionId)
         if currentTurn.hasRemoteToolActivity {
             RemoteAgentRunLog.client(
                 "stream end remoteTools=\(currentTurn.remoteToolActivity.count) "
@@ -5033,32 +6709,20 @@ final class ChatSession: ObservableObject {
         }
 
         if let first = firstDeltaTime {
-            // Split cold model load out of TTFT.
-            //
-            // `streamStartTime` is stamped immediately before `streamChat`, and
-            // no delta can arrive until the weights are resident — so a cold
-            // container load lands inside this window and used to be reported
-            // as time-to-first-token. A 64 GB M3 Max showed "TTFT 215.61s" on a
-            // ~1.8k-token prompt: no machine prefills 1.8k tokens in 215s, so
-            // the number was measuring a 27 GB load and reading as an engine
-            // fault. Both halves are kept; neither is hidden.
-            //
-            // `modelLoadSeconds` is clamped to the window by the manager, so
-            // the subtraction cannot go negative and cannot turn an honest
-            // slow turn into a reassuring fast one.
-            let wallClock = first.timeIntervalSince(streamStartTime)
-            let loadSeconds = InferenceProgressManager.shared.modelLoadSeconds(
-                from: streamStartTime, to: first)
-            currentTurn.modelLoadSeconds = loadSeconds > 0 ? loadSeconds : nil
-            currentTurn.timeToFirstToken = max(0, wallClock - loadSeconds)
+            // TTFT spans this request's setup, queue, load and prefill up to
+            // its first generated event. Global model-load intervals can
+            // belong to another chat/background request, so subtracting them
+            // would manufacture a shorter number. A load-excluded metric
+            // requires request-correlated runtime timing, not a global union.
+            currentTurn.modelLoadSeconds = nil
+            currentTurn.timeToFirstToken = max(0, first.timeIntervalSince(streamStartTime))
             // Stamp the steady-state tok/s. Single source of truth across
             // local-MLX, remote-API, with-tools, and thinking-on/off paths.
             //
-            // Order matters, and every rung is a real measurement:
-            //   1. the converged rolling window — best steady-state read, and
-            //      immune to first-token amortisation;
-            //   2. the engine's decode rate — a true tokens-over-decode-wall
-            //      figure for replies too short for the window to converge;
+            // Order matters: rolling input estimates tokens per text chunk,
+            // so it must not replace an authoritative engine completion rate.
+            //   1. the engine's actual tokens-over-decode-wall rate;
+            //   2. the rolling estimate when no valid engine rate is available;
             //   3. nothing.
             //
             // Rung 3 is the point. There is no fourth rung that guesses. The old
@@ -5068,7 +6732,7 @@ final class ChatSession: ObservableObject {
             // tok/s on a 7-token answer. A blank cell is honest; that number was
             // not.
             currentTurn.generationTokensPerSecond =
-                rollingRate.finalRate() ?? engineTokensPerSecond
+                rollingRate.finalRate(authoritativeTokensPerSecond: engineTokensPerSecond)
             // Token count: prefer vmlx's authoritative count (already
             // assigned in the stats sentinel branch above) — only fall back
             // to our chars/4 estimate if the stats sentinel never fired
@@ -5083,6 +6747,13 @@ final class ChatSession: ObservableObject {
         // actually generated.
         let streamEndedAt = Date()
         currentTurn.completedAt = streamEndedAt
+        if let location = OnboardingFirstRun.shared.runLocation(for: self) {
+            currentTurn.runLocation = location
+        }
+        // Final stats are plain turn fields; no content delta follows them.
+        // Refresh now so the footer does not retain its last rolling estimate
+        // until another message or unrelated UI event invalidates the blocks.
+        rebuildVisibleBlocks()
 
         let totalTime = streamEndedAt.timeIntervalSince(streamStartTime)
         // Last visible delta → stream termination. For local models this is
@@ -5218,6 +6889,9 @@ final class ChatSession: ObservableObject {
         }
     }
 
+    /// The selected model makes images or video rather than text.
+    var generatesMedia: Bool { isImageGenerationModel(selectedModel) || isVideoGenerationModel(selectedModel) }
+
     func isVideoGenerationModel(_ id: String?) -> Bool {
         #if DEBUG
             if forceChatEngineRouteForTests { return false }
@@ -5228,13 +6902,26 @@ final class ChatSession: ObservableObject {
         }
     }
 
+    /// Record presentation ownership before the native producer starts. Stop
+    /// can then replace progress synchronously, before cleanup saves the turn.
+    func beginNativeImagePresentation(on turn: ChatTurn) {
+        pendingNativeImageTurnId = turn.id
+        turn.content = L("Generating image…")
+    }
+
+    func finishNativeImagePresentation(on turn: ChatTurn) {
+        if pendingNativeImageTurnId == turn.id {
+            pendingNativeImageTurnId = nil
+        }
+    }
+
     /// Run a text→image generation for the active image model, streaming
     /// progress into `turn` and rendering the final PNG as a markdown image
     /// (the existing assistant markdown renderer displays `file://` images).
     /// Honors the run lifecycle: cancelling `currentTask` cancels the consume
     /// loop, which soft-cancels the underlying job.
     func runImageGeneration(
-        prompt: String,
+        prompt promptText: String,
         attachments: [Attachment],
         settings: ImageComposerSettings,
         into turn: ChatTurn,
@@ -5242,6 +6929,14 @@ final class ChatSession: ObservableObject {
     ) async {
         guard let model = selectedModel, !model.isEmpty else {
             turn.content = L("Image generation failed: no model selected")
+            rebuildVisibleBlocks()
+            return
+        }
+        let prompt: String
+        do {
+            prompt = try ImageComposerRequestBuilder.prompt(text: promptText, attachments: attachments)
+        } catch {
+            turn.content = "\(L("Image generation failed:")) \(error.localizedDescription)"
             rebuildVisibleBlocks()
             return
         }
@@ -5267,7 +6962,11 @@ final class ChatSession: ObservableObject {
             return
         }
 
-        turn.content = L("Generating image…")
+        beginNativeImagePresentation(on: turn)
+        defer {
+            turn.imageStep = nil
+            finishNativeImagePresentation(on: turn)
+        }
         rebuildVisibleBlocks()
 
         var lastRebuild = Date.distantPast
@@ -5282,74 +6981,60 @@ final class ChatSession: ObservableObject {
         var reachedTerminal = false
         let sourceImages = attachments.loadImages()
         let stream: AsyncThrowingStream<ImageGenerationEvent, Error>
-        if imageItem.imageCapabilities?.imageEdit == true || imageItem.imageKind == "imageEdit" {
-            guard !sourceImages.isEmpty else {
-                turn.content = L("Attach one source image to edit with this model.")
-                rebuildVisibleBlocks()
-                return
-            }
-            let params = ImageEditParameters(
-                model: model,
-                prompt: prompt,
-                sourceImages: sourceImages,
-                negativePrompt: settings.normalizedNegativePrompt,
-                strength: settings.clampedStrength,
-                width: settings.clampedWidth,
-                height: settings.clampedHeight,
-                steps: settings.clampedSteps,
-                guidance: settings.clampedGuidance,
-                seed: settings.normalizedSeed
+        do {
+            let request = try ImageComposerRequestBuilder.build(
+                item: imageItem, prompt: prompt, sourceImages: sourceImages,
+                expectedSourceCount: attachments.filter(\.isImage).count, settings: settings
             )
-            stream = await ImageGenerationService.shared.edit(params, jobID: runId.uuidString)
-        } else {
-            guard sourceImages.isEmpty else {
-                turn.content = L("Selected image model does not accept source images.")
-                rebuildVisibleBlocks()
-                return
+            switch request {
+            case .generate(let params):
+                stream = await ImageGenerationService.shared.generate(params, jobID: runId.uuidString)
+            case .edit(let params):
+                stream = await ImageGenerationService.shared.edit(params, jobID: runId.uuidString)
             }
-            let params = ImageGenerationParameters(
-                model: model,
-                prompt: prompt,
-                negativePrompt: settings.normalizedNegativePrompt,
-                width: settings.clampedWidth,
-                height: settings.clampedHeight,
-                steps: settings.clampedSteps,
-                guidance: settings.clampedGuidance,
-                seed: settings.normalizedSeed,
-                numImages: 1,
-                outputFormat: .png
-            )
-            stream = await ImageGenerationService.shared.generate(params, jobID: runId.uuidString)
+        } catch {
+            turn.content = (error as? ImageComposerRequestBuilder.RequestError)?.localizedMessage
+                ?? String(describing: error)
+            rebuildVisibleBlocks()
+            return
         }
         do {
             for try await event in stream {
-                noteRunProgress()
+                noteRunProgress(.discrete)
                 guard isRunActive(runId) else { break }
                 switch event {
                 case .loadingModel:
                     turn.content = L("Loading image model…")
                     refresh()
                 case .step(let step, let total, _):
+                    turn.imageStep = (step, total)
                     turn.content = "\(L("Generating image…")) \(step)/\(total)"
                     refresh()
                 case .preview:
                     break
+                case .imageCompleted:
+                    // The terminal event publishes the ordered gallery together.
+                    // Intermediate events must not settle the chat/model lease.
+                    break
                 case .completed(let images):
+                    finishNativeImagePresentation(on: turn)
                     reachedTerminal = true
                     if images.isEmpty {
                         turn.content = L("Image generation produced no image.")
                     } else {
                         turn.content =
                             images
-                            .map { "![\(prompt)](\($0.url.absoluteString))" }
+                            .map { ImageComposerRequestBuilder.generatedImageMarkdown(url: $0.url) }
                             .joined(separator: "\n\n")
                     }
                     refresh(force: true)
                 case .failed(let message, _):
+                    finishNativeImagePresentation(on: turn)
                     reachedTerminal = true
                     turn.content = "\(L("Image generation failed:")) \(message)"
                     refresh(force: true)
                 case .cancelled:
+                    finishNativeImagePresentation(on: turn)
                     if !reachedTerminal {
                         reachedTerminal = true
                         turn.content = L("Image generation cancelled.")
@@ -5358,6 +7043,7 @@ final class ChatSession: ObservableObject {
                 }
             }
         } catch {
+            guard isRunActive(runId) else { return }
             if !reachedTerminal {
                 turn.content = "\(L("Image generation failed:")) \(error)"
                 refresh(force: true)
@@ -5538,7 +7224,9 @@ final class ChatSession: ObservableObject {
                 "resolved_model": model.displayName,
                 "duration": duration,
                 "quote_usd": quote.usd,
-                "billing_notice": "Approving queues a billable remote job that cannot be cancelled upstream.",
+                "billing_notice": model.target.backend == .local
+                    ? "Approving runs this video locally on your Mac."
+                    : "Approving queues a billable remote job that cannot be cancelled upstream.",
             ]
             approvalValues["resolution"] = settings.resolution
             approvalValues["aspect_ratio"] = settings.aspectRatio
@@ -5588,6 +7276,7 @@ final class ChatSession: ObservableObject {
                     case .cancelled:
                         turn.content = L("Video generation cancelled.")
                     }
+                    self.noteRunProgress(.discrete)
                     self.rebuildVisibleBlocks()
                 }
             }
@@ -5675,16 +7364,40 @@ final class ChatSession: ObservableObject {
         isDirty = true
     }
 
-    func send(_ text: String, attachments: [Attachment] = []) {
+    func send(
+        _ text: String,
+        attachments: [Attachment] = [],
+        directUserSend: Bool = false,
+        taskIntent: ChatTaskIntent? = nil,
+        generationControls: ChatTurnGenerationControls? = nil,
+        turnOverrides: ChatTurnOverrides? = nil
+    ) {
+        let alignmentRepairModel = directUserSend && source == .chat && !isRemoteAgentTarget
+            ? selectedModel.flatMap { ModelManager.findInstalledModel(named: $0)?.id } : nil
         // The user's clock starts here, not when generation does. Everything
         // below — the warm-up handshake especially, which can wait out a whole
         // container load — happens before there is a trace to record it, so the
         // reported TTFT excluded it and the wait was unattributable. See #2347.
         let sendRequestedAt = Date()
+        let author = nextSendAuthor
+        nextSendAuthor = nil
+        let bypassesOnboarding = bypassesOnboardingRouter
+        bypassesOnboardingRouter = false
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedTaskIntent = taskIntent ?? ChatTaskIntent(userText: text)
         let hasContent = !trimmed.isEmpty || !attachments.isEmpty
         let isRegeneration = !hasContent && !turns.isEmpty
         guard hasContent || isRegeneration else { return }
+        // Another Mac runs this chat's agent: the turn goes to it. It can't
+        // regenerate a turn it already answered.
+        if let host = hostDeviceElsewhere {
+            if hasContent {
+                sendToHost(trimmed, attachments: attachments, host: host)
+            } else {
+                restoreTurnsRollbackAfterAbortedRegeneration()
+            }
+            return
+        }
         // `isStreaming` does not flip until the pre-send handshake finishes.
         // Treat the retained handshake as an active send so a second Send
         // cannot queue another captured turn into the same lifecycle gap.
@@ -5696,7 +7409,15 @@ final class ChatSession: ObservableObject {
             restoreTurnsRollbackAfterAbortedRegeneration()
             return
         }
-
+        // Every other send path (queued flush, regeneration, voice) waits for
+        // the phone's run in this chat too; a message is held, not lost.
+        if let sessionId, RemoteSessionContinuation.isPhoneReplying(sessionId) {
+            if hasContent {
+                queuedSend = QueuedSend(text: trimmed, attachments: attachments, oneOffSkillId: pendingOneOffSkillId)
+            }
+            restoreTurnsRollbackAfterAbortedRegeneration()
+            return
+        }
         // Authoritative guard for every send path (interactive, regeneration,
         // queued, VAD, programmatic): never start a local generation while
         // another window is already running one. `sendCurrent` checks this
@@ -5707,11 +7428,31 @@ final class ChatSession: ObservableObject {
             restoreTurnsRollbackAfterAbortedRegeneration()
             return
         }
+        if hasContent, !bypassesOnboarding, source == .chat, OnboardingFirstRun.shared.routesTypedMessage(in: self) {
+            OnboardingFirstRun.shared.routeTyped(trimmed, attachments: attachments, in: self)
+            return
+        }
+
+        let controls = generationControls
+            ?? (isRegeneration ? turns.last(where: { $0.role == .user })?.generationControls : nil)
+            ?? captureGenerationControls(overrides: turnOverrides)
+        do { try controls.overrides.validate(); turnParametersError = nil }
+        catch {
+            turnParametersError = error.localizedDescription
+            restoreTurnsRollbackAfterAbortedRegeneration()
+            return
+        }
+        let storedTurnOptions = controls.storedExplicitOptions
+        if hasContent, generationControls == nil, turnOverrides == nil {
+            nextTurnOverrides = ChatTurnOverrides()
+        }
 
         // A new send supersedes the previous turn's follow-up suggestions:
         // clear them so stale rows never linger beneath an older message while
         // the next response streams in.
         clearFollowUpSuggestions()
+        autoTitleTask?.cancel()
+        autoTitleTask = nil
 
         // The LLM compaction summary must line up with the transcript this
         // send will build from; regenerations/edits that rewrote covered
@@ -5730,6 +7471,29 @@ final class ChatSession: ObservableObject {
         // becomes a no-op.
         reconcilePromptShapeBeforeSend()
 
+        // The Architect's draft is keyed by session id, so the chat needs a
+        // real one before its first tool call. Direct sidebar edits and the
+        // selected node ride along as a visible attachment.
+        var attachments = attachments
+        if hasContent, agentId == Agent.architectId {
+            if sessionId == nil {
+                sessionId = UUID()
+                createdAt = Date()
+                isDirty = true
+            }
+            if let context = WorkflowDraftStore.shared.takeTurnContext(sessionID: sessionId?.uuidString) {
+                attachments.append(
+                    .document(filename: "workflow-context.md", content: context, fileSize: context.utf8.count))
+            }
+        }
+        // The New Agent draft's panel edits ride along the same way.
+        if hasContent, agentId == Agent.configuratorId,
+            let context = AgentDraftStore.shared.takeTurnContext(sessionID: sessionId?.uuidString)
+        {
+            attachments.append(
+                .document(filename: "agent-draft-context.md", content: context, fileSize: context.utf8.count))
+        }
+
         // Lazy loading: no pre-send warm-up exists for any family (the DSV4
         // pre-send prefix request is gone with it). The model loads and the
         // real request prefills inside dispatchSend's ordinary path.
@@ -5742,9 +7506,14 @@ final class ChatSession: ObservableObject {
         guard warmupController.needsPreSendHandshake else {
             dispatchSend(
                 trimmed: trimmed,
+                taskIntent: resolvedTaskIntent,
                 attachments: attachments,
                 hasContent: hasContent,
-                sendRequestedAt: sendRequestedAt
+                sendRequestedAt: sendRequestedAt,
+                alignmentRepairModel: alignmentRepairModel,
+                author: author,
+                generationControls: controls,
+                storedTurnOptions: storedTurnOptions
             )
             return
         }
@@ -5759,6 +7528,8 @@ final class ChatSession: ObservableObject {
         if hasContent {
             preAppendIntroducedFirstTurn = turns.isEmpty
             let turn = ChatTurn(role: .user, content: trimmed, attachments: attachments)
+            turn.author = author
+            turn.generationControls = controls
             turns.append(turn)
             preAppendedUserTurn = turn
         }
@@ -5785,13 +7556,17 @@ final class ChatSession: ObservableObject {
             self.awaitingPreSendHandshake = false
             self.dispatchSend(
                 trimmed: trimmed,
+                taskIntent: resolvedTaskIntent,
                 attachments: attachments,
                 hasContent: hasContent,
                 preAppendedUserTurn: preAppendedUserTurn,
                 preAppendIntroducedFirstTurn: preAppendIntroducedFirstTurn,
                 expectedPreSendHandshakeEpoch: handshakeEpoch,
                 sendRequestedAt: sendRequestedAt,
-                awaitedPreSendHandshake: true
+                awaitedPreSendHandshake: true,
+                alignmentRepairModel: alignmentRepairModel,
+                generationControls: controls,
+                storedTurnOptions: storedTurnOptions
             )
         }
     }
@@ -5801,13 +7576,18 @@ final class ChatSession: ObservableObject {
     /// yielded the MainActor.
     private func dispatchSend(
         trimmed: String,
+        taskIntent: ChatTaskIntent,
         attachments: [Attachment],
         hasContent: Bool,
         preAppendedUserTurn: ChatTurn? = nil,
         preAppendIntroducedFirstTurn: Bool = false,
         expectedPreSendHandshakeEpoch: UInt64? = nil,
         sendRequestedAt: Date = Date(),
-        awaitedPreSendHandshake: Bool = false
+        awaitedPreSendHandshake: Bool = false,
+        alignmentRepairModel: String? = nil,
+        author: ParticipantRef? = nil,
+        generationControls: ChatTurnGenerationControls,
+        storedTurnOptions: [String: ModelOptionValue]?
     ) {
         // The pre-send task already checks this after its await. Keep the same
         // guard at the dispatch boundary so future refactors cannot restore
@@ -5832,9 +7612,8 @@ final class ChatSession: ObservableObject {
             // await above widened the window in which another window can
             // grab the runtime. Put the draft back instead of dropping it.
             rollbackPreAppendedUserTurn(preAppendedUserTurn, restoringDraft: nil)
-            if hasContent, input.isEmpty, pendingAttachments.isEmpty {
-                input = trimmed
-                pendingAttachments = attachments
+            if hasContent {
+                restoreAbortedSendDraft(text: trimmed, attachments: attachments, controls: generationControls)
             }
             restoreTurnsRollbackAfterAbortedRegeneration()
             return
@@ -5850,6 +7629,7 @@ final class ChatSession: ObservableObject {
         transientSessionIdForCurrentRun = nil
         appendedUserTurnForCurrentRun = false
         suppressQueuedSendFlushForCurrentRun = false
+        pendingWorkingFolderContinuation = false
 
         // Any new user input clears a prior completion banner — we're
         // moving on to a follow-up. Clarify prompts (when active) live
@@ -5889,7 +7669,10 @@ final class ChatSession: ObservableObject {
             if let pre = preAppendedUserTurn {
                 if preAppendedTurnPresent == false { turns.append(pre) }
             } else {
-                turns.append(ChatTurn(role: .user, content: trimmed, attachments: attachments))
+                let userTurn = ChatTurn(role: .user, content: trimmed, attachments: attachments)
+                userTurn.author = author
+                userTurn.generationControls = generationControls
+                turns.append(userTurn)
             }
             appendedUserTurnForCurrentRun = true
             // Stash the draft so we can put it back if the user cancels
@@ -5898,6 +7681,7 @@ final class ChatSession: ObservableObject {
             // own send animation) so we have to capture them here at
             // the only point where we still know what they were.
             savedDraftOnCancel = (text: trimmed, attachments: attachments)
+            savedTurnOverridesOnCancel = generationControls.overrides
             isDirty = true
             rebuildVisibleBlocks()
 
@@ -5917,6 +7701,11 @@ final class ChatSession: ObservableObject {
 
         let memoryAgentId = (agentId ?? Agent.defaultId).uuidString
         let memoryConversationId = (sessionId ?? UUID()).uuidString
+        // A helper report sent as `.hostContinuation` carries host text, not
+        // user words. Regenerate and folder continuation are also host
+        // continuations but send no text: their latest user turn is genuine
+        // and already carries its frozen recall.
+        let hostAuthoredTurn = hasContent && taskIntent == .hostContinuation
 
         let runId = UUID()
         beginRun(
@@ -5924,8 +7713,10 @@ final class ChatSession: ObservableObject {
             context: RunContext(
                 hasContent: hasContent,
                 userContent: trimmed,
+                userContentIsHostAuthored: hostAuthoredTurn,
                 memoryAgentId: memoryAgentId,
                 memoryConversationId: memoryConversationId,
+                memorySource: source,
                 memoryProjectId: projectId
             )
         )
@@ -5939,16 +7730,23 @@ final class ChatSession: ObservableObject {
         // streaming pipeline (e.g. from a sandbox plugin running on a
         // detached task) couldn't tell what agent they belonged to.
         let turnAgentId = agentId ?? Agent.defaultId
+        // Regenerate and edit retain the user turn but call send(""). Capture
+        // that turn before asynchronous work and before appending the assistant.
+        let imageInput = turns.last(where: { $0.role == .user }).map { (prompt: $0.content, attachments: $0.attachments) }
+            ?? (prompt: trimmed, attachments: attachments)
         let turnModelId = selectedModel
+        let turnHarness = harnessSelection
         let turnModelType = selectedPickerItem?.modelType
         let turnSupportsImages = selectedModelSupportsImages
         let turnSupportsAudio = selectedModelSupportsAudio
         let turnSupportsVideo = selectedModelSupportsVideo
-        let imageSettings = imageComposerSettings
-        let turnModelOptions = activeModelOptions
-        let storedTurnModelOptions = turnModelId.flatMap {
-            ModelOptionsStore.shared.storedExplicitOptions(for: $0)
+        var imageSettings = imageComposerSettings
+        if let hosted = pendingHostedImageSettings {
+            pendingHostedImageSettings = nil
+            imageSettings = hosted.applied(to: imageSettings)
         }
+        let turnModelOptions = generationControls.modelOptions ?? [:]
+        let storedTurnModelOptions = storedTurnOptions
 
         currentTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -5957,16 +7755,31 @@ final class ChatSession: ObservableObject {
             // explicit Thinking choice that launch-time cold-cache
             // normalization may have provisionally hidden. No default is
             // synthesized: absent choices still defer to the bundle.
-            let turnGenerationControls = await ChatTurnGenerationControls.captureForSend(
-                modelId: turnModelId,
-                activeModelOptions: turnModelOptions,
-                storedExplicitOptions: storedTurnModelOptions
-            ) { modelId in
-                _ = await LocalReasoningCapability.resolveForDispatch(modelId: modelId)
+            var turnGenerationControls = generationControls
+            if !generationControls.hasResolvedReasoning {
+                turnGenerationControls = await ChatTurnGenerationControls.captureForSend(
+                    modelId: turnModelId,
+                    activeModelOptions: turnModelOptions,
+                    storedExplicitOptions: storedTurnModelOptions
+                ) { modelId in
+                    _ = await LocalReasoningCapability.resolveForDispatch(modelId: modelId)
+                }
             }
+            turnGenerationControls.hasResolvedReasoning = true
             guard self.isRunActive(runId) else { return }
-            if self.selectedModel == turnModelId,
-                self.activeModelOptions.isEmpty,
+            turnGenerationControls.temperature = generationControls.temperature
+            turnGenerationControls.topP = generationControls.topP
+            turnGenerationControls.topK = generationControls.topK
+            turnGenerationControls.agentSettings = generationControls.agentSettings
+            turnGenerationControls.maxOutputTokens = generationControls.maxOutputTokens
+            turnGenerationControls.agentDefaultsCaptured = generationControls.agentDefaultsCaptured
+            turnGenerationControls.overrides = generationControls.overrides
+            turnGenerationControls.storedExplicitOptions = generationControls.storedExplicitOptions
+            self.turns.last(where: { $0.role == .user })?.generationControls = turnGenerationControls
+            if let turnModelId,
+                self.selectedModel == turnModelId,
+                self.activeModelOptions == turnModelOptions,
+                ModelOptionsStore.shared.storedExplicitOptions(for: turnModelId) == storedTurnModelOptions,
                 let recovered = turnGenerationControls.modelOptions
             {
                 self.activeModelOptions = recovered
@@ -5976,7 +7789,7 @@ final class ChatSession: ObservableObject {
             // turn composes WITH the folder instead of silently folder-less.
             // Instant when no restore is pending. Default agent skips — it
             // is folder-less by policy and must not wait on a restore.
-            if turnAgentId != Agent.defaultId {
+            if turnAgentId != Agent.defaultId || turnHarness != nil {
                 _ = await self.folderState.contextWaitingForRestore()
             }
             guard self.isRunActive(runId) else { return }
@@ -6007,30 +7820,13 @@ final class ChatSession: ObservableObject {
             // mode). Interactive chats never set this.
             let folderIsDispatchTarget =
                 self.folderContextFromDispatchBookmark && turnFolderRoot != nil
-            await ChatExecutionContext.$currentFolderRoot.withValue(turnFolderRoot) { [self] in
-            await ChatExecutionContext.$hostFolderIsDispatchTarget.withValue(folderIsDispatchTarget) { [self] in
-            // Typed run provenance for the whole turn. The session's own
-            // persisted `source` is authoritative here (a dispatched
-            // schedule/watcher/self-schedule run re-binds the same value the
-            // dispatcher already bound; a UI chat turn binds `.chat`).
-            // Source-scoped capabilities (proactive channel publishing) read
-            // this instead of inferring provenance from surface flags.
-            await ChatExecutionContext.$currentSessionSource.withValue(source) { [self] in
-            // Weak handle to THIS session for the whole turn, so a
-            // `background: true` spawn dispatch can deliver its report-back
-            // digest to the exact launching conversation later.
-            await ChatExecutionContext.$currentChatSessionBox.withValue(WeakChatSessionBox(self)) { [self] in
-            await ChatExecutionContext.$currentAgentId.withValue(turnAgentId) { [self] in
-            await ChatExecutionContext.$currentProjectId.withValue(self.projectId) { [self] in
-            await ChatExecutionContext.$currentUserRequest.withValue(
-                trimmed.isEmpty ? nil : trimmed
-            ) { [self] in
-            await ChatExecutionContext.$currentModelName.withValue(
-                turnModelId
-            ) { [self] in
-            await ChatExecutionContext.$currentEnableThinking.withValue(
-                turnGenerationControls.enableThinking
-            ) { [self] in
+            // The turn body is a local function rather than the innermost
+            // closure literal: the eight nested `withValue` calls form ONE
+            // expression, and Swift 6.3 folds every closure body into that
+            // expression's constraint system, which blows the type-checker
+            // budget ("unable to type-check this expression in reasonable
+            // time"). A declaration is checked on its own.
+            @MainActor func runTurn() async {
                 debugLog("send: task started runId=\(runId) model=\(turnModelId ?? "nil")")
                 // A Stop can land between beginRun (synchronous in send) and
                 // this task's first line: stop() has then already finalized
@@ -6054,10 +7850,28 @@ final class ChatSession: ObservableObject {
                 }
 
                 var assistantTurn = ChatTurn(role: .assistant, content: "")
+                // The footer's total response time runs from the keypress, so
+                // it covers the pre-send warm-up (model load) and setup above.
+                assistantTurn.requestedAt = sendRequestedAt
                 turns.append(assistantTurn)
                 // Must refresh block memoizer before first delta — otherwise visibleBlocks stays
                 // user-only while isStreaming is true and the table early-returns without assistant rows.
                 rebuildVisibleBlocks()
+
+                // A harness agent's turn runs in its own process with its own
+                // history; none of the built-in loop below applies.
+                if let turnHarness {
+                    await self.runHarnessTurn(
+                        turnHarness,
+                        prompt: imageInput.prompt,
+                        attachments: imageInput.attachments,
+                        agentId: turnAgentId,
+                        folderRoot: self.folderState.context?.rootPath,
+                        into: assistantTurn,
+                        runId: runId
+                    )
+                    return
+                }
 
                 // Image-generation models route through ImageGenerationService
                 // (a second MLX graph, gated exclusive to LLM eval) instead of
@@ -6075,8 +7889,8 @@ final class ChatSession: ObservableObject {
                                     }
                 if self.isImageGenerationModel(turnModelId) {
                     await self.runImageGeneration(
-                        prompt: trimmed,
-                        attachments: attachments,
+                        prompt: imageInput.prompt,
+                        attachments: imageInput.attachments,
                         settings: imageSettings,
                         into: assistantTurn,
                         runId: runId
@@ -6103,7 +7917,13 @@ final class ChatSession: ObservableObject {
                 ttftTrace?.mark("pre_send_wait")
                 ttftTrace?.set("awaited_pre_send_handshake", awaitedPreSendHandshake)
                 do {
-                    let engine = chatEngineFactory(source.inferenceSource)
+                    if let unavailable = self.lockedModelUnavailable {
+                        throw ChatEngine.EngineError(
+                            kind: .agentModelUnavailable(
+                                agentName: AgentManager.shared.agent(for: turnAgentId)?.displayName ?? L("This agent"),
+                                model: unavailable))
+                    }
+                    let engine = chatEngineFactory(runtimeSource.inferenceSource)
                     let chatCfg = ChatConfigurationStore.load()
 
                     // MARK: - Capability Setup
@@ -6112,6 +7932,12 @@ final class ChatSession: ObservableObject {
                     // turn's agent id; we just alias it locally for the calls
                     // below that want a plain UUID.
                     let effectiveAgentId = turnAgentId
+                    // Pick up edits made outside the app (or by another
+                    // window) before anything reads this turn's configuration.
+                    if effectiveAgentId == Agent.defaultId {
+                        DefaultAgentConfigurationStore.reloadIfChangedOnDisk()
+                        ConfiguratorConfigurationStore.reloadIfChangedOnDisk()
+                    }
                     // Per-agent screen context (a child of Computer Use). Read
                     // once here so the freeze gate below and the inject gate in
                     // `loopHooks.buildMessages` agree on a single value for the
@@ -6126,6 +7952,11 @@ final class ChatSession: ObservableObject {
                     let priorUserMessages: [ChatMessage] = turns.compactMap { t in
                         guard t.role == .user, !t.contentIsEmpty else { return nil }
                         return ChatMessage(role: "user", content: t.content)
+                    }
+
+                    if !isRemoteAgentTarget {
+                        await PluginManager.shared.ensurePromptCatalogReady()
+                        guard isRunActive(runId) else { return }
                     }
 
                     // Reuse the per-session always-loaded + capabilities_load
@@ -6145,7 +7976,9 @@ final class ChatSession: ObservableObject {
                     let liveFingerprint = SessionToolState.fingerprint(
                         executionMode: executionMode,
                         toolMode: liveToolMode,
-                        agentId: effectiveAgentId
+                        agentId: effectiveAgentId,
+                        orchestratorConfig: effectiveAgentId == Agent.defaultId
+                            ? SessionToolState.orchestratorConfigComponent() : nil
                     )
                     let cachedSession: SessionToolState?
                     if let sid = sessionId {
@@ -6162,6 +7995,10 @@ final class ChatSession: ObservableObject {
                             key,
                             liveFingerprint: liveFingerprint,
                             preservingLoadedToolNames: modeIndependentDynamicNames
+                        )
+                        await SessionToolStateStore.shared.reconcileToolGrants(
+                            key,
+                            current: ToolRegistry.shared.toolGrantSnapshot(agentId: effectiveAgentId)
                         )
                         cachedSession = await SessionToolStateStore.shared.get(key)
                     } else {
@@ -6195,15 +8032,6 @@ final class ChatSession: ObservableObject {
                         self.isScreenContextFrozen = true
                     }
 
-                    // Keep the first real send byte-identical to warmup and
-                    // restart restore: plugin tools/skills are part of the
-                    // static prompt and must come from a completed catalog
-                    // snapshot, not launch-task timing.
-                    if !isRemoteAgentTarget {
-                        await PluginManager.shared.ensurePromptCatalogReady()
-                        guard isRunActive(runId) else { return }
-                    }
-
                     // Resolve the pending one-off skill BEFORE composing.
                     // Skill instructions routinely name the exact tools they
                     // expect the model to call (MCP / plugin tools), but those
@@ -6222,7 +8050,13 @@ final class ChatSession: ObservableObject {
                         pendingOneOffSkillId = nil
                                             if !isRemoteAgentTarget, let skill = SkillManager.shared.skill(for: skillId)
                                             {
-                            let body = await SkillManager.shared.buildFullInstructions(for: skill)
+                            let sandboxed =
+                                SandboxBackend.current == .virtualMachine
+                                && AgentManager.shared.effectiveAutonomousExec(for: effectiveAgentId)?.enabled == true
+                            let body = await SkillManager.shared.buildFullInstructions(
+                                for: skill,
+                                sandboxAgentName: sandboxed
+                                    ? SandboxAgentProvisioner.linuxName(for: effectiveAgentId.uuidString) : nil)
                             oneOffSkillSection = (skill.name, body, SkillManager.isEditable(skill))
                             let granted = AgentManager.shared
                                 .effectiveEnabledToolNames(for: effectiveAgentId)
@@ -6266,7 +8100,10 @@ final class ChatSession: ObservableObject {
                             frozenManifest: cachedSession?.frozenManifest,
                             frozenSoul: cachedSession?.frozenSoul,
                             trace: ttftTrace,
-                            projectId: projectId
+                            projectId: projectId,
+                            // No recall keyed on a helper report: it froze the
+                            // delegated task's own memory onto the report.
+                            recallsMemory: !hostAuthoredTurn
                         )
                     )
                     guard isRunActive(runId) else { return }
@@ -6321,6 +8158,13 @@ final class ChatSession: ObservableObject {
                             body: oneOff.body,
                             editable: oneOff.editable
                         )
+                    }
+
+                    // A hosted run's own instructions (a phone's voice-call
+                    // note) ride this run's system prompt only.
+                    if let runInstructions = pendingRunInstructions {
+                        pendingRunInstructions = nil
+                        if !isRemoteAgentTarget { sys += "\n\n" + runInstructions }
                     }
 
                     // Initial request schema. `ToolExecutionScope` appends tools
@@ -6395,6 +8239,21 @@ final class ChatSession: ObservableObject {
                             appName: FrontmostAppTracker.shared.lastNonSelfAppName
                         )
                         : nil
+                    // An ask button or Discovery card names its target, so the
+                    // host makes that call in the first step's place.
+                    var routedDispatch: ServiceToolInvocation? =
+                        effectiveAgentId == Agent.defaultId && !isRemoteAgentTarget && hasContent
+                        ? takePendingHostDispatch(for: trimmed) : nil
+                    if let dispatch = routedDispatch, !toolScope.authorizedNames.contains(dispatch.toolName) {
+                        routedDispatch = nil
+                    }
+                    let dispatchedToolName = routedDispatch?.toolName
+                    var presentingAfterDispatch = false
+                    var routedCallId: String?
+                    // The forced `state` step, once armed, and the last
+                    // handoff result this turn got (both decide whether it arms).
+                    var forcedStateStep: (tools: [Tool], choice: ToolChoiceOption)?
+                    var lastHandoffResult: HandoffResult?
                     if !isRemoteAgentTarget {
                         freezeInjectedContextOntoLatestUserTurn(
                             memorySection: context.memorySection,
@@ -6402,10 +8261,18 @@ final class ChatSession: ObservableObject {
                             automationContext: appleScriptWorkingContext
                         )
                     }
+                    let orchestratorStateBlock: String? =
+                        effectiveAgentId == Agent.defaultId && !isRemoteAgentTarget
+                        ? OrchestratorTurnBlock.injectedBlock(
+                            state: (sessionState ?? .empty).rendered(), dispatchedTool: dispatchedToolName,
+                            stateOffered: toolScope.authorizedNames.contains(StateTool.toolName))
+                        : nil
 
-                                        var effectiveMaxTokensForAgent = AgentManager.shared.effectiveMaxTokens(
-                                            for: effectiveAgentId
-                                        )
+                    var effectiveMaxTokensForAgent = turnGenerationControls.agentDefaultsCaptured == true
+                        ? turnGenerationControls.maxOutputTokens
+                        : AgentManager.shared.effectiveMaxTokens(for: effectiveAgentId)
+                    let admissionOutputTokensAreImplicit = self.delegationBudget != nil
+                        && effectiveMaxTokensForAgent == nil
                     if let delegationBudget = self.delegationBudget {
                         // Delegated child: the contract's per-generation
                         // response ceiling is ENFORCED here (admission
@@ -6413,6 +8280,13 @@ final class ChatSession: ObservableObject {
                         effectiveMaxTokensForAgent = delegationBudget
                             .clampedResponseTokens(agentConfigured: effectiveMaxTokensForAgent)
                     }
+
+                    // Validate the NEW payload before history filtering. A stale
+                    // capability must produce a visible failure, never a text-only
+                    // request that silently loses the user's attachment.
+                    try ModelMediaCapabilities.validateAttachments(attachments, capabilities: .init(
+                        supportsImage: turnSupportsImages, supportsVideo: turnSupportsVideo,
+                        supportsAudio: turnSupportsAudio))
 
                     // KV-cache-aware history compaction: shared window
                     // resolution + reservations via `AgentLoopBudget` (parity
@@ -6441,6 +8315,10 @@ final class ChatSession: ObservableObject {
                             maxResponseTokens: effectiveMaxTokensForAgent
                         )
                     }()
+                    let orchestratorContextWindow: Int? =
+                        usesOrchestratorContextPolicy
+                        ? await AgentLoopBudget.resolveContextWindow(modelId: turnModelId ?? "default")
+                        : nil
 
                     // Incomplete reasoning attempts remain visible in the
                     // transcript but must not be fed back into the retry.
@@ -6458,7 +8336,8 @@ final class ChatSession: ObservableObject {
 
                     /// Convert a single turn to a ChatMessage (returns nil if should be skipped)
                     @MainActor
-                    func turnToMessage(_ t: ChatTurn, isLastTurn: Bool) -> ChatMessage? {
+                    func turnToMessage(_ t: ChatTurn, isLastTurn: Bool, isLatestUserTurn: Bool) -> ChatMessage? {
+                        guard Self.isModelVisible(t) else { return nil }
                         switch t.role {
                         case .assistant:
                             return Self.modelVisibleAssistantMessage(
@@ -6466,11 +8345,15 @@ final class ChatSession: ObservableObject {
                                 isLastTurn: isLastTurn
                             )
                         case .tool:
-                            return ChatMessage(
-                                role: "tool",
+                            // Tool results that staged an image (`file_read`
+                            // on a picture) ride as multimodal tool messages
+                            // for vision models. Same helper as warm-up so
+                            // both serialise byte-identical history.
+                            return ToolResultMediaBridge.toolMessage(
                                 content: t.content,
-                                tool_calls: nil,
-                                tool_call_id: t.toolCallId
+                                toolCallId: t.toolCallId,
+                                attachments: t.attachments,
+                                supportsImages: turnSupportsImages
                             )
                         case .user:
                             let base = Self.buildUserChatMessage(
@@ -6487,9 +8370,10 @@ final class ChatSession: ObservableObject {
                             // turns). Mode 2 requests stay bare — the local
                             // agent's memory must not ride to a remote agent.
                             if isRemoteAgentTarget { return base }
-                            return Self.applyingFrozenInjectedPrefix(
-                                t.injectedContextPrefix,
-                                to: base
+                            return Self.userMessage(
+                                base,
+                                frozenPrefix: t.injectedContextPrefix,
+                                sessionState: isLatestUserTurn ? orchestratorStateBlock : nil
                             )
                         default:
                             return ChatMessage(role: t.role.rawValue, content: t.content)
@@ -6509,9 +8393,12 @@ final class ChatSession: ObservableObject {
                         // and `CompactionWatermark.validate` resets its sticky
                         // decisions (an implicit rebase at the boundary); the
                         // deterministic trimmer still runs on the remainder.
-                        let summary = self.conversationSummary
+                        // The Orchestrator drops old turns instead (see
+                        // `OrchestratorContextPolicy`), so it never reads a summary.
+                        let summary = orchestratorContextWindow == nil ? self.conversationSummary : nil
                         let coveredIds = summary.map { Set($0.coveredTurnIds) } ?? []
                         var summaryInjected = false
+                        let latestUserTurnId = turns.last(where: { $0.role == .user })?.id
 
                         for (index, t) in turns.enumerated() {
                             if let summary, coveredIds.contains(t.id) {
@@ -6527,15 +8414,23 @@ final class ChatSession: ObservableObject {
                                 continue
                             }
                             let isLastTurn = index == turns.count - 1
-                            if let msg = turnToMessage(t, isLastTurn: isLastTurn) {
+                            if let msg = turnToMessage(
+                                t, isLastTurn: isLastTurn, isLatestUserTurn: t.id == latestUserTurnId)
+                            {
                                 msgs.append(msg)
                             }
                         }
 
-                        return msgs
+                        if let orchestratorContextWindow {
+                            msgs = OrchestratorContextPolicy.apply(msgs, contextWindow: orchestratorContextWindow)
+                        }
+                        // Only the most recent tool-result images stay live;
+                        // older ones collapse to text (mirrored in warm-up).
+                        return ToolResultMediaBridge.collapsingOlderImages(msgs)
                     }
 
-                    var maxAttempts = max(chatCfg.maxToolAttempts ?? 15, 1)
+                    var maxAttempts = ArchitectConfiguration.maxToolAttempts(
+                        agentId: effectiveAgentId, configured: max(chatCfg.maxToolAttempts ?? 15, 1))
                     if let delegationBudget = self.delegationBudget {
                         // Delegated child: the contract's turn ceiling is
                         // ENFORCED here (admission priced it). Tighten-only.
@@ -6561,9 +8456,7 @@ final class ChatSession: ObservableObject {
                     // unrelated future failures get a fresh budget.
                     let maxTransientRetries = 2
                     var transientRetries = 0
-                                        let effectiveTemp = AgentManager.shared.effectiveTemperature(
-                                            for: effectiveAgentId
-                                        )
+                                        let effectiveTemp = turnGenerationControls.temperature
 
                     ttftTrace?.mark("pre_ttft_done")
 
@@ -6601,6 +8494,16 @@ final class ChatSession: ObservableObject {
                         owner.setToolResult(toolCardOverrides[callId] ?? result, for: callId)
                         let toolTurn = ChatTurn(role: .tool, content: result)
                         toolTurn.toolCallId = callId
+                        // Staged tool-result images (file_read on a picture)
+                        // become turn attachments so they persist with the
+                        // transcript and reach the model via `turnToMessage`.
+                        let toolName =
+                            owner.toolCalls?.first(where: { $0.id == callId })?.function.name ?? ""
+                        let media = ToolResultMediaBridge.attachments(toolName: toolName, result: result)
+                        if !media.isEmpty {
+                            toolTurn.attachments = media
+                        }
+                        self.noteRunProgress(.discrete)
                         return toolTurn
                     }
 
@@ -6706,6 +8609,92 @@ final class ChatSession: ObservableObject {
                             // Fall through on failure (empty question,
                             // etc.) so the model sees the rejection.
                         }
+                        if WorkflowToolCall.isWorkflowCall(inv.toolName),
+                            !ToolEnvelope.isError(resultText),
+                            let payload = ToolEnvelope.successPayload(resultText) as? [String: Any],
+                            payload["status"] as? String == WorkflowCallResult.Status.awaitingUser.rawValue,
+                            let runID = (payload["run_id"] as? String).flatMap(UUID.init(uuidString:))
+                        {
+                            // Work Mode: the run is waiting on a form. Like
+                            // clarify, the turn ends; the chat continues with
+                            // the run's result once the run ends.
+                            self.turns.append(recordToolTurn(resultText, callId: callId))
+                            self.rebuildVisibleBlocks()
+                            self.parkOnWorkflowRun(runID, callId: callId, toolName: inv.toolName)
+                            self.lastCompletionSummary = nil
+                            return AgentLoopToolExecution(result: resultText, endRun: true)
+                        }
+                        if inv.toolName == WorkflowProposeSaveTool.toolName
+                            || inv.toolName == ArchitectHandoffTool.toolName,
+                            !ToolEnvelope.isError(resultText),
+                            let payload = ToolEnvelope.successPayload(resultText) as? [String: Any],
+                            inv.toolName == WorkflowProposeSaveTool.toolName
+                                || payload[ArchitectInlineHandoff.savePromptKey] as? Bool == true,
+                            let draftID = (payload["draft_id"] as? String).flatMap(UUID.init(uuidString:))
+                        {
+                            // Like clarify: the turn ends and the user
+                            // decides (the Architect's proposal, or the
+                            // Orchestrator's keep). Only the card's Save writes.
+                            self.turns.append(recordToolTurn(resultText, callId: callId))
+                            self.rebuildVisibleBlocks()
+                            self.promptQueue.enqueue(
+                                .workflowSave(
+                                    WorkflowSavePromptState(
+                                        draftID: draftID,
+                                        name: payload["name"] as? String ?? "",
+                                        version: payload["version"] as? Int ?? 1,
+                                        changelog: payload["changelog"] as? String ?? "",
+                                        updates: payload["updates"] as? String,
+                                        trigger: WorkflowDraftTrigger.proposed(for: draftID))))
+                            self.lastCompletionSummary = nil
+                            return AgentLoopToolExecution(result: resultText, endRun: true)
+                        }
+                        if inv.toolName == PromptWorkingFolderTool.toolName {
+                            // The user picked a folder inside the tool call
+                            // and the session already holds it (per-chat
+                            // folder + sticky agent record + sandbox off).
+                            // Nothing in THIS run can use it, though: the
+                            // folder root TaskLocal, the execution mode and
+                            // the tool schema were all frozen when the turn
+                            // started. End the run here and let
+                            // `completeRunCleanup` re-enter `send("")`, which
+                            // recomposes with the folder bound and the file
+                            // tools in the schema — the model continues from
+                            // the success envelope in history without the
+                            // user typing anything. A cancel / failure
+                            // envelope falls through so the model sees it
+                            // and delivers without the folder.
+                            if !ToolEnvelope.isError(resultText) {
+                                self.turns.append(recordToolTurn(resultText, callId: callId))
+                                self.rebuildVisibleBlocks()
+                                self.pendingWorkingFolderContinuation = true
+                                return AgentLoopToolExecution(result: resultText, endRun: true)
+                            }
+                        }
+
+                        if let handoff = HandoffResult.parse(envelope: resultText) {
+                            lastHandoffResult = handoff
+                        }
+
+                        // `state` closes the Orchestrator's turn when it rides
+                        // with the written answer and nothing else: another
+                        // generation would only restate the reply. With several
+                        // `state` calls in one message the last one closes it,
+                        // so the last write still wins.
+                        if inv.toolName == StateTool.toolName, !ToolEnvelope.isError(resultText),
+                            let owner = self.turns.last(where: { turn in
+                                turn.role == .assistant
+                                    && (turn.toolCalls?.contains { $0.id == callId } ?? false)
+                            }),
+                            let calls = owner.toolCalls,
+                            calls.allSatisfy({ $0.function.name == StateTool.toolName }),
+                            calls.last?.id == callId,
+                            !owner.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        {
+                            self.turns.append(recordToolTurn(resultText, callId: callId))
+                            self.rebuildVisibleBlocks()
+                            return AgentLoopToolExecution(result: resultText, endRun: true)
+                        }
 
                         // Tools loaded via capabilities, first-use sandbox
                         // provisioning, or sandbox_plugin_register.
@@ -6741,6 +8730,27 @@ final class ChatSession: ObservableObject {
                             // a second artifact-sharing step.
                             toolCardOverrides[callId] = resultText
                             resultText = compactResult
+                        } else if inv.toolName == SubagentCapabilityRegistry.spawnAgentToolName,
+                            SubagentSession.isBackgroundAck(resultText)
+                        {
+                            // A background worker outlives this tool call in
+                            // an unstructured task; remember it so a Stop on
+                            // THIS run can reach it (`stop()`).
+                            self.backgroundSpawnCallIdsThisRun.append(callId)
+                        } else if inv.toolName == SubagentCapabilityRegistry.spawnAgentToolName,
+                            SpawnResultCompaction.applies(to: resultText)
+                        {
+                            // The card and telemetry keep the full envelope
+                            // (structured usage/context/residency); the model
+                            // reads the digest, continuation handles and
+                            // deliverable paths with one accounting line —
+                            // and a shorter digest on a compact launcher.
+                            toolCardOverrides[callId] = resultText
+                            resultText = SpawnResultCompaction.modelVisible(
+                                resultText,
+                                prefersCompactPrompt: ContextSizeResolver.resolve(modelId: turnModelId)
+                                    .prefersCompactPrompt
+                            )
                         } else if inv.toolName == "share_artifact" {
                             resultText = await self.processShareArtifactResult(
                                 toolResult: resultText,
@@ -6760,7 +8770,10 @@ final class ChatSession: ObservableObject {
                             // string means success — route it to the card.
                             let enriched = await self.processNativeImageToolResult(
                                 toolName: inv.toolName,
-                                toolResult: resultText
+                                toolResult: resultText,
+                                owner: self.turns.last(where: {
+                                    $0.role == .assistant && ($0.toolCalls?.contains { $0.id == callId } ?? false)
+                                }) ?? assistantTurn
                             )
                             if enriched != resultText {
                                 toolCardOverrides[callId] = enriched
@@ -6777,8 +8790,26 @@ final class ChatSession: ObservableObject {
                         // `SpawnArtifactCollector` (the spawn payload carries
                         // only an `artifacts_shared` count). Drain after EVERY
                         // spawn return and attach to the owning assistant turn.
-                        if SubagentCapabilityRegistry.spawn.toolNames.contains(inv.toolName) {
+                        if SubagentCapabilityRegistry.spawn.toolNames.contains(inv.toolName)
+                            || WorkflowToolCall.isWorkflowCall(inv.toolName)
+                            || GeneratedMediaToolArtifactBridge.isGeneratedMediaTool(inv.toolName)
+                        {
                             await self.promoteWorkerSharedArtifacts(callId: callId)
+                        }
+
+                        if ToolResultMediaBridge.imageProducingTools.contains(inv.toolName),
+                            ToolResultMediaBridge.isImageEnvelope(resultText)
+                        {
+                            // The model keeps the compact image envelope (the
+                            // bytes ride as a multimodal part); the card shows
+                            // the picture through the artifact renderer.
+                            let enriched = await self.processFileReadImageResult(
+                                toolName: inv.toolName,
+                                toolResult: resultText
+                            )
+                            if enriched != resultText {
+                                toolCardOverrides[callId] = enriched
+                            }
                         }
 
                         if let fileCard = WorkspaceFileReference.cardResult(
@@ -6946,10 +8977,14 @@ final class ChatSession: ObservableObject {
                     }
 
                     // Approval-aware parallel batch execution (chat
-                    // semantics): approvals resolve FIRST, serially and in
-                    // model order, so permission prompts never stack or
-                    // race; the approved set then executes concurrently
-                    // (registry dispatch only); results post-process on the
+                    // semantics): REGISTRY approvals (`PermissionedTool`)
+                    // resolve FIRST, serially and in model order; the
+                    // approved set then executes concurrently (registry
+                    // dispatch only). Tools that prompt from their own body
+                    // (spawn, image/video billing) still prompt during the
+                    // parallel phase — `ToolPermissionPromptService` queues
+                    // those cards one at a time and sibling spawn calls share
+                    // one wave card. Results post-process on the
                     // MainActor in model order. On a denial the remaining
                     // unstarted calls are skipped with a paired envelope —
                     // the chat policy (`stopOnToolRejection`) stops the
@@ -6989,7 +9024,9 @@ final class ChatSession: ObservableObject {
                         // Keep the batch framing, but execute every call in the
                         // batch serially when it contains Todo; onBatchComplete
                         // still persists all result turns in slot order.
-                        if calls.contains(where: { $0.invocation.toolName == "todo" }),
+                        if calls.contains(where: {
+                            $0.invocation.toolName == "todo" || $0.invocation.toolName == StateTool.toolName
+                        }),
                             !AgentToolLoop.containsIntercept(calls)
                         {
                             var serialExecutions: [AgentLoopToolExecution] = []
@@ -7018,8 +9055,15 @@ final class ChatSession: ObservableObject {
                         // are appended inline here (serial execution order IS
                         // model order); `onBatchComplete` skips call ids that
                         // already have a tool turn.
+                        //
+                        // A workflow call that parks on a form also ends the
+                        // run, but the rest of the batch still executes: every
+                        // other workflow call in it parks too, and ordinary
+                        // calls record their results, so the transcript the
+                        // task resumes from has a result for every call.
                         if AgentToolLoop.containsIntercept(calls) {
                             var serialExecutions: [AgentLoopToolExecution] = []
+                            var parkedInBatch = false
                             for call in calls {
                                 guard self.isRunActive(runId) else { break }
                                 let execution = await executeSingleToolCall(
@@ -7032,13 +9076,26 @@ final class ChatSession: ObservableObject {
                                     break
                                 }
                                 serialExecutions.append(execution)
-                                if execution.endRun { break }
+                                if execution.endRun {
+                                    if WorkflowToolCall.isWorkflowCall(call.invocation.toolName) {
+                                        parkedInBatch = true
+                                        continue
+                                    }
+                                    break
+                                }
                                 // Historical serial shape: tool turn followed
                                 // by a fresh assistant turn for subsequent
-                                // content.
+                                // content. Once a call has parked, no content
+                                // follows in this run; the resume sends its
+                                // own turn.
                                 let toolTurn = recordToolTurn(execution.result, callId: call.callId)
+                                if parkedInBatch {
+                                    self.turns.append(toolTurn)
+                                    continue
+                                }
                                 let newAssistantTurn = ChatTurn(role: .assistant, content: "")
-                                self.turns.append(contentsOf: [toolTurn, newAssistantTurn])
+                                self.turns.append(contentsOf: [toolTurn, newAssistantTurn,
+                                                                ])
                                 assistantTurn = newAssistantTurn
                             }
                             self.rebuildVisibleBlocks()
@@ -7156,12 +9213,6 @@ final class ChatSession: ObservableObject {
                         return executions.map { $0 ?? AgentLoopToolExecution(result: "") }
                     }
 
-                    // One-shot mid-run token notice, mirroring the iteration-
-                    // budget warning: fired the first time the conversation
-                    // estimate crosses 90% of the history budget so the model
-                    // wraps up instead of relying on compaction forever.
-                    var tokenBudgetNoticeFired = false
-
                     // The canonical loop skeleton — iteration budget + warning
                     // notice, consecutive-identical dedupe replay, task-state
                     // recording, next-step bias staging, rejection policy —
@@ -7184,6 +9235,20 @@ final class ChatSession: ObservableObject {
 
                             ttftTrace?.mark("build_messages_start")
                             var msgs = buildMessages()
+                            let previousSummaryId = self.conversationSummary?.id
+                            try await self.compactBeforeToolContinuation(
+                                runId: runId, assistantTurnId: assistantTurn.id,
+                                historyTokens: ContextBudgetManager.estimateTokens(
+                                    for: msgs.filter { $0.role != "system" }),
+                                historyBudget: loopBudgetManager.historyBudget,
+                                invocation: ModelJobInvocation(parentModelName: turnModelId, source: self.source),
+                                agentId: effectiveAgentId
+                            )
+                            // Ordinary tool rounds render history once. Only a
+                            // newly accepted summary changes the outbound shape.
+                            if previousSummaryId != self.conversationSummary?.id {
+                                msgs = buildMessages()
+                            }
                             ttftTrace?.mark("build_messages_done")
 
                             // Compact history that outgrew the window: middle
@@ -7220,55 +9285,9 @@ final class ChatSession: ObservableObject {
                             // `AgentLoopBudget.appendingTransientNotices`).
                             msgs = AgentLoopBudget.appendingTransientNotices(notices, to: msgs)
 
-                            // Mid-run near-limit notice: once the (post-trim)
-                            // conversation estimate crosses 90% of the history
-                            // budget, tell the model to wrap up — compaction
-                            // remains the actual overflow handler, this is the
-                            // early signal. Fired at most once per run, like
-                            // the iteration-budget warning, and only when the
-                            // history actually ends in an in-progress tool
-                            // exchange: "wrap up the current work" is incoherent
-                            // on a fresh user question (observed live — the
-                            // notice landed as the trailing user-role message
-                            // right after the real question and the model
-                            // reasoned about the notice instead), and skipping
-                            // it on non-tool tails also keeps reasoning-retry
-                            // rebuilds byte-identical to the pre-attempt
-                            // history. The tool tail is additionally the only
-                            // placement where `appendingTransientNotices` is
-                            // KV-stable. The system prefix is excluded — its
-                            // tokens are reserved separately and the history
-                            // budget already accounts for them.
-                            let midRunToolTail = msgs.last?.role == "tool"
-                            let historyBudget = loopBudgetManager.historyBudget
-                            let historyTokens = ContextBudgetManager.estimateTokens(
-                                for: msgs.filter { $0.role != "system" }
-                            )
-                            if !tokenBudgetNoticeFired,
-                                midRunToolTail,
-                                historyBudget > 0,
-                                historyTokens >= Int(Double(historyBudget) * 0.9)
-                            {
-                                tokenBudgetNoticeFired = true
-                                // Delegation nudge rides along when a spawn tool
-                                // is actually in this run's frozen schema: a
-                                // tight window is exactly when offloading bulk
-                                // reading to a worker pays for itself.
-                                let spawnVisible = toolSpecs.contains {
-                                                        $0.function.name
-                                                            == SubagentCapabilityRegistry.spawnAgentToolName
-                                        || $0.function.name
-                                            == SubagentCapabilityRegistry.spawnModelToolName
-                                }
-                                msgs = AgentLoopBudget.appendingTransientNotices(
-                                    [
-                                        AgentToolLoop.contextNearLimitNotice(
-                                            spawnAvailable: spawnVisible
-                                        )
-                                    ],
-                                    to: msgs
-                                )
-                            }
+                            // Context pressure is handled by the awaited summary
+                            // boundary and the deterministic trimmer above. Do not
+                            // inject a synthetic instruction to abandon the task.
 
                             // Memory + screen context ride the latest user
                             // message as a FROZEN turn prefix (see
@@ -7280,33 +9299,30 @@ final class ChatSession: ObservableObject {
                             // Context), so subtract it from the Conversation
                             // total; PAST turns' frozen prefixes are genuine
                             // history bytes and stay counted here.
-                            let currentInjectedTokens =
-                                self.turns.last(where: { $0.role == .user })?
-                                .injectedContextPrefix
-                                .map { ContextBudgetManager.estimateTokens(for: $0) } ?? 0
+                            let latestUserTurn = self.turns.last(where: { $0.role == .user })
+                            let currentInjectedPrefix: String? = latestUserTurn?.injectedContextPrefix
+                            let currentInjectedTokens: Int = currentInjectedPrefix.map {
+                                ContextBudgetManager.estimateTokens(for: $0)
+                            } ?? 0
                             // The dedicated AppleScript app-name hint is part of
                             // the conversation, not the opt-in Screen Context
                             // budget row. Add its tokens back after excluding
                             // the memory/screen prefix from Conversation.
-                            let automationContextTokens =
-                                appleScriptWorkingContext.map {
-                                    ContextBudgetManager.estimateTokens(for: $0)
-                                } ?? 0
+                            let automationContextTokens: Int = appleScriptWorkingContext.map {
+                                ContextBudgetManager.estimateTokens(for: $0)
+                            } ?? 0
                             // The LLM compaction summary message rides inside
                             // `msgs` but has its own budget row (set above), so
                             // exclude it from the Conversation total.
-                            let summaryMessageTokens =
-                                self.conversationSummary.map {
-                                    ContextBudgetManager.estimateTokens(for: $0.contextMessageText)
-                                } ?? 0
-                            let convTokens =
-                                msgs
-                                .filter { $0.role != "system" }
-                                                    .reduce(0) {
-                                                        $0 + ContextBudgetManager.estimateTokens(for: $1.content)
-                                                    }
-                                - max(0, currentInjectedTokens - automationContextTokens)
-                                - summaryMessageTokens
+                            let summaryMessageTokens: Int = self.conversationSummary.map {
+                                ContextBudgetManager.estimateTokens(for: $0.contextMessageText)
+                            } ?? 0
+                            var rawConvTokens: Int = 0
+                            for message in msgs where message.role != "system" {
+                                rawConvTokens += ContextBudgetManager.estimateTokens(for: message.content)
+                            }
+                            let excludedInjected: Int = max(0, currentInjectedTokens - automationContextTokens)
+                            let convTokens: Int = rawConvTokens - excludedInjected - summaryMessageTokens
                             self.budgetTracker.updateConversation(
                                 tokens: max(0, convTokens),
                                 finishedOutputTurn: assistantTurn
@@ -7322,7 +9338,23 @@ final class ChatSession: ObservableObject {
                             )
                         },
                         modelStep: { msgs, attempt in
-                            let iterationToolSpecs = toolScope.modelVisibleSpecs
+                            // The host's routed call takes the first step's
+                            // place: no generation decides the route. The loop
+                            // records and runs it like any model call, then the
+                            // Orchestrator gets the presenting turn below.
+                            if let dispatch = routedDispatch {
+                                routedDispatch = nil
+                                presentingAfterDispatch = true
+                                hasStructuredToolWorkThisRun = true
+                                return .toolCalls([dispatch])
+                            }
+                            let iterationToolSpecs =
+                                forcedStateStep?.tools
+                                ?? (presentingAfterDispatch
+                                    ? toolScope.modelVisibleSpecs.filter {
+                                        OrchestratorTurnBlock.presentingTurnToolNames.contains($0.function.name)
+                                    }
+                                    : toolScope.modelVisibleSpecs)
                             ttftTrace?.set("messageCount", msgs.count)
                             ttftTrace?.set("conversationTurns", self.turns.count)
 
@@ -7348,34 +9380,34 @@ final class ChatSession: ObservableObject {
                                     debugLog(promptDump)
                                 }
                             #endif
-                            let requestedToolChoice = ChatToolChoicePolicy.resolve(
-                                tools: iterationToolSpecs,
-                                userText: trimmed,
-                                attempt: attempt
-                            )
+                            let requestedToolChoice =
+                                forcedStateStep?.choice
+                                ?? ChatToolChoicePolicy.resolve(
+                                    tools: iterationToolSpecs,
+                                    taskIntent: taskIntent,
+                                    attempt: attempt
+                                )
                             forcedToolGate.arm(requestedToolChoice)
-                            var req = ChatCompletionRequest(
+                            var req = ResponsesInferenceRequest(
                                 // Mode 2: the wire omits the model and routing is
                                 // by provider id, so don't pass the local
                                 // `selectedModel` — it can lag the async agent pin
                                 // and would only leak a stale prefix internally.
                                 model: self.isRemoteAgentTarget
                                     ? "default" : (turnModelId ?? "default"),
-                                messages: msgs,
-                                temperature: effectiveTemp,
-                                max_tokens: effectiveMaxTokensForAgent,
-                                stream: true,
-                                top_p: chatCfg.topPOverride,
-                                frequency_penalty: nil,
-                                presence_penalty: nil,
-                                stop: nil,
-                                n: nil,
+                                input: msgs,
+                                generation: ResponsesGenerationOptions(
+                                    temperature: effectiveTemp,
+                                    maxOutputTokens: effectiveMaxTokensForAgent,
+                                    topP: turnGenerationControls.topP
+                                ),
                                 tools: iterationToolSpecs.isEmpty ? nil : iterationToolSpecs,
-                                tool_choice: requestedToolChoice,
-                                session_id: self.sessionId?.uuidString
+                                toolChoice: requestedToolChoice,
+                                sessionID: self.sessionId?.uuidString
                             )
-                            req.samplingParametersAreImplicit = true
-                            req.claudeCodeOptions = self.claudeCodeRunOptions(for: turnAgentId)
+                            req.context.admissionPositionLimit = self.delegationBudget?.contextPositions
+                            req.context.admissionOutputTokensAreImplicit = admissionOutputTokensAreImplicit
+                            req.context.samplingParametersAreImplicit = true
                             // Mode 2 routing signal: tells `RemoteProviderService`
                             // to target the peer's `/agents/{address}/run`
                             // endpoint (remote agent runs fully server-side). The
@@ -7384,8 +9416,8 @@ final class ChatSession: ObservableObject {
                             // peer resolves its own live effective model. False =
                             // Mode 1 (plain remote inference via
                             // `/chat/completions`).
-                            req.runAsRemoteAgent = self.isRemoteAgentTarget
-                            req.cacheStableSystemPrefix =
+                            req.context.runAsRemoteAgent = self.isRemoteAgentTarget
+                            req.context.cacheStableSystemPrefix =
                                 self.isRemoteAgentTarget ? nil : context.staticPrefix
                             // Mode 2 routing: target the selected agent's
                             // provider directly (by id), so a stale
@@ -7393,29 +9425,30 @@ final class ChatSession: ObservableObject {
                             // different local provider. `ChatEngine` resolves
                             // the service from this id and ignores the model
                             // string for agent runs.
-                            req.remoteAgentProviderId =
-                                self.isRemoteAgentTarget
-                                ? self.windowState?.selectedDiscoveredAgentProviderId : nil
+                            req.context.remoteAgentProviderId = self.remoteAgentProviderId
+                            req.context.remoteAgentCallerId = self.remoteAgentCallingAgentId
                             // Insights fidelity: in Mode 2 the wire omits the
                             // model, so log the agent's live effective model
                             // instead of the local prefixed fallback.
-                            req.remoteAgentLogModel =
-                                self.isRemoteAgentTarget
-                                ? self.windowState?.pinnedRemoteAgentEffectiveModel : nil
+                            req.context.remoteAgentLogModel =
+                                self.isRemoteAgentTarget ? self.remoteAgentEffectiveModel : nil
                             // Freeze agent semantics for the whole logical run.
                             // Tool schemas stay present on ordinary iterations,
                             // but the cap finalizer below intentionally removes
                             // them; the explicit marker keeps both paths on the
                             // same reasoning policy.
-                            req.isAgentRequest =
+                            req.context.isAgentRequest =
                                 !iterationToolSpecs.isEmpty || self.isRemoteAgentTarget
                             turnGenerationControls.apply(to: &req)
-                            req.backgroundModelLoad = (self.loadIntent == .background)
-                            req.ttftTrace = ttftTrace
+                            req.context.backgroundModelLoad = (self.loadIntent == .background)
+                            // Only the first inference of this direct Send. Tool
+                            // continuations and parent restoration cannot authorize repair.
+                            req.context.alignmentRepairModel = attempt == 1 ? alignmentRepairModel : nil
+                            req.context.ttftTrace = ttftTrace
                             // Correlate the Insights log this send produces back to the
                             // assistant turn, so the per-message "Insights" button can
                             // open this exact response.
-                            req.turnId = assistantTurn.id
+                            req.context.turnId = assistantTurn.id
                             // Stable per-logical-step idempotency token. The
                             // agent loop holds `attempt` constant across
                             // transient retries (it decrements then re-increments
@@ -7430,7 +9463,7 @@ final class ChatSession: ObservableObject {
                             // IDEMPOTENCY_CONFLICT — the body fingerprint suffix
                             // keys those as distinct requests while identical
                             // retryWithoutCharge re-POSTs still dedupe.
-                            req.idempotencyKey =
+                            req.context.idempotencyKey =
                                 "\(runId.uuidString):\(attempt):"
                                 + AgentToolLoop.recoveryAwareIdempotencySuffix(
                                     messages: msgs,
@@ -7438,7 +9471,7 @@ final class ChatSession: ObservableObject {
                                         incompleteReasoningRetryOrdinal
                                 )
                             debugLog(
-                                "send: attempt=\(attempt) model=\(req.model) tools=\(req.tools?.count ?? 0) sessionId=\(req.session_id ?? "nil")"
+                                "send: attempt=\(attempt) model=\(req.model) tools=\(req.tools?.count ?? 0) sessionId=\(req.sessionID ?? "nil")"
                             )
                             // Cache-fingerprint diagnostic: one `[Cache]` log line +
                             // matching TTFT fields per send so we can audit KV reuse
@@ -7457,16 +9490,31 @@ final class ChatSession: ObservableObject {
                                     conversation: msgs
                                 )
                             }
+                            // The forced `state` step streams into a turn that
+                            // joins the transcript only with its `state` call:
+                            // a local decoder is not constrained to the forced
+                            // tool, and a refusal must not add a second answer
+                            // to the one already on screen.
+                            let isForcedStateStep = forcedStateStep != nil
                             do {
-                                let streamStartTime = Date()
+                                let streamStartTime = self.beginModelStep()
                                 let (invocations, finalTurn) = try await self.processStreamDeltas(
-                                    stream: try await engine.streamChat(request: req),
-                                    assistantTurn: assistantTurn,
+                                    stream: try await engine.streamResponses(request: req),
+                                    assistantTurn: isForcedStateStep
+                                        ? ChatTurn(role: .assistant, content: "") : assistantTurn,
                                     runId: runId,
                                     streamStartTime: streamStartTime,
                                     ttftTrace: ttftTrace,
                                     selectedModel: turnModelId
                                 )
+                                if isForcedStateStep {
+                                    guard !invocations.isEmpty else {
+                                        print("[Osaurus][State] forced `state` step refused (no call)")
+                                        return .finalResponse
+                                    }
+                                    self.turns.append(finalTurn)
+                                    self.rebuildVisibleBlocks()
+                                }
                                 assistantTurn = finalTurn
                                 // Stream finished naturally without a tool call — reset
                                 // the transient-retry budget so a future, unrelated
@@ -7513,28 +9561,16 @@ final class ChatSession: ObservableObject {
                                         // the first batch:" preamble whose
                                         // tool call never arrived.
                                         content: assistantTurn.contentIsBlank
-                                            ? nil : assistantTurn.content,
-                                        // Set only when the stream consumer
-                                        // cut the turn on a repetition loop.
-                                        repetitionLoopPhrase:
-                                            assistantTurn.repetitionLoopPhrase
+                                            ? nil : assistantTurn.content
                                     )
                                 }
                                 hasStructuredToolWorkThisRun = true
                                 return .toolCalls(invocations)
-                            } catch let oversized as OversizedStreamingToolCall {
-                                print(
-                                    "[Osaurus] Oversized streamed tool call "
-                                        + "tool=\(oversized.toolName ?? "unknown") "
-                                        + "chars=\(oversized.argumentCharacters); retrying with chunking notice"
-                                )
-                                assistantTurn.pendingToolName = nil
-                                assistantTurn.clearPendingToolArgs()
-                                self.rebuildVisibleBlocks()
-                                return .oversizedToolCall(
-                                    toolName: oversized.toolName,
-                                    argumentCharacters: oversized.argumentCharacters
-                                )
+                            } catch let error as NSError
+                                where isForcedStateStep && error.domain == "OsaurusToolChoice"
+                            {
+                                print("[Osaurus][State] forced `state` step refused: \(error.localizedDescription)")
+                                return .finalResponse
                             } catch let error as RemoteProviderServiceError {
                                 // Transient provider-side stream errors — most commonly
                                 // mid-tool-args truncation flagged by
@@ -7607,6 +9643,7 @@ final class ChatSession: ObservableObject {
                             self.rebuildVisibleBlocks()
                         },
                         willProcessCall: { inv, callId in
+                            if presentingAfterDispatch, routedCallId == nil { routedCallId = callId }
                             // Recorded history uses the secret-safe view;
                             // execution still receives the original `inv`.
                             let call = SecretArgumentScrubber.recordedToolCall(
@@ -7620,6 +9657,7 @@ final class ChatSession: ObservableObject {
                             // Start the duration timer now; the call renders running
                             // until `recordToolTurn` lands the result after execution.
                             assistantTurn.markToolCallStarted(callId)
+                            self.noteRunProgress(.discrete)
 
                             // Materialise the tool-call row BEFORE we await
                             // execute(...). Without this the chat skips
@@ -7651,13 +9689,23 @@ final class ChatSession: ObservableObject {
                         executeTool: { inv, callId in
                             // Serial single-call path (used when no batch
                             // executor is installed; kept for parity).
-                            await executeSingleToolCall(inv, callId: callId)
+                            var execution = await executeSingleToolCall(inv, callId: callId)
+                            // A failed routed call still gets its presenting
+                            // turn: the model never chose it, so it explains
+                            // the failure or routes again.
+                            if callId == routedCallId { execution.isError = false }
+                            return execution
                         },
                         executeBatch: { calls in
                             // Approval-aware parallel batches: approvals
                             // serial in model order, execution concurrent,
                             // post-processing back in model order.
-                            await executeToolBatch(calls)
+                            var results = await executeToolBatch(calls)
+                            for (index, call) in calls.enumerated()
+                            where call.callId == routedCallId && index < results.count {
+                                results[index].isError = false
+                            }
+                            return results
                         },
                         onBatchComplete: { outcomes in
                             guard !outcomes.isEmpty else { return }
@@ -7727,7 +9775,8 @@ final class ChatSession: ObservableObject {
                                 assistantTurn.content =
                                     AgentLoopModelStep.contentWithLengthFallback(
                                         assistantTurn.content,
-                                        fallback: text
+                                        fallback: effectiveAgentId == Agent.architectId
+                                            ? ArchitectConfiguration.outputLimitMessage : text
                                     )
                             } else {
                                 assistantTurn.appendContentAndNotify(text)
@@ -7750,14 +9799,14 @@ final class ChatSession: ObservableObject {
                             self.rebuildVisibleBlocks()
                         },
                         finalVisibleText: {
-                            // Grounded-claim check scope: only runs where the
-                            // configure surface is actually offered, so agents
-                            // without `osaurus_config` are never second-guessed
-                            // about changes made through their own tools.
+                            // Grounded-claim check scope: only runs where a
+                            // change can be made through the configure surface
+                            // (`osaurus_config`, or the Orchestrator's
+                            // `configurator_handoff`), so other agents are never
+                            // second-guessed about changes made through their own tools.
                             guard
-                                toolScope.modelVisibleSpecs.contains(where: {
-                                    $0.function.name == GroundedConfigClaimCheck.configToolName
-                                })
+                                GroundedConfigClaimCheck.applies(
+                                    toToolNames: toolScope.modelVisibleSpecs.map(\.function.name))
                             else { return nil }
                             return assistantTurn.content
                         },
@@ -7788,12 +9837,36 @@ final class ChatSession: ObservableObject {
                             assistantTurn.content
                         }
                     )
+                    loopHooks.recordTerminalToolRejection = { [weak self] envelope in
+                        guard let self, self.activeRunId == runId else { return }
+                        self.delegatedToolFailure.record(envelope, runID: runId)
+                    }
                     // What this run may execute, read live: the driver folds
                     // `osaurus_help!!` onto `osaurus_help` only when the
                     // canonical name is in scope, and lists these names in the
                     // `tool_not_found` notice. Assigned after construction so
                     // the hooks literal above stays type-checkable.
                     loopHooks.authorizedToolNames = { toolScope.authorizedNames }
+                    if effectiveAgentId == Agent.defaultId, !isRemoteAgentTarget {
+                        let stateSessionKey = expectedTodoSessionId
+                        loopHooks.armForcedStateStep = { [weak self] ending in
+                            guard let self else { return false }
+                            var lastStep = ending
+                            if ending == .finalText, case .awaitingUser? = lastHandoffResult { lastStep = .awaitingUser }
+                            self.orchestratorTurnEnding = lastStep
+                            forcedStateStep = ChatToolChoicePolicy.forceStateIfMissing(
+                                qualifying: presentingAfterDispatch || lastHandoffResult != nil,
+                                interrupted: self.orchestratorTurnInterrupted || !self.isRunActive(runId),
+                                lastStepEndedOn: lastStep,
+                                stateWritten: SessionStateRegistry.shared.hasPendingWrite(sessionId: stateSessionKey),
+                                tools: toolScope.modelVisibleSpecs
+                            )
+                            if forcedStateStep != nil {
+                                print("[Osaurus][State] forcing one `state` step (\(ending))")
+                            }
+                            return forcedStateStep != nil
+                        }
+                    }
                     // The announce-only nudge classifies the rest of the
                     // registry against the same live scope: callable now,
                     // one load away, or blocked until a folder is attached.
@@ -7881,6 +9954,12 @@ final class ChatSession: ObservableObject {
                         // failed so this capped reasoning-only turn cannot be
                         // announced or warmed as a completed agent task.
                         lastStreamError = AgentToolLoop.lengthExhaustedFallback
+                        if effectiveAgentId == Agent.architectId && isRunActive(runId) {
+                            followUpGenerationStarted = true
+                            followUpTurnId = assistantTurn.id
+                            followUpSuggestions = [L("Continue")]
+                            rebuildVisibleBlocks()
+                        }
                     }
 
                     if runResult.exit == .emptyResponseExhausted {
@@ -7931,63 +10010,60 @@ final class ChatSession: ObservableObject {
                                         [notice],
                                         to: trimmedFinalMessages
                                     )
-                                var finalReq = ChatCompletionRequest(
-                                    model: turnModelId ?? "default",
-                                    // Same watermark-trimmed view of history the
-                                    // loop iterations used — the raw array can
-                                    // exceed the window precisely when the cap
-                                    // hits after heavy tool traffic.
-                                    messages: finalMessages,
+                            var finalReq = ResponsesInferenceRequest(
+                                model: turnModelId ?? "default",
+                                // Same watermark-trimmed view of history the
+                                // loop iterations used — the raw array can
+                                // exceed the window precisely when the cap
+                                // hits after heavy tool traffic.
+                                input: finalMessages,
+                                generation: ResponsesGenerationOptions(
                                     temperature: effectiveTemp,
-                                    max_tokens: effectiveMaxTokensForAgent,
-                                    stream: true,
-                                    top_p: chatCfg.topPOverride,
-                                    frequency_penalty: nil,
-                                    presence_penalty: nil,
-                                    stop: nil,
-                                    n: nil,
-                                    tools: nil,
-                                    tool_choice: nil,
-                                    session_id: sessionId?.uuidString
+                                    maxOutputTokens: effectiveMaxTokensForAgent,
+                                    topP: turnGenerationControls.topP
+                                ),
+                                tools: nil,
+                                toolChoice: nil,
+                                sessionID: sessionId?.uuidString
                                 )
-                                finalReq.samplingParametersAreImplicit = true
-                                finalReq.claudeCodeOptions = claudeCodeRunOptions(for: turnAgentId)
-                                finalReq.runAsRemoteAgent = isRemoteAgentTarget
-                                finalReq.cacheStableSystemPrefix =
+                                finalReq.context.admissionPositionLimit = self.delegationBudget?.contextPositions
+                                finalReq.context.admissionOutputTokensAreImplicit = admissionOutputTokensAreImplicit
+                                finalReq.context.samplingParametersAreImplicit = true
+                                finalReq.context.runAsRemoteAgent = isRemoteAgentTarget
+                                finalReq.context.cacheStableSystemPrefix =
                                     isRemoteAgentTarget ? nil : context.staticPrefix
                                 // Carry the agent provider id on this path too so
                                 // the route-by-provider invariant holds for *every*
                                 // Mode 2 request — a `runAsRemoteAgent` send with no
                                 // provider id would fall back to model-string
                                 // routing (the exact mis-route this fix removes).
-                                finalReq.remoteAgentProviderId =
-                                    isRemoteAgentTarget
-                                    ? windowState?.selectedDiscoveredAgentProviderId : nil
-                                finalReq.remoteAgentLogModel =
-                                    isRemoteAgentTarget
-                                    ? windowState?.pinnedRemoteAgentEffectiveModel : nil
-                                finalReq.isAgentRequest = !toolSpecs.isEmpty || isRemoteAgentTarget
+                                finalReq.context.remoteAgentProviderId = remoteAgentProviderId
+                                finalReq.context.remoteAgentCallerId = remoteAgentCallingAgentId
+                                finalReq.context.remoteAgentLogModel =
+                                    isRemoteAgentTarget ? remoteAgentEffectiveModel : nil
+                                finalReq.context.isAgentRequest = !toolSpecs.isEmpty || isRemoteAgentTarget
                                 turnGenerationControls.apply(to: &finalReq)
-                                finalReq.backgroundModelLoad = (loadIntent == .background)
-                                finalReq.turnId = assistantTurn.id
+                                finalReq.context.backgroundModelLoad = (loadIntent == .background)
+                                finalReq.context.turnId = assistantTurn.id
                                 // Distinct logical step (the post-cap summarizing
                                 // call) so it bills once and dedupes on its own
                                 // connect-phase retry without colliding with the
                                 // loop's per-iteration keys.
-                                finalReq.idempotencyKey = "\(runId.uuidString):final"
+                                finalReq.context.idempotencyKey = "\(runId.uuidString):final"
 
                                 // Route the capped-run wrap-up through the exact
-                                // same typed sentinel decoder as every ordinary
+                                // same typed event consumer as every ordinary
                                 // chat step. Feeding this stream directly into a
                                 // StreamingDeltaProcessor leaked U+FFFE prefill and
                                 // stats envelopes into ChatTurn.content (and then
                                 // transcript exports) whenever the agent reached
                                 // its iteration cap.
+                                let finalStreamStartTime = beginModelStep()
                                 let (_, finalTurn) = try await processStreamDeltas(
-                                    stream: try await engine.streamChat(request: finalReq),
+                                    stream: try await engine.streamResponses(request: finalReq),
                                     assistantTurn: assistantTurn,
                                     runId: runId,
-                                    streamStartTime: Date(),
+                                    streamStartTime: finalStreamStartTime,
                                     ttftTrace: ttftTrace,
                                     selectedModel: turnModelId
                                 )
@@ -8011,7 +10087,13 @@ final class ChatSession: ObservableObject {
                         }
                     }
                     if runResult.exit == .iterationCapReached && isRunActive(runId) {
-                        if let pending = runResult.unfinishedTodoCount, pending > 0 {
+                        if effectiveAgentId == Agent.architectId {
+                            assistantTurn.content = ArchitectConfiguration.pausedMessage
+                            followUpGenerationStarted = true
+                            followUpTurnId = assistantTurn.id
+                            followUpSuggestions = [L("Continue")]
+                            rebuildVisibleBlocks()
+                        } else if let pending = runResult.unfinishedTodoCount, pending > 0 {
                             // A current-run Todo hit the hard step cap. Do not
                             // launch the generic tool-free wrap-up stream: it
                             // can only guess at unfinished work, and treating
@@ -8100,9 +10182,10 @@ final class ChatSession: ObservableObject {
                     // the assistant bubble surfaces the localized
                     // explanation (e.g. "Open Settings → Privacy to re-
                     // download…") instead of a generic "Error:" prefix.
-                    debugLog("send: privacy filter blocked send — \(pfError.localizedDescription)")
-                    assistantTurn.content = pfError.localizedDescription
-                    lastStreamError = pfError.localizedDescription
+                    let privacyFilterMessage: String = pfError.localizedDescription
+                    debugLog("send: privacy filter blocked send — " + privacyFilterMessage)
+                    assistantTurn.content = privacyFilterMessage
+                    lastStreamError = privacyFilterMessage
                 } catch {
                     let errorMessage = ChatErrorMessages.assistantMessage(for: error)
                     // Preserve any text the model already streamed before the
@@ -8117,11 +10200,48 @@ final class ChatSession: ObservableObject {
                     if streamedSoFar.isEmpty {
                         assistantTurn.content = errorMessage
                     } else {
-                        assistantTurn.content += "\n\n\(errorMessage)"
+                        assistantTurn.content += "\n\n" + errorMessage
                     }
                     lastStreamError = error.localizedDescription
                     noteInsufficientFundsIfNeeded(error: error, blockedTurn: assistantTurn)
                 }
+            }
+
+            await ChatExecutionContext.$currentFolderRoot.withValue(turnFolderRoot) { [self] () async -> Void in
+            await ChatExecutionContext.$hostFolderIsDispatchTarget.withValue(folderIsDispatchTarget) { [self] () async -> Void in
+            // Typed run provenance for the whole turn. The session's own
+            // persisted `source` is authoritative here (a dispatched
+            // schedule/watcher/self-schedule run re-binds the same value the
+            // dispatcher already bound; a UI chat turn binds `.chat`).
+            // Source-scoped capabilities (proactive channel publishing) read
+            // this instead of inferring provenance from surface flags.
+            await ChatExecutionContext.$currentSessionSource.withValue(runtimeSource) { [self] () async -> Void in
+            // Weak handle to THIS session for the whole turn, so a
+            // `background: true` spawn dispatch can deliver its report-back
+            // digest to the exact launching conversation later.
+            await ChatExecutionContext.$currentChatSessionBox.withValue(WeakChatSessionBox(self)) { [self] () async -> Void in
+            await ChatExecutionContext.$currentAgentId.withValue(turnAgentId) { [self] () async -> Void in
+            await ChatExecutionContext.$currentProjectId.withValue(self.projectId) { [self] () async -> Void in
+            await ChatExecutionContext.$currentUserRequest.withValue(
+                trimmed.isEmpty ? nil : trimmed
+            ) { [self] () async -> Void in
+            await ChatExecutionContext.$currentModelName.withValue(
+                turnModelId
+            ) { [self] () async -> Void in
+            await ChatExecutionContext.$currentEnableThinking.withValue(
+                turnGenerationControls.enableThinking
+            ) { [self] () async -> Void in
+            await ChatExecutionContext.$currentReasoningEffort.withValue(
+                turnGenerationControls.reasoningEffort
+            ) { [self] () async -> Void in
+            // Same flag `turnToMessage` uses to encode tool-turn images, so
+            // `file_read` never stages an image the request would drop.
+            await ChatExecutionContext.$toolResultImagesEnabled.withValue(
+                turnSupportsImages
+            ) { [self] () async -> Void in
+                await runTurn()
+            }  // ChatExecutionContext.$toolResultImagesEnabled.withValue
+            }  // ChatExecutionContext.$currentReasoningEffort.withValue
             }  // ChatExecutionContext.$currentEnableThinking.withValue
             }  // ChatExecutionContext.$currentModelName.withValue
             }  // ChatExecutionContext.$currentUserRequest.withValue
@@ -8176,7 +10296,9 @@ final class ChatSession: ObservableObject {
         if let draft = savedDraftOnCancel {
             input = draft.text
             pendingAttachments = draft.attachments
+            if let savedTurnOverridesOnCancel { nextTurnOverrides = savedTurnOverridesOnCancel }
         }
+        savedTurnOverridesOnCancel = nil
         savedDraftOnCancel = nil
         persistAfterCancelledBeforeFirstDelta()
     }
@@ -8189,6 +10311,15 @@ final class ChatSession: ObservableObject {
     /// path when the post-handshake dispatch aborts (a run started or
     /// another window grabbed the local runtime while we waited). Restores
     /// the draft when asked so the user's text isn't silently dropped.
+    /// Restore only the draft this aborted send owned. A newly authored
+    /// one-turn override remains the composer's newer choice.
+    func restoreAbortedSendDraft(text: String, attachments: [Attachment], controls: ChatTurnGenerationControls?) {
+        guard input.isEmpty, pendingAttachments.isEmpty else { return }
+        input = text
+        pendingAttachments = attachments
+        if nextTurnOverrides.isEmpty, let controls { nextTurnOverrides = controls.overrides }
+    }
+
     private func rollbackPreAppendedUserTurn(
         _ turn: ChatTurn?,
         restoringDraft draft: (text: String, attachments: [Attachment])?
@@ -8198,9 +10329,8 @@ final class ChatSession: ObservableObject {
             turns.remove(at: index)
             rebuildVisibleBlocks()
         }
-        if let draft, input.isEmpty, pendingAttachments.isEmpty {
-            input = draft.text
-            pendingAttachments = draft.attachments
+        if let draft {
+            restoreAbortedSendDraft(text: draft.text, attachments: draft.attachments, controls: turn.generationControls)
         }
     }
 
@@ -8258,8 +10388,8 @@ private struct DeleteAlsoUserMessageToggle: View {
     var body: some View {
         Toggle(isOn: $options.alsoDeleteUserMessage) {
             Text("Also delete my message", bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .textStyle(.caption)
+                .foregroundColor(theme.text.secondary)
         }
         .toggleStyle(.checkbox)
     }
@@ -8288,14 +10418,32 @@ struct ChatView: View {
     /// every frame; the final value is committed to `storedSidebarWidth` on
     /// drag end. `nil` means no drag is active.
     @State private var liveSidebarWidth: Double?
-    /// Width captured at the start of a drag. `translation` is cumulative from
-    /// the gesture start, so the live width is always `anchor + translation`
-    /// (adding to the running live value would double-count the delta).
-    @State private var sidebarDragAnchor: Double?
-    /// Project whose detail page is shown in the content area (opened from
-    /// the sidebar's Projects tab). nil shows the normal chat surface.
-    /// Observed so project renames/edits re-render the open detail page.
-    @ObservedObject private var projectManager = ProjectManager.shared
+    /// Which half of the workflow-creation split shows when the window is
+    /// too narrow to put the chat and the draft side by side.
+    @State private var workflowCreationPane: WorkflowCreationPane = .chat
+    /// Off for this view's first layout. Springing columns to the first
+    /// geometry sample while the window still lays out republishes its
+    /// content size every frame until AppKit runs out of Update
+    /// Constraints passes and raises.
+    @State private var animatesShellLayout = false
+    /// The workflow- and agent-creation chats' widths once the user drags
+    /// the divider beside them; 0 follows the window. Clamped on read like
+    /// the sidebar's.
+    @AppStorage("workflowCreationChatWidth") private var storedWorkflowChatWidth: Double = 0
+    @AppStorage("agentCreationChatWidth") private var storedAgentChatWidth: Double = 0
+    /// Transient creation chat width while that divider's drag is in flight.
+    @State private var liveCreationChatWidth: Double?
+    /// The New Agent intro's "Fill it in yourself" was chosen.
+    @State private var agentCreatorFillingIn = false
+    /// Measured height of the find bar, reserved above the thread while the
+    /// bar is open so it never covers the first message.
+    @State private var findBarHeight: CGFloat = 0
+    /// User-adjustable width of the right-hand inspector, persisted like the
+    /// sidebar's and clamped to `inspectorWidthRange` on read.
+    @AppStorage("chatInspectorWidth") private var storedInspectorWidth: Double = ChatView.defaultInspectorWidth
+    @AppStorage(DiscoveryStore.enabledKey) private var discoveryEnabled = true
+    /// Transient inspector width while its edge drag is in flight.
+    @State private var liveInspectorWidth: Double?
     @State private var scrollToBottomTrigger: Int = 0
     @State private var keyMonitor: Any?
     // Inline editing state
@@ -8306,8 +10454,6 @@ struct ChatView: View {
     /// Set when the user taps a pasted-content chip in a sent message;
     /// cleared on dismiss.
     @State private var pastedContentPreview: Attachment?
-    // Bonjour agent connection
-    @State private var pendingDiscoveredAgent: DiscoveredAgent? = nil
     // Minimap
     @State private var activeMinimapTurnId: UUID?
     @State private var scrollToTurnId: UUID?
@@ -8333,8 +10479,6 @@ struct ChatView: View {
     /// Occurrence (within the turn) the last find jump targeted; nil when the
     /// pending scroll request came from the minimap instead of the find bar.
     @State private var scrollToFindOccurrence: Int?
-    // What's New modal
-    @State private var pendingWhatsNew: WhatsNewRelease? = nil
     @State private var showAutoSpeakPrompt: Bool = false
     /// Drives the confirmation before deleting an assistant response. The
     /// pending turn id is captured so the confirm button knows what to excise;
@@ -8472,18 +10616,11 @@ struct ChatView: View {
         session.promptQueue.current?.obscuresConversation == true
     }
 
-    /// Picker items filtered to the active Bonjour provider's models when a
-    /// remote agent is selected, or ALL models (local + user-configured
-    /// remote providers) when no remote agent is active.
-    ///
-    /// Prior to this fix, the no-agent branch hid every `.remote` model
-    /// from the picker — which was correct for keeping Bonjour-discovered
-    /// models from leaking into the local-only view, but also suppressed
-    /// manually-configured remote providers (Ollama, custom OpenAI
-    /// endpoints, etc.). Since user-configured providers are always
-    /// intentional, they should be visible regardless of Bonjour state.
+    /// Picker items filtered to the selected remote agent's provider, or ALL
+    /// models (local + user-configured remote providers) when no remote agent
+    /// is active.
     private var filteredPickerItems: [ModelPickerItem] {
-        guard let providerId = windowState.selectedDiscoveredAgentProviderId else {
+        guard let providerId = windowState.selectedRemoteAgentProviderId else {
             // No remote agent selected (Mode 1 / local): show everything —
             // local, foundation, and user-configured remote providers, including
             // the device's own models so they can be picked for remote inference.
@@ -8526,8 +10663,14 @@ struct ChatView: View {
     /// the agent's. Returns nil when no remote agent is selected (the chip is
     /// interactive then and resolves its own label).
     private var pinnedModelChipLabel: String? {
-        guard let providerId = windowState.selectedDiscoveredAgentProviderId else { return nil }
-        if let effective = windowState.pinnedRemoteAgentEffectiveModel, !effective.isEmpty {
+        if !isRemoteAgentChrome, let locked = lockedAgentModel {
+            return session.pickerItems.first(where: { $0.id == session.selectedModel })?.displayName ?? locked
+        }
+        guard isRemoteAgentChrome else { return nil }
+        if let host = observedSession.hostDeviceElsewhere { return hostedRunMonitor.hostName(host) }
+        if let providerId = windowState.selectedRemoteAgentProviderId,
+            let effective = windowState.pinnedRemoteAgentEffectiveModel, !effective.isEmpty
+        {
             if let item = session.pickerItems.first(where: {
                 Self.isProviderItem($0, providerId: providerId)
                     && Self.unprefixedModelTail($0.id) == effective
@@ -8536,64 +10679,363 @@ struct ChatView: View {
             }
             return effective
         }
-        return windowState.selectedDiscoveredAgent?.name
-            ?? windowState.selectedRelayAgent?.name
-            ?? L("Default")
+        // Not resolved yet (connecting / unpaired): show the agent's own
+        // identity — the paired name last, so a workspace agent reads by its
+        // router display name even before its provider exists.
+        if let identity = windowState.sharedAgentIdentity {
+            return identity.modelLabel ?? identity.name
+        }
+        return windowState.selectedRelayAgent?.name ?? L("Default")
+    }
+
+    /// Remote-agent mode for CHROME purposes (pinned model chip, hidden
+    /// context ring, remote hero/badge). True for any tab stamped with a
+    /// workspace agent — paired or not, connecting or failed — and for legacy
+    /// Mode 2 pins; false for read-only teammate conversations served here,
+    /// which render as ordinary (locked) local transcripts.
+    private var isRemoteAgentChrome: Bool {
+        if observedSession.hostDeviceElsewhere != nil { return true }
+        if let context = observedSession.workspaceContext { return !context.isServedForTeammate }
+        return windowState.selectedRemoteAgentProviderId != nil
+    }
+
+    /// The model this tab's agent is locked to, or nil.
+    private var lockedAgentModel: String? {
+        AgentManager.shared.lockedModel(for: observedSession.agentId)
+    }
+
+    /// Why this tab's model chip is a fixed label, if it is.
+    private var composerModelPin: ModelPinReason? {
+        if isRemoteAgentChrome { return .remoteAgent }
+        return lockedAgentModel != nil ? .agentLocked : nil
+    }
+
+    /// The locked model this tab cannot run, when it is unavailable.
+    private var lockedModelUnavailable: String? {
+        isRemoteAgentChrome ? nil : observedSession.lockedModelUnavailable
+    }
+
+    /// Typing stays open but nothing sends: another device is replying, or
+    /// the agent's locked model is unavailable. Explained above the card.
+    private var composerSendBlocked: Bool {
+        observedSession.remoteReply != nil || observedSession.isWaitingOnHost || lockedModelUnavailable != nil
+    }
+
+    /// Workspace name for the composer's "Workspace pool" spend chip when the
+    /// active tab's cloud calls bill a workspace pool: a teammate's shared
+    /// agent (billed by its host), or one of this Mac's own agents whose
+    /// "Bill the workspace pool" preference is on. Nil for personally billed
+    /// local agents and for read-only teammate conversations served here.
+    private var workspacePoolLabel: String? {
+        // Agents shared directly (invite link) carry no workspace id and
+        // bill nothing to a pool.
+        guard let workspaceId = poolBillingWorkspaceId else { return nil }
+        return rosterStore.rosters.first(where: { $0.id == workspaceId })?.workspace.name
+            ?? L("Workspace")
+    }
+
+    /// The workspace whose pool this tab's turns bill, for the composer chip.
+    /// Remote tabs: the tab's workspace share. Local tabs: the agent's own
+    /// pool-billing preference — the same lookup `RemoteProviderService`
+    /// makes when it attaches `workspace_context`, so chip and charge agree.
+    /// `workspacesService` is observed so flipping the switch re-renders.
+    private var poolBillingWorkspaceId: String? {
+        if let workspaceId = activeWorkspaceId { return workspaceId }
+        guard observedSession.workspaceContext == nil else { return nil }
+        return WorkspacesService.workspaceContext(forAgentId: windowState.agentId)?.workspaceId
+    }
+
+    /// Where the composer lock's settings shortcut lands: the workspace
+    /// roster for a team agent, the Agents tab (where the pairing lives) for
+    /// an agent shared directly outside any workspace.
+    private var composerLockSettingsTab: ManagementTab {
+        (observedSession.workspaceContext?.workspaceId.isEmpty ?? false) ? .agents : .workspaces
+    }
+
+    /// The workspace this tab's shared agent belongs to, when it is a
+    /// workspace share (nil for local tabs and invite-link shares).
+    private var activeWorkspaceId: String? {
+        guard let context = observedSession.workspaceContext, !context.isServedForTeammate,
+            !context.workspaceId.isEmpty
+        else { return nil }
+        return context.workspaceId
+    }
+
+    /// Composer lock shortcut: the agent's own workspace roster (Shared
+    /// Agents tab) for a team agent; the Agents tab for a direct share.
+    private func openComposerLockSettings() {
+        if let workspaceId = activeWorkspaceId {
+            WorkspacesService.shared.openInSettings(workspaceId: workspaceId, tab: .sharedAgents)
+        } else {
+            AppDelegate.shared?.showManagementWindow(initialTab: composerLockSettingsTab)
+        }
+    }
+
+    /// Why the composer is locked for the active tab (workspace team agent
+    /// offline / unpaired / connecting, or a read-only teammate conversation
+    /// served by this host). Re-evaluated on roster, pairing, and connection
+    /// changes through the observed stores above.
+    private var composerLock: ComposerLock? {
+        // Touch the observed stores so SwiftUI tracks them for this view.
+        _ = rosterStore.rosters
+        _ = rosterStore.forcedOffline
+        _ = remoteAgentManager.remoteAgents
+        _ = workspaceConnectService.connectingAddresses
+        _ = workspaceConnectService.connectFailures
+        _ = observedSession.workspaceContext
+        _ = observedSession.hostDevice
+        _ = hostedRunMonitor.connectedDevices
+        return windowState.composerLock
+    }
+
+    /// A conversation this Mac hosted for someone else (a teammate, or its
+    /// own paired iPhone): read here, continued where it started, so there
+    /// is no input card to show.
+    private var isReadOnlyConversation: Bool {
+        if case .teammateConversation = composerLock { return true }
+        return false
+    }
+
+    /// One-line explanation of the composer lock with its action (Retry /
+    /// Open Workspaces), in the style of `remoteAgentConnectionNotice`. Auto-
+    /// clears when the lock lifts (presence flips online, connect lands).
+    @ViewBuilder
+    private var composerLockNotice: some View {
+        if case .hostOffline(let hostName) = composerLock {
+            remoteAgentNoticeRow(tone: theme.status.warning) {
+                Image(systemName: "moon.zzz.fill")
+                    .glyphSize(.caption, weight: .semibold)
+                    .foregroundColor(theme.status.warning.foreground)
+                Text(String(format: L("%@ is offline. You can send when it's awake and online."), hostName))
+                    .textStyle(.caption, weight: 500)
+                    .foregroundColor(theme.text.primary)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } else if let lock = composerLock, let status = windowState.sharedAgentStatus,
+            let identity = windowState.sharedAgentIdentity,
+            // On an empty thread the hero badge already reads "Securing
+            // connection…"; one connecting indicator is enough.
+            !(status == .connecting && !observedSession.hasVisibleThreadMessages)
+        {
+            if case .teammateConversation(let callerName, let agentName, let isWorkspace) = lock {
+                // Own subview: it observes the task registry for the live
+                // step / Stop so the rest of the chat doesn't re-render on
+                // every background-task tick.
+                HostedRunNotice(
+                    sessionId: observedSession.sessionId,
+                    callerName: callerName,
+                    agentName: agentName,
+                    isWorkspace: isWorkspace,
+                    isFromPairedPhone: observedSession.workspaceContext
+                        .map(RemoteSessionContinuation.isFromPairedPhone) ?? false,
+                    servedBy: observedSession.servedElsewhere,
+                    ownerDeviceTurnIds: observedSession.servedElsewhere == nil
+                        ? []
+                        : observedSession.turns.filter { $0.role == .user && $0.author?.kind == .ownerDevice }.map(\.id)
+                )
+            } else {
+                sharedAgentStatusNotice(status, identity: identity)
+            }
+        }
+    }
+
+    /// The agent is locked to a model that is not available: nothing sends
+    /// until the model is repaired or the agent's model is changed.
+    private func lockedModelUnavailableNotice(_ model: String) -> some View {
+        remoteAgentNoticeRow(tone: theme.status.warning) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .glyphSize(.caption, weight: .semibold)
+                .foregroundColor(theme.status.warning.foreground)
+            Text(
+                String(
+                    format: L(
+                        "This agent's model (%@) isn't available. Repair it in the app that installed it, or change the model in the agent's settings."
+                    ), model)
+            )
+            .textStyle(.caption, weight: 500)
+            .foregroundColor(theme.text.primary)
+            .lineLimit(3)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button(action: {
+                AppDelegate.shared?.showManagementWindow(
+                    initialTab: .agents, deeplinkAgentId: observedSession.agentId)
+            }) {
+                Text("Open Agent Settings", bundle: .module)
+            }
+            .assignedSettingsButtonStyle(.secondary, size: .compact)
+        }
+    }
+
+    /// Status tone for a `SharedAgentStatus` tint role; nil for muted.
+    private func statusTone(_ tint: SharedAgentStatus.Tint) -> ThemeStatusSet<Color>? {
+        switch tint {
+        case .success: return theme.status.success
+        case .accent: return theme.status.info
+        case .warning: return theme.status.warning
+        case .muted: return nil
+        }
+    }
+
+    /// One layout for every shared-agent lock state: a status glyph (spinner
+    /// while connecting), a one-line title with the reason as a caption
+    /// beneath it, and the status' actions in a trailing group that never
+    /// compresses — so a long reason can't push `Retry` off the chip. Neutral
+    /// chrome (raised surface + border) with only the glyph and primary
+    /// action carrying the status tint, so the notice reads as part of the
+    /// composer rather than a warning banner.
+    private func sharedAgentStatusNotice(_ status: SharedAgentStatus, identity: SharedAgentIdentity) -> some View {
+        let tone = statusTone(status.tint)
+        let tint = tone?.foreground ?? theme.text.secondary
+        let title = status.title(agentName: identity.name)
+        let detail = status.detail(agentName: identity.name, hostName: identity.ownerName)
+        return HStack(alignment: .center, spacing: theme.space.s8) {
+            Group {
+                if status == .connecting || status == .checking {
+                    SettingsSpinner()
+                } else {
+                    Image(systemName: status.symbolName)
+                        .glyphSize(.caption, weight: .semibold)
+                        .foregroundColor(tint)
+                }
+            }
+            .frame(width: 24, height: 24)
+            .background(Circle().fill(tone?.background ?? theme.surface.hover))
+
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                Text(title)
+                    .textStyle(.label, weight: 600)
+                    .foregroundColor(theme.text.primary)
+                    .lineLimit(1)
+                if let detail {
+                    Text(detail)
+                        .textStyle(.caption)
+                        .foregroundColor(theme.text.secondary)
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .help(detail)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: theme.space.s6) {
+                if let action = status.actionLabel {
+                    Button(action: { windowState.retryWorkspaceAgentConnection() }) {
+                        Text(action)
+                    }
+                    .assignedSettingsButtonStyle(.primary, size: .compact)
+                }
+                switch status {
+                case .notConnected:
+                    Button(action: openComposerLockSettings) {
+                        Text(composerLockSettingsTab == .agents ? L("Open Agents") : L("Open Workspace"))
+                    }
+                    .assignedSettingsButtonStyle(.secondary, size: .compact)
+                case .unavailable(_, let fix):
+                    switch fix {
+                    case .enableRouter:
+                        Button(action: { RemoteProviderManager.shared.setOsaurusRouterEnabled(true) }) {
+                            Text(L("Turn on Router"))
+                        }
+                        .assignedSettingsButtonStyle(.primary, size: .compact)
+                    case .openWorkspaces:
+                        // Unavailable = unshared / we left: the workspace may
+                        // no longer list it, so the list is the right landing.
+                        Button(action: { AppDelegate.shared?.showManagementWindow(initialTab: .workspaces) }) {
+                            Text(L("Open Workspaces"))
+                        }
+                        .assignedSettingsButtonStyle(.secondary, size: .compact)
+                    case .none:
+                        EmptyView()
+                    }
+                case .accessRevoked:
+                    Button(action: openComposerLockSettings) {
+                        Text(L("Open Agents"))
+                    }
+                    .buttonStyle(.settings(.secondary, size: .compact))
+                case .ready, .checking, .connecting, .offline, .readOnlyTeammate:
+                    EmptyView()
+                }
+            }
+            .fixedSize()
+        }
+        .padding(.leading, theme.space.s12)
+        .padding(.trailing, theme.space.s8)
+        .padding(.vertical, theme.space.s8)
+        .background(
+            RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous)
+                .fill(theme.surface.raised)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous)
+                .strokeBorder(theme.border.default, lineWidth: theme.stroke.default)
+        )
+        .padding(.bottom, theme.space.s8)
+        .transition(.opacity.combined(with: .scale(scale: 0.96)))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text(verbatim: status.message(agentName: identity.name, hostName: identity.ownerName)))
+    }
+
+    /// "Research Agent is offline — you can read this conversation, but new
+    /// messages can't be sent until Alice's Osaurus is back online."
+    nonisolated static func offlineLockMessage(agentName: String, ownerName: String?, lastSeen: Date?) -> String {
+        SharedAgentStatus.offline(lastSeen: lastSeen).message(agentName: agentName, hostName: ownerName)
     }
 
     /// Compact Mode 2 connection status shown above the composer: an actionable
     /// error with Retry on failure. The connecting affordance lives in the
     /// empty-state security badge (which morphs "Securing connection…" -> lock),
     /// so this row only surfaces on `.failed`; it's empty otherwise and when
-    /// not in remote-agent mode.
+    /// not in remote-agent mode. A workspace team agent's failure is reported
+    /// by `composerLockNotice` instead, so this stays empty while it's locked.
     @ViewBuilder
     private var remoteAgentConnectionNotice: some View {
-        if windowState.selectedDiscoveredAgentProviderId != nil {
+        if windowState.selectedRemoteAgentProviderId != nil, composerLock == nil {
             switch windowState.remoteAgentConnectionPhase {
             case .failed(let message):
                 connectionFailedNotice(message)
+            case .connecting where observedSession.hasVisibleThreadMessages:
+                // With a transcript the empty-state badge isn't on screen, so
+                // the gated send needs its own explanation here.
+                RemoteAgentConnectionStatusNotice(phase: .connecting(windowState.selectedRelayAgent?.name ?? L("the remote agent")), baseTheme: theme)
             case .idle, .connected, .connecting:
-                // The connecting affordance now lives in the empty-state
-                // security badge (it morphs "Securing connection…" -> lock),
-                // so there's no separate connecting chip above the composer.
+                // On an empty thread the connecting affordance lives in the
+                // empty-state security badge ("Securing connection…" → lock).
                 EmptyView()
             }
         }
     }
 
-    /// Run-liveness chip shown above the composer while a run has produced no
-    /// stream/tool/image progress for a while. `slow` reassures ("still
-    /// working"); `stalled` names the likely wedge and points at Stop — the
-    /// recovery action — without auto-killing a run that may legitimately be
-    /// deep in a long model load or tool call.
+    /// Composer chip while a run has gone quiet. `slow` reassures; `stalled`
+    /// is a silent hang. Loading-phase UI hides only `.slow`.
     @ViewBuilder
     private var runProgressNotice: some View {
         if observedSession.isStreaming {
-            switch observedSession.runProgressState {
+            switch observedSession.runProgress.state {
             case .active:
                 EmptyView()
             case .slow:
-                remoteAgentNoticeRow(tint: theme.accentColor) {
-                    ProgressView()
-                        .controlSize(.small)
+                remoteAgentNoticeRow(tone: theme.status.info) {
+                    SettingsSpinner()
                     Text(L("Still working — waiting on the model or a tool…"))
-                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                        .foregroundColor(theme.primaryText)
+                        .textStyle(.caption, weight: 500)
+                        .foregroundColor(theme.assignedColor(NativeComponentInspectionStyle.key(40, "foreground"), fallback: theme.text.primary))
                 }
             case .stalled:
-                remoteAgentNoticeRow(tint: theme.warningColor) {
+                remoteAgentNoticeRow(tone: theme.status.warning) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: CGFloat(theme.captionSize), weight: .semibold))
-                        .foregroundColor(theme.warningColor)
+                        .glyphSize(.caption, weight: .semibold)
+                        .foregroundColor(theme.status.warning.foreground)
                     Text(L("No response for a while — this run may be stuck."))
-                        .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                        .foregroundColor(theme.primaryText)
+                        .textStyle(.caption, weight: 500)
+                        .foregroundColor(theme.assignedColor(NativeComponentInspectionStyle.key(40, "foreground"), fallback: theme.text.primary))
                         .lineLimit(2)
                         .fixedSize(horizontal: false, vertical: true)
                     Button(action: { observedSession.stop() }) {
                         Text(L("Stop"))
-                            .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
-                            .foregroundColor(theme.warningColor)
+                            .textStyle(.caption, weight: 600)
+                            .foregroundColor(theme.status.warning.foreground)
                     }
                     .buttonStyle(.plain)
                 }
@@ -8601,56 +11043,144 @@ struct ChatView: View {
         }
     }
 
-    /// Connection-failure chip: the error message plus a Retry that re-runs the
-    /// connect + model-pin flow.
-    private func connectionFailedNotice(_ message: String) -> some View {
-        remoteAgentNoticeRow(tint: theme.warningColor) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: CGFloat(theme.captionSize), weight: .semibold))
-                .foregroundColor(theme.warningColor)
-            Text(message)
-                .font(theme.font(size: CGFloat(theme.captionSize), weight: .medium))
-                .foregroundColor(theme.primaryText)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-            Button(action: { retryRemoteAgentConnection() }) {
-                Text(L("Retry"))
-                    .font(theme.font(size: CGFloat(theme.captionSize), weight: .semibold))
-                    .foregroundColor(theme.accentColor)
+    /// Another device is replying in this chat (sending waits for it), or
+    /// messages written here haven't reached the user's other devices yet.
+    @ViewBuilder
+    private var syncNotice: some View {
+        if let host = observedSession.hostDeviceElsewhere {
+            if composerLock == nil { hostedRunNotice(hostName: hostedRunMonitor.hostName(host)) }
+        } else if let sessionId = observedSession.sessionId, let request = hostRunner.runningFor[sessionId] {
+            remoteAgentNoticeRow(tone: theme.status.info) {
+                Image(systemName: SyncPhoneDevices.isPhone(deviceKey: request.deviceKey) ? "iphone" : "desktopcomputer")
+                    .glyphSize(.caption, weight: .semibold)
+                    .foregroundColor(theme.status.info.foreground)
+                Text(String(format: L("Answering for %@…"), Self.requesterName(request.deviceKey)))
+                    .textStyle(.caption, weight: 500)
+                    .foregroundColor(theme.text.primary)
+                    .lineLimit(1)
             }
-            .buttonStyle(.plain)
+            .help(L("This Mac is running this chat for another of your devices. Its approvals and questions go to that device."))
+        } else if let reply = observedSession.remoteReply {
+            remoteAgentNoticeRow(tone: theme.status.info) {
+                SettingsSpinner()
+                Text(String(format: L("Replying on %@…"), reply.deviceName))
+                    .textStyle(.caption, weight: 500)
+                    .foregroundColor(theme.text.primary)
+                    .lineLimit(1)
+            }
+        } else if observedSession.syncPendingCount > 0, !observedSession.isStreaming {
+            HStack(spacing: theme.space.s6) {
+                Image(systemName: "clock.arrow.circlepath")
+                    .glyphSize(.footnote, weight: .medium)
+                Text(L("Waiting to reach your other devices"))
+                    .textStyle(.micro)
+            }
+            .foregroundStyle(theme.text.secondary)
+            .padding(.bottom, theme.space.s6)
+            .help(L("These messages sync the next time one of your other devices is reachable."))
         }
     }
 
-    /// Shared chip chrome for the Mode 2 status rows (connecting / error): a
-    /// content-hugging, centered rounded chip with a subtle tinted fill and
-    /// hairline border, matching the empty-state security badge and the rest
-    /// of the app's chrome. The `tint` conveys intent (accent while
-    /// connecting, warning on failure) so the two phases differ only in their
-    /// content and color, not their shape.
+    /// A chat another Mac runs: its approval cards first, then whether it's
+    /// on a turn, else where the agent runs.
     @ViewBuilder
+    private func hostedRunNotice(hostName: String) -> some View {
+        if let approval = observedSession.hostApprovals.first {
+            HostedApprovalCard(approval: approval, hostName: hostName) { answer in
+                observedSession.answerHostApproval(id: approval.id, answer)
+            }
+        } else if let prompt = observedSession.hostPrompts.first {
+            HostedSecretCard(prompt: prompt, hostName: hostName) { value in
+                observedSession.answerHostPrompt(prompt, value: value)
+            }
+            .id(prompt.id)
+        } else if observedSession.isWaitingOnHost {
+            remoteAgentNoticeRow(tone: theme.status.info) {
+                SettingsSpinner()
+                Text(
+                    String(
+                        format: observedSession.hostStopRequest == nil ? L("Running on %@…") : L("Stopping on %@…"),
+                        hostName
+                    )
+                )
+                .textStyle(.caption, weight: 500)
+                .foregroundColor(theme.text.primary)
+                .lineLimit(1)
+            }
+        } else if observedSession.hostStopUnconfirmed {
+            remoteAgentNoticeRow(tone: theme.status.warning) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .glyphSize(.caption, weight: .semibold)
+                    .foregroundColor(theme.status.warning.foreground)
+                Text(
+                    String(
+                        format: L("Stop not confirmed. %@ may be asleep and could still finish this reply."),
+                        hostName
+                    )
+                )
+                .textStyle(.caption, weight: 500)
+                .foregroundColor(theme.text.primary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            }
+        } else {
+            HStack(spacing: theme.space.s6) {
+                Image(systemName: "desktopcomputer")
+                    .glyphSize(.footnote, weight: .medium)
+                Text(String(format: L("Runs on %@"), hostName))
+                    .textStyle(.micro)
+            }
+            .foregroundStyle(theme.text.secondary)
+            .padding(.bottom, theme.space.s6)
+            .help(String(format: L("The agent, its tools and its files are on %@."), hostName))
+        }
+    }
+
+    /// Keeps the host's connection state and run state fresh while a chat it
+    /// runs is on screen.
+    private var hostedWatchKey: String {
+        "\(observedSession.sessionId?.uuidString ?? "")|\(observedSession.hostDeviceElsewhere ?? "")"
+    }
+
+    private func watchHostedRun() async {
+        guard observedSession.hostDeviceElsewhere != nil else { return }
+        let monitor = SyncHostedRunMonitor.shared
+        monitor.beginWatching()
+        monitor.refresh(observedSession)
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(3600))
+        }
+        monitor.endWatching()
+    }
+
+    /// Connection-failure chip: the error message plus a Retry that re-runs the
+    /// connect + model-pin flow.
+    private func connectionFailedNotice(_ message: String) -> some View {
+        RemoteAgentConnectionStatusNotice(phase: .failed(message), baseTheme: theme, retry: { retryRemoteAgentConnection() })
+    }
+
+    /// Shared chip chrome for the Mode 2 status rows (connecting / error): a
+    /// content-hugging, centered rounded chip in the status tone's fill and
+    /// border, matching the empty-state security badge and the rest of the
+    /// app's chrome. The `tone` conveys intent (info while connecting,
+    /// warning on failure) so the two phases differ only in their content
+    /// and color, not their shape.
+    @ViewBuilder
+    private static func requesterName(_ deviceKey: String) -> String {
+        if SyncPhoneDevices.isPhone(deviceKey: deviceKey) { return L("your iPhone") }
+        return SyncService.shared.deviceName(forKey: deviceKey) ?? L("your other device")
+    }
+
     private func remoteAgentNoticeRow<Content: View>(
-        tint: Color,
-        @ViewBuilder _ content: () -> Content
+        tone: ThemeStatusSet<Color>,
+        @ViewBuilder _ content: @escaping () -> Content
     ) -> some View {
-        HStack(spacing: 8) { content() }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
-            .background(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(tint.opacity(theme.isDark ? 0.14 : 0.10))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(tint.opacity(0.22), lineWidth: 1)
-            )
-            .padding(.bottom, 8)
-            .transition(.opacity.combined(with: .scale(scale: 0.96)))
+        ComposerNoticeRow(tone: tone, content: content)
     }
 
     /// Re-run the connect + model-pin flow after a failure (Retry button).
     private func retryRemoteAgentConnection() {
-        guard let providerId = windowState.selectedDiscoveredAgentProviderId else { return }
+        guard let providerId = windowState.selectedRemoteAgentProviderId else { return }
         pinRemoteAgentModelAfterConnect(providerId: providerId)
     }
 
@@ -8686,15 +11216,37 @@ struct ChatView: View {
     /// Observed session - needed to properly propagate @Published changes from ChatSession
     @ObservedObject private var observedSession: ChatSession
 
+    /// Workspace stores the composer lock derives from (presence, pairing,
+    /// auto-connect progress). Observed so the lock notice clears the moment
+    /// a teammate's host comes back or the pairing lands.
+    @ObservedObject private var rosterStore = WorkspaceRosterStore.shared
+    @ObservedObject private var remoteAgentManager = RemoteAgentManager.shared
+    @ObservedObject private var workspaceConnectService = WorkspaceAgentConnectService.shared
+    @ObservedObject private var hostedRunMonitor = SyncHostedRunMonitor.shared
+    @ObservedObject private var hostRunner = SyncHostRunner.shared
+    @ObservedObject private var agentDirectory = SyncAgentDirectory.shared
+    /// Per-agent pool-billing preference for the composer chip on local
+    /// tabs; publishes when the "Bill the workspace pool" switch changes or
+    /// the roster-driven default binds an agent.
+    @ObservedObject private var workspacesService = WorkspacesService.shared
+
     /// Convenience accessor for the session (uses observedSession for proper SwiftUI updates)
     private var session: ChatSession { observedSession }
 
     // MARK: - Initializers
 
+    /// Hosted inside another surface (Settings' New Agent creator) rather
+    /// than a chat window: no rail, sidebar, titlebar or window sizing.
+    private var isEmbedded = false
+    /// Embedded only: the draft panel's Create hands the new agent's id here.
+    private var onAgentCreated: ((UUID) -> Void)?
+
     /// Multi-window initializer with window state
-    init(windowState: ChatWindowState) {
+    init(windowState: ChatWindowState, embedded: Bool = false, onAgentCreated: ((UUID) -> Void)? = nil) {
         _windowState = ObservedObject(wrappedValue: windowState)
         _observedSession = ObservedObject(wrappedValue: windowState.session)
+        isEmbedded = embedded
+        self.onAgentCreated = onAgentCreated
     }
 
     /// Convenience initializer with window ID and optional initial state
@@ -8743,7 +11295,7 @@ struct ChatView: View {
                 L("You're out of credits"),
                 isPresented: $observedSession.insufficientFundsAlert,
                 message: insufficientFundsMessage,
-                primaryButton: .primary(L("Add credits")) { showTopUpSheet = true },
+                primaryButton: .primary(L("Add Credits")) { showTopUpSheet = true },
                 secondaryButton: .cancel(L("Not now"))
             )
             .themedAlert(
@@ -8755,16 +11307,13 @@ struct ChatView: View {
             )
             .themedAlertScope(.chat(windowState.windowId))
             .overlay(ThemedAlertHost(scope: .chat(windowState.windowId)))
-            .overlay { promptOverlayLayer }
-            // Computer Use gated-action confirmations. Process-wide queue so
-            // the in-tool loop (which has no ChatSession handle) can park a
-            // request the user resolves; rendered above the input bar like the
-            // other prompt cards.
-            .overlay { ComputerUseConfirmOverlay() }
-            // osaurus_config plan-review approvals: the dedicated diff card
-            // every apply awaits. Same process-wide queue pattern as the
-            // Computer Use card.
-            .overlay { ConfigPlanApprovalCard() }
+            // osaurus_config plan-review approvals: the dedicated diff
+            // dialog every apply awaits (same process-wide queue pattern as
+            // the Computer Use card). A presenter, not a surface — it routes
+            // the request into this window's ThemedAlertHost, and takes the
+            // scope explicitly because the environment doesn't reach
+            // overlay level.
+            .overlay { ConfigApprovalModal(scope: .chat(windowState.windowId)) }
             .sheet(isPresented: $showTopUpSheet) {
                 CreditsTopUpSheet()
                     .environment(\.theme, theme)
@@ -8813,12 +11362,7 @@ struct ChatView: View {
         let current = session.promptQueue.current
         ZStack {
             if current != nil {
-                Color.black
-                    .opacity(
-                        current?.obscuresConversation == true
-                            ? (theme.isDark ? 0.28 : 0.18)
-                            : (theme.isDark ? 0.10 : 0.06)
-                    )
+                (current?.obscuresConversation == true ? theme.scrim : theme.scrimSubtle)
                     .ignoresSafeArea()
                     .transition(.opacity)
                     .allowsHitTesting(true)
@@ -8834,6 +11378,16 @@ struct ChatView: View {
                     ClarifyPromptOverlay(state: c) {
                         session.promptQueue.advance()
                     }
+                case .workflowDialog(let w):
+                    WorkflowDialogPromptOverlay(state: w)
+                case .workflowSave(let w):
+                    WorkflowSavePromptOverlay(state: w) {
+                        session.promptQueue.advance()
+                    }
+                case .ownerApproval(let o):
+                    OwnerApprovalPromptOverlay(state: o) {
+                        session.promptQueue.advance()
+                    }
                 case .none:
                     EmptyView()
                 }
@@ -8841,13 +11395,14 @@ struct ChatView: View {
             .id(current?.id)
             .transition(.opacity)
         }
-        .animation(theme.springAnimation(), value: current?.id)
+        .animation(theme.motion.springAnimation, value: current?.id)
     }
 
     /// Allowed range for the resizable sidebar. The floor keeps the header
     /// controls usable; the ceiling stops the sidebar from crowding out the
     /// chat on narrow windows.
-    private static let sidebarWidthRange: ClosedRange<Double> = 260...460
+    private static let sidebarWidthRange: ClosedRange<Double> =
+        Double(ChatShellLayout.sidebarWidthRange.lowerBound)...Double(ChatShellLayout.sidebarWidthRange.upperBound)
 
     /// Clamp a raw width to the allowed range.
     private func clampSidebarWidth(_ raw: Double) -> Double {
@@ -8860,210 +11415,404 @@ struct ChatView: View {
         CGFloat(clampSidebarWidth(liveSidebarWidth ?? storedSidebarWidth))
     }
 
-    /// Draggable divider on the sidebar's trailing edge. A thin visible seam
-    /// with a wider invisible hit area; dragging resizes the sidebar and the
-    /// two-headed resize cursor telegraphs that it's grabbable.
+    /// Draggable divider on the sidebar's trailing edge (shared control with
+    /// the inspector's leading edge).
     private var sidebarResizeHandle: some View {
-        // An 11pt-wide interactive strip straddling the trailing edge (offset
-        // pushes half of it past the border) so the seam is grabbable right at
-        // the boundary. The visible seam is a 1pt line at the strip's center;
-        // the AppKit cursor area fills the strip.
-        Color.clear
-            .frame(width: 11)
-            .frame(maxHeight: .infinity)
-            .overlay {
-                Rectangle()
-                    .fill(theme.secondaryText.opacity(liveSidebarWidth != nil ? 0.55 : 0.12))
-                    .frame(width: 1)
+        ColumnResizeHandle(
+            edge: .trailing,
+            range: Self.sidebarWidthRange,
+            storedWidth: $storedSidebarWidth,
+            liveWidth: $liveSidebarWidth
+        )
+    }
+
+    /// The saved width of this creation chat (workflow or agent); 0 follows
+    /// the window.
+    private var storedCreationChatWidth: Binding<Double> {
+        isAgentCreation ? $storedAgentChatWidth : $storedWorkflowChatWidth
+    }
+
+    /// The creation chat width the user chose: the live drag value while
+    /// resizing, the saved one otherwise, nil to follow the window.
+    private var preferredCreationChatWidth: CGFloat? {
+        if let live = liveCreationChatWidth { return CGFloat(live) }
+        let stored = storedCreationChatWidth.wrappedValue
+        return stored > 0 ? CGFloat(stored) : nil
+    }
+
+    /// Draggable divider centered in the gap between a creation chat and
+    /// its draft. Until it is dragged the width follows the window; a
+    /// double-click goes back to that.
+    private func creationChatResizeHandle(width: CGFloat, range: ClosedRange<CGFloat>) -> some View {
+        let stored = storedCreationChatWidth
+        return ColumnResizeHandle(
+            edge: .trailing,
+            range: Double(range.lowerBound)...Double(range.upperBound),
+            storedWidth: Binding(get: { Double(width) }, set: { stored.wrappedValue = $0 }),
+            liveWidth: $liveCreationChatWidth,
+            accessibilityLabel: L("Resize chat"),
+            onReset: { stored.wrappedValue = 0 })
+        .offset(x: theme.space.s24 / 2)
+    }
+
+    /// Allowed range for the resizable inspector. Same floor as the
+    /// inspector's squeeze limit; the ceiling keeps the chat column
+    /// readable.
+    static let inspectorWidthRange: ClosedRange<Double> =
+        Double(ChatShellLayout.contextWidthRange.lowerBound)...Double(ChatShellLayout.contextWidthRange.upperBound)
+    /// Design width the inspector opens at before the user resizes it.
+    static let defaultInspectorWidth = Double(ChatShellLayout.defaultContextWidth)
+    /// Chat column kept readable beside the inspector.
+    private static let chatColumnMinWidthWithPanel = ChatShellLayout.minimumContentWidthWithPanel
+
+    /// Clamp a raw inspector width to the allowed range.
+    static func clampInspectorWidth(_ raw: Double) -> Double {
+        Double(ChatShellLayout.clampContextWidth(CGFloat(raw)))
+    }
+
+    /// Effective user-chosen inspector width: the live drag value while
+    /// resizing, otherwise the persisted width. Always clamped.
+    private var clampedInspectorWidth: CGFloat {
+        CGFloat(Self.clampInspectorWidth(liveInspectorWidth ?? storedInspectorWidth))
+    }
+
+    /// Whether the sidebar steps aside (not persisted) for the inspector:
+    /// both only stay up once the window can hold the sidebar at its
+    /// current width, a readable chat column and the inspector at its floor.
+    static func sidebarStepsAside(windowWidth: CGFloat, sidebarWidth: CGFloat, inspectorOpen: Bool) -> Bool {
+        inspectorOpen
+            && windowWidth < sidebarWidth + chatColumnMinWidthWithPanel + CGFloat(inspectorWidthRange.lowerBound)
+    }
+
+    /// Inspector width for a window of `totalWidth`: the user's chosen width
+    /// when it fits, otherwise squeezed down to its floor before the chat
+    /// column gives.
+    static func changesPanelWidth(totalWidth: CGFloat, sidebarWidth: CGFloat, preferredWidth: CGFloat) -> CGFloat {
+        ChatShellLayout.dockedContextWidth(available: totalWidth, sidebarWidth: sidebarWidth, preferred: preferredWidth)
+    }
+
+    // MARK: - Shell layout
+
+    /// The column model for a window `windowWidth` wide. The sidebar and
+    /// context panel belong to the Chat destination; Workflows owns the
+    /// whole content area. In a compact window the sidebar is a drawer
+    /// with its own open state, so narrowing the window never rewrites
+    /// the user's docked choice.
+    private func shellLayout(windowWidth: CGFloat) -> ChatShellLayout {
+        let isChat = windowState.mainSurface == .chat && !isEmbedded
+        let railWidth = isEmbedded ? 0 : ChatShellLayout.railWidth
+        let breakpoint = ChatShellLayout.breakpoint(forAvailableWidth: windowWidth - railWidth)
+        let sidebarRequested = isChat
+            && (breakpoint == .compact ? windowState.isCompactSidebarPresented : windowState.showSidebar)
+        return ChatShellLayout(
+            windowWidth: windowWidth,
+            sidebarRequested: sidebarRequested,
+            preferredSidebarWidth: clampedSidebarWidth,
+            // Wide windows set a column aside for the File Changes card so
+            // the conversation re-centers beside it; narrower windows let
+            // the card float over the content (`floatingContextCard`).
+            contextRequested: isChat && contextPane != nil
+                && ChatShellLayout.contextReservesColumn(breakpoint),
+            preferredContextWidth: ChatShellLayout.reservedContextWidth,
+            railWidth: railWidth
+        )
+    }
+
+    /// Room kept clear at the top for the window's titlebar strip.
+    private var topInset: CGFloat { isEmbedded ? 0 : Self.headerHeight(theme) }
+
+    /// The context panel's pane on screen, if any: File Changes, once
+    /// the chat has some (`ChatWindowState.contextPane`). Past chats live
+    /// in the sidebar, Workflows is a rail destination and the Architect's
+    /// draft lives in the Workflows split, so none of them opens here.
+    private var contextPane: ChatInspectorPane? { windowState.contextPane }
+
+    private func contextPanel(pane: ChatInspectorPane, width: CGFloat, maxHeight: CGFloat) -> some View {
+        ChatInspectorPanel(
+            windowState: windowState,
+            pane: pane,
+            width: width,
+            maxHeight: maxHeight,
+            sessionId: session.sessionId,
+            focusSetId: $windowState.changesPanelFocusSetId,
+            userPrompt: { userPromptExcerpt(for: $0) }
+        )
+    }
+
+    /// The context panel as a card at the window's top trailing corner,
+    /// below the titlebar strip. In a wide window it sits in the column
+    /// set aside for it (`reservedWidth`); narrower, it floats over the
+    /// content. It grows from that corner (where the toolbar's context
+    /// button sits) and shrinks back into it.
+    private func floatingContextCard(contentWidth: CGFloat, reservedWidth: CGFloat, height: CGFloat) -> some View {
+        let pane = windowState.mainSurface == .chat ? contextPane : nil
+        var size = ChatShellLayout.floatingContextSize(
+            contentWidth: reservedWidth > 0 ? reservedWidth : contentWidth,
+            height: height, headerHeight: Self.headerHeight(theme))
+        if reservedWidth > 0 { size.width = reservedWidth - 2 * ChatShellLayout.floatingContextInset }
+        return ZStack(alignment: .topTrailing) {
+            if let pane {
+                contextPanel(pane: pane, width: size.width, maxHeight: size.height)
+                    .padding(.top, Self.headerHeight(theme) + ChatShellLayout.floatingContextInset)
+                    .padding(.trailing, ChatShellLayout.floatingContextInset)
+                    .transition(.scale(scale: 0.94, anchor: .topTrailing).combined(with: .opacity))
             }
-            .contentShape(Rectangle())
-            .pointerStyle(.columnResize)
-            .offset(x: 5)
-            .gesture(
-                DragGesture(minimumDistance: 0, coordinateSpace: .global)
-                    .onChanged { value in
-                        // Anchor to the width at gesture start so the rail
-                        // tracks the cursor 1:1 without accumulating drift.
-                        let anchor = sidebarDragAnchor ?? Double(clampedSidebarWidth)
-                        if sidebarDragAnchor == nil {
-                            sidebarDragAnchor = anchor
-                        }
-                        liveSidebarWidth = clampSidebarWidth(anchor + Double(value.translation.width))
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+        .animation(theme.motion.standard, value: pane != nil)
+    }
+
+    /// Compact windows: the sidebar drawer slides over the content from
+    /// the leading edge above a scrim that dismisses it. Esc closes it too
+    /// (see the key monitor).
+    @ViewBuilder
+    private func compactSidebarOverlay(layout: ChatShellLayout) -> some View {
+        let sidebarOpen = layout.sidebarMode == .overlay
+        ZStack {
+            if sidebarOpen {
+                theme.scrimSubtle
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        withAnimation(theme.motion.quick) { _ = windowState.dismissShellOverlay() }
                     }
-                    .onEnded { _ in
-                        if let final = liveSidebarWidth {
-                            storedSidebarWidth = clampSidebarWidth(final)
-                        }
-                        liveSidebarWidth = nil
-                        sidebarDragAnchor = nil
-                    }
-            )
+                    .padding(.top, Self.headerHeight(theme))
+                    .transition(.opacity)
+                navigatorRail(width: layout.sidebarWidth)
+                    .padding(.top, Self.headerHeight(theme))
+                    .frame(width: layout.sidebarWidth)
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    .background(chatBackground)
+                    .themeElevation(theme.elevation.overlay)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+            }
+        }
+        .animation(theme.motion.quick, value: sidebarOpen)
+    }
+
+    /// Picking anything in the compact drawer is navigation: the drawer
+    /// gets out of the way of what was picked.
+    private func closeCompactDrawer() {
+        guard windowState.isCompactSidebarPresented else { return }
+        windowState.isCompactSidebarPresented = false
+    }
+
+    /// Chat / Workflow switch for the stacked workflow-creation layout.
+    @ViewBuilder
+    private var workflowCreationPanePicker: some View {
+        Group {
+            AssignedBaseSegmentedPicker(
+                selection: $workflowCreationPane,
+                options: [
+                    .init(.chat, L("Chat"), verbatim: true),
+                    .init(.workflow, isAgentCreation ? L("Agent") : L("Workflow"), verbatim: true),
+                ],
+                size: .compact, minimumOptionWidth: theme.space.s48 * 2)
+        }
+        .accessibilityLabel(Text("Workflow creation view", bundle: .module))
+        .frame(maxWidth: .infinity)
+    }
+
+    /// First line of the user's request that produced the assistant turn
+    /// `turnId`, for the File Changes timeline headers.
+    private func userPromptExcerpt(for turnId: UUID) -> String? {
+        let turns = session.turns
+        guard let index = turns.firstIndex(where: { $0.id == turnId }) else { return nil }
+        guard let user = turns[..<index].last(where: { $0.role == .user }) else { return nil }
+        let line = user.content.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return nil }
+        return trimmed.count > 120 ? String(trimmed.prefix(120)) + "…" : trimmed
+    }
+
+    /// The left rail (agents, then projects), with every window-level
+    /// handoff it needs. Kept out of `chatModeContent` so the layout
+    /// expression stays type-checkable.
+    private func navigatorRail(width sidebarWidth: CGFloat) -> some View {
+        ChatSessionSidebar(
+            sessions: windowState.filteredSessions,
+            agentId: windowState.agentId,
+            width: sidebarWidth,
+            activeSessionId: session.sessionId,
+            activeOpenTabId: windowState.activeTabId,
+            openChats: windowState.tabs,
+            onSelectOpenChat: { windowState.selectTab(id: $0); closeCompactDrawer() },
+            onCloseOpenChat: { windowState.closeTab(id: $0) },
+            onSelect: { data in
+                windowState.loadSession(data)
+                isPinnedToBottom = true
+                closeCompactDrawer()
+            },
+            onNewChatInProject: { project in
+                windowState.startNewChat(in: project)
+                isPinnedToBottom = true
+                closeCompactDrawer()
+            },
+            onStop: { id in
+                // This window's own run stops directly (the
+                // hosting surface may not be registered with
+                // ChatWindowManager); anything else routes
+                // through the monitor, which prefers the
+                // registry task so a detached run is also
+                // marked cancelled.
+                if session.sessionId == id {
+                    session.stop()
+                } else {
+                    SessionActivityMonitor.shared.stop(sessionId: id)
+                }
+            },
+            onOpenInNewTab: { sessionData in
+                windowState.openSessionInNewTab(sessionData)
+                closeCompactDrawer()
+            },
+            onSelectAgent: { newAgentId in
+                windowState.switchAgent(to: newAgentId)
+                closeCompactDrawer()
+            },
+            onNewChatWithAgent: { newAgentId in
+                windowState.startNewChat(with: newAgentId)
+                isPinnedToBottom = true
+                closeCompactDrawer()
+            },
+            workspaceAgentAddress: windowState.workspaceAgentAddress,
+            workspaceAgentWorkspaceId: observedSession.workspaceContext?.workspaceId,
+            onSelectWorkspaceAgent: { address, workspaceId in
+                windowState.switchToWorkspaceAgent(address: address, workspaceId: workspaceId)
+                closeCompactDrawer()
+            },
+            activeHostedAgent: {
+                if case .hosted(let device, let agentId) = ChatTabScope.of(observedSession) {
+                    return (device, agentId)
+                }
+                return nil
+            }(),
+            onSelectHostedAgent: { device, agentId in
+                windowState.switchToHostedAgent(device: device, agentId: agentId)
+                closeCompactDrawer()
+            }
+        )
     }
 
     /// Chat mode content - the original ChatView implementation
     @ViewBuilder
     private var chatModeContent: some View {
         GeometryReader { proxy in
-            let sidebarWidth: CGFloat = windowState.showSidebar ? clampedSidebarWidth : 0
-            let chatWidth = proxy.size.width - sidebarWidth
-            let effectiveContentWidth = min(chatWidth, 1100)
+            let layout = shellLayout(windowWidth: proxy.size.width)
+            let sidebarDocked = layout.sidebarMode == .docked
+            let sidebarWidth: CGFloat = sidebarDocked ? layout.sidebarWidth : 0
+            let inspectorWidth: CGFloat = layout.contextMode == .docked ? layout.contextWidth : 0
+            let sidebarAutoHidden = layout.sidebarStepsAside
+            let architectBlank = architectStartsBlank
+            let agentBlank = agentCreatorStartsBlank
+            let workflowSplit = (isWorkflowCreation && !architectBlank) || (isAgentCreation && !agentBlank)
+            let creationContentWidth = layout.contentWidth - 2 * theme.space.s16
+            let workflowChatWidth = !workflowSplit ? nil
+                : isAgentCreation
+                ? ChatShellLayout.agentCreationChatWidth(
+                    contentWidth: creationContentWidth, spacing: theme.space.s24, embedded: isEmbedded,
+                    preferred: preferredCreationChatWidth)
+                : ChatShellLayout.workflowCreationChatWidth(
+                    contentWidth: creationContentWidth, spacing: theme.space.s24,
+                    preferred: preferredCreationChatWidth)
+            let workflowStacked = workflowSplit && workflowChatWidth == nil
+            let workflowChatRange = !workflowSplit ? nil
+                : isAgentCreation
+                ? ChatShellLayout.agentCreationChatRange(
+                    contentWidth: creationContentWidth, spacing: theme.space.s24, embedded: isEmbedded)
+                : ChatShellLayout.workflowCreationChatRange(contentWidth: creationContentWidth, spacing: theme.space.s24)
+            let effectiveContentWidth = isCreationLayout
+                ? (workflowChatWidth ?? layout.contentWidth - 2 * theme.space.s16) - 2 * theme.space.s16
+                : layout.threadContentWidth
 
-            HStack(alignment: .top, spacing: 0) {
-                // Sidebar
-                VStack(alignment: .leading, spacing: 0) {
-                    if windowState.showSidebar {
-                        ChatSessionSidebar(
-                            sessions: windowState.filteredSessions,
-                            agentId: windowState.agentId,
-                            currentSessionId: session.sessionId,
-                            width: sidebarWidth,
-                            onSelect: { data in
-                                windowState.openProjectId = nil
-                                windowState.enteredChatFromProjectPage = false
-                                windowState.loadSession(data)
-                                isPinnedToBottom = true
-                            },
-                            onNewChat: { projectId in
-                                // The sidebar's own New Chat button passes nil:
-                                // it is the explicit way to start a chat outside
-                                // any project (⌘N stays in the current one).
-                                if let project = projectManager.project(for: projectId) {
-                                    windowState.startNewChat(in: project)
-                                } else {
-                                    windowState.openProjectId = nil
-                                    windowState.enteredChatFromProjectPage = false
-                                    windowState.startNewChat()
-                                }
-                            },
-                            onDelete: { id in
-                                // Deleting a chat is an explicit destructive
-                                // action: cancel any registry-owned run still
-                                // driving it so a background completion can't
-                                // resurrect the deleted row on save.
-                                if let liveTask = BackgroundTaskManager.shared.liveTask(forSessionId: id) {
-                                    BackgroundTaskManager.shared.cancelTask(liveTask.id)
-                                }
-                                // Detach this window first (registry-shared
-                                // instances are released, never reset in
-                                // place) before the row is deleted.
-                                windowState.prepareForSessionDeletion(id: id)
-                                ChatSessionsManager.shared.delete(id: id)
-                                windowState.refreshSessions()
-                            },
-                            onRename: { id, title in
-                                ChatSessionsManager.shared.rename(id: id, title: title)
-                                // Keep the open view-model in sync so the
-                                // next auto-save doesn't clobber the rename.
-                                if session.sessionId == id {
-                                    session.title = title
-                                }
-                                windowState.refreshSessions()
-                            },
-                            onSetArchived: { id, archived in
-                                ChatSessionsManager.shared.setArchived(id: id, archived: archived)
-                                // Keep the open view-model in sync so the
-                                // next auto-save doesn't clobber the flag.
-                                if session.sessionId == id {
-                                    session.archived = archived
-                                }
-                                windowState.refreshSessions()
-                            },
-                            onSetPinned: { id, pinned in
-                                ChatSessionsManager.shared.setPinned(id: id, pinned: pinned)
-                                // Keep the open view-model in sync so the
-                                // next auto-save doesn't clobber the flag.
-                                if session.sessionId == id {
-                                    session.pinned = pinned
-                                }
-                                windowState.refreshSessions()
-                            },
-                            onSetProject: { id, projectId in
-                                ChatSessionsManager.shared.setProject(id: id, projectId: projectId)
-                                // Keep the open view-model in sync so the
-                                // next auto-save doesn't clobber the move.
-                                if session.sessionId == id {
-                                    session.projectId = projectId
-                                }
-                                windowState.refreshSessions()
-                            },
-                            onDeleteProject: { id in
-                                ChatSessionsManager.shared.deleteProject(id: id)
-                                // The open chat may have been a member; its
-                                // next auto-save must not resurrect the id.
-                                if session.projectId == id {
-                                    session.projectId = nil
-                                }
-                                if windowState.openProjectId == id {
-                                    windowState.openProjectId = nil
-                                }
-                                windowState.refreshSessions()
-                            },
-                            onOpenProject: { project in
-                                windowState.openProjectId = project.id
-                            },
-                            onExport: { metadata, format in
-                                ChatSessionExportCoordinator.run(
-                                    metadataSession: metadata,
-                                    format: format,
-                                    scope: .chat(windowState.windowId)
-                                )
-                            },
-                            onStop: { id in
-                                // This window's own run stops directly (the
-                                // hosting surface may not be registered with
-                                // ChatWindowManager); anything else routes
-                                // through the monitor, which prefers the
-                                // registry task so a detached run is also
-                                // marked cancelled.
-                                if session.sessionId == id {
-                                    session.stop()
-                                } else {
-                                    SessionActivityMonitor.shared.stop(sessionId: id)
-                                }
-                            },
-                            onOpenInNewWindow: { sessionData in
-                                // Open session in a new window via ChatWindowManager
-                                ChatWindowManager.shared.createWindow(
-                                    agentId: sessionData.agentId,
-                                    sessionData: sessionData
-                                )
-                            },
-                            onOpenInNewTab: { sessionData in
-                                windowState.openProjectId = nil
-                                windowState.enteredChatFromProjectPage = false
-                                windowState.openSessionInNewTab(sessionData)
-                            },
-                            onSelectAgent: { newAgentId in
-                                windowState.switchAgent(to: newAgentId)
-                            }
-                        )
+            HStack(alignment: .top, spacing: theme.space.s0) {
+                if !isEmbedded {
+                    MainNavigationRail(windowState: windowState)
+                        .padding(.top, topInset)
+                }
+                HStack(alignment: .top, spacing: theme.space.s0) {
+                // Sidebar, docked beside the content (regular and wide).
+                // Stays mounted at its own width while hidden: opening and
+                // closing only animates the clipped column it slides through,
+                // so the rail is neither rebuilt nor re-laid out per frame.
+                let keepsSidebarMounted = layout.breakpoint != .compact
+                    && windowState.mainSurface == .chat && !isEmbedded
+                let railWidth = sidebarDocked ? sidebarWidth : clampedSidebarWidth
+                VStack(alignment: .leading, spacing: theme.space.s0) {
+                    if sidebarDocked || keepsSidebarMounted {
+                        navigatorRail(width: railWidth)
+                            .padding(.top, topInset)
+                            .frame(width: railWidth)
                     }
                 }
-                .frame(width: sidebarWidth, alignment: .top)
+                .frame(width: sidebarWidth, alignment: .topTrailing)
                 .frame(maxHeight: .infinity, alignment: .top)
                 .clipped()
+                .allowsHitTesting(sidebarDocked)
+                .accessibilityHidden(!sidebarDocked)
                 .overlay(alignment: .trailing) {
-                    if windowState.showSidebar {
-                        sidebarResizeHandle
+                    if sidebarDocked {
+                        sidebarResizeHandle.padding(.top, topInset)
                     }
                 }
                 .zIndex(1)
 
                 // Main chat area
                 ZStack {
-                    // Background
-                    chatBackground
+                    // Keep the titlebar over the window material, outside the chat canvas.
+                    Group {
+                        if windowState.mainSurface == .workflows { WorkflowCanvasGrid() }
+                        else { theme.surface.canvas }
+                    }
+                        .padding(.top, topInset)
 
-                    // Main content — centered with a max readable width
-                    VStack(spacing: 0) {
+                    // Paper's creation split reuses the same live thread and
+                    // composer, with the existing draft editor to its right.
+                    VStack(spacing: theme.space.s12) {
+                    if workflowStacked {
+                        workflowCreationPanePicker
+                    }
+                    HStack(alignment: .top, spacing: isCreationLayout ? theme.space.s24 : 0) {
+                    if !workflowStacked || workflowCreationPane == .chat {
+                    VStack(spacing: theme.space.s0) {
                         // Header
-                        chatHeader
+                        if !isCreationLayout {
+                            chatHeader(contentLeadingX: ChatShellLayout.railWidth + sidebarWidth,
+                                       trailingPaneWidth: inspectorWidth)
+                        }
 
-                        // Content area (show immediately, model discovery is async)
-                        if session.hasAnyModel || session.isDiscoveringModels {
-                            if !session.hasVisibleThreadMessages {
-                                emptyStateView
+
+                        if let workflowTab = activeWorkflowTab {
+                            WorkflowRunTabView(
+                                windowState: windowState, tabId: workflowTab.tabId,
+                                workflowID: workflowTab.workflowID, runID: workflowTab.runID
+                            )
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            // The header spacer above holds the tab strip;
+                            // scrolled form content must not draw under it.
+                            .clipped()
+                        } else if isCreationLayout || session.hasAnyModel || session.isDiscoveringModels || session.isHarnessAgentActive {
+                            // Content area (show immediately, model discovery is async)
+                            if agentBlank {
+                                agentCreatorIntro
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                    .transition(.opacity)
+                            } else if !session.hasVisibleThreadMessages {
+                                if session.isHydratingTranscript {
+                                    // A hibernated tab being woken: its
+                                    // transcript is on its way, so don't
+                                    // flash the new-chat greeting.
+                                    SettingsSpinner()
+                                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                } else if isWorkflowCreation {
+                                    architectChatEmptyState
+                                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                        .transition(.opacity)
+                                } else {
+                                    emptyStateView
+                                }
                             } else {
+                                PendingLocalSetupStrip(
+                                    session: session, ownsFirstRun: OnboardingFirstRun.shared.ownsSession(session))
                                 // Message thread. While a prompt
                                 // overlay is mounted, blur the thread
                                 // and stop hit-testing so the prompt
@@ -9073,27 +11822,68 @@ struct ChatView: View {
                                     .blur(radius: promptOverlayObscuresConversation ? 1.5 : 0)
                                     .allowsHitTesting(!isPromptOverlayActive)
                                     .transition(.opacity.combined(with: .move(edge: .bottom)))
-                                    .animation(theme.springAnimation(), value: promptOverlayObscuresConversation)
+                                    .animation(theme.motion.springAnimation, value: promptOverlayObscuresConversation)
                             }
 
                             // Mode 2 connection status (connecting / error +
                             // Retry) shown directly above the composer so the
                             // gated send has a visible explanation.
+                            // Every notice above the composer shares the input
+                            // card's 20 pt horizontal inset (see
+                            // `FloatingInputCard.inputCard`) so they read as
+                            // one stacked group with the same left/right edges.
                             remoteAgentConnectionNotice
-                                .frame(maxWidth: 1100)
-                                .frame(maxWidth: .infinity)
-                                .animation(theme.springAnimation(), value: windowState.remoteAgentConnectionPhase)
+                                .readableColumnRow()
+                                .animation(theme.motion.springAnimation, value: windowState.remoteAgentConnectionPhase)
+
+                            // Workspace team agent offline / unpaired /
+                            // connecting, or a read-only teammate
+                            // conversation: explains the locked composer and
+                            // offers Retry / Connect.
+                            if observedSession.workspaceContext?.isServedForTeammate == false {
+                                Text("The agent owner can review this conversation and its history.", bundle: .module)
+                                    .textStyle(.micro)
+                                    .foregroundStyle(theme.text.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .readableColumnRow()
+                            }
+
+                            ChatPersistenceNotice(sessionId: observedSession.sessionId)
+                                .readableColumnRow()
+
+                            // Spaced from the notice above (the repair banner),
+                            // and from the window edge when there is no input
+                            // card below it to do that.
+                            if composerLock != nil {
+                                composerLockNotice
+                                    .padding(.top, theme.space.s8)
+                                    .padding(.bottom, isReadOnlyConversation ? theme.space.s12 : theme.space.s0)
+                                    .readableColumnRow()
+                                    .animation(theme.motion.springAnimation, value: composerLock)
+                            }
+
+                            if let locked = lockedModelUnavailable {
+                                lockedModelUnavailableNotice(locked)
+                                    .padding(.top, theme.space.s8)
+                                    .readableColumnRow()
+                            }
 
                             // Run-liveness notice (slow / stalled) so a run
                             // with no visible progress reads as a knowable
                             // state with a recovery action, not a hang.
                             runProgressNotice
-                                .frame(maxWidth: 1100)
-                                .frame(maxWidth: .infinity)
+                                .readableColumnRow()
                                 .animation(
-                                    theme.springAnimation(),
-                                    value: observedSession.runProgressState
+                                    theme.motion.springAnimation,
+                                    value: observedSession.runProgress.state
                                 )
+
+                            syncNotice
+                                .readableColumnRow()
+                                .animation(theme.motion.springAnimation, value: observedSession.remoteReply == nil)
+                                .animation(theme.motion.springAnimation, value: observedSession.hostApprovals)
+                                .animation(theme.motion.springAnimation, value: observedSession.hostPrompts)
+                                .task(id: hostedWatchKey) { await watchHostedRun() }
 
                             // Follow-up suggestions render as a thread row
                             // beneath the assistant message (see
@@ -9105,94 +11895,133 @@ struct ChatView: View {
                             // input is the obvious place to type, and
                             // accidental sends here can't race the
                             // prompt resolution.
-                            FloatingInputCard(
-                                text: $observedSession.input,
-                                selectedModel: $observedSession.selectedModel,
-                                pendingAttachments: $observedSession.pendingAttachments,
-                                isContinuousVoiceMode: $observedSession.isContinuousVoiceMode,
-                                voiceInputState: $observedSession.voiceInputState,
-                                showVoiceOverlay: $observedSession.showVoiceOverlay,
-                                pickerItems: filteredPickerItems,
-                                activeModelOptions: $observedSession.activeModelOptions,
-                                isStreaming: observedSession.isSendActiveForComposer,
-                                // Hide Stop ONLY while the redaction review
-                                // sheet is actually on screen (the sheet owns
-                                // its own Cancel and the streaming Task is
-                                // suspended in its continuation). Crucially
-                                // this is NOT gated on the broader
-                                // "before first token" window, so Stop stays
-                                // available during model load / prefill — the
-                                // long pause a big model spends loading from
-                                // disk while the typing-indicator shimmer is up.
-                                isPrivacyReviewSheetVisible: pendingRedactionReview != nil,
-                                supportsImages: observedSession.selectedModelSupportsImages,
-                                estimatedContextTokens: observedSession.estimatedContextTokens,
-                                appliesAgentReasoningDefault: observedSession.appliesAgentReasoningDefault,
-                                contextBreakdown: observedSession.estimatedContextBreakdown,
-                                sessionSpendMicro: observedSession.sessionRouterSpendMicro,
-                                isRouterBilledSession: observedSession.isOsaurusRouterSession,
-                                imageComposerSettings: $observedSession.imageComposerSettings,
-                                onSend: { manualText in
-                                    if let manualText = manualText {
-                                        observedSession.input = manualText
-                                    }
-                                    if observedSession.isSendActiveForComposer {
-                                        observedSession.enqueueSend(
-                                            observedSession.input,
-                                            attachments: observedSession.pendingAttachments
+                            // Hidden on a read-only conversation (a teammate's, or one
+                            // from the paired iPhone): nothing can be sent there, and the
+                            // notice above says where it continues.
+                            if !isReadOnlyConversation {
+                                if let error = observedSession.turnParametersError {
+                                    Text(error).textStyle(.caption).foregroundStyle(theme.status.error.foreground)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .readableColumnRow()
+                                }
+                                FloatingInputCard(
+                                    text: $observedSession.input,
+                                    selectedModel: $observedSession.selectedModel,
+                                    pendingAttachments: $observedSession.pendingAttachments,
+                                    isContinuousVoiceMode: $observedSession.isContinuousVoiceMode,
+                                    voiceInputState: $observedSession.voiceInputState,
+                                    showVoiceOverlay: $observedSession.showVoiceOverlay,
+                                    pickerItems: filteredPickerItems,
+                                    activeModelOptions: $observedSession.activeModelOptions,
+                                    turnOverrides: $observedSession.nextTurnOverrides,
+                                    isStreaming: observedSession.isSendActiveForComposer
+                                        || observedSession.isWaitingOnHost,
+                                    // Hide Stop ONLY while the redaction review
+                                    // sheet is actually on screen (the sheet owns
+                                    // its own Cancel and the streaming Task is
+                                    // suspended in its continuation). Crucially
+                                    // this is NOT gated on the broader
+                                    // "before first token" window, so Stop stays
+                                    // available during model load / prefill — the
+                                    // long pause a big model spends loading from
+                                    // disk while the typing-indicator shimmer is up.
+                                    isPrivacyReviewSheetVisible: pendingRedactionReview != nil,
+                                    supportsImages: observedSession.selectedModelSupportsImages,
+                                    estimatedContextTokens: observedSession.estimatedContextTokens,
+                                    appliesAgentReasoningDefault: observedSession.appliesAgentReasoningDefault,
+                                    contextBreakdown: observedSession.estimatedContextBreakdown,
+                                    sessionSpendMicro: observedSession.sessionRouterSpendMicro,
+                                    sessionCachedInputLabel: {
+                                        let stats = observedSession.sessionRouterCacheStats
+                                        return OsaurusRouter.formatCachedInputLabel(
+                                            cachedTokens: stats.cachedInputTokens,
+                                            inputTokens: stats.inputTokens
                                         )
-                                    } else {
-                                        observedSession.sendCurrent()
-                                    }
-                                },
-                                onStop: { observedSession.stop() },
-                                focusTrigger: focusTrigger,
-                                agentId: windowState.agentId,
-                                windowId: windowState.windowId,
-                                isCompact: windowState.showSidebar,
-                                isEmptyChat: !observedSession.hasVisibleThreadMessages,
-                                onClearChat: { observedSession.reset() },
-                                modelSwitchContinuityWarning:
-                                    observedSession.modelSwitchContinuityWarning,
-                                onDismissModelSwitchContinuityWarning: {
-                                    observedSession.modelSwitchContinuityWarning = nil
-                                },
-                                onCaptureScreenshot: { observedSession.captureScreenshotFromSlashCommand() },
-                                onGenerateTitle: { observedSession.generateTitleFromSlashCommand() },
-                                onSkillSelected: { skillId in
-                                    observedSession.pendingOneOffSkillId = skillId
-                                },
-                                pendingSkillId: $observedSession.pendingOneOffSkillId,
-                                autoSpeakAssistant: $observedSession.autoSpeakAssistant,
-                                queuedSend: $observedSession.queuedSend,
-                                onSendNow: { observedSession.sendNowInterrupting() },
-                                onCancelQueued: { observedSession.cancelQueuedSend() },
-                                onAddCredits: { showTopUpSheet = true },
-                                isModelPinned: windowState.selectedDiscoveredAgentProviderId != nil,
-                                pinnedModelLabel: pinnedModelChipLabel,
-                                remoteConnectionPending: windowState.remoteAgentConnectionPhase
-                                    == .connecting,
-                                isRemoteAgentRun: windowState.selectedDiscoveredAgentProviderId
-                                    != nil,
-                                inputHistoryProvider: { [weak observedSession] in
-                                    guard let observedSession else { return [] }
-                                    return ChatInputHistory.entries(from: observedSession.turns)
-                                },
-                                inputHistoryKey: observedSession.sessionId,
-                                compactionState: observedSession.compactionState,
-                                canCompactConversation: observedSession
-                                    .canManuallyCompactConversation,
-                                onCompactConversation: {
-                                    observedSession.requestManualCompaction()
-                                },
-                                warmupController: observedSession.warmupController,
-                                folderState: observedSession.folderState
-                            )
-                            .frame(maxWidth: 1100)
-                            .frame(maxWidth: .infinity)
-                            .opacity(isPromptOverlayActive ? 0.55 : 1.0)
-                            .allowsHitTesting(!isPromptOverlayActive)
-                            .animation(theme.springAnimation(), value: isPromptOverlayActive)
+                                    }(),
+                                    isRouterBilledSession: observedSession.isOsaurusRouterSession,
+                                    workspacePoolLabel: workspacePoolLabel,
+                                    workspacePoolId: poolBillingWorkspaceId,
+                                    imageComposerSettings: $observedSession.imageComposerSettings,
+                                    onSend: { manualText in
+                                        if let manualText = manualText {
+                                            observedSession.input = manualText
+                                        }
+                                        if observedSession.isSendActiveForComposer {
+                                            observedSession.enqueueSend(
+                                                observedSession.input,
+                                                attachments: observedSession.pendingAttachments
+                                            )
+                                        } else {
+                                            observedSession.sendCurrent(directUserSend: true)
+                                        }
+                                    },
+                                    onStop: {
+                                        if observedSession.isWaitingOnHost {
+                                            observedSession.stopHostedRun()
+                                        } else {
+                                            observedSession.stop()
+                                        }
+                                    },
+                                    focusTrigger: focusTrigger,
+                                    agentId: windowState.agentId,
+                                    windowId: windowState.windowId,
+                                    isCompact: layout.usesCompactComposer || isCreationLayout,
+                                    isEmptyChat: !observedSession.hasVisibleThreadMessages,
+                                    onClearChat: { observedSession.reset() },
+                                    onDraftChange: { observedSession.noteComposerDraft($0) },
+                                    onWillRehydrate: { observedSession.promoteComposerDraft() },
+                                    modelSwitchContinuityWarning:
+                                        observedSession.modelSwitchContinuityWarning,
+                                    onDismissModelSwitchContinuityWarning: {
+                                        observedSession.modelSwitchContinuityWarning = nil
+                                    },
+                                    onCaptureScreenshot: { observedSession.captureScreenshotFromSlashCommand() },
+                                    onGenerateTitle: { observedSession.generateTitleFromSlashCommand() },
+                                    onSkillSelected: { skillId in
+                                        observedSession.pendingOneOffSkillId = skillId
+                                    },
+                                    pendingSkillId: $observedSession.pendingOneOffSkillId,
+                                    autoSpeakAssistant: $observedSession.autoSpeakAssistant,
+                                    queuedSend: $observedSession.queuedSend,
+                                    onSendNow: { observedSession.sendNowInterrupting() },
+                                    onCancelQueued: { observedSession.cancelQueuedSend() },
+                                    onAddCredits: { showTopUpSheet = true },
+                                    modelPin: composerModelPin,
+                                    isPinnedModelUnavailable: lockedModelUnavailable != nil,
+                                    pinnedModelLabel: pinnedModelChipLabel,
+                                    remoteConnectionPending: windowState.remoteAgentConnectionPhase
+                                        == .connecting,
+                                    composerLock: composerLock,
+                                    sendBlocked: composerSendBlocked,
+                                    isRemoteAgentRun: isRemoteAgentChrome,
+                                    inputHistoryProvider: { [weak observedSession] in
+                                        guard let observedSession else { return [] }
+                                        return ChatInputHistory.entries(from: observedSession.turns)
+                                    },
+                                    inputHistoryKey: observedSession.sessionId,
+                                    compactionState: observedSession.compactionState,
+                                    canCompactConversation: observedSession
+                                        .canManuallyCompactConversation,
+                                    onCompactConversation: {
+                                        observedSession.requestManualCompaction()
+                                    },
+                                    warmupController: observedSession.warmupController,
+                                    folderState: observedSession.folderState,
+                                    minimumEditorHeight: isCreationLayout ? 48 : 52,
+                                    minimumCardHeight: 104
+                                )
+                                // Passed through the environment rather than as
+                                // an init argument: the initializer above is at
+                                // the type-checker's limit already.
+                                .environment(\.composerGeneration, observedSession.composerGeneration)
+                                .environment(\.composerAllowsWorkflowSelection, windowState.mainSurface != .workflows)
+                                .modifier(WorkflowCreationComposerFrame(isActive: isCreationLayout))
+                                .frame(maxWidth: layout.composerFrameWidth)
+                                .frame(maxWidth: .infinity)
+                                .opacity(isPromptOverlayActive ? 0.55 : 1.0)
+                                .allowsHitTesting(!isPromptOverlayActive)
+                                .animation(theme.motion.springAnimation, value: isPromptOverlayActive)
+                            }
                         } else {
                             // No models empty state
                             ChatEmptyState(
@@ -9204,7 +12033,7 @@ struct ChatView: View {
                                 onOpenModelManager: {
                                     AppDelegate.shared?.showManagementWindow(initialTab: .models)
                                 },
-                                onUseFoundation: windowState.foundationModelAvailable
+                                onUseFoundation: windowState.foundationModelAvailable && lockedAgentModel == nil
                                     ? {
                                         session.selectedModel = session.pickerItems.firstChatCapable?.id ?? "foundation"
                                     } : nil,
@@ -9237,77 +12066,222 @@ struct ChatView: View {
                             )
                         }
                     }
-                    .animation(theme.springAnimation(responseMultiplier: 0.9), value: session.hasVisibleThreadMessages)
+                    .animation(
+                        theme.motion.springAnimation(responseMultiplier: 0.9),
+                        value: session.hasVisibleThreadMessages
+                    )
+                    .modifier(WorkflowCreationChatFrame(isActive: isCreationLayout, width: workflowChatWidth))
+                    // Prompt cards belong to the conversation they ask about:
+                    // scoped to this column, never over the sidebar or draft.
+                    .overlay { promptOverlayLayer }
+                    .overlay(alignment: .trailing) {
+                        if let width = workflowChatWidth, let range = workflowChatRange {
+                            creationChatResizeHandle(width: width, range: range)
+                        }
+                    }
+                    }
+                    if workflowSplit && (!workflowStacked || workflowCreationPane == .workflow) {
+                        if isAgentCreation {
+                            AgentDraftPanel(
+                                sessionId: session.sessionId,
+                                isGenerating: session.isStreaming,
+                                userMessageCount: session.turns.filter { $0.role == .user && $0.origin != .authored }.count,
+                                onStartChat: { windowState.startNewChat(with: $0) },
+                                onCreated: onAgentCreated,
+                                startsEditing: agentCreatorFillingIn)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                                .transition(.opacity.combined(with: .move(edge: .trailing)))
+                        } else {
+                            ArchitectSidebarPanel(
+                                sessionId: session.sessionId,
+                                isGenerating: session.isStreaming,
+                                onAsk: { session.input = $0 },
+                                onSend: { session.send($0) },
+                                onBrowse: { windowState.showWorkflowsHome(tab: .all) })
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .transition(.opacity.combined(with: .move(edge: .trailing)))
+                        }
+                    }
+                    }
+                    }
+                    .padding(.horizontal, isCreationLayout ? theme.space.s16 : 0)
+                    .padding(.top, isCreationLayout ? topInset + theme.space.s16 : 0)
+                    .padding(.bottom, isCreationLayout ? theme.space.s16 : 0)
+                    .animation(animatesShellLayout ? theme.motion.standard : nil, value: isCreationLayout)
+                    .animation(animatesShellLayout ? theme.motion.springAnimation : nil, value: architectBlank)
+                    .animation(animatesShellLayout ? theme.motion.springAnimation : nil, value: agentBlank)
+                    .opacity(isChatContentCovered ? 0 : 1)
+                    .allowsHitTesting(!isChatContentCovered)
+                    .accessibilityHidden(isChatContentCovered)
 
-                    // Project detail page, shown over the chat surface while
-                    // a project is open from the sidebar's Projects tab.
-                    // Opaque and full-size so the chat beneath neither shows
-                    // nor receives events.
-                    if let project = projectManager.project(for: windowState.openProjectId) {
-                        ProjectDetailView(
-                            project: project,
-                            currentAgentId: windowState.agentId,
-                            onOpenSession: { data in
-                                windowState.openProjectId = nil
-                                windowState.enteredChatFromProjectPage = true
-                                windowState.loadSession(data)
-                                isPinnedToBottom = true
-                            },
-                            onNewChat: { windowState.startNewChat(in: project) },
-                            onDelete: {
-                                ChatSessionsManager.shared.deleteProject(id: project.id)
-                                if session.projectId == project.id {
-                                    session.projectId = nil
-                                }
-                                windowState.openProjectId = nil
-                                windowState.refreshSessions()
-                            }
-                        )
-                        .transition(.opacity)
-                        .zIndex(2)
+                    ZStack {
+                        if windowState.mainSurface == .workflows && windowState.showsWorkflowLibrary {
+                            WorkflowMainDestination(windowState: windowState)
+                                .padding(.top, Self.headerHeight(theme))
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .transition(pageTransition)
+                        } else if windowState.mainSurface == .insights {
+                            InsightsView()
+                                .padding(.top, Self.headerHeight(theme))
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .transition(pageTransition)
+                        } else if windowState.mainSurface == .help {
+                            HelpView()
+                                .padding(.top, Self.headerHeight(theme))
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .transition(pageTransition)
+                        } else if windowState.mainSurface == .newAgent {
+                            AgentCreatorMainDestination(windowState: windowState)
+                                .padding(.top, Self.headerHeight(theme))
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .transition(pageTransition)
+                        } else if windowState.mainSurface == .settings {
+                            SettingsMainDestination(
+                                topInset: topInset,
+                                sidebarWidth: clampedSidebarWidth,
+                                isSidebarCollapsed: windowState.isSettingsSidebarCollapsed,
+                                sidebarWidthRange: Self.sidebarWidthRange,
+                                storedSidebarWidth: $storedSidebarWidth,
+                                liveSidebarWidth: $liveSidebarWidth
+                            )
+                            .equatable()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .transition(pageTransition)
+                        }
+                    }
+                    .zIndex(2)
+                }
+                .environment(\.workflowSharedGrid, windowState.mainSurface == .workflows)
+                // Computer Use gated-action confirmations. Process-wide queue so
+                // the in-tool loop (which has no ChatSession handle) can park a
+                // request the user resolves; rendered above the input bar like the
+                // other prompt cards, inside the content column.
+                .overlay { ComputerUseConfirmOverlay() }
+                // Compact windows: the sidebar floats over the content
+                // instead of squeezing it.
+                .overlay { compactSidebarOverlay(layout: layout) }
+
+                // The column a wide window sets aside for the File Changes
+                // card: the same canvas as the conversation, so the card
+                // reads as floating beside it.
+                theme.surface.canvas
+                    .padding(.top, topInset)
+                    .frame(width: inspectorWidth)
+                }
+                // Everything beside the rail meets it with one rounded
+                // corner, whichever surface or sidebar is first. Leave the
+                // titlebar above it intact.
+                .mask {
+                    VStack(spacing: theme.space.s0) {
+                        Rectangle().frame(height: topInset)
+                        UnevenRoundedRectangle(topLeadingRadius: isEmbedded ? 0 : theme.radius.xlarge, style: .continuous)
                     }
                 }
-                .animation(theme.animationQuick(), value: windowState.openProjectId)
             }
+            // The card sits in that column when there is one, otherwise
+            // over the content's trailing edge.
+            .overlay {
+                if !isEmbedded {
+                    floatingContextCard(
+                        contentWidth: layout.contentWidth, reservedWidth: inspectorWidth, height: proxy.size.height)
+                }
+            }
+            .animation(animatesShellLayout ? theme.motion.standard : nil, value: inspectorWidth)
+            .animation(animatesShellLayout ? theme.motion.quick : nil, value: layout.breakpoint)
+            .onAppear { DispatchQueue.main.async { animatesShellLayout = true } }
+            // Publish the geometry-driven step-aside so the toolbar toggle
+            // and tab strip describe the sidebar actually on screen.
+            .onChange(of: sidebarAutoHidden, initial: true) { _, hidden in
+                if windowState.isSidebarAutoHidden != hidden {
+                    windowState.isSidebarAutoHidden = hidden
+                }
+            }
+            .onChange(of: layout.breakpoint, initial: true) { _, breakpoint in
+                windowState.updateShellBreakpoint(breakpoint)
+            }
+            // A question from the Architect needs the chat: in the stacked
+            // workflow-creation layout, bring the Chat half forward.
+            .onChange(of: session.promptQueue.current?.id) { _, id in
+                if id != nil && workflowStacked { workflowCreationPane = .chat }
+            }
+            .onChange(of: session.sessionId, initial: true) { _, _ in
+                workflowCreationPane = .opening(
+                    hasChat: session.hasVisibleThreadMessages,
+                    hasSteps: !(architectDraft?.definition.nodes.isEmpty ?? true))
+            }
+            // The rails' on-screen widths: the strip insets its leading and
+            // trailing edges by them so the tabs span exactly the chat
+            // column. `sidebarWidth` is already 0 while hidden or stepped
+            // aside and live during a resize drag (the persisted default
+            // only updates on release), so the strip never lags the rail.
+            .onChange(of: sidebarWidth, initial: true) { _, width in
+                if windowState.sidebarColumnWidth != width {
+                    windowState.sidebarColumnWidth = width
+                }
+            }
+            // `toggleSidebar` publishes the width it expects ahead of layout;
+            // when the layout disagrees (the rail stepping aside for the
+            // inspector) the width above may not change, so correct it here.
+            .onChange(of: windowState.showSidebar) { _, _ in
+                if !isEmbedded, windowState.sidebarColumnWidth != sidebarWidth {
+                    windowState.sidebarColumnWidth = sidebarWidth
+                }
+            }
+            .onChange(of: inspectorWidth, initial: true) { _, width in
+                if windowState.inspectorColumnWidth != width {
+                    windowState.inspectorColumnWidth = width
+                }
+            }
+            // Deliberately NO `.onDisappear` reset of these published values.
+            // `ChatWindowRootView` remounts `ChatView` (`.id` on the session)
+            // for every tab switch / new tab, and SwiftUI runs the incoming
+            // instance's `initial: true` publish BEFORE the outgoing
+            // instance's `onDisappear`. A reset there found the value already
+            // equal, so the incoming publish was skipped and the reset then
+            // zeroed it: the tabs ran under the open inspector until its
+            // width next changed. The replacement instance republishes the
+            // real geometry, and a window that closes takes its state with it.
         }
-        // Allow the window to narrow down to 680pt so it tiles beside other
-        // windows. With the sidebar open by default (260pt) plus the tab strip,
-        // anything narrower squished the chat column; the content is responsive
-        // (chips collapse to icons, tabs fold into an overflow menu), so a narrow
-        // width reflows the same UI rather than clipping it.
+        .background(chatBackground)
+        // Allow the window to narrow down to the shell's compact minimum so it
+        // tiles beside other windows. Below the regular breakpoint the sidebar
+        // and context panel float over the content (`ChatShellLayout`), so a
+        // narrow width reflows the same UI rather than clipping it.
+        //
+        // The floor is the window's `minimumContentSize`: the 560x480 design
+        // minimum, clamped by `ChatWindowManager` to what the window's screen
+        // can show so a small display never gets a window taller than itself
+        // (#2728). The hosting controller mirrors this into the panel's
+        // `contentMinSize`, so it is the single source of truth for the floor.
         //
         // The ideal size is what a brand-new window actually opens at: the
         // hosting controller pushes the root view's fitting size onto the
         // window when it is attached, overriding the panel's content rect.
         // Keep it tied to the shared default so both agree.
         .frame(
-            minWidth: 680,
-            idealWidth: WindowConfiguration.chat.defaultSize.width,
+            minWidth: isEmbedded ? nil : windowState.minimumContentSize.width,
+            idealWidth: isEmbedded ? nil : WindowConfiguration.chat.defaultSize.width,
             maxWidth: .infinity,
-            minHeight: 575,
-            idealHeight: WindowConfiguration.chat.defaultSize.height,
+            minHeight: isEmbedded ? nil : windowState.minimumContentSize.height,
+            idealHeight: isEmbedded ? nil : WindowConfiguration.chat.defaultSize.height,
             maxHeight: .infinity
         )
-        // Matches the window's rounded corners; in full screen the window is
-        // square, so rounding would cut visible notches into the content.
-        .clipShape(
-            RoundedRectangle(
-                cornerRadius: windowState.isFullScreen ? 0 : 24,
-                style: .continuous
-            )
-        )
-        .ignoresSafeArea()
-        .onReceive(NotificationCenter.default.publisher(for: .chatToolbarBackToProject)) { notification in
-            guard let targetWindowId = notification.userInfo?["windowId"] as? UUID,
-                targetWindowId == windowState.windowId
-            else { return }
-            windowState.openProjectId = session.projectId
-        }
+        // No corner clipping here: the panel is opaque and AppKit masks the
+        // window frame at the system radius, which differs between macOS
+        // releases (26 and 27 disagree). A hardcoded radius left the
+        // content clipped tighter than the frame on 27, exposing the panel
+        // background in the corners.
+        .ignoresSafeArea(edges: isEmbedded ? [] : .all)
         // Keep the live session's membership in sync with sidebar/other-window
         // moves: compose reads `session.projectId` every turn, so a stale copy
         // keeps injecting the old project's instructions and knowledge.
         .onReceive(NotificationCenter.default.publisher(for: .chatSessionProjectDidChange)) { notification in
             if let clearedProjectId = notification.userInfo?["clearedProjectId"] as? UUID {
+                // Every tab, not just the one on screen: a background
+                // tab's next save would otherwise restore the deleted id.
+                for tab in windowState.tabs where tab.session.projectId == clearedProjectId {
+                    tab.session.projectId = nil
+                }
                 if session.projectId == clearedProjectId { session.projectId = nil }
                 return
             }
@@ -9321,19 +12295,8 @@ struct ChatView: View {
             focusTrigger &+= 1
             isPinnedToBottom = true
         }
-        .onReceive(NotificationCenter.default.publisher(for: .chatToolbarSelectDiscoveredAgent)) { notification in
-            guard let targetWindowId = notification.userInfo?["windowId"] as? UUID,
-                targetWindowId == windowState.windowId,
-                let agent = notification.object as? DiscoveredAgent
-            else { return }
-            selectDiscoveredAgent(agent)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .chatToolbarSelectRelayAgent)) { notification in
-            guard let targetWindowId = notification.userInfo?["windowId"] as? UUID,
-                targetWindowId == windowState.windowId,
-                let relay = notification.object as? PairedRelayAgent
-            else { return }
-            connectToRelayAgent(relay)
+        .onChange(of: windowState.pendingRelayConnect) { _, _ in
+            consumePendingRelayConnect()
         }
         .onReceive(NotificationCenter.default.publisher(for: .vadStartNewSession)) { notification in
             // VAD requested a new session for a specific agent
@@ -9348,34 +12311,18 @@ struct ChatView: View {
         .onAppear {
             setupKeyMonitor()
             observedSession.notifySessionBecameActive()
+            // A team-agent tab may have queued its connect before this view
+            // mounted (tab remount swaps the `ChatView` instance).
+            consumePendingRelayConnect()
+
+            // Window-only from here: the close callback.
+            guard !isEmbedded else { return }
 
             // Register close callback with ChatWindowManager
             ChatWindowManager.shared.setCloseCallback(for: windowState.windowId) { [weak windowState] in
                 windowState?.cleanup()
                 windowState?.session.save()
             }
-
-            // Compute the conditional flags so we don't surface the
-            // "restart sandbox" / "review paired devices" pages to users
-            // who would have nothing to do on them.
-            let hasSandbox: Bool = {
-                #if os(macOS)
-                    if #available(macOS 26, *) {
-                        return SandboxConfigurationStore.load().setupComplete
-                    }
-                #endif
-                return false
-            }()
-            let knownAgentAddrs = Set(
-                AgentManager.shared.agents.compactMap { $0.agentAddress }
-            )
-            let hasLegacyPairedKeys = !APIKeyManager.shared
-                .legacyMasterScopedKeys(knownAgentAddresses: knownAgentAddrs)
-                .isEmpty
-            pendingWhatsNew = WhatsNewGate.pendingAutoShowRelease(
-                hasSandbox: hasSandbox,
-                hasLegacyPairedKeys: hasLegacyPairedKeys
-            )
         }
         .onDisappear {
             cleanupKeyMonitor()
@@ -9384,10 +12331,10 @@ struct ChatView: View {
             // Remote agent active: (re)apply the pinned model when the device's
             // models arrive after the async connect. No agent → leave the user's
             // selection alone.
-            guard let providerId = windowState.selectedDiscoveredAgentProviderId else { return }
+            guard let providerId = windowState.selectedRemoteAgentProviderId else { return }
             applyRemoteAgentModelPin(providerId: providerId)
         }
-        .onChange(of: windowState.selectedDiscoveredAgentProviderId) { _, providerId in
+        .onChange(of: windowState.selectedRemoteAgentProviderId) { _, providerId in
             guard providerId == nil else { return }
             // Remote agent deselected — drop the pin and restore the local
             // agent's preferred model.
@@ -9410,131 +12357,12 @@ struct ChatView: View {
                 session.rebuildVisibleBlocks()
             }
         }
+        .onChange(of: windowState.agentId, initial: true) { _, agentId in
+            if agentId == Agent.architectId { windowState.showWorkflowDetail() }
+            windowState.openInspectorForArchitect()
+        }
         .environment(\.theme, windowState.theme)
-        .tint(theme.accentColor)
-        .sheet(item: $pendingWhatsNew) { release in
-            WhatsNewModal(
-                release: release,
-                onClose: {
-                    WhatsNewGate.markShown(version: release.version)
-                    pendingWhatsNew = nil
-                },
-                onAction: { action in
-                    // Only perform the deep link here. The modal owns
-                    // dismissal — it stays open on non-final pages and calls
-                    // `onClose` (which marks the release seen) when the CTA is
-                    // on the last page, so a mid-carousel CTA doesn't skip the
-                    // remaining notes.
-                    switch action {
-                    case .openSandboxSettings:
-                        AppDelegate.shared?.showManagementWindow(initialTab: .sandbox)
-                    case .openAPIKeysSettings:
-                        AppDelegate.shared?.showManagementWindow(initialTab: .server)
-                    case .openSecurityDoc(let url):
-                        NSWorkspace.shared.open(url)
-                    case .openStorageSettings, .exportPlaintextBackup:
-                        // Both actions land on the storage-encryption panel,
-                        // which lives on the Privacy tab now that the
-                        // standalone Storage tab is gone.
-                        // `exportPlaintextBackup` doesn't auto-open
-                        // the file picker — the user clicks
-                        // "Export plaintext backup…" once they're
-                        // there, which is the safer flow because it
-                        // forces them to pick a destination.
-                        AppDelegate.shared?.showManagementWindow(initialTab: .privacy)
-                    case .openPrivacySettings:
-                        AppDelegate.shared?.showManagementWindow(initialTab: .privacy)
-                    case .openComputerUseSettings:
-                        AppDelegate.shared?.showManagementWindow(initialTab: .computerUse)
-                    case .openCredits:
-                        AppDelegate.shared?.showManagementWindow(initialTab: .credits)
-                    case .openImageGeneration:
-                        AppDelegate.shared?.showManagementWindow(initialTab: .imageGeneration)
-                    case .openSearchSettings:
-                        AppDelegate.shared?.showManagementWindow(initialTab: .search)
-                    case .openKnowledgeSettings:
-                        AppDelegate.shared?.showManagementWindow(initialTab: .knowledge)
-                    case .openBrowserSettings:
-                        AppDelegate.shared?.showManagementWindow(initialTab: .browser)
-                    case .openChannelsSettings:
-                        AppDelegate.shared?.showManagementWindow(initialTab: .agentChannels)
-                    case .openProjects:
-                        // Projects live in this window's sidebar; open the
-                        // sidebar (it may be collapsed) and flip its lens to
-                        // Projects rather than opening the management window.
-                        withAnimation(windowState.theme.animationQuick()) {
-                            windowState.showSidebar = true
-                        }
-                        ProjectManager.shared.pendingRevealProjectsTab = true
-                    case .openOrchestratorSettings:
-                        AppDelegate.shared?.showManagementWindow(initialTab: .orchestrator)
-                    case .openModelDownloads(let modelId):
-                        // Ride the one-shot pending request (mirrors
-                        // `pendingRemoteAgentDetailId`) so the detail sheet
-                        // opens for both a fresh and a reused Models window.
-                        if let modelId {
-                            ManagementStateManager.shared.pendingModelDetailId = modelId
-                        }
-                        AppDelegate.shared?.showManagementWindow(initialTab: .models)
-                    case .openSubagentSettings:
-                        // Land on the first custom (non-built-in) agent's
-                        // Subagents tab (per-agent spawn / image config). With
-                        // no custom agent yet, just open the Agents grid so the
-                        // user can create one.
-                        if let subagentAgentId = AgentManager.shared.agents
-                            .first(where: { !$0.isBuiltIn })?.id
-                        {
-                            AppDelegate.shared?.showAgentDetail(
-                                agentId: subagentAgentId,
-                                tab: "subagents"
-                            )
-                        } else {
-                            AppDelegate.shared?.showManagementWindow(initialTab: .agents)
-                        }
-                    }
-                }
-            )
-            .environment(\.theme, windowState.theme)
-        }
-        // Session-scoped sandbox Changes list + undo, opened from the
-        // toolbar's Changes button.
-        .sheet(isPresented: $windowState.isChangesSheetPresented) {
-            if let sid = session.sessionId {
-                ChatChangesView(
-                    sessionId: sid,
-                    onClose: { windowState.isChangesSheetPresented = false }
-                )
-                .environment(\.theme, windowState.theme)
-            }
-        }
-        .sheet(item: $pendingDiscoveredAgent) { agent in
-            if agent.isUnverifiableSecureChannelPeer {
-                // Claims encryption (osc=1) but advertised no address to pin —
-                // an inconsistent advertisement (spoof, or a peer that needs to
-                // upgrade / assign an identity). Refuse rather than connect
-                // without any identity verification.
-                UnverifiablePeerSheet(agentName: agent.name) {
-                    pendingDiscoveredAgent = nil
-                }
-                .environment(\.theme, windowState.theme)
-            } else if agent.address != nil {
-                PairingSheet(agent: agent) { apiKey, isPermanent in
-                    connectToDiscoveredAgent(agent, token: apiKey, isEphemeral: !isPermanent)
-                    pendingDiscoveredAgent = nil
-                } onCancel: {
-                    pendingDiscoveredAgent = nil
-                }
-                .environment(\.theme, windowState.theme)
-            } else {
-                BonjourTokenSheet(agentName: agent.name) { token in
-                    connectToDiscoveredAgent(agent, token: token)
-                    pendingDiscoveredAgent = nil
-                } onCancel: {
-                    pendingDiscoveredAgent = nil
-                }
-                .environment(\.theme, windowState.theme)
-            }
-        }
+        .tint(theme.action.primary.default.background)
         // Privacy-filter redaction review. The presenter closure is
         // registered in `.task` below; when the pipeline detects PII
         // it suspends on a continuation in `RedactionReviewState`,
@@ -9559,6 +12387,9 @@ struct ChatView: View {
             // open windows still behave as last-write-wins; the token
             // is how we drop *this* window's registration at teardown
             // without disturbing whichever window is currently active.
+            // Settings' embedded chat must not take these from the
+            // chat windows.
+            guard !isEmbedded else { return }
             let token = PrivacyReviewService.shared.registerPresenter { state in
                 pendingRedactionReview = state
             }
@@ -9586,84 +12417,6 @@ struct ChatView: View {
         }
     }
 
-    /// Called when the user picks a discovered agent from the menu.
-    /// If a persistent (non-ephemeral) paired provider already exists for this agent,
-    /// connect directly without showing the pairing sheet.
-    private func selectDiscoveredAgent(_ agent: DiscoveredAgent) {
-        let manager = RemoteProviderManager.shared
-        let hasPersistentProvider = manager.configuration.providers.contains(where: {
-            $0.providerType == .osaurus
-                && $0.remoteAgentId == agent.id
-                && !manager.isEphemeral(id: $0.id)
-        })
-        if hasPersistentProvider {
-            connectToDiscoveredAgent(agent, token: "", isEphemeral: false)
-        } else {
-            pendingDiscoveredAgent = agent
-        }
-    }
-
-    private func connectToDiscoveredAgent(_ agent: DiscoveredAgent, token: String, isEphemeral: Bool = true) {
-        // Prefer the stable `.local` hostname, falling back to the resolved IP
-        // when it's missing (some networks block multicast `.local`
-        // resolution). Strip the trailing dot from mDNS hostnames
-        // (e.g. "device.local." -> "device.local").
-        let rawHost = agent.connectHost ?? "localhost"
-        let host = rawHost.hasSuffix(".") ? String(rawHost.dropLast()) : rawHost
-        let manager = RemoteProviderManager.shared
-
-        let providerId: UUID
-        // Reuse an existing Osaurus provider that already targets the same agent
-        if let existing = manager.configuration.providers.first(where: {
-            $0.providerType == .osaurus && $0.remoteAgentId == agent.id
-        }) {
-            providerId = existing.id
-            var updated = existing
-            updated.host = host
-            updated.providerProtocol = .http
-            updated.port = agent.port
-            updated.enabled = true
-            if let address = agent.address { updated.remoteAgentAddress = address }
-            if !token.isEmpty {
-                updated.authType = .apiKey
-                manager.updateProvider(updated, apiKey: token)
-            } else {
-                manager.updateProvider(updated, apiKey: nil)
-            }
-            // The connect is owned by `pinRemoteAgentModelAfterConnect` below so
-            // the first model refresh / effective-model pin runs *after* the
-            // provider is connected (otherwise the picker stays empty until the
-            // window is reopened).
-        } else {
-            // Use basePath="" so URLs are constructed directly as /agents/{id}/run
-            let provider = RemoteProvider(
-                name: agent.name,
-                host: host,
-                providerProtocol: .http,
-                port: agent.port,
-                basePath: "",
-                authType: token.isEmpty ? .none : .apiKey,
-                providerType: .osaurus,
-                enabled: true,
-                autoConnect: true,
-                remoteAgentId: agent.id,
-                remoteAgentAddress: agent.address
-            )
-            providerId = provider.id
-            manager.addProvider(provider, apiKey: token.isEmpty ? nil : token, isEphemeral: isEphemeral)
-        }
-
-        windowState.selectedRelayAgent = nil
-        windowState.selectedDiscoveredAgent = agent
-        windowState.selectedDiscoveredAgentProviderId = providerId
-        windowState.pinnedRemoteAgentEffectiveModel = nil
-        windowState.pinnedRemoteAgentAvatar = nil
-        windowState.pinnedRemoteAgentQuickActions = nil
-        windowState.refreshPairedRelayAgents()
-        session.reset()
-        pinRemoteAgentModelAfterConnect(providerId: providerId)
-    }
-
     /// After selecting a remote agent (Mode 2), refresh the picker, resolve the
     /// agent's live effective model, and pin the chip to it. Survives the async
     /// connect race: the effective-model fetch runs independently of model
@@ -9674,7 +12427,21 @@ struct ChatView: View {
             $0.id == providerId
         }
         windowState.remoteAgentConnectionPhase = .connecting
+        // The lock notice's "Connecting…" has no cancel; if the connect never
+        // resolves (relay hang, dropped socket), give the user a Retry after
+        // a bounded wait instead of a permanent spinner.
+        let timeoutTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(Self.remoteConnectTimeout))
+            guard !Task.isCancelled,
+                windowState.selectedRemoteAgentProviderId == providerId,
+                windowState.remoteAgentConnectionPhase == .connecting
+            else { return }
+            windowState.remoteAgentConnectionPhase = .failed(
+                L("The connection timed out. The agent's host may be asleep or offline.")
+            )
+        }
         Task {
+            defer { timeoutTask.cancel() }
             // Ensure the provider is connected before refreshing models /
             // resolving the pin, so the first refresh sees the connected
             // provider's model list rather than an empty one. `connect` is
@@ -9685,13 +12452,29 @@ struct ChatView: View {
             do {
                 try await RemoteProviderManager.shared.connect(providerId: providerId)
             } catch {
-                guard windowState.selectedDiscoveredAgentProviderId == providerId else { return }
+                guard windowState.selectedRemoteAgentProviderId == providerId else { return }
+                // The host refused our key: for a workspace pairing that is a
+                // stale attestation, not a dead agent. Re-handshake once and
+                // let the rebind run this flow again with the fresh provider;
+                // only a second refusal surfaces as a failure.
+                if RemoteProviderService.isPeerRejection(error),
+                    await windowState.repairWorkspacePairingAfterRejection()
+                {
+                    return
+                }
+                // A guest link's key refused outright means the owner revoked
+                // it (workspace pairings were re-handshaked above).
+                if RemoteProviderService.isPeerRejection(error) {
+                    RemoteAgentManager.shared.setAccessRevoked(true, forProviderId: providerId)
+                }
+                guard windowState.selectedRemoteAgentProviderId == providerId else { return }
                 windowState.remoteAgentConnectionPhase = .failed(
                     ChatErrorMessages.remoteConnectFailure(error)
                 )
                 return
             }
-            guard windowState.selectedDiscoveredAgentProviderId == providerId else { return }
+            RemoteAgentManager.shared.setAccessRevoked(false, forProviderId: providerId)
+            guard windowState.selectedRemoteAgentProviderId == providerId else { return }
             await session.refreshPickerItems()
             if let provider {
                 // One metadata fetch resolves the live model + avatar + name so
@@ -9700,32 +12483,54 @@ struct ChatView: View {
                 let metadata = await RemoteProviderService.fetchOsaurusAgentMetadata(
                     from: provider
                 )
-                guard windowState.selectedDiscoveredAgentProviderId == providerId else { return }
+                guard windowState.selectedRemoteAgentProviderId == providerId else { return }
                 windowState.pinnedRemoteAgentEffectiveModel = metadata?.effectiveModel
                 windowState.pinnedRemoteAgentAvatar = metadata?.avatar
                 windowState.pinnedRemoteAgentQuickActions = metadata?.quickActions
-                // Keep the persisted paired-agent label/avatar honest (no-op for
-                // ephemeral Bonjour peers without a RemoteAgent record).
-                if let address = provider.remoteAgentAddress, !address.isEmpty {
+                // Keep the persisted paired-agent label/avatar honest.
+                if let metadata, let address = provider.remoteAgentAddress, !address.isEmpty {
                     RemoteAgentManager.shared.updateLiveMetadata(
                         forAddress: address,
-                        name: metadata?.name,
-                        description: metadata?.description,
-                        avatar: metadata?.avatar
+                        name: metadata.name,
+                        description: metadata.description,
+                        avatar: metadata.avatar,
+                        providerId: providerId
                     )
                 }
             }
-            guard windowState.selectedDiscoveredAgentProviderId == providerId else { return }
+            guard windowState.selectedRemoteAgentProviderId == providerId else { return }
             applyRemoteAgentModelPin(providerId: providerId)
             windowState.remoteAgentConnectionPhase = .connected
+            SharedConversationPoller.shared.watch(session, providerId: providerId)
         }
     }
 
-    private func connectToRelayAgent(_ relay: PairedRelayAgent) {
+    /// `preserveSession` keeps the current transcript (a workspace agent's
+    /// history reopened from the sidebar / History) instead of starting a
+    /// fresh chat — the connect itself is identical.
+    /// Upper bound on the Mode 2 connect + model-pin handshake before the
+    /// lock notice offers Retry.
+    static let remoteConnectTimeout: TimeInterval = 30
+
+    /// Horizontal inset of the floating input card
+    /// (`FloatingInputCard.inputCard`), shared by the notices stacked above
+    /// it so their edges line up with the composer's.
+    static let composerHorizontalInset: CGFloat = ChatShellLayout.columnInset
+
+    private func connectToRelayAgent(_ relay: PairedRelayAgent, preserveSession: Bool = false) {
         let relayHost = "\(relay.remoteAgentAddress).agent.osaurus.ai"
         let manager = RemoteProviderManager.shared
 
         guard let existing = manager.configuration.providers.first(where: { $0.id == relay.providerId }) else {
+            // The pairing's provider is gone (removed under us). Drop the
+            // orphaned pairing record so the lock reads "not connected" with a
+            // Connect action (and auto-connect can re-pair), instead of
+            // sitting on "Connecting…" forever.
+            if let orphan = RemoteAgentManager.shared.remoteAgent(forAddress: relay.remoteAgentAddress) {
+                _ = RemoteAgentManager.shared.remove(id: orphan.id)
+            }
+            windowState.remoteAgentConnectionPhase = .idle
+            windowState.refreshPairedRelayAgents()
             return
         }
 
@@ -9737,14 +12542,21 @@ struct ChatView: View {
         manager.updateProvider(updated, apiKey: nil)
         // Connect is owned by `pinRemoteAgentModelAfterConnect` (see note there).
 
-        windowState.selectedDiscoveredAgent = nil
         windowState.selectedRelayAgent = relay
-        windowState.selectedDiscoveredAgentProviderId = relay.providerId
+        windowState.selectedRemoteAgentProviderId = relay.providerId
         windowState.pinnedRemoteAgentEffectiveModel = nil
         windowState.pinnedRemoteAgentAvatar = nil
         windowState.pinnedRemoteAgentQuickActions = nil
-        session.reset()
+        if !preserveSession { session.reset() }
         pinRemoteAgentModelAfterConnect(providerId: relay.providerId)
+    }
+
+    /// Run a connect the window state queued (`switchToWorkspaceAgent`,
+    /// tab switch back onto a team-agent tab, Retry). Consumed once.
+    private func consumePendingRelayConnect() {
+        guard let request = windowState.pendingRelayConnect else { return }
+        windowState.pendingRelayConnect = nil
+        connectToRelayAgent(request.relay, preserveSession: request.preserveSession)
     }
 
     // MARK: - Empty State
@@ -9757,28 +12569,127 @@ struct ChatView: View {
     /// Quick actions for the empty chat state: the active agent's own actions
     /// if defined, else the built-in defaults (configure-oriented for the
     /// default Osaurus agent, chat-oriented for everything else).
+    /// The active tab when it shows a workflow instead of a conversation.
+    private var isWorkflowCreation: Bool {
+        windowState.mainSurface == .workflows && !windowState.showsWorkflowLibrary
+            && windowState.agentId == Agent.architectId && activeWorkflowTab == nil
+    }
+
+    /// A New Agent chat: the Configurator drafting an agent beside the chat.
+    private var isAgentCreation: Bool {
+        windowState.mainSurface == .chat && windowState.agentId == Agent.configuratorId && activeWorkflowTab == nil
+    }
+
+    /// Either creation chat, which share the chat-beside-draft layout.
+    private var isCreationLayout: Bool { isWorkflowCreation || isAgentCreation }
+
+    /// The Workflows home, Insights, New Agent or Settings owns the content
+    /// area; the live thread and composer stay mounted underneath, hidden.
+    private var isChatContentCovered: Bool {
+        (windowState.mainSurface == .workflows && windowState.showsWorkflowLibrary)
+            || windowState.showsPageSurface
+    }
+
+    /// A short fade carried by the transition alone, so nothing inside the
+    /// page animates its layout. Any movement shows a gap under the rounded
+    /// corner.
+    private var pageTransition: AnyTransition {
+        .opacity.animation(theme.motion.quick)
+    }
+
+    /// The Architect chat's draft, when it has one.
+    private var architectDraft: WorkflowDraft? {
+        guard windowState.agentId == Agent.architectId else { return nil }
+        return WorkflowDraftStore.shared.draft(forSession: session.sessionId?.uuidString)
+    }
+
+    /// A new Architect chat with nothing drafted: the draft pane stays
+    /// hidden until the conversation starts or the draft gets a step.
+    private var architectStartsBlank: Bool {
+        isWorkflowCreation && !session.hasVisibleThreadMessages && !session.isStreaming
+            && (architectDraft?.definition.nodes.isEmpty ?? true)
+    }
+
+    /// A New Agent chat before anything is said or drafted: the intro
+    /// stands alone until the person describes the agent or fills it in.
+    private var agentCreatorStartsBlank: Bool {
+        isAgentCreation && !agentCreatorFillingIn && !session.isStreaming
+            && !session.turns.contains { $0.role == .user }
+            && (AgentDraftStore.shared.draft(forSession: session.sessionId?.uuidString)?.isEmpty ?? true)
+    }
+
+    private var agentCreatorIntro: some View {
+        AgentCreatorIntro(
+            canDraft: session.hasAnyModel || session.isDiscoveringModels,
+            onStarter: { session.send(AgentCreatorLauncher.starterBrief($0)) },
+            onFillIn: {
+                withAnimation(theme.motion.springAnimation) {
+                    agentCreatorFillingIn = true
+                    workflowCreationPane = .workflow
+                }
+            },
+            onChooseModel: { AppDelegate.shared?.showManagementWindow(initialTab: .models) })
+    }
+
+    private var architectChatEmptyState: some View {
+        let mode: ArchitectChatEmptyState.Mode
+        let actions: [AgentQuickAction]
+        if let draft = architectDraft, !draft.definition.nodes.isEmpty {
+            mode = .edit(
+                workflowName: draft.name, stepCount: draft.definition.nodes.count, isSaved: draft.baseVersion != nil)
+            actions = AgentQuickAction.architectEditQuickActions(workflowName: draft.name)
+        } else {
+            mode = .start
+            actions = windowState.activeAgent.chatQuickActions ?? AgentQuickAction.architectQuickActions
+        }
+        return ArchitectChatEmptyState(
+            mode: mode, quickActions: actions,
+            onPick: { session.input = $0 },
+            onBrowse: { windowState.showWorkflowsHome(tab: .all) })
+    }
+
+    private var activeWorkflowTab: (tabId: UUID, workflowID: UUID, runID: UUID?)? {
+        guard let tab = windowState.activeTab, case .workflowRun(let workflowID, let runID) = tab.kind else {
+            return nil
+        }
+        return (tab.id, workflowID, runID)
+    }
+
     private var emptyStateQuickActions: [AgentQuickAction] {
-        windowState.activeAgent.chatQuickActions
+        if windowState.agentId == Agent.architectId,
+            let draft = WorkflowDraftStore.shared.draft(forSession: session.sessionId?.uuidString),
+            draft.baseVersion != nil, draft.history.isEmpty
+        {
+            return AgentQuickAction.architectEditQuickActions(workflowName: draft.name)
+        }
+        return windowState.activeAgent.chatQuickActions
             ?? (windowState.agentId == Agent.defaultId
                 ? AgentQuickAction.defaultConfigurationQuickActions
                 : AgentQuickAction.defaultChatQuickActions)
     }
 
     /// Description shown beneath the remote agent's name in the empty state.
-    /// Prefers the Bonjour-advertised description, then the persisted paired
-    /// record's (refreshed from live metadata on connect). nil → neutral default.
+    /// The persisted paired record's (refreshed from live metadata on
+    /// connect). nil → neutral default.
     private var remoteAgentDescriptionForEmptyState: String? {
-        if let discovered = windowState.selectedDiscoveredAgent {
-            let d = discovered.agentDescription.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !d.isEmpty { return d }
-        }
-        if let providerId = windowState.selectedDiscoveredAgentProviderId,
+        if let providerId = windowState.selectedRemoteAgentProviderId,
             let remote = RemoteAgentManager.shared.remoteAgent(forProviderId: providerId)
         {
             let d = remote.description.trimmingCharacters(in: .whitespacesAndNewlines)
             if !d.isEmpty { return d }
         }
         return nil
+    }
+
+    private var hostedAgentHero: HostedAgentHero? {
+        guard let host = observedSession.hostDeviceElsewhere else { return nil }
+        let entry = observedSession.agentId.flatMap { agentDirectory.entry(device: host, agentId: $0) }
+        return HostedAgentHero(
+            name: entry?.name ?? L("Agent"),
+            avatar: entry?.avatar,
+            description: entry?.description,
+            hostName: hostedRunMonitor.hostName(host)
+        )
     }
 
     @ViewBuilder
@@ -9789,6 +12700,8 @@ struct ChatView: View {
         // the whole session object, so its body re-evaluates on every published
         // change; `.equatable()` lets SwiftUI skip this subtree when the inputs
         // below are unchanged.
+        let isLocalAgentChrome =
+            !isRemoteAgentChrome && windowState.selectedRelayAgent == nil && hostedAgentHero == nil
         EmptyStateContent(
             selectedModel: session.selectedModel,
             agents: windowState.agents,
@@ -9796,16 +12709,20 @@ struct ChatView: View {
             quickActions: emptyStateQuickActions,
             pendingLocalModelId: session.pendingLocalSetupModelId,
             temporaryCloudModelName: session.temporaryCloudModelDisplayName,
-            activeDiscoveredAgent: windowState.selectedDiscoveredAgent,
             activeRelayAgent: windowState.selectedRelayAgent,
             remoteAgentAvatar: windowState.pinnedRemoteAgentAvatar,
             remoteAgentDescription: remoteAgentDescriptionForEmptyState,
             remoteAgentQuickActions: windowState.pinnedRemoteAgentQuickActions,
             isConnecting: windowState.remoteAgentConnectionPhase == .connecting,
+            sharedAgent: isRemoteAgentChrome ? windowState.sharedAgentIdentity : nil,
+            sharedAgentStatus: isRemoteAgentChrome ? windowState.sharedAgentStatus : nil,
+            hostedAgent: hostedAgentHero,
+            discoveryCard: isLocalAgentChrome && discoveryEnabled ? session.discoveryCard : nil,
+            setUpLeft: isLocalAgentChrome && discoveryEnabled ? session.setUpLeft : 0,
             onOpenModelManager: {
                 AppDelegate.shared?.showManagementWindow(initialTab: .models)
             },
-            onUseFoundation: windowState.foundationModelAvailable
+            onUseFoundation: windowState.foundationModelAvailable && lockedAgentModel == nil
                 ? {
                     session.selectedModel =
                         session.pickerItems.firstChatCapable?.id
@@ -9816,67 +12733,85 @@ struct ChatView: View {
             },
             // Automatic while local setup is pending: connects the Router on
             // demand, with recovery UI if it cannot be reached.
-            onUseHostedWhilePending: { await session.adoptOsaurusRouterModelWhileLocalSetupPending() }
+            onUseHostedWhilePending: { await session.adoptOsaurusRouterModelWhileLocalSetupPending() },
+            onOpenDiscovery: { DiscoveryCenter.shared.open($0, in: session) },
+            onDismissDiscovery: { DiscoveryCenter.shared.dismiss($0, in: session) },
+            onOpenSetUp: { DiscoveryCenter.shared.showSetUp(in: session, source: .greeting) },
+            onSkipSetUp: { DiscoveryCenter.shared.skipSetUp() }
         )
         .equatable()
+        .onAppear { DiscoveryCenter.shared.draw(for: session) }
         .transition(.opacity.combined(with: .scale(scale: 0.98)))
     }
 
     // MARK: - Background
 
+    /// The one translucent layer: base window material + canvas tint (see
+    /// `WindowMaterialView`). Everything above it is an opaque surface role.
+    @ViewBuilder
     private var chatBackground: some View {
-        ZStack {
-            ThemedBackgroundLayer(
-                cachedBackgroundImage: windowState.cachedBackgroundImage,
-                showSidebar: windowState.showSidebar,
-                isFullScreen: windowState.isFullScreen
-            )
-
-            if theme.glassEnabled {
-                ThemedGlassSurface(
-                    cornerRadius: windowState.isFullScreen ? 0 : 24,
-                    topLeadingRadius: windowState.showSidebar ? 0 : nil,
-                    bottomLeadingRadius: windowState.showSidebar ? 0 : nil
-                )
-                .allowsHitTesting(false)
-
-                let baseBacking = theme.windowBackingOpacity
-                let backingOpacity = baseBacking * (0.4 + theme.glassOpacityPrimary * 0.6)
-
-                LinearGradient(
-                    colors: [
-                        theme.primaryBackground.opacity(backingOpacity + theme.glassOpacityPrimary * 0.3),
-                        theme.primaryBackground.opacity(backingOpacity + theme.glassOpacitySecondary * 0.2),
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .clipShape(
-                    UnevenRoundedRectangle(
-                        topLeadingRadius: (windowState.showSidebar || windowState.isFullScreen) ? 0 : 24,
-                        bottomLeadingRadius: (windowState.showSidebar || windowState.isFullScreen) ? 0 : 24,
-                        bottomTrailingRadius: windowState.isFullScreen ? 0 : 24,
-                        topTrailingRadius: windowState.isFullScreen ? 0 : 24,
-                        style: .continuous
-                    )
-                )
-                .allowsHitTesting(false)
-            }
-        }
+        if isEmbedded { theme.surface.canvas } else { WindowMaterialView() }
     }
 
     // MARK: - Header
 
-    private var chatHeader: some View {
-        // Team layout: no agent identity in the chat header — the sidebar's
-        // Agents list (open by default) carries the selection; project
-        // membership shows as a folder glyph on the session tab.
-        Color.clear
-            .frame(height: 52)
-            .allowsHitTesting(false)
+    /// The titlebar strip over the content column. It carries the chat's
+    /// title, centered over the column, so the window always says what is
+    /// on screen; the agent sits beside it in the quieter style. Window
+    /// controls and toolbar buttons live in the same strip, so both sides
+    /// keep the larger of the two clearances (the leading chrome when no
+    /// sidebar pushes the column right, the trailing buttons when no
+    /// context panel sits under them) and the title stays centered.
+    /// Not hit-testable: the strip still drags the window.
+    private func chatHeader(contentLeadingX: CGFloat, trailingPaneWidth: CGFloat) -> some View {
+        let showsTitle = windowState.mainSurface == .chat && activeWorkflowTab == nil
+        let sideInset = max(
+            ChatShellLayout.columnInset,
+            ChatShellLayout.toolbarLeadingChromeWidth - contentLeadingX,
+            ChatShellLayout.toolbarTrailingChromeWidth - trailingPaneWidth)
+        return HStack(spacing: theme.space.s6) {
+            if showsTitle {
+                Text(chatHeaderTitle)
+                    .textStyle(.label, weight: 600)
+                    .foregroundStyle(theme.text.primary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .layoutPriority(1)
+                Text(verbatim: windowState.effectiveChatIdentity.name)
+                    .textStyle(.label)
+                    .foregroundStyle(theme.text.tertiary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+        }
+        .padding(.horizontal, sideInset)
+        .frame(maxWidth: .infinity)
+        .frame(height: Self.headerHeight(theme))
+        .allowsHitTesting(false)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isHeader)
+    }
+
+    private var chatHeaderTitle: String {
+        let title = observedSession.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return title.isEmpty ? L("New Chat") : title
+    }
+
+    /// The strip at the top of the chat that holds the window controls and
+    /// tab strip. Prompt cards stay below it.
+    static func headerHeight(_ theme: any ThemeProtocol) -> CGFloat {
+        max(44, theme.assignedMetric("component.button.size.small.height", fallback: theme.controlSize.compactHeight)
+            + 2 * theme.space.s8)
     }
 
     // MARK: - Message Thread
+
+    private static let findBarTopGap: CGFloat = 8
+
+    /// Space the open find bar takes above the thread (zero when closed).
+    private var findBarReservedHeight: CGFloat {
+        windowState.isFindBarVisible && findBarHeight > 0 ? findBarHeight + Self.findBarTopGap : 0
+    }
 
     /// Isolated message thread view to prevent cascading re-renders
     private func messageThread(_ width: CGFloat) -> some View {
@@ -9913,7 +12848,9 @@ struct ChatView: View {
                 agentCustomAvatarPath: identity.customAvatarPath,
                 isStreaming: session.isStreaming,
                 lastAssistantTurnId: lastAssistantTurnId,
+                showResponseMetrics: windowState.activeAgent.settings.showResponseMetrics,
                 expandedBlocksStore: session.expandedBlocksStore,
+                scrollPositionStore: session.scrollPositionStore,
                 scrollToBottomTrigger: scrollToBottomTrigger,
                 onScrolledToBottom: { isPinnedToBottom = true },
                 onScrolledAwayFromBottom: { isPinnedToBottom = false },
@@ -9943,47 +12880,55 @@ struct ChatView: View {
                 searchCurrentOccurrence: currentFindMatch?.occurrence ?? 0,
                 scrollToFindOccurrence: scrollToFindOccurrence
             )
+            .environment(\.workflowThreadFullWidth, isCreationLayout)
+            // Keep message insets inside the scroll view; its scrollbar belongs
+            // at the workflow panel edge, outside the message/card column.
+            .padding(.horizontal, isCreationLayout ? -theme.space.s16 : 0)
             .safeAreaInset(edge: .top, spacing: 0) {
                 Color.clear
-                    .frame(height: inlineInsetHeight)
-                    .animation(theme.springAnimation(), value: inlineInsetHeight)
+                    .frame(height: inlineInsetHeight + findBarReservedHeight)
+                    .animation(theme.motion.springAnimation, value: inlineInsetHeight)
+                    .animation(theme.motion.quick, value: findBarReservedHeight)
             }
 
             // Floating agent-loop chrome (Todo / Done) — top-anchored
             // overlay. Lives in the ZStack as a sibling to the thread
             // so it doesn't consume vertical space; pills compact, cards
             // expand on hover/pin (see `AgentInlineBlocks.swift`).
-            VStack(spacing: AgentInlineBlockMetrics.stackSpacing) {
+            VStack(spacing: theme.catalogLayoutMetric("component.library.35.elements.layout.chatView.messageThread.verticalGap", inheriting: AgentProgressInspectionStyle.metric("gap", AgentInlineBlockMetrics.stackSpacing, theme))) {
                 agentInlineBlocks
-            }
+            }.catalogLayoutTarget("component.library.35.elements.layout.chatView.messageThread.verticalGap")
             // Match the thread's centered content width so the blocks align
             // with the message column instead of stretching across the full
             // chat area on wide windows.
+            .padding(.horizontal, isCreationLayout ? 0 : CenteredMessageScrollView.minimumSideInset)
             .frame(maxWidth: CenteredMessageScrollView.defaultMaxContentWidth)
-            .padding(.top, 4)
+            .padding(.top, 4 + findBarReservedHeight)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .allowsHitTesting(session.lastCompletionSummary != nil || session.currentTodo != nil)
 
-            // Find bar overlay (Cmd+F) — top-trailing, above the thread.
+            // Find bar (Cmd+F): docked at the top-trailing edge of the
+            // readable column. The thread's top inset grows by its height
+            // above, so it pushes the conversation down instead of
+            // covering it, and it shrinks with the column.
             if windowState.isFindBarVisible {
-                VStack {
-                    HStack {
-                        Spacer()
-                        ChatFindBar(
-                            query: $findQuery,
-                            focusTrigger: windowState.findBarFocusRequestID,
-                            isSearching: isFindSearchPending,
-                            matchIndex: findMatchIndex,
-                            matchCount: findMatches.count,
-                            onPrevious: { advanceFindMatch(by: -1) },
-                            onNext: { advanceFindMatch(by: 1) },
-                            onClose: { windowState.isFindBarVisible = false }
-                        )
-                        .padding(.trailing, 16)
-                        .padding(.top, inlineInsetHeight + 8)
-                    }
-                    Spacer()
+                ChatFindBar(
+                    query: $findQuery,
+                    focusTrigger: windowState.findBarFocusRequestID,
+                    isSearching: isFindSearchPending,
+                    matchIndex: findMatchIndex,
+                    matchCount: findMatches.count,
+                    onPrevious: { advanceFindMatch(by: -1) },
+                    onNext: { advanceFindMatch(by: 1) },
+                    onClose: { windowState.isFindBarVisible = false }
+                )
+                .frame(maxWidth: min(ChatShellLayout.findBarMaxWidth, max(0, width)))
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                    if abs(findBarHeight - height) > 0.5 { findBarHeight = height }
                 }
+                .frame(maxWidth: max(0, width), alignment: .trailing)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .padding(.top, Self.findBarTopGap)
                 .transition(.move(edge: .top).combined(with: .opacity))
                 .onChange(of: findQuery) { _, query in
                     scheduleFindRecompute(query: query)
@@ -10008,27 +12953,31 @@ struct ChatView: View {
 
             // Minimap overlay — sits at vertical center, right edge
             if minimapMarkers.count >= 2 {
-                HStack {
-                    Spacer()
-                    ChatMinimap(
-                        markers: minimapMarkers,
-                        activeMarkerId: activeMinimapTurnId,
-                        onSelect: { turnId in
-                            scrollToTurnId = turnId
-                            scrollToFindOccurrence = nil
-                            scrollToTurnTrigger &+= 1
-                        }
-                    )
-                    .padding(.trailing, 22)
+                // Reads the thread area's height so the minimap can cap
+                // itself on long conversations instead of overflowing.
+                GeometryReader { proxy in
+                    HStack {
+                        Spacer()
+                        ChatMinimap(
+                            markers: minimapMarkers,
+                            activeMarkerId: activeMinimapTurnId,
+                            availableHeight: proxy.size.height,
+                            onSelect: { turnId in
+                                scrollToTurnId = turnId
+                                scrollToFindOccurrence = nil
+                                scrollToTurnTrigger &+= 1
+                            }
+                        )
+                        .padding(.trailing, ChatMinimap.trailingInset(threadWidth: proxy.size.width))
+                    }
+                    .frame(width: proxy.size.width, height: proxy.size.height)
                 }
-                .allowsHitTesting(true)
             }
 
             // Scroll button overlay - isolated from content
             VStack {
                 Spacer()
                 HStack {
-                    Spacer()
                     ScrollToBottomButton(
                         isPinnedToBottom: isPinnedToBottom,
                         hasTurns: session.hasVisibleThreadMessages,
@@ -10038,6 +12987,7 @@ struct ChatView: View {
                         }
                     )
                 }
+                .frame(maxWidth: .infinity)
             }
         }
         .sheet(
@@ -10122,7 +13072,7 @@ struct ChatView: View {
         guard session.currentTodo != nil else { return 0 }
         let topPadding: CGFloat = 4
         let bottomBuffer: CGFloat = 6
-        return topPadding + AgentInlineBlockMetrics.collapsedPillHeight + bottomBuffer
+        return topPadding + AgentProgressInspectionStyle.collapsedHeight(theme) + bottomBuffer
     }
 
 }
@@ -10140,7 +13090,9 @@ private struct IsolatedThreadView: View {
     let agentCustomAvatarPath: String?
     let isStreaming: Bool
     let lastAssistantTurnId: UUID?
+    let showResponseMetrics: Bool
     let expandedBlocksStore: ExpandedBlocksStore
+    let scrollPositionStore: ThreadScrollPositionStore
     let scrollToBottomTrigger: Int
     let onScrolledToBottom: () -> Void
     let onScrolledAwayFromBottom: () -> Void
@@ -10188,7 +13140,9 @@ private struct IsolatedThreadView: View {
             agentCustomAvatarPath: agentCustomAvatarPath,
             isStreaming: isStreaming,
             lastAssistantTurnId: lastAssistantTurnId,
+            showResponseMetrics: showResponseMetrics,
             expandedBlocksStore: expandedBlocksStore,
+            scrollPositionStore: scrollPositionStore,
             scrollToBottomTrigger: scrollToBottomTrigger,
             onScrolledToBottom: onScrolledToBottom,
             onScrolledAwayFromBottom: onScrolledAwayFromBottom,
@@ -10229,7 +13183,7 @@ extension ChatView {
         }
         for turn in session.turns {
             for att in turn.attachments where att.id.uuidString == attachmentId {
-                if let data = att.imageData, let img = NSImage(data: data) {
+                if let data = att.loadImageData(), let img = NSImage(data: data) {
                     userImagePreview = img
                     return
                 }
@@ -10257,20 +13211,21 @@ extension ChatView {
         var markers: [ChatMinimap.Marker] = []
         markers.reserveCapacity(8)
         for block in blocks {
-            if case let .userMessage(text, _, _, _) = block.kind {
-                markers.append(ChatMinimap.Marker(id: block.turnId, preview: text))
+            if case let .userMessage(text, _, _, _, envelope, _) = block.kind {
+                markers.append(ChatMinimap.Marker(id: block.turnId, preview: envelope?.displayText ?? text))
             }
         }
         return markers
     }
 
-    /// Copy a turn's thinking + content to the clipboard
+    /// Copy a turn's content to the clipboard. Thinking is left out: the copy
+    /// button sits under the response, and chat export covers the reasoning.
     private func copyTurnContent(turnId: UUID) {
         guard let turn = session.turns.first(where: { $0.id == turnId }) else { return }
 
         // Image-generation replies are just the rendered image — copy the actual
         // image to the clipboard instead of the raw `![](file://…)` markdown.
-        if !turn.contentIsBlank, !turn.hasRenderableThinking,
+        if !turn.contentIsBlank,
             ContentBlock.isImageOnlyContent(turn.visibleContent),
             let imageURL = Self.firstLocalImageURL(in: turn.visibleContent)
         {
@@ -10279,14 +13234,14 @@ extension ChatView {
             return
         }
 
-        var textToCopy = ""
-        if turn.hasRenderableThinking {
-            textToCopy += turn.thinking
-        }
-        if !turn.contentIsBlank {
-            if !textToCopy.isEmpty { textToCopy += "\n\n" }
-            textToCopy += turn.visibleContent
-        }
+        guard !turn.contentIsBlank else { return }
+        // A user turn copies what the bubble shows: an enveloped dispatch
+        // (channel / delegated / scheduled / watcher) yields the message,
+        // not the machine wrapper around it.
+        let textToCopy =
+            turn.role == .user
+            ? turn.displayContent(sessionSource: session.runtimeSource)
+            : turn.visibleContent
         guard !textToCopy.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(textToCopy, forType: .string)
@@ -10331,13 +13286,14 @@ extension ChatView {
     }
 
     /// Auto-speak the just-finished assistant turn when the per-session
-    /// preference is on. Skips if TTS is disabled, the model isn't loaded,
-    /// or another message is already playing (don't interrupt).
+    /// preference is on. Skips if TTS is disabled, the model was never
+    /// downloaded, or another message is already playing (don't interrupt).
+    /// A downloaded but unloaded model loads first, then speaks.
     private func handleAssistantTurnCompleted(turnId: UUID?) {
         guard let turnId else { return }
         guard session.autoSpeakAssistant else { return }
         guard TTSConfigurationStore.load().enabled else { return }
-        guard TTSService.shared.isModelReady else { return }
+        guard TTSService.shared.canSpeakWithoutDownload else { return }
         guard TTSService.shared.playingMessageId == nil else { return }
         guard let turn = session.turns.first(where: { $0.id == turnId }),
             !turn.contentIsBlank
@@ -10506,9 +13462,10 @@ extension ChatView {
         // Snapshot on the main thread (O(turn count) — strings are CoW),
         // scan off it: the scan is O(total conversation text) and must
         // never block the main thread (Sentry app-hang).
-        let snapshot = session.turns.map {
-            ChatFindTurnSnapshot(id: $0.id, role: $0.role, content: $0.content)
-        }
+        // User turns snapshot their DISPLAYED text (envelope stripped), so
+        // the match total agrees with the block-level offsets and paint.
+        let source = session.runtimeSource
+        let snapshot = session.turns.map { ChatFindTurnSnapshot(turn: $0, sessionSource: source) }
         let previous = ChatFindState(matches: findMatches, matchIndex: findMatchIndex)
         findComputeTask = Task { @MainActor in
             let (state, jumpTo) = await ChatFindMatcher.recomputeDetached(
@@ -10571,12 +13528,13 @@ extension ChatView {
         scrollToTurnTrigger &+= 1
     }
 
-    // Key monitor for Esc. Dismisses transient UI in priority order
-    // before falling through to closing the window. The monitor owns the
-    // key event before SwiftUI's `.keyboardShortcut(.cancelAction)` /
-    // `.onExitCommand` machinery, so every state that should win over
-    // "close window" must either be handled here or explicitly passed
-    // through to the responder chain.
+    // Key monitor for Esc. Esc is "back": it dismisses transient UI in
+    // priority order, then leaves a focused field, then steps back out of
+    // pushed pages, and only at the top of the window closes it. The
+    // monitor owns the key event before SwiftUI's
+    // `.keyboardShortcut(.cancelAction)` / `.onExitCommand` machinery, so
+    // every state that should win over "close window" must either be
+    // handled here or explicitly passed through to the responder chain.
     private func setupKeyMonitor() {
         if keyMonitor != nil { return }
 
@@ -10602,7 +13560,8 @@ extension ChatView {
             {
                 guard let ourWindow = ChatWindowManager.shared.getNSWindow(id: capturedWindowId),
                     event.window === ourWindow,
-                    let windowState
+                    let windowState,
+                    !windowState.showsPageSurface
                 else { return event }
                 windowState.isFindBarVisible = true
                 // Also fires when the bar is already open so Cmd+F always
@@ -10661,6 +13620,24 @@ extension ChatView {
                     return nil
                 }
 
+                // Stage 2.5: Settings or Insights covers the chat. Esc
+                // belongs to the page on screen (its search field, an
+                // inspector); the hidden chat's prompts and the window
+                // itself are never its target. A focused field gets it
+                // first, then lets go of focus, as in Stage 4.25.
+                if let windowState, windowState.showsPageSurface {
+                    if let field = ourWindow.firstResponder as? NSTextView,
+                        field.isFieldEditor || field is IMETrackingTextView, !field.hasMarkedText()
+                    {
+                        ourWindow.sendEvent(event)
+                        if ourWindow.firstResponder === field {
+                            ourWindow.makeFirstResponder(nil)
+                        }
+                        return nil
+                    }
+                    return event
+                }
+
                 // Stage 3: Voice overlay is visible.
                 if session.showVoiceOverlay {
                     if SpeechService.shared.isRecording {
@@ -10687,6 +13664,30 @@ extension ChatView {
                     return nil
                 }
 
+                // Stage 4.25: A single-line field has focus (sidebar or
+                // Workflows search, a title rename, a form field). The
+                // field gets this Esc first — search fields empty their
+                // query, a rename cancels — then focus leaves it and Esc
+                // stops here. Only Esc with no field focused goes on to
+                // back and close below. Mid-composition the input method
+                // owns Esc.
+                if let field = ourWindow.firstResponder as? NSTextView,
+                    field.isFieldEditor || field is IMETrackingTextView
+                {
+                    if field.hasMarkedText() { return event }
+                    ourWindow.sendEvent(event)
+                    if ourWindow.firstResponder === field {
+                        ourWindow.makeFirstResponder(nil)
+                    }
+                    return nil
+                }
+
+                // Stage 4.5: A compact-window drawer or context overlay
+                // covers the conversation — Esc closes it like the scrim.
+                if let windowState, windowState.dismissShellOverlay() {
+                    return nil
+                }
+
                 // Stage 5: A text view that opted into local Esc
                 // handling (inline message editor) has focus — pass the
                 // event through so its `cancelOperation(_:)` cancels the
@@ -10706,11 +13707,26 @@ extension ChatView {
                     return nil
                 }
 
+                // A history title field uses SwiftUI's field editor, not CustomNSTextView.
+                // Cancel its draft before Escape can reach window close.
+                if let cancelRename = windowState?.cancelHistoryRename {
+                    cancelRename()
+                    return nil
+                }
+
                 // Stage 7: Completion banner — dismiss it; the next Esc
                 // closes the window.
                 if session.lastCompletionSummary != nil {
                     session.lastCompletionSummary = nil
                     session.lastCompletionWasBlocked = false
+                    return nil
+                }
+
+                // Stage 7.5: A link opened this surface, or a page is
+                // pushed (Workflows' editor, a workflow, a run, New
+                // Workflow) — go back one level, as the title bar's back
+                // button does.
+                if let windowState, windowState.goBack() {
                     return nil
                 }
 
@@ -10743,403 +13759,37 @@ extension ChatView {
     }
 }
 
-// MARK: - Unverifiable Peer Sheet
-
-/// Shown when a discovered peer claims Secure Channel support (`osc=1`) but
-/// advertised no crypto address to pin. We refuse the connection rather than
-/// proceed without any identity verification: a genuine, current Osaurus peer
-/// always advertises its address alongside `osc=1`, so this combination means
-/// either a spoofed advertisement or a peer that must upgrade / assign an
-/// identity. Refusal-only — there is no "connect anyway".
-private struct UnverifiablePeerSheet: View {
-    let agentName: String
-    let onClose: () -> Void
-
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.shield.fill")
-                        .font(theme.font(size: 16, weight: .semibold))
-                        .foregroundColor(theme.warningColor)
-                    Text("Can't verify \(agentName)", bundle: .module)
-                        .font(theme.font(size: 16, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
-                }
-
-                Text(
-                    "This agent advertised that it supports encryption but didn't include a verifiable identity, so it can't be paired securely. It may be impersonating another device, or the other device may need to update Osaurus.",
-                    bundle: .module
-                )
-                .font(theme.font(size: 13))
-                .foregroundColor(theme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-
-            HStack {
-                Spacer()
-                Button {
-                    onClose()
-                } label: {
-                    Text("Close", bundle: .module)
-                }
-                .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
-            }
-        }
-        .padding(24)
-        .frame(width: 380)
-    }
-}
-
-// MARK: - Bonjour Token Sheet
-
-/// Sheet shown when the user selects a Bonjour-discovered remote agent.
-/// Prompts for an optional server token before connecting.
-private struct BonjourTokenSheet: View {
-    let agentName: String
-    let onConnect: (String) -> Void
-    let onCancel: () -> Void
-
-    @State private var token: String = ""
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Connect to \(agentName)", bundle: .module)
-                    .font(theme.font(size: 16, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-
-                Text("Enter the server token for this agent, or leave blank if none is required.", bundle: .module)
-                    .font(theme.font(size: 13))
-                    .foregroundColor(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            SecureField(L("Server token (optional)"), text: $token)
-                .textFieldStyle(.roundedBorder)
-                .font(theme.font(size: 13))
-
-            HStack {
-                Button {
-                    onCancel()
-                } label: {
-                    Text("Cancel", bundle: .module)
-                }
-                .keyboardShortcut(.cancelAction)
-                Spacer()
-                Button {
-                    onConnect(token)
-                } label: {
-                    Text("Connect", bundle: .module)
-                }
-                .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
-            }
-        }
-        .padding(24)
-        .frame(width: 380)
-    }
-}
-
-// MARK: - Pairing Sheet
-
-/// Sheet shown when the user selects a Bonjour-discovered agent that has a crypto address.
-/// Performs cryptographic pairing instead of prompting for a manual server token.
-private struct PairingSheet: View {
-    let agent: DiscoveredAgent
-    let onSuccess: (String, Bool) -> Void  // (apiKey, isPermanent)
-    let onCancel: () -> Void
-
-    @State private var isPairing = false
-    @State private var errorMessage: String? = nil
-    @Environment(\.theme) private var theme
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Pair with \(agent.name)", bundle: .module)
-                    .font(theme.font(size: 16, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
-
-                Text(
-                    "This will cryptographically verify both devices. The remote device will show an approval prompt.",
-                    bundle: .module
-                )
-                .font(theme.font(size: 13))
-                .foregroundColor(theme.secondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-            }
-
-            // Surface the cryptographic identity that pairing will pin and
-            // verify, so the user confirms *who* they're connecting to rather
-            // than trusting only the (unauthenticated) advertised display name.
-            if let fingerprint = agent.addressFingerprint {
-                HStack(spacing: 8) {
-                    Image(systemName: "checkmark.shield.fill")
-                        .font(theme.font(size: 13))
-                        .foregroundColor(theme.accentColor)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Verifying identity", bundle: .module)
-                            .font(theme.font(size: 11))
-                            .foregroundColor(theme.secondaryText)
-                        Text(fingerprint)
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundColor(theme.primaryText)
-                            .textSelection(.enabled)
-                    }
-                }
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.accentColor.opacity(0.08))
-                )
-            }
-
-            if let error = errorMessage {
-                Text(error)
-                    .font(theme.font(size: 12))
-                    .foregroundColor(theme.errorColor)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            HStack {
-                Button {
-                    onCancel()
-                } label: {
-                    Text("Cancel", bundle: .module)
-                }
-                .keyboardShortcut(.cancelAction)
-                .disabled(isPairing)
-                Spacer()
-                if isPairing {
-                    ProgressView()
-                        .controlSize(.small)
-                        .padding(.trailing, 4)
-                } else {
-                    Button {
-                        Task { await performPairing() }
-                    } label: {
-                        Text("Pair", bundle: .module)
-                    }
-                    .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
-                }
-            }
-        }
-        .padding(24)
-        .frame(width: 380)
-    }
-
-    private func performPairing() async {
-        isPairing = true
-        errorMessage = nil
-        defer { isPairing = false }
-
-        do {
-            let (apiKey, isPermanent) = try await PairingClient.pair(with: agent)
-            onSuccess(apiKey, isPermanent)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-}
-
-// MARK: - Pairing Client
-
-private enum PairingClient {
-    struct PairRequestBody: Codable {
-        let connectorAddress: String
-        let agentId: String
-        let nonce: String
-        let signature: String
-        let encPub: String?
-    }
-
-    struct PairResponseBody: Codable {
-        let agentAddress: String
-        let apiKey: String
-        let isPermanent: Bool
-        let serverSignature: String?
-        let sealedApiKey: PairingKeyEnvelope.Sealed?
-    }
-
-    struct ChallengeResponseBody: Codable {
-        let nonce: String
-    }
-
-    enum PairingError: LocalizedError {
-        case missingHost
-        case signFailed
-        case networkError(Int)
-        case decodingFailed
-        case denied
-        case challengeFailed
-        case identityMismatch
-        case unverifiablePeer
-
-        var errorDescription: String? {
-            switch self {
-            case .missingHost: return "Could not resolve the agent's network address."
-            case .signFailed: return "Failed to sign the pairing request."
-            case .networkError(let code): return "Pairing request failed (HTTP \(code))."
-            case .decodingFailed: return "Unexpected response from the remote device."
-            case .denied: return "Pairing was denied by the remote device."
-            case .challengeFailed: return "Could not obtain a pairing challenge from the remote device."
-            case .identityMismatch:
-                return "The remote device could not prove it owns the discovered agent identity."
-            case .unverifiablePeer:
-                return
-                    "This agent claims to support encryption but didn't advertise a verifiable identity, so pairing was refused."
-            }
-        }
-    }
-
-    static func pair(with agent: DiscoveredAgent) async throws -> (apiKey: String, isPermanent: Bool) {
-        // Defense-in-depth: refuse a peer claiming Secure Channel support
-        // (osc=1) that advertised no address to pin. The address-gated
-        // verification below would otherwise be skipped entirely, leaving the
-        // server unauthenticated. (The sheet routing already diverts these to
-        // a refusal view; this guard fails closed if pair() is ever reached.)
-        guard !agent.isUnverifiableSecureChannelPeer else {
-            throw PairingError.unverifiablePeer
-        }
-
-        let context = LAContext()
-        context.touchIDAuthenticationAllowableReuseDuration = 300
-
-        var masterKey = try MasterKey.getPrivateKey(context: context)
-        defer {
-            masterKey.withUnsafeMutableBytes { ptr in
-                if let base = ptr.baseAddress { memset(base, 0, ptr.count) }
-            }
-        }
-
-        let connectorAddress = try PairingKey.deriveAddress(masterKey: masterKey)
-
-        // Prefer the `.local` hostname; fall back to the resolved IP when the
-        // peer advertised no hostname (or it can't be resolved on this network).
-        let rawHost = agent.connectHost ?? ""
-        guard !rawHost.isEmpty else { throw PairingError.missingHost }
-        let host = rawHost.hasSuffix(".") ? String(rawHost.dropLast()) : rawHost
-
-        // 1. Fetch a server-issued single-use challenge nonce. Signing this
-        //    (instead of a self-chosen nonce) is what makes a sniffed `/pair`
-        //    body non-replayable.
-        let nonce = try await fetchChallenge(host: host, port: agent.port)
-
-        // 2. Ephemeral X25519 key for HPKE: the minted credential comes back
-        //    sealed to this key, so it never crosses the cleartext LAN hop in
-        //    plaintext. Signing "<nonce>:<encPub>" binds the key to us — a
-        //    MITM can't swap in their own without changing the connector
-        //    address shown in the approval prompt.
-        let (encPrivateKey, encPub) = PairingKeyEnvelope.generateRecipientKey()
-
-        let signature = try PairingKey.sign(
-            payload: Data("\(nonce):\(encPub)".utf8),
-            masterKey: masterKey
-        )
-        let hexSig = "0x" + signature.hexEncodedString
-
-        let urlString = "http://\(host):\(agent.port)/pair"
-        guard let url = URL(string: urlString) else { throw PairingError.missingHost }
-
-        let body = PairRequestBody(
-            connectorAddress: connectorAddress,
-            agentId: agent.id.uuidString,
-            nonce: nonce,
-            signature: hexSig,
-            encPub: encPub
-        )
-        let bodyData = try JSONEncoder().encode(body)
-
-        var request = URLRequest(url: url, timeoutInterval: 120)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = bodyData
-
-        let (responseData, response) = try await URLSession.shared.data(for: request)
-        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-
-        if statusCode == 403 { throw PairingError.denied }
-        guard statusCode == 200 else { throw PairingError.networkError(statusCode) }
-
-        guard let decoded = try? JSONDecoder().decode(PairResponseBody.self, from: responseData) else {
-            throw PairingError.decodingFailed
-        }
-
-        // 3. Verify the responder controls the agent address we discovered over
-        //    Bonjour. If the TXT record advertised a crypto address, the server
-        //    MUST prove control of it by signing our challenge with the agent
-        //    key; otherwise a spoofed advertiser / MITM could hand us a key.
-        if let expectedAddress = agent.address, !expectedAddress.isEmpty {
-            try verifyServerIdentity(
-                decoded: decoded,
-                expectedAddress: expectedAddress,
-                nonce: nonce
-            )
-        }
-
-        // 4. We sent `encPub`, so the credential MUST come back sealed. Fail
-        //    closed on a plaintext (or missing) key so a downgrade-stripping
-        //    MITM can't force the key onto the cleartext hop.
-        guard let sealed = decoded.sealedApiKey else { throw PairingError.decodingFailed }
-        let apiKey = try PairingKeyEnvelope.open(
-            sealed,
-            privateKey: encPrivateKey,
-            info: PairingKeyEnvelope.info(agentAddress: decoded.agentAddress, nonce: nonce)
-        )
-
-        return (apiKey: apiKey, isPermanent: decoded.isPermanent)
-    }
-
-    private static func fetchChallenge(host: String, port: Int) async throws -> String {
-        guard let url = URL(string: "http://\(host):\(port)/pair/challenge") else {
-            throw PairingError.missingHost
-        }
-        var request = URLRequest(url: url, timeoutInterval: 30)
-        request.httpMethod = "GET"
-        let (data, response) = try await URLSession.shared.data(for: request)
-        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-        guard statusCode == 200,
-            let decoded = try? JSONDecoder().decode(ChallengeResponseBody.self, from: data),
-            !decoded.nonce.isEmpty
-        else {
-            throw PairingError.challengeFailed
-        }
-        return decoded.nonce
-    }
-
-    private static func verifyServerIdentity(
-        decoded: PairResponseBody,
-        expectedAddress: String,
-        nonce: String
-    ) throws {
-        // The server must return the agent address we expect and a signature
-        // over the challenge that recovers to that same address.
-        guard decoded.agentAddress.lowercased() == expectedAddress.lowercased(),
-            let serverSignature = decoded.serverSignature
-        else {
-            throw PairingError.identityMismatch
-        }
-        let hex =
-            serverSignature.hasPrefix("0x") ? String(serverSignature.dropFirst(2)) : serverSignature
-        guard let sigBytes = Data(hexEncoded: hex),
-            let recovered = try? recoverAddress(
-                payload: pairingServerSigningPayload(agentAddress: decoded.agentAddress, nonce: nonce),
-                signature: sigBytes,
-                domainPrefix: "Osaurus Signed Pairing Server"
-            ),
-            recovered.lowercased() == expectedAddress.lowercased()
-        else {
-            throw PairingError.identityMismatch
-        }
-    }
-}
-
 // MARK: - Shared Header Components
-// HeaderActionButton, SettingsButton, CloseButton, PinButton are now in SharedHeaderComponents.swift
+// HeaderActionButton, CloseButton, PinButton are now in SharedHeaderComponents.swift
+
+
+/// Main destinations stay separate from the agent/conversation navigator.
+private struct MainNavigationRail: View {
+    @ObservedObject var windowState: ChatWindowState
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        VStack(spacing: theme.space.s8) {
+            destination(.chat, symbol: "message", label: "Chat")
+            destination(.workflows, symbol: "point.forward.to.point.capsulepath", label: "Workflows")
+            Spacer(minLength: 8)
+            NavigationHelpButton(windowState: windowState)
+            NavigationUsageButton()
+            destination(.insights, symbol: "chart.bar.doc.horizontal", label: "Insights")
+            destination(.settings, symbol: "gearshape", label: "Settings")
+        }
+        .padding(.horizontal, theme.space.s6).padding(.vertical, theme.space.s8)
+        .frame(width: 44)
+        .frame(maxHeight: .infinity)
+        .background(Color.clear)
+    }
+
+    private func destination(_ surface: ChatWindowState.MainSurface, symbol: String, label: String) -> some View {
+        let isSelected = windowState.mainSurface == surface
+        return SettingsIconButton(symbol, help: label, size: .regular, isActive: isSelected, role: .tertiary) {
+            windowState.showMainSurfaceFromRail(surface)
+        }
+        .frame(width: 32, height: 32)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
+    }
+}

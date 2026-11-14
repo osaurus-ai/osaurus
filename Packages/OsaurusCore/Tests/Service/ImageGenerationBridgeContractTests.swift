@@ -81,7 +81,7 @@ struct ImageGenerationBridgeContractTests {
             encoding: .utf8
         )
 
-        let expectedRevision = "45bcb1de740d979a2322570a06edd457ce3d0697"
+        let expectedRevision = "1bcd74ad182103a3b83941f61e57ee0bac23b330"
         #expect(packageSwift.contains(#"revision: "\#(expectedRevision)""#))
         // Whitespace-insensitive: the literal spacing is SwiftPM's to choose,
         // not part of the contract. `Package.resolved` used to be written
@@ -93,8 +93,11 @@ struct ImageGenerationBridgeContractTests {
         #expect(pins(workspaceResolved, to: expectedRevision))
         #expect(pins(appResolved, to: expectedRevision))
         #expect(service.contains("import vMLXFlux"))
-        #expect(service.contains("await MetalGate.shared.enterImageGeneration()"))
-        #expect(service.contains("await MetalGate.shared.exitImageGeneration()"))
+        #expect(service.contains("metalGate = .shared"))
+        #expect(service.contains("MLXCacheIOLock.withSerializedMLXCacheIO"))
+        #expect(service.contains("Memory.clearCache()"))
+        #expect(service.contains("try await self.metalGate.enterImageGeneration()"))
+        #expect(service.contains("await self.metalGate.exitImageGeneration()"))
         #expect(gate.contains("public func enterImageGeneration() async"))
         #expect(gate.contains("public func exitImageGeneration()"))
         #expect(handler.contains(#"path == "/images/models""#))

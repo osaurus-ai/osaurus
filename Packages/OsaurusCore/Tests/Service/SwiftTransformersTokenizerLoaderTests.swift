@@ -11,6 +11,23 @@ import Testing
 
 @Suite(.serialized)
 struct SwiftTransformersTokenizerLoaderTests {
+    @Test func appOwnedGemmaFallbackDescribesSchemasWithoutForcingToolChoiceProse() throws {
+        let package = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: package.appendingPathComponent(
+            "Services/ModelRuntime/SwiftTransformersTokenizerLoader.swift"), encoding: .utf8)
+        let start = try #require(source.range(of: "private static let gemma3FunctionToolMinimal"))
+        let end = try #require(source.range(of: "\"\"\"#", range: start.upperBound ..< source.endIndex))
+        let template = String(source[start.lowerBound ..< end.lowerBound])
+        #expect(template.contains("tools is defined"))
+        #expect(template.contains("fn['parameters'] | tojson"))
+        #expect(template.contains("message['tool_calls']"))
+        #expect(template.contains("<start_function_call>call:"))
+        #expect(!template.contains("tool_choice"))
+        #expect(!template.contains("MUST be a function call"))
+        #expect(!template.contains("do not answer in prose"))
+    }
+
     @Test func qwen35LocalTokenizerExposesNoGenerationPromptPrefixForCacheBoundary() async throws {
         let defaultPath = "/Users/eric/models/Qwen3.5-35B-A3B-4bit"
         let modelPath = ProcessInfo.processInfo.environment["OSAURUS_QWEN35_TEST_MODEL"] ?? defaultPath
@@ -317,7 +334,7 @@ struct SwiftTransformersTokenizerLoaderTests {
         #expect(decoded.contains("Create the probe file."), "Decoded: \(decoded)")
     }
 
-    @Test func gemma4FallbackCompactsClosedToolHistoryForLaterRequiredToolTurn() async throws {
+    @Test func gemma4RequiredToolTurnPreservesOriginalHistoryWithoutCoercion() async throws {
         let defaultPath = "/Users/eric/models/OsaurusAI/gemma-4-12B-it-MXFP4"
         let modelPath = ProcessInfo.processInfo.environment["OSAURUS_GEMMA4_TEST_MODEL"] ?? defaultPath
         let modelURL = URL(fileURLWithPath: modelPath)
@@ -377,24 +394,24 @@ struct SwiftTransformersTokenizerLoaderTests {
         let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
 
         #expect(decoded.contains(finalUser), "Decoded: \(decoded)")
-        #expect(decoded.contains("The current assistant response MUST be a function call."), "Decoded: \(decoded)")
-        #expect(
-            decoded.contains("For multiline string values, represent each line break with the two characters \\n"),
-            "Decoded: \(decoded)"
-        )
-        #expect(decoded.contains("Use the `line_count` function."), "Decoded: \(decoded)")
-        #expect(
-            decoded.contains(#"<|tool_call>call:line_count{text:<|"|>one\ntwo<|"|>}<tool_call|>"#),
-            "Decoded: \(decoded)"
-        )
+        #expect(decoded.contains("<|tool>declaration:line_count"), "Decoded: \(decoded)")
+        #expect(decoded.contains("red\ngreen\nblue"), "Earlier user/tool arguments must remain available. Decoded: \(decoded)")
+        #expect(decoded.contains("The text contains 3 lines."), "Earlier assistant history was removed. Decoded: \(decoded)")
+        #expect(decoded.contains("{\"lines\":3}"), "Earlier tool result was removed. Decoded: \(decoded)")
+        for injected in [
+            "The current assistant response MUST be a function call.",
+            "Tool use is REQUIRED for this assistant turn.",
+            "Required call shape for the current request", "Use exactly this function name:",
+            "For multiline string values, represent each line break",
+        ] {
+            #expect(!decoded.contains(injected), "Runtime must not append a tool-choice directive. Decoded: \(decoded)")
+        }
+        #expect(!decoded.contains(#"<|tool_call>call:line_count{text:<|"|>one\ntwo<|"|>}<tool_call|>"#),
+            "The runtime must not synthesize a call for the latest user request. Decoded: \(decoded)")
         #expect(!decoded.contains("<zyphra_tool_call>"), "Decoded: \(decoded)")
-        #expect(!decoded.contains("red\ngreen\nblue"), "Decoded: \(decoded)")
-        #expect(!decoded.contains("The text contains 3 lines."), "Decoded: \(decoded)")
-        #expect(!decoded.contains("call_line_count_1"), "Decoded: \(decoded)")
-        #expect(!decoded.contains("Tool result: {\"lines\":3}"), "Decoded: \(decoded)")
     }
 
-    @Test func gemma4FallbackRendersFirstTurnRequiredMultilineToolShape() async throws {
+    @Test func gemma4RequiredToolTurnDoesNotSynthesizeCurrentArguments() async throws {
         let defaultPath = "/Users/eric/models/OsaurusAI/gemma-4-12B-it-MXFP4"
         let modelPath = ProcessInfo.processInfo.environment["OSAURUS_GEMMA4_TEST_MODEL"] ?? defaultPath
         let modelURL = URL(fileURLWithPath: modelPath)
@@ -437,17 +454,19 @@ struct SwiftTransformersTokenizerLoaderTests {
         )
         let decoded = tokenizer.decode(tokenIds: tokenIds, skipSpecialTokens: false)
 
-        #expect(decoded.contains("The current assistant response MUST be a function call."), "Decoded: \(decoded)")
-        #expect(
-            decoded.contains("For multiline string values, represent each line break with the two characters \\n"),
-            "Decoded: \(decoded)"
-        )
-        #expect(
-            decoded.contains(#"<|tool_call>call:line_count{text:<|"|>red\ngreen\nblue<|"|>}<tool_call|>"#),
-            "Decoded: \(decoded)"
-        )
-        let unescapedActualNewlineValue = "<|" + "\"|>red\ngreen\nblue<|" + "\"|>"
-        #expect(!decoded.contains(unescapedActualNewlineValue), "Decoded: \(decoded)")
+        #expect(decoded.contains("<|tool>declaration:line_count"), "Decoded: \(decoded)")
+        #expect(decoded.contains("Use the line_count tool on this exact text: red\ngreen\nblue"),
+            "The original multiline request must remain intact. Decoded: \(decoded)")
+        for injected in [
+            "The current assistant response MUST be a function call.",
+            "Tool use is REQUIRED for this assistant turn.",
+            "Required call shape for the current request", "Use exactly this function name:",
+            "For multiline string values, represent each line break",
+        ] {
+            #expect(!decoded.contains(injected), "Runtime must not append a tool-choice directive. Decoded: \(decoded)")
+        }
+        #expect(!decoded.contains("<|tool_call>call:line_count{"),
+            "A schema-only input must not acquire an invented assistant call/example. Decoded: \(decoded)")
         #expect(!decoded.contains("<zyphra_tool_call>"), "Decoded: \(decoded)")
     }
 
@@ -682,8 +701,6 @@ struct SwiftTransformersTokenizerLoaderTests {
         )
 
         #expect(!(tokenizerTools?.isEmpty ?? true))
-        let arrayTypedPaths = collectArrayTypedSchemaPaths(tokenizerTools as Any)
-        #expect(arrayTypedPaths.isEmpty, "Array-valued schema type paths: \(arrayTypedPaths)")
 
         let tokenIds = try tokenizer.applyChatTemplate(
             messages: [
@@ -701,11 +718,14 @@ struct SwiftTransformersTokenizerLoaderTests {
         // This snapshot is the Default configuration agent. Its current
         // contract exposes the consolidated osaurus_* surface directly and
         // intentionally omits the custom-agent discovery gateway.
-        #expect(decoded.contains("osaurus_status"), "Decoded: \(decoded)")
+        // #2485 consolidated status/list/describe under osaurus_inspect.
+        // Assert the actual native declaration, not the retired tool name.
+        #expect(decoded.contains("declaration:osaurus_inspect{"), "Decoded: \(decoded)")
+        #expect(!decoded.contains("declaration:osaurus_status{"), "Decoded: \(decoded)")
         #expect(!decoded.contains("capabilities_discover"), "Decoded: \(decoded)")
     }
 
-    @Test func loaderNormalizesRawGemmaSensitiveToolSchemas() throws {
+    @Test func loaderPreservesRawToolSchemasForEveryTemplate() throws {
         let parameters: [String: any Sendable] = [
             "type": ["object", "null"] as [any Sendable],
             "additionalProperties": false,
@@ -753,24 +773,24 @@ struct SwiftTransformersTokenizerLoaderTests {
         let metadataProperties = try #require(metadata["properties"] as? [String: any Sendable])
         let propertyNamedType = try #require(metadataProperties["type"] as? [String: any Sendable])
         let tags = try #require(metadataProperties["tags"] as? [String: any Sendable])
-        let closed = try #require(metadataProperties["closed"] as? [String: any Sendable])
+        let closed = try #require(metadataProperties["closed"] as? Bool)
 
-        #expect(normalizedParameters["type"] as? String == "object")
-        #expect(normalizedParameters["nullable"] as? Bool == true)
-        #expect(normalizedParameters["additionalProperties"] == nil)
-        #expect(set["additionalProperties"] == nil)
-        #expect(metadata["type"] as? String == "object")
-        #expect(metadata["nullable"] as? Bool == true)
+        #expect(normalizedParameters["type"] as? [String] == ["object", "null"])
+        #expect(normalizedParameters["nullable"] == nil)
+        #expect(normalizedParameters["additionalProperties"] as? Bool == false)
+        #expect(set["additionalProperties"] as? Bool == true)
+        #expect(metadata["type"] as? [String] == ["object", "null"])
+        #expect(metadata["nullable"] == nil)
         #expect(propertyNamedType["type"] as? String == "string")
-        #expect(tags["type"] as? String == "array")
-        #expect(tags["nullable"] as? Bool == true)
-        #expect(closed["type"] as? String == "string")
+        #expect(tags["type"] as? [String] == ["array", "null"])
+        #expect(tags["nullable"] == nil)
+        #expect(closed == false)
         #expect(
-            collectArrayTypedSchemaPaths(tools as Any).isEmpty,
+            collectArrayTypedSchemaPaths(tools as Any).count == 3,
             "Array-valued schema type paths: \(collectArrayTypedSchemaPaths(tools as Any))"
         )
         #expect(
-            collectBooleanAdditionalPropertiesPaths(tools as Any).isEmpty,
+            collectBooleanAdditionalPropertiesPaths(tools as Any).count == 2,
             "Boolean additionalProperties paths: \(collectBooleanAdditionalPropertiesPaths(tools as Any))"
         )
     }

@@ -92,6 +92,7 @@ public final class RampartModelManager: ObservableObject {
                 }
                 try await self?.loadIfNeeded()
                 self?.state = .ready
+                PrivacyFilterStore.enableAIDetectionAfterInstall()
             } catch is CancellationError {
                 self?.state = .idle
             } catch {

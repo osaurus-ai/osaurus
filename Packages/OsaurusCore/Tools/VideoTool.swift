@@ -14,6 +14,13 @@ struct VideoJobParams: Sendable {
     var resolution: String?
     var aspectRatio: String?
     var audio: Bool?
+    var width: Int? = nil
+    var height: Int? = nil
+    var frameCount: Int? = nil
+    var fps: Int? = nil
+    var steps: Int? = nil
+    var guidance: Float? = nil
+    var seed: UInt64? = nil
 
     var isImageToVideo: Bool { sourcePath != nil }
 }
@@ -21,7 +28,7 @@ struct VideoJobParams: Sendable {
 public final class VideoTool: OsaurusTool, @unchecked Sendable {
     public let name = "video"
     public static let toolDescription =
-        "Generate a billable video from text or one source image. A current price quote is included "
+        "Generate a video locally or with a configured remote provider, from text or one source image. A current price quote is included "
         + "in the approval request before the job is queued. The completed video is shown automatically."
 
     public var description: String { Self.toolDescription }
@@ -51,7 +58,7 @@ public final class VideoTool: OsaurusTool, @unchecked Sendable {
             ]),
             "duration": .object([
                 "type": .string("string"),
-                "description": .string("Catalog-supported duration such as `5s` or `10s`."),
+                "description": .string("Cloud: a catalog-supported duration. Local: exact frame_count/fps in seconds, e.g. `3.0625s` for 49 frames at 16 fps."),
             ]),
             "resolution": .object([
                 "type": .string("string"),
@@ -65,6 +72,13 @@ public final class VideoTool: OsaurusTool, @unchecked Sendable {
                 "type": .string("boolean"),
                 "description": .string("Optional audio generation setting when the model supports it."),
             ]),
+            "width": .object(["type": .string("integer"), "description": .string("Local video width, a multiple of 16.")]),
+            "height": .object(["type": .string("integer"), "description": .string("Local video height, a multiple of 16.")]),
+            "frame_count": .object(["type": .string("integer"), "description": .string("Local video frames, 4n+1; duration must equal frame_count/fps.")]),
+            "fps": .object(["type": .string("integer"), "description": .string("Local video frame rate. Default 16.")]),
+            "steps": .object(["type": .string("integer"), "description": .string("Local denoise steps. Default 50.")]),
+            "guidance": .object(["type": .string("number"), "description": .string("Local classifier-free guidance. Default 5.")]),
+            "seed": .object(["type": .string("integer"), "minimum": .number(0), "description": .string("Optional local video seed.")]),
         ]),
         "required": .array([.string("prompt"), .string("duration")]),
     ])
@@ -79,12 +93,15 @@ public final class VideoTool: OsaurusTool, @unchecked Sendable {
         let durationReq = requireString(
             args,
             "duration",
-            expected: "catalog-supported duration",
+            expected: "catalog-supported cloud duration, or exact local frame_count/fps",
             tool: name
         )
         guard case .value(let duration) = durationReq else {
             return durationReq.failureEnvelope ?? ""
         }
+        let local: LocalOptions
+        do { local = try JSONDecoder().decode(LocalOptions.self, from: Data(argumentsJSON.utf8)) }
+        catch { throw MediaGenerationError.invalidRequest("Local video controls must use their declared numeric types.") }
         let params = VideoJobParams(
             prompt: prompt,
             sourcePath: Self.optionalString(args["source_path"]),
@@ -93,12 +110,24 @@ public final class VideoTool: OsaurusTool, @unchecked Sendable {
             duration: duration,
             resolution: Self.optionalString(args["resolution"]),
             aspectRatio: Self.optionalString(args["aspect_ratio"]),
-            audio: args["audio"] as? Bool
+            audio: args["audio"] as? Bool,
+            width: local.width, height: local.height, frameCount: local.frame_count,
+            fps: local.fps, steps: local.steps, guidance: local.guidance, seed: local.seed
         )
         return await SubagentSession.run(
             VideoSubagentKind(params: params, argumentsJSON: argumentsJSON),
             tool: name
         )
+    }
+
+    private struct LocalOptions: Decodable {
+        var width: Int?
+        var height: Int?
+        var frame_count: Int?
+        var fps: Int?
+        var steps: Int?
+        var guidance: Float?
+        var seed: UInt64?
     }
 
     private static func optionalString(_ raw: Any?) -> String? {

@@ -24,29 +24,23 @@ struct SpawnRemoteIdentityPersistenceTests {
             SubagentConfiguration(
                 subagentModelOverrides: [
                     SubagentCapabilityRegistry.spawn.id: target
-                ],
-                spawnableModelNames: [target],
-                spawnableModelNotes: [target: "Use for difficult remote work"]
+                ]
             )
         )
         SubagentConfigurationStore.flushPendingWrites()
         SubagentConfigurationStore.invalidateSnapshot()
 
         let decoded = SubagentConfigurationStore.snapshot()
-        #expect(decoded.spawnableModelNames == [target])
-        #expect(decoded.spawnableModelNotes[target] == "Use for difficult remote work")
         #expect(
             decoded.subagentModelOverrides[SubagentCapabilityRegistry.spawn.id]
                 == target
         )
     }
 
-    @Test("custom-agent pool, note, and override survive Codable round-trip")
+    @Test("custom-agent remote override survives Codable round-trip")
     func agentSettingsRoundTrip() throws {
         var settings = AgentSettings.defaultDisabled
         settings.spawnDelegationEnabled = true
-        settings.spawnableModelNames = [target]
-        settings.spawnableModelNotes = [target: "Use for difficult remote work"]
         settings.subagentModelOverrides = [
             SubagentCapabilityRegistry.spawn.id: target
         ]
@@ -55,8 +49,6 @@ struct SpawnRemoteIdentityPersistenceTests {
             AgentSettings.self,
             from: JSONEncoder().encode(settings)
         )
-        #expect(decoded.spawnableModelNames == [target])
-        #expect(decoded.spawnableModelNotes[target] == "Use for difficult remote work")
         #expect(
             decoded.subagentModelOverrides[SubagentCapabilityRegistry.spawn.id]
                 == target

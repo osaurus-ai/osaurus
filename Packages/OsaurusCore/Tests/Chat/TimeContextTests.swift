@@ -40,6 +40,22 @@ struct TimeContextTests {
         #expect(a == b)
     }
 
+    @Test func timeMetadataDoesNotAddAnExampleTaskToTheUserRequest() throws {
+        let zone = try #require(TimeZone(identifier: "Asia/Kolkata"))
+        let prefix = try #require(SystemPromptComposer.composeInjectedUserPrefix(
+            memorySection: nil,
+            screenContext: nil,
+            timeContext: SystemPromptTemplates.timeContext(now: fixedInstant, timeZone: zone)
+        ))
+        // Native Gemma delegation copied the old imperative and its example
+        // dates into Research instead of forwarding the tiny marker task.
+        #expect(!prefix.contains("Resolve relative dates"))
+        #expect(!prefix.contains("tomorrow at 8 AM"))
+        #expect(prefix.contains("2026-07-27T09:15+05:30"))
+        let userText = "Delegate only to Research. Ask it to return exactly RESEARCH-OK."
+        #expect((prefix + userText).hasSuffix(userText))
+    }
+
     @Test func prefixPlacesTimeContextLast() throws {
         let zone = try #require(TimeZone(identifier: "Asia/Kolkata"))
         let time = SystemPromptTemplates.timeContext(now: fixedInstant, timeZone: zone)
@@ -78,6 +94,26 @@ struct TimeContextTests {
         let chatA = try firstTurnBytes(dispatchedAt: fixedInstant)
         let chatB = try firstTurnBytes(dispatchedAt: fixedInstant.addingTimeInterval(17))
         #expect(chatA == chatB)
+    }
+
+    @Test func memoryDateLineGivesWayToCurrentTime() throws {
+        let zone = try #require(TimeZone(identifier: "Asia/Kolkata"))
+        let memory = "Current date: 3 November 2026\n\n## What I should always remember\n- User works at Osaurus"
+        let withTime = try #require(
+            SystemPromptComposer.composeInjectedUserPrefix(
+                memorySection: memory,
+                screenContext: nil,
+                timeContext: SystemPromptTemplates.timeContext(now: fixedInstant, timeZone: zone)
+            )
+        )
+        #expect(!withTime.contains("Current date:"))
+        #expect(withTime.contains("- User works at Osaurus"))
+        #expect(withTime.contains("[Current Time]"))
+
+        let withoutTime = try #require(
+            SystemPromptComposer.composeInjectedUserPrefix(memorySection: memory, screenContext: nil)
+        )
+        #expect(withoutTime.contains("Current date: 3 November 2026"))
     }
 
     @Test func timeContextAloneProducesPrefix() throws {

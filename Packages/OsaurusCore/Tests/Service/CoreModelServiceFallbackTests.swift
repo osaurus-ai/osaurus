@@ -39,6 +39,90 @@ import Testing
 @Suite(.serialized)
 struct CoreModelServiceFallbackTests {
 
+    private actor ResidencyProbe: ModelService {
+        nonisolated let id = "core-residency-probe"
+        private(set) var parameters: GenerationParameters?
+
+        nonisolated func isAvailable() -> Bool { true }
+        nonisolated func handles(requestedModel: String?) -> Bool {
+            requestedModel == id
+        }
+
+        func generateOneShot(
+            messages: [ChatMessage],
+            parameters: GenerationParameters,
+            requestedModel: String?
+        ) async throws -> String {
+            self.parameters = parameters
+            return "UTILITY-OK"
+        }
+
+        func streamDeltas(
+            messages: [ChatMessage],
+            parameters: GenerationParameters,
+            requestedModel: String?,
+            stopSequences: [String]
+        ) async throws -> AsyncThrowingStream<String, Error> {
+            throw CancellationError()
+        }
+    }
+
+    @Test("utility calls preserve model defaults or an explicit override", arguments: [false, true])
+    func utilityNativeDefaultsReachService(explicitOverride: Bool) async throws {
+        let probe = ResidencyProbe()
+        let service = CoreModelService(localServices: [probe])
+        if explicitOverride {
+            _ = try await service.generate(
+                prompt: "Describe an agent", temperature: 0.2, timeout: 5, modelOverride: probe.id)
+        } else {
+            _ = try await service.generate(
+                prompt: "Describe an agent", timeout: 5, modelOverride: probe.id)
+        }
+        let parameters = try #require(await probe.parameters)
+        #expect(parameters.temperature == (explicitOverride ? Float(0.2) : nil))
+        #expect(parameters.auxiliaryCacheIntent)
+        #expect(parameters.preserveExistingResidencyOwner)
+    }
+
+    @Test("core utility routing preserves the resident owner for window-close cleanup")
+    func utilityGenerationPreservesResidencyOwner() async throws {
+        for intent in [CoreModelIntent.background, .interactive] {
+            let probe = ResidencyProbe()
+            let service = CoreModelService(localServices: [probe])
+            let result = try await service.generate(
+                prompt: "Utility request",
+                timeout: 5,
+                intent: intent,
+                modelOverride: probe.id
+            )
+            #expect(result == "UTILITY-OK")
+            let parameters = try #require(await probe.parameters)
+            // Exercise the parameters delivered through the real router, then
+            // the runtime ownership decision used by close-window teardown.
+            for owner in RequestSource.allCases {
+                let retained = ModelRuntime.resolvedResidencySource(
+                    existing: owner,
+                    incoming: parameters.requestSource,
+                    preserveExisting: parameters.preserveExistingResidencyOwner
+                )
+                #expect(retained == owner)
+                #expect(
+                    ModelRuntime.isChatOwnedResidencySource(retained)
+                        == ModelRuntime.isChatOwnedResidencySource(owner)
+                )
+            }
+            // A real subsequent API request still claims API ownership.
+            let api = GenerationParameters(temperature: nil, maxTokens: 32)
+            #expect(
+                ModelRuntime.resolvedResidencySource(
+                    existing: .chatUI,
+                    incoming: api.requestSource,
+                    preserveExisting: api.preserveExistingResidencyOwner
+                ) == .httpAPI
+            )
+        }
+    }
+
     // MARK: - Test scaffolding
 
     /// One-shot scaffold that:
@@ -306,9 +390,17 @@ struct CoreModelServiceFallbackTests {
     }
 
     @Test
-    func transientErrors_neverFallBack() {
+    func hangsFallBack_breakerOpenNeverDoes() {
+        // A hung primary hands over to the chat model (the hang is still
+        // counted against the primary's breaker); an open breaker is handled
+        // structurally in `generate` and never reaches this decision.
         #expect(
-            !CoreModelService.shouldFallBackToChatModel(for: .timedOut, allowResidencyRefusal: true)
+            CoreModelService.shouldFallBackToChatModel(for: .timedOut, allowResidencyRefusal: false)
+        )
+        #expect(
+            CoreModelService.shouldFallBackToChatModel(
+                for: .unresponsive("foundation"), allowResidencyRefusal: false
+            )
         )
         #expect(
             !CoreModelService.shouldFallBackToChatModel(

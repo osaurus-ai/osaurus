@@ -1,0 +1,83 @@
+{
+  "agent" : {
+    "address" : "0x331565e19602986634610f4B33Ff7ad182860036",
+    "privateKeyHex" : "c2ddba76f071d8115d12d4a8e4d9df7c460aa6ae4f4a59b6c9d1f740a88146f9"
+  },
+  "bufferedResponse" : {
+    "frame" : {
+      "aad" : "osaurus-sc1:resp:8OHSw7Sllod4aVpLPC0eDw:1:0:1",
+      "ct" : "82OPfRmVfTWOd0pzQGsW4qhRgSIZ-q8eF376BfMbSjZ6ktVY_cmI5ExTG0urwIpN7rf76XMVG6mXGG-03uwMDxfc0z2dn-PgxKmzhNQzauW24STd95wJi3f9lsJa8Vrb-UfJOFix0NkNoGp4",
+      "fin" : true,
+      "plaintext" : "{\"status\":200,\"contentType\":\"application\/json; charset=utf-8\",\"body\":\"eyJzdGF0dXMiOiJvayJ9\"}",
+      "seq" : 0
+    },
+    "requestSeq" : 1,
+    "responseKeyHex" : "97583ed81b1cb728820d8cb29ef9f7f20337ac356f161a979efebc0bb22aa8f8"
+  },
+  "call" : {
+    "aad" : "osaurus-sc1:req:8OHSw7Sllod4aVpLPC0eDw:1",
+    "body" : {
+      "ct" : "NjWBFZDT8p8LILs-87hgoeyLUsq8l9Uud4dxwI4foJYa6miguekSlgiTBCsY4uj_pmSf3Zj0eGrcq8rcwcObaGyv6QyjzAMvomE5JH5tODQVeMOPFzrLQ1XGuz4xWXzbj4_l-_oJ_ld4k_IiPq0tE502rS5wJdYc7uGAr3dvlphu64viTWgqiFJe1zbw3cTyBWnP46SqPaYl80MeUESmtfAHWiHWp0X4Z-LA7wAewO-cyjfyE8j-StmcsDRBUyMVZbwGTm-LPpN9u97HeH6At69zVHiJDg",
+      "seq" : 1,
+      "sid" : "8OHSw7Sllod4aVpLPC0eDw",
+      "v" : 1
+    },
+    "ct" : "NjWBFZDT8p8LILs-87hgoeyLUsq8l9Uud4dxwI4foJYa6miguekSlgiTBCsY4uj_pmSf3Zj0eGrcq8rcwcObaGyv6QyjzAMvomE5JH5tODQVeMOPFzrLQ1XGuz4xWXzbj4_l-_oJ_ld4k_IiPq0tE502rS5wJdYc7uGAr3dvlphu64viTWgqiFJe1zbw3cTyBWnP46SqPaYl80MeUESmtfAHWiHWp0X4Z-LA7wAewO-cyjfyE8j-StmcsDRBUyMVZbwGTm-LPpN9u97HeH6At69zVHiJDg",
+    "innerRequest" : "{\"method\":\"GET\",\"path\":\"\/channels\/n8n\/n8n-local\/ping\",\"accept\":\"application\/json\",\"headers\":{\"X-Osaurus-Channel-Signature\":\"sha256=b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad\"}}",
+    "nonceHex" : "000000000000000000000001",
+    "requestSeq" : 1
+  },
+  "domain" : "osaurus-sc1",
+  "handshake" : {
+    "clientEphemeralPrivateHex" : "77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a",
+    "clientHello" : {
+      "agentAddress" : "0x331565e19602986634610f4b33ff7ad182860036",
+      "encPub" : "hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr066SpjqqbTmo",
+      "nonce" : "AAECAwQFBgcICQoLDA0ODw",
+      "v" : 1
+    },
+    "clientToServerKeyHex" : "8ae18d9e0eac6298177ce01ee029f931d854db0e500af8a669b11fe05e76e76d",
+    "domainHashHex" : "ba9ac4aabffaa7598c6a83106bc2d073b1d617e7075d922e198da7d6a7cf4743",
+    "serverEphemeralPrivateHex" : "5dab087e624a8a4b79e17f8b83800ee66f3bb1292618b6fd1c2f8b27ff88e0eb",
+    "serverHello" : {
+      "encPub" : "3p7bfXt9wbTTW2HC7OQ1Nz-DQ8hbeGdNrfx-FG-IK08",
+      "expiresAt" : 1800000000,
+      "sid" : "8OHSw7Sllod4aVpLPC0eDw",
+      "signature" : "0xfba850b0a90fcbb1411c52687d31ab9d5da3cab347dc95627d22126514eb6185725284a542e1ddedabe9e1625d8838ea0599f3bff449b41f44107782992e74641c",
+      "v" : 1
+    },
+    "serverToClientKeyHex" : "6bb39415b0b87f4f57f1128d4b84554ef432802cf13cef63d90dd93bc719b325",
+    "sharedSecretHex" : "4a5d9d5ba4ce2de1728e3bf480350f25e07e21c947d19e3376f09b3c1e161742",
+    "transcript" : "osaurus-sc1|v=1|aA=0x331565e19602986634610f4b33ff7ad182860036|eC=hSDwCYkwp1R0i33ctD73Wg2_Og0mOBr066SpjqqbTmo|nC=AAECAwQFBgcICQoLDA0ODw|sid=8OHSw7Sllod4aVpLPC0eDw|eS=3p7bfXt9wbTTW2HC7OQ1Nz-DQ8hbeGdNrfx-FG-IK08|exp=1800000000"
+  },
+  "signingDomainPrefix" : "Osaurus Secure Channel",
+  "streamResponse" : {
+    "callCt" : "kq1BgZxbpR9fq7g76ZJzAaNyt2TzPTVIF8_DUcswdCdszc7EOcmheCbhLbQ5XglJyOsO1dbQzHDo8PMuOPuQh39GfTi-hrKvv8XjpY-vV8ulPXBB8dQqagOTyjJ6Gg-dZpEzwnTmPefOL6XrVBEq8y3rWwE8SafklUtJOuf_OmA4PA1TZxcQyqt0Y3oOsTDxEAZmtQiGhOnF6z_7k-_bopT01G2jOZpSWsjdX-4_TV4FkHt-GBWDy4pwPJAI0-KOblCrgkYySoPLA0d_NwQxqQtoA44ZfQ",
+    "frames" : [
+      {
+        "aad" : "osaurus-sc1:resp:8OHSw7Sllod4aVpLPC0eDw:2:0:0",
+        "ct" : "zk1eZ3Ijaso0AZimyyDT_01Dd4eBOGkJuGyXMXy5UQ",
+        "fin" : false,
+        "plaintext" : "data: {\"n\":1}\n\n",
+        "seq" : 0
+      },
+      {
+        "aad" : "osaurus-sc1:resp:8OHSw7Sllod4aVpLPC0eDw:2:1:0",
+        "ct" : "JLhOmCShPnLLz1agldX7Dy7kI85GiQBxmenG73OxYg",
+        "fin" : false,
+        "plaintext" : "data: {\"n\":2}\n\n",
+        "seq" : 1
+      },
+      {
+        "aad" : "osaurus-sc1:resp:8OHSw7Sllod4aVpLPC0eDw:2:2:1",
+        "ct" : "qn5peYOi6QpHuf3l3h4z-g",
+        "fin" : true,
+        "plaintext" : "",
+        "seq" : 2
+      }
+    ],
+    "requestSeq" : 2,
+    "responseKeyHex" : "c06a54fdeaaaa1c4f57d1b794c57b65234fde3d507892e8d04241199616bcf21"
+  },
+  "version" : 1
+}

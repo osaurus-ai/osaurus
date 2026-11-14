@@ -257,10 +257,8 @@ struct ModelFormatDetectionTests {
         #expect(!model.isMLXFormat)
     }
 
-    @Test func osaurusAIProvenanceAlwaysAllowed() throws {
-        // First-party bundles are trusted by provenance even if the on-disk
-        // files would otherwise read as non-MLX (e.g. a pipeline that omits the
-        // MLX tag). An `OsaurusAI/...` id must never be greyed.
+    @Test(arguments: ["OsaurusAI/renamed", "publisher/renamed", "ordinary-model"])
+    func publisherNamesCannotOverrideInstalledFormat(_ id: String) throws {
         let dir = try makeBundle(
             config: ["model_type": "lfm2"],
             safetensors: [("model.safetensors", ["format": "pt"])],
@@ -268,7 +266,7 @@ struct ModelFormatDetectionTests {
         )
         defer { try? FileManager.default.removeItem(at: dir) }
         let model = MLXModel(
-            id: "OsaurusAI/LFM2.5-230M-bf16",
+            id: id,
             name: "LFM2 first-party",
             description: "fixture",
             downloadURL: "https://example.invalid/lfm2",
@@ -276,7 +274,7 @@ struct ModelFormatDetectionTests {
             externalSource: nil
         )
         #expect(model.isDownloaded)
-        #expect(model.isMLXFormat)
+        #expect(!model.isMLXFormat)
     }
 
     @Test func undownloadedModelIsAssumedMLX() {
@@ -317,8 +315,7 @@ struct ModelFormatDetectionTests {
         #expect(report.preflight.blocksRuntimeLoad)
     }
 
-    @Test func diagnosticsAllowsOsaurusAIBundleByProvenance() throws {
-        // Even a pt-tagged bundle is not blocked when its id is first-party.
+    @Test func diagnosticsCannotBypassFormatForAPublisherName() throws {
         let dir = try makeBundle(
             config: ["model_type": "lfm2"],
             safetensors: [("model.safetensors", ["format": "pt"])],
@@ -334,7 +331,8 @@ struct ModelFormatDetectionTests {
             externalSource: nil
         )
         let report = ModelCompatibilityDiagnostics.report(for: model)
-        #expect(report.preflight.reason != .notMLXFormat)
+        #expect(report.preflight.reason == .notMLXFormat)
+        #expect(report.preflight.blocksRuntimeLoad)
     }
 
     @Test func diagnosticsAllowsMLXBundle() throws {

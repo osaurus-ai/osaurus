@@ -18,8 +18,27 @@ public struct DeviceKey: Sendable {
 
     // MARK: - Attestation
 
+    /// The device ID for this device, attesting first if it has none yet.
+    ///
+    /// The device layer is independent of the master: a master that arrived
+    /// via iCloud Keychain sync or a mnemonic restore has never run
+    /// `attest()` on this device, and every "which device is this" consumer
+    /// (request tokens, device-scoped agent addresses, the Identity tab)
+    /// used to throw `deviceNotAttested` in that state. This is the one
+    /// entry point those consumers should use; it never replaces an
+    /// existing device ID (which would silently re-scope future agents).
+    public static func ensureAttested() async throws -> String {
+        if let existing = UserDefaults.standard.string(forKey: deviceIdKey), !existing.isEmpty {
+            return existing
+        }
+        return try await attest()
+    }
+
     /// Generate and attest a new device key. Returns the 8-char device ID.
     /// Falls back to a software-generated ID when App Attest is unavailable.
+    ///
+    /// Prefer `ensureAttested()`: calling this on an already-attested device
+    /// mints a fresh App Attest key and therefore a different device ID.
     public static func attest() async throws -> String {
         let service = DCAppAttestService.shared
 

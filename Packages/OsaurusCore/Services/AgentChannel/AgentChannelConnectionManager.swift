@@ -13,6 +13,9 @@ enum AgentChannelConnectionManagerError: LocalizedError, Equatable, Sendable {
     case emptyName
     case missingSupportedActions(String)
     case missingCustomHTTPConfiguration(String)
+    case missingN8nConfiguration(String)
+    case invalidN8nOutboundURL(String)
+    case invalidN8nVerificationHeader(String)
     case invalidCustomHTTPBaseURL(String)
     case invalidCustomHTTPMethod(action: String, method: String)
     case invalidCustomHTTPPath(action: String, path: String)
@@ -25,11 +28,20 @@ enum AgentChannelConnectionManagerError: LocalizedError, Equatable, Sendable {
     case emptyBindingId
     case duplicateBindingId(String)
     case invalidBinding(String)
+    case connectionNotFound(String)
+    case unsupportedKind(AgentChannelKind)
+    case emptyContactIdentity
 
     var errorDescription: String? {
         switch self {
         case .emptyConnectionId:
             return "Agent channel connection id is required."
+        case .connectionNotFound(let id):
+            return "Agent channel connection `\(id)` was not found."
+        case .unsupportedKind(let kind):
+            return "This operation does not apply to `\(kind.rawValue)` connections."
+        case .emptyContactIdentity:
+            return "A conversation id and sender id are required to approve a workflow."
         case .reservedConnectionId(let id):
             return "`\(id)` is reserved for a native Agent Channel connection."
         case .emptyName:
@@ -38,6 +50,13 @@ enum AgentChannelConnectionManagerError: LocalizedError, Equatable, Sendable {
             return "Agent channel connection `\(id)` must support at least one standard action."
         case .missingCustomHTTPConfiguration(let id):
             return "Custom JSON channel `\(id)` requires a custom HTTP configuration."
+        case .missingN8nConfiguration(let id):
+            return "n8n channel `\(id)` requires an n8n configuration block."
+        case .invalidN8nOutboundURL(let url):
+            return
+                "n8n outbound webhook URL `\(url)` must be an absolute HTTPS URL to a public host. Loopback, private-network, and plain-HTTP targets are refused by the outbound host policy; use pull-based replies for local n8n."
+        case .invalidN8nVerificationHeader(let header):
+            return "n8n verification header `\(header)` is not a valid HTTP header name."
         case .invalidCustomHTTPBaseURL(let url):
             return "`\(url)` is not a valid HTTP or HTTPS base URL."
         case .invalidCustomHTTPMethod(let action, let method):
@@ -75,6 +94,7 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
         AgentChannelConnection.nativeTelegramConnectionId,
         AgentChannelConnection.nativeIMessageConnectionId,
         AgentChannelConnection.nativeWhatsAppConnectionId,
+        AgentChannelConnection.nativeEmailConnectionId,
     ])
     private static let supportedHTTPMethods = Set(["GET", "POST", "PUT", "PATCH", "DELETE"])
 
@@ -100,6 +120,46 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
 
     func loadConfiguration() -> AgentChannelConfiguration {
         AgentChannelConfigurationStore.load()
+    }
+
+    // MARK: - Configured
+
+    /// iMessage has no remote credential; "configured" means a verified
+    /// helper is present AND allowlisted chats exist. Without the helper
+    /// check, a machine that lost its helper (failed download, tampered
+    /// digest) would still show Configured/Connected while every action
+    /// fails.
+    static func isIMessageConfigured() -> Bool {
+        let config = IMessageConnectionService.shared.configuration()
+        return IMessageConnectionService.shared.helperAvailable()
+            && (!config.readableChatIds.isEmpty || !config.writableChatIds.isEmpty)
+    }
+
+    /// WhatsApp mirrors iMessage: a verified helper plus allowlisted chats.
+    static func isWhatsAppConfigured() -> Bool {
+        let config = WhatsAppConnectionService.shared.configuration()
+        return WhatsAppConnectionService.shared.helperAvailable()
+            && (!config.readableChatIds.isEmpty || !config.writableChatIds.isEmpty)
+    }
+
+    /// Accounts added beyond each multi-account provider's primary one.
+    static func extraAccounts() -> [ChannelAccount] {
+        ChannelAccounts.multiAccountKinds.flatMap { ChannelAccounts.accounts(kind: $0) }.filter { !$0.isPrimary }
+    }
+
+    /// Whether any channel is set up, counted as the Channels screen counts
+    /// it, plus custom connections. Credentials are read off the main thread.
+    func anyChannelConfigured() async -> Bool {
+        if !editableConnections().isEmpty || Self.isIMessageConfigured() || Self.isWhatsAppConfigured()
+            || EmailChannelService.shared.configuration()
+                .account(channelConnectionId: AgentChannelConnection.nativeEmailConnectionId) != nil
+            || !Self.extraAccounts().isEmpty
+        {
+            return true
+        }
+        if await DiscordConnectionService.shared.hasBotTokenOffMain() { return true }
+        if await TelegramConnectionService.shared.hasBotTokenOffMain() { return true }
+        return await SlackConnectionService.shared.credentialPresenceOffMain().botToken
     }
 
     func editableConnections() -> [AgentChannelConnection] {
@@ -148,6 +208,64 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
         try AgentChannelConfigurationStore.save(configuration)
     }
 
+    /// Approve-on-first-contact: adds the identity a verified n8n event
+    /// arrived with to the connection's allowlists. Goes through
+    /// `upsertConnection` so the save-time n8n projection (outbound
+    /// `writeRoomAllowlist` mirroring) runs exactly as for a manual edit.
+    @discardableResult
+    func approveN8nContact(
+        connectionId: String,
+        conversationId rawConversationId: String,
+        senderId rawSenderId: String
+    ) throws -> AgentChannelConnection {
+        let conversationId = AgentChannelConnection.normalizedId(rawConversationId)
+        let senderId = AgentChannelConnection.normalizedId(rawSenderId)
+        guard !conversationId.isEmpty, !senderId.isEmpty else {
+            throw AgentChannelConnectionManagerError.emptyContactIdentity
+        }
+        guard var connection = connection(id: connectionId) else {
+            throw AgentChannelConnectionManagerError.connectionNotFound(
+                AgentChannelConnection.normalizedId(connectionId)
+            )
+        }
+        guard connection.kind == .n8n else {
+            throw AgentChannelConnectionManagerError.unsupportedKind(connection.kind)
+        }
+        var rooms = connection.inboundAuthorization.roomAllowlist
+        if !rooms.contains(conversationId) { rooms.append(conversationId) }
+        var senders = connection.inboundAuthorization.senderAllowlist
+        if !senders.contains(senderId) { senders.append(senderId) }
+        connection.inboundAuthorization.roomAllowlist = rooms
+        connection.inboundAuthorization.senderAllowlist = senders
+        try upsertConnection(connection, replacingOriginalId: connection.id)
+        return connection
+    }
+
+    /// Reverse of `approveN8nContact` for the removable chips in the sheet.
+    @discardableResult
+    func revokeN8nAllowlistEntry(
+        connectionId: String,
+        conversationId: String? = nil,
+        senderId: String? = nil
+    ) throws -> AgentChannelConnection {
+        guard var connection = connection(id: connectionId) else {
+            throw AgentChannelConnectionManagerError.connectionNotFound(
+                AgentChannelConnection.normalizedId(connectionId)
+            )
+        }
+        guard connection.kind == .n8n else {
+            throw AgentChannelConnectionManagerError.unsupportedKind(connection.kind)
+        }
+        if let conversationId = conversationId.map(AgentChannelConnection.normalizedId) {
+            connection.inboundAuthorization.roomAllowlist.removeAll { $0 == conversationId }
+        }
+        if let senderId = senderId.map(AgentChannelConnection.normalizedId) {
+            connection.inboundAuthorization.senderAllowlist.removeAll { $0 == senderId }
+        }
+        try upsertConnection(connection, replacingOriginalId: connection.id)
+        return connection
+    }
+
     func deleteConnection(id: String) throws {
         let normalizedId = AgentChannelConnection.normalizedId(id)
         guard !Self.reservedConnectionIds.contains(normalizedId.lowercased()) else {
@@ -159,6 +277,21 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
         // Disabled (not deleted) so the operator sees what broke — and so a
         // LATER connection recreated under the same id can never silently
         // reactivate an old autonomous route without an explicit re-enable.
+        configuration.bindings = configuration.bindings.map { binding in
+            guard binding.connectionId == normalizedId else { return binding }
+            var disabled = binding
+            disabled.enabled = false
+            return disabled
+        }
+        try AgentChannelConfigurationStore.save(configuration)
+    }
+
+    /// Disables the bindings of a removed channel account, as
+    /// `deleteConnection` does for a custom one.
+    func disableBindings(connectionId: String) throws {
+        let normalizedId = AgentChannelConnection.normalizedId(connectionId)
+        var configuration = loadConfiguration()
+        guard configuration.bindings.contains(where: { $0.connectionId == normalizedId && $0.enabled }) else { return }
         configuration.bindings = configuration.bindings.map { binding in
             guard binding.connectionId == normalizedId else { return binding }
             var disabled = binding
@@ -246,7 +379,7 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
     ) -> Bool {
         let normalized = AgentChannelConnection.normalizedId(connectionId)
         if reservedConnectionIds.contains(normalized.lowercased()) { return true }
-        return configuration.connection(id: normalized) != nil
+        return configuration.connection(id: normalized) != nil || ChannelAccounts.isNative(normalized)
     }
 
     private func validatedBinding(_ binding: AgentChannelBinding) throws -> AgentChannelBinding {
@@ -336,11 +469,19 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
     private func validatedConnection(
         _ connection: AgentChannelConnection
     ) throws -> AgentChannelConnection {
-        let normalized = connection.normalized
+        // n8n: project the optional outbound webhook onto the generic custom
+        // HTTP fields the runner reads (secret reference, actions, write
+        // allowlists) before validation so the stored row is self-consistent.
+        let normalized = AgentChannelN8nPreset.applyingOutbound(to: connection).normalized
         guard !normalized.id.isEmpty else {
             throw AgentChannelConnectionManagerError.emptyConnectionId
         }
-        guard !Self.reservedConnectionIds.contains(normalized.id.lowercased()) else {
+        // Extra channel accounts own `<kind>-...` ids; a custom connection
+        // saved under one before that keeps it.
+        let keepsLegacyId =
+            !Self.reservedConnectionIds.contains(normalized.id.lowercased())
+            && loadConfiguration().connection(id: normalized.id) != nil
+        guard !ChannelAccounts.isReserved(normalized.id) || keepsLegacyId else {
             throw AgentChannelConnectionManagerError.reservedConnectionId(normalized.id)
         }
         guard !normalized.name.isEmpty else {
@@ -353,7 +494,52 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
         if normalized.kind == .customHTTP {
             try validateCustomHTTPConfiguration(for: normalized)
         }
+        if normalized.kind == .n8n {
+            try validateN8nConfiguration(for: normalized)
+            // The optional outbound push is stored as a regular custom HTTP
+            // action set so every runner gate applies unchanged; validate it
+            // exactly like a custom connection when present.
+            if normalized.customHTTP != nil {
+                do {
+                    try validateCustomHTTPConfiguration(for: normalized)
+                } catch AgentChannelConnectionManagerError.invalidCustomHTTPBaseURL {
+                    // The runner's host policy (C2) refused the outbound target
+                    // (loopback / private ranges / plain HTTP). Name the n8n
+                    // field the operator actually edited.
+                    throw AgentChannelConnectionManagerError.invalidN8nOutboundURL(
+                        normalized.n8n?.outbound.webhookURL ?? normalized.customHTTP?.baseURL ?? ""
+                    )
+                }
+            }
+        }
         return normalized
+    }
+
+    private func validateN8nConfiguration(
+        for connection: AgentChannelConnection
+    ) throws {
+        guard let n8n = connection.n8n else {
+            throw AgentChannelConnectionManagerError.missingN8nConfiguration(connection.id)
+        }
+        if let header = n8n.inboundVerification.headerName {
+            let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+            guard !header.isEmpty,
+                header.unicodeScalars.allSatisfy(allowed.contains)
+            else {
+                throw AgentChannelConnectionManagerError.invalidN8nVerificationHeader(header)
+            }
+        }
+        // Outbound push is HTTPS-only (spec §6.3 / plan): the preset never
+        // opts into `allowInsecureHTTP`, so this is the same contract the
+        // runner enforces, surfaced at save time with the n8n-specific error.
+        if let webhookURL = n8n.outbound.webhookURL {
+            guard let url = URL(string: webhookURL),
+                url.scheme?.lowercased() == "https",
+                let host = url.host, !host.isEmpty
+            else {
+                throw AgentChannelConnectionManagerError.invalidN8nOutboundURL(webhookURL)
+            }
+        }
     }
 
     private func validateSecretReferences(

@@ -13,17 +13,26 @@ actor OsaurusRouterAPIClient {
     private let signer: OsaurusRouterAuthSigner
     private let authOverride: (@Sendable (inout URLRequest, Data?) async throws -> Void)?
     private let decoder: JSONDecoder
+    /// Osaurus ID session bearer token for `/id/*` routes (nil = wallet
+    /// signing). Injectable so tests can exercise both auth paths without a
+    /// real keychain.
+    private let idSessionToken: @Sendable () -> String?
+    private let clearIDSession: @Sendable () -> Void
 
     init(
         baseURL: URL = OsaurusRouter.defaultBaseURL,
         session: URLSession? = nil,
         searchSession: URLSession? = nil,
         signer: OsaurusRouterAuthSigner = OsaurusRouterAuthSigner(),
-        authOverride: (@Sendable (inout URLRequest, Data?) async throws -> Void)? = nil
+        authOverride: (@Sendable (inout URLRequest, Data?) async throws -> Void)? = nil,
+        idSessionToken: @escaping @Sendable () -> String? = { OsaurusIDSessionStore.token() },
+        clearIDSession: @escaping @Sendable () -> Void = { OsaurusIDSessionStore.clear() }
     ) {
         self.baseURL = baseURL
         self.signer = signer
         self.authOverride = authOverride
+        self.idSessionToken = idSessionToken
+        self.clearIDSession = clearIDSession
         self.session = session ?? Self.makeSession()
         // An injected plain `session` (tests) also serves search calls unless
         // a dedicated search session is provided.
@@ -56,8 +65,30 @@ actor OsaurusRouterAPIClient {
         try ensureOK(data: data, response: response)
     }
 
-    func balance() async throws -> OsaurusRouterBalanceResponse {
-        try await get("/credits/balance")
+    /// `GET /announcements?app_version=…` — the live community announcements.
+    /// Unauthenticated (onboarding users have no wallet yet) and IP
+    /// rate-limited; a 429 surfaces as `.rateLimited(retryAfter:)` so the
+    /// caller can back off. `appVersion` lets operators bound an
+    /// announcement to a build range, so always send it.
+    func announcements(appVersion: String?) async throws -> OsaurusRouterAnnouncementsResponse {
+        var queryItems: [URLQueryItem] = []
+        if let appVersion, !appVersion.isEmpty {
+            queryItems.append(URLQueryItem(name: "app_version", value: appVersion))
+        }
+        let url = try url(path: "/announcements", queryItems: queryItems)
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 10
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let (data, response) = try await perform(request)
+        try ensureOK(data: data, response: response)
+        return try decoder.decode(OsaurusRouterAnnouncementsResponse.self, from: data)
+    }
+
+    /// `timeout` bounds the request for callers that must answer quickly (the
+    /// local `GET /credits/balance` endpoint); nil keeps the session default.
+    func balance(timeout: TimeInterval? = nil) async throws -> OsaurusRouterBalanceResponse {
+        try await get("/credits/balance", timeout: timeout)
     }
 
     func checkout(amountMicro: String) async throws -> OsaurusRouterCheckoutResponse {
@@ -85,6 +116,433 @@ actor OsaurusRouterAPIClient {
     func models() async throws -> [OsaurusRouterModel] {
         let response: OsaurusRouterModelListResponse = try await get("/models")
         return response.data
+    }
+
+    // MARK: - Osaurus ID (`/id/*`)
+    //
+    // Auth: claiming and session creation are always wallet-signed (the spec
+    // requires it — no session exists yet, and a session token may never mint
+    // another). Every other `/id/*` call prefers the stored `osk_…` session
+    // bearer token so routine profile traffic never re-touches the master
+    // key, falling back to wallet signing when no token exists. A 401 under a
+    // bearer token drops the token and retries wallet-signed once.
+
+    /// `GET /id/availability?osaurus_id=…` — cheap pre-claim check for the
+    /// claim field. Always 200; availability can still change before the
+    /// claim lands.
+    func osaurusIDAvailability(_ handle: String) async throws -> OsaurusIDAvailability {
+        try await idRequest(
+            method: "GET",
+            path: "/id/availability",
+            queryItems: [URLQueryItem(name: "osaurus_id", value: handle)]
+        )
+    }
+
+    /// `POST /id` — claim the account's one Osaurus ID. Wallet-signed.
+    func claimOsaurusID(handle: String) async throws -> OsaurusIDProfile {
+        struct Body: Encodable { let osaurus_id: String }
+        return try await post("/id", body: Body(osaurus_id: handle))
+    }
+
+    /// `GET /id/me` — the own profile (404 `NOT_FOUND` = no Osaurus ID yet).
+    func osaurusIDProfile() async throws -> OsaurusIDProfile {
+        try await idRequest(method: "GET", path: "/id/me")
+    }
+
+    /// `PATCH /id/me` — update any subset of the mutable profile fields.
+    func updateOsaurusIDProfile(_ patch: OsaurusIDProfilePatch) async throws -> OsaurusIDProfile {
+        let body = try JSONEncoder.osaurusCanonical(prettyPrinted: false).encode(patch)
+        return try await idRequest(method: "PATCH", path: "/id/me", bodyData: body)
+    }
+
+    /// `POST /id/sessions` — mint an `osk_…` bearer token. Wallet-signed
+    /// always; the token in the response is shown exactly once.
+    func createOsaurusIDSession(
+        label: String,
+        expiresInDays: Int? = nil
+    ) async throws -> OsaurusIDSessionCreateResponse {
+        struct Body: Encodable {
+            let label: String
+            let expires_in_days: Int?
+        }
+        return try await post("/id/sessions", body: Body(label: label, expires_in_days: expiresInDays))
+    }
+
+    func listOsaurusIDSessions() async throws -> [OsaurusIDSession] {
+        let response: OsaurusIDSessionListResponse = try await idRequest(method: "GET", path: "/id/sessions")
+        return response.data
+    }
+
+    func revokeOsaurusIDSession(id: String) async throws {
+        _ = try await idData(method: "DELETE", path: "/id/sessions/\(try routerPathComponent(id))")
+    }
+
+    /// `POST /id/lookup` — claimed Osaurus IDs for 1–25 wallets, keyed by
+    /// lowercased wallet. Wallets without a claimed ID are absent.
+    func osaurusIDLookup(wallets: [String], timeout: TimeInterval = 3) async throws -> [String: String] {
+        struct Body: Encodable { let wallets: [String] }
+        struct Person: Decodable {
+            let wallet: String
+            let osaurus_id: String
+        }
+        struct Response: Decodable { let people: [Person] }
+        let body = try JSONEncoder.osaurusCanonical(prettyPrinted: false).encode(Body(wallets: wallets))
+        let response: Response = try await idRequest(
+            method: "POST", path: "/id/lookup", bodyData: body, timeout: timeout)
+        return Dictionary(response.people.map { ($0.wallet.lowercased(), $0.osaurus_id) }, uniquingKeysWith: { a, _ in a })
+    }
+
+    private func idRequest<T: Decodable>(
+        method: String,
+        path: String,
+        queryItems: [URLQueryItem] = [],
+        bodyData: Data? = nil,
+        timeout: TimeInterval? = nil
+    ) async throws -> T {
+        let data = try await idData(
+            method: method, path: path, queryItems: queryItems, bodyData: bodyData, timeout: timeout)
+        return try decoder.decode(T.self, from: data)
+    }
+
+    /// Session-token-first transport for the `/id/*` routes (see the auth
+    /// note at the top of this section).
+    private func idData(
+        method: String,
+        path: String,
+        queryItems: [URLQueryItem] = [],
+        bodyData: Data? = nil,
+        timeout: TimeInterval? = nil
+    ) async throws -> Data {
+        let url = try url(path: path, queryItems: queryItems)
+        func makeRequest() -> URLRequest {
+            var request = URLRequest(url: url)
+            request.httpMethod = method
+            if let timeout { request.timeoutInterval = timeout }
+            request.setValue("application/json", forHTTPHeaderField: "Accept")
+            if bodyData != nil {
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            }
+            request.httpBody = bodyData
+            return request
+        }
+
+        if let token = idSessionToken() {
+            var request = makeRequest()
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            let (data, response) = try await perform(request)
+            if let http = response as? HTTPURLResponse, http.statusCode == 401 {
+                // Revoked or expired server-side: drop the dead token and
+                // fall through to wallet signing.
+                clearIDSession()
+            } else {
+                try ensureOK(data: data, response: response)
+                return data
+            }
+        }
+
+        var request = makeRequest()
+        try await sign(request: &request, body: bodyData ?? Data())
+        let (data, response) = try await perform(request)
+        try ensureOK(data: data, response: response)
+        return data
+    }
+
+    // MARK: - Workspaces (`/workspaces/*`)
+
+    func observeWorkspaceSync(_ receive: @Sendable (WorkspaceSyncFrame) async -> Void) async throws {
+        var request = try await signedJSONRequest(method: "GET", path: "/workspaces/sync")
+        request.setValue("application/x-ndjson", forHTTPHeaderField: "Accept")
+        let (bytes, response) = try await session.bytes(for: request)
+        guard let http = response as? HTTPURLResponse, http.statusCode == 200,
+            http.value(forHTTPHeaderField: "Content-Type")?.hasPrefix("application/x-ndjson") == true
+        else { throw OsaurusRouterAPIError.invalidResponse }
+        for try await line in bytes.lines {
+            try Task.checkCancellation()
+            guard line.utf8.count <= 1_048_576 else { throw OsaurusRouterAPIError.invalidResponse }
+            let frame = try JSONDecoder().decode(WorkspaceSyncFrame.self, from: Data(line.utf8))
+            await receive(frame)
+        }
+    }
+
+    func verifyWorkspaceAgentAccess(workspaceId: String, agentAddress: String, attestation: String) async throws {
+        struct Body: Encodable { let attestation: String }
+        struct Response: Decodable { let allowed: Bool }
+        let body = try JSONEncoder.osaurusCanonical().encode(Body(attestation: attestation))
+        var request = try await signedJSONRequest(
+            method: "POST",
+            path:
+                "/workspaces/\(try routerPathComponent(workspaceId))/agents/\(try routerPathComponent(agentAddress))/access",
+            body: body
+        )
+        request.timeoutInterval = 2
+        let (data, response) = try await perform(request)
+        try ensureOK(data: data, response: response)
+        let result = try decoder.decode(Response.self, from: data)
+        guard result.allowed else { throw OsaurusRouterAPIError.invalidResponse }
+    }
+
+    /// Redeems an activation code (web purchase made before the buyer had a
+    /// wallet, or an admin comp), creating the workspace owned by the caller
+    /// and binding the parked subscription to them. Wallet-signed.
+    /// Re-presenting a code this wallet already redeemed returns the existing
+    /// workspace (idempotent retry after a dropped response).
+    func workspaceActivate(code: String, name: String) async throws -> OsaurusRouterWorkspaceDetail {
+        struct Body: Encodable {
+            let code: String
+            let name: String
+        }
+        return try await post("/workspaces/activate", body: Body(code: code, name: name))
+    }
+
+    /// Creates a workspace owned by the caller. Immediate (`201 created`) when
+    /// the owner already has a live, non-trialing subscription; otherwise
+    /// `200 checkout_required` with a Stripe Checkout URL (carrying the trial
+    /// on a first subscription). `409 TRIAL_WORKSPACE_LIMIT` while trialing
+    /// with a workspace already. `price_id` is only consulted on the Checkout
+    /// path (default: the live monthly price).
+    func createWorkspace(name: String, priceId: String? = nil) async throws
+        -> OsaurusRouterWorkspaceCreateResponse
+    {
+        struct Body: Encodable {
+            let name: String
+            let price_id: String?
+        }
+        return try await post("/workspaces", body: Body(name: name, price_id: priceId))
+    }
+
+    /// Puts a suspended workspace back on the owner's subscription in place:
+    /// `200 upgraded` on a live subscription, else `200 checkout_required`.
+    func upgradeWorkspace(id: String, priceId: String? = nil) async throws
+        -> OsaurusRouterWorkspaceCreateResponse
+    {
+        struct Body: Encodable { let price_id: String? }
+        return try await post(
+            "/workspaces/\(try routerPathComponent(id))/upgrade", body: Body(price_id: priceId)
+        )
+    }
+
+    func listWorkspaces() async throws -> [OsaurusRouterWorkspaceSummary] {
+        struct Response: Decodable { let data: [OsaurusRouterWorkspaceSummary] }
+        let response: Response = try await get("/workspaces")
+        return response.data
+    }
+
+    /// The single plan (levers + trial length) and the live per-workspace
+    /// prices. Public and unsigned (pricing-page material, cacheable).
+    func workspacePrices() async throws -> OsaurusRouterWorkspacePricesResponse {
+        let url = try url(path: "/workspaces/prices")
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let (data, response) = try await perform(request)
+        try ensureOK(data: data, response: response)
+        return try decoder.decode(OsaurusRouterWorkspacePricesResponse.self, from: data)
+    }
+
+    /// The caller's owner subscription (one per account, covering every
+    /// workspace they own) with trial state, plus owned/billed counts and
+    /// trial eligibility.
+    func workspaceBilling() async throws -> OsaurusRouterWorkspaceBillingSummary {
+        try await get("/workspaces/billing")
+    }
+
+    /// Stripe Billing Portal for the caller's owner subscription. `409
+    /// INVALID_STATE` when the account has never subscribed.
+    func workspaceBillingPortal() async throws -> OsaurusRouterWorkspacePortalResponse {
+        struct Body: Encodable {}
+        return try await post("/workspaces/billing/portal", body: Body())
+    }
+
+    func workspaceDetail(id: String) async throws -> OsaurusRouterWorkspaceDetail {
+        try await get("/workspaces/\(try routerPathComponent(id))")
+    }
+
+    func renameWorkspace(id: String, name: String) async throws {
+        struct Body: Encodable { let name: String }
+        try await sendVoid(
+            method: "PATCH",
+            path: "/workspaces/\(try routerPathComponent(id))",
+            body: Body(name: name)
+        )
+    }
+
+    func deleteWorkspace(id: String) async throws {
+        try await sendVoid(method: "DELETE", path: "/workspaces/\(try routerPathComponent(id))")
+    }
+
+    /// Mints an invite link. `max_uses` is omitted when 1 (the server
+    /// default) so the body stays minimal; up to 100 distinct wallets may
+    /// join through one link.
+    func createWorkspaceInvite(
+        id: String,
+        role: OsaurusRouterWorkspaceRole,
+        maxUses: Int = 1
+    ) async throws -> OsaurusRouterWorkspaceInvite {
+        struct Body: Encodable {
+            let role: String
+            let max_uses: Int?
+        }
+        return try await post(
+            "/workspaces/\(try routerPathComponent(id))/invites",
+            body: Body(role: role.rawValue, max_uses: maxUses > 1 ? maxUses : nil)
+        )
+    }
+
+    /// Redeems an invite link (`osaurus://workspaces/join?code=…`). Wallet-signed;
+    /// the first call from a new wallet also creates its router account.
+    /// Idempotent: an existing member gets `200` without consuming a use.
+    func workspaceJoin(code: String) async throws -> OsaurusRouterWorkspaceDetail {
+        struct Body: Encodable { let code: String }
+        return try await post("/workspaces/join", body: Body(code: code))
+    }
+
+    func workspaceInvites(id: String) async throws -> [OsaurusRouterWorkspaceInvite] {
+        let response: OsaurusRouterWorkspaceInviteListResponse = try await get(
+            "/workspaces/\(try routerPathComponent(id))/invites"
+        )
+        return response.data
+    }
+
+    func revokeWorkspaceInvite(id: String, inviteId: String) async throws {
+        try await sendVoid(
+            method: "DELETE",
+            path: "/workspaces/\(try routerPathComponent(id))/invites/\(try routerPathComponent(inviteId))"
+        )
+    }
+
+    func workspaceMembers(id: String) async throws -> [OsaurusRouterWorkspaceMember] {
+        let response: OsaurusRouterWorkspaceMemberListResponse = try await get(
+            "/workspaces/\(try routerPathComponent(id))/members"
+        )
+        return response.data
+    }
+
+    func setWorkspaceMemberRole(
+        id: String,
+        accountId: String,
+        role: OsaurusRouterWorkspaceRole
+    ) async throws {
+        struct Body: Encodable { let role: String }
+        try await sendVoid(
+            method: "PATCH",
+            path: "/workspaces/\(try routerPathComponent(id))/members/\(try routerPathComponent(accountId))",
+            body: Body(role: role.rawValue)
+        )
+    }
+
+    /// Owner/admin removal, or self-leave when `accountId` is the caller.
+    func removeWorkspaceMember(id: String, accountId: String) async throws {
+        try await sendVoid(
+            method: "DELETE",
+            path: "/workspaces/\(try routerPathComponent(id))/members/\(try routerPathComponent(accountId))"
+        )
+    }
+
+    func shareWorkspaceAgent(
+        id: String,
+        body: OsaurusRouterWorkspaceShareAgentBody
+    ) async throws -> OsaurusRouterWorkspaceAgent {
+        try await post("/workspaces/\(try routerPathComponent(id))/agents", body: body)
+    }
+
+    func workspaceAgents(id: String) async throws -> [OsaurusRouterWorkspaceAgent] {
+        let response: OsaurusRouterWorkspaceAgentListResponse = try await get(
+            "/workspaces/\(try routerPathComponent(id))/agents"
+        )
+        return response.data
+    }
+
+    func unshareWorkspaceAgent(id: String, agentAddress: String) async throws {
+        try await sendVoid(
+            method: "DELETE",
+            path: "/workspaces/\(try routerPathComponent(id))/agents/\(try routerPathComponent(agentAddress))"
+        )
+    }
+
+    /// Mints a short-lived (10 min) membership attestation for the caller.
+    /// Wallet-signed; any active member. `409 INVALID_STATE` when the router
+    /// has no attestation key configured (feature off).
+    func workspaceAttestation(id: String) async throws -> OsaurusRouterWorkspaceAttestationResponse {
+        try await postEmpty("/workspaces/\(try routerPathComponent(id))/attestation")
+    }
+
+    /// The router's Ed25519 attestation verification key. Public and
+    /// unsigned (like the package list); callers should cache it (≤1h).
+    func workspacesAttestationKey() async throws -> OsaurusRouterWorkspaceAttestationKeyResponse {
+        let url = try url(path: "/workspaces/attestation-key")
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let (data, response) = try await perform(request)
+        try ensureOK(data: data, response: response)
+        return try decoder.decode(OsaurusRouterWorkspaceAttestationKeyResponse.self, from: data)
+    }
+
+    /// Pool balance with its grant/purchased split and the auto-reload state
+    /// (any active member).
+    func workspaceBalance(id: String) async throws -> OsaurusRouterWorkspacePoolBalance {
+        try await get("/workspaces/\(try routerPathComponent(id))/credits/balance")
+    }
+
+    /// One-time pool top-up (owner only): a Stripe Checkout for `amountMicro`
+    /// ($5–$500, whole cents). Nothing is credited by the redirect — the
+    /// webhook posts the `workspace_topup` ledger entry.
+    func workspacePoolCheckout(
+        id: String, amountMicro: Int64
+    ) async throws -> OsaurusRouterWorkspaceTopUpCheckoutResponse {
+        struct Body: Encodable { let amount_micro: String }
+        return try await post(
+            "/workspaces/\(try routerPathComponent(id))/credits/checkout",
+            body: Body(amount_micro: String(amountMicro))
+        )
+    }
+
+    /// Auto-reload settings + state (any member may read).
+    func workspaceAutoReload(id: String) async throws -> OsaurusRouterWorkspaceAutoReload {
+        try await get("/workspaces/\(try routerPathComponent(id))/credits/auto-reload")
+    }
+
+    /// Saves auto-reload settings (owner only). Saving clears a pause and the
+    /// failure count; enabling needs an active owner subscription with a
+    /// saved card (`AUTO_RELOAD_UNAVAILABLE` otherwise).
+    func updateWorkspaceAutoReload(
+        id: String, _ update: OsaurusRouterWorkspaceAutoReloadUpdate
+    ) async throws -> OsaurusRouterWorkspaceAutoReload {
+        try await send(
+            method: "PUT",
+            path: "/workspaces/\(try routerPathComponent(id))/credits/auto-reload",
+            body: update
+        )
+    }
+
+    func workspaceUsage(
+        id: String,
+        limit: Int = 50,
+        cursor: String? = nil
+    ) async throws -> OsaurusRouterUsageResponse {
+        var queryItems = [URLQueryItem(name: "limit", value: String(limit))]
+        if let cursor, !cursor.isEmpty {
+            queryItems.append(URLQueryItem(name: "cursor", value: cursor))
+        }
+        return try await get(
+            "/workspaces/\(try routerPathComponent(id))/credits/usage",
+            queryItems: queryItems
+        )
+    }
+
+    func workspaceTransactions(
+        id: String,
+        limit: Int = 50,
+        cursor: String? = nil
+    ) async throws -> OsaurusRouterTransactionsResponse {
+        var queryItems = [URLQueryItem(name: "limit", value: String(limit))]
+        if let cursor, !cursor.isEmpty {
+            queryItems.append(URLQueryItem(name: "cursor", value: cursor))
+        }
+        return try await get(
+            "/workspaces/\(try routerPathComponent(id))/credits/transactions",
+            queryItems: queryItems
+        )
     }
 
     // MARK: - Cloud media
@@ -210,6 +668,45 @@ actor OsaurusRouterAPIClient {
         return try await get("/credits/web-usage", queryItems: queryItems)
     }
 
+    // MARK: - Help (`/support/*`)
+    //
+    // Bug reports and the two-way thread behind each one. Wallet-signed like
+    // `/credits/*`; the router deliberately does not count these as the
+    // wallet's first signed action, so they are also allowed while the
+    // welcome-credit choice is pending (see
+    // `RouterCreditAcquisitionCoordinator.allowsSignedRequest`).
+
+    /// `GET /support/threads` — the user's reports, newest first, plus the
+    /// unread count for the Help badge.
+    func supportThreads() async throws -> OsaurusRouterSupportThreadsResponse {
+        try await get("/support/threads", timeout: 15)
+    }
+
+    /// `POST /support/threads` — send a new report. `body.consent` must be
+    /// true; the router refuses anything else.
+    func createSupportThread(_ body: OsaurusRouterSupportReportBody) async throws -> OsaurusRouterSupportThread {
+        try await post("/support/threads", body: body)
+    }
+
+    /// `GET /support/threads/:id` — one report with its messages.
+    func supportThread(id: String) async throws -> OsaurusRouterSupportThread {
+        try await get("/support/threads/\(try routerPathComponent(id))", timeout: 15)
+    }
+
+    /// `POST /support/threads/:id/messages` — the user answers. Moves the
+    /// thread back to `open`, including from `closed`.
+    func replyToSupportThread(id: String, body: String) async throws -> OsaurusRouterSupportThread {
+        struct Body: Encodable { let body: String }
+        return try await post(
+            "/support/threads/\(try routerPathComponent(id))/messages", body: Body(body: body))
+    }
+
+    /// `POST /support/threads/:id/read` — clear the unread flag. Reading the
+    /// detail does not do this on its own.
+    func markSupportThreadRead(id: String) async throws -> OsaurusRouterSupportThread {
+        try await postEmpty("/support/threads/\(try routerPathComponent(id))/read")
+    }
+
     func signedJSONRequest(method: String, path: String, body: Data? = nil) async throws -> URLRequest {
         let url = try url(path: path)
         return try await signedJSONRequest(method: method, url: url, body: body)
@@ -225,11 +722,16 @@ actor OsaurusRouterAPIClient {
         return request
     }
 
-    private func get<T: Decodable>(_ path: String, queryItems: [URLQueryItem] = []) async throws -> T {
+    private func get<T: Decodable>(
+        _ path: String,
+        queryItems: [URLQueryItem] = [],
+        timeout: TimeInterval? = nil
+    ) async throws -> T {
         let url = try url(path: path, queryItems: queryItems)
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let timeout { request.timeoutInterval = timeout }
         try await sign(request: &request, body: Data())
         let (data, response) = try await perform(request)
         try ensureOK(data: data, response: response)
@@ -242,10 +744,24 @@ actor OsaurusRouterAPIClient {
         idempotencyKey: String? = nil,
         session: URLSession? = nil
     ) async throws -> T {
+        try await send(
+            method: "POST", path: path, body: body, idempotencyKey: idempotencyKey, session: session
+        )
+    }
+
+    /// Signed JSON request with a body (POST / PUT / PATCH) that decodes the
+    /// response.
+    private func send<Body: Encodable, T: Decodable>(
+        method: String,
+        path: String,
+        body: Body,
+        idempotencyKey: String? = nil,
+        session: URLSession? = nil
+    ) async throws -> T {
         // Encode once with the canonical encoder: these exact bytes are both
         // signed (body hash binding) and sent.
         let bodyData = try JSONEncoder.osaurusCanonical(prettyPrinted: false).encode(body)
-        var request = try await signedJSONRequest(method: "POST", path: path, body: bodyData)
+        var request = try await signedJSONRequest(method: method, path: path, body: bodyData)
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         if let idempotencyKey {
             request.setValue(idempotencyKey, forHTTPHeaderField: "Idempotency-Key")
@@ -255,15 +771,120 @@ actor OsaurusRouterAPIClient {
         return try decoder.decode(T.self, from: data)
     }
 
+    /// Signed request whose response body the client doesn't consume
+    /// (renames, deletes, role changes, invite create/revoke/decline).
+    private func sendVoid(method: String, path: String, bodyData: Data? = nil) async throws {
+        let request = try await signedJSONRequest(method: method, path: path, body: bodyData)
+        let (data, response) = try await perform(request)
+        try ensureOK(data: data, response: response)
+    }
+
+    private func sendVoid<Body: Encodable>(method: String, path: String, body: Body) async throws {
+        // Canonical encoder: these exact bytes are both signed and sent.
+        let bodyData = try JSONEncoder.osaurusCanonical(prettyPrinted: false).encode(body)
+        try await sendVoid(method: method, path: path, bodyData: bodyData)
+    }
+
+    /// Signed POST with an empty body (the empty string is what gets hashed
+    /// into the signature) that decodes the response.
+    private func postEmpty<T: Decodable>(_ path: String) async throws -> T {
+        let request = try await signedJSONRequest(method: "POST", path: path, body: nil)
+        let (data, response) = try await perform(request)
+        try ensureOK(data: data, response: response)
+        return try decoder.decode(T.self, from: data)
+    }
+
     private func perform(
         _ request: URLRequest,
         session overrideSession: URLSession? = nil
     ) async throws -> (Data, URLResponse) {
+        // Activity log: every signed control-plane call (account, credits,
+        // workspaces, media, pairing) is cloud egress. Hosted search and
+        // contents are excluded here because `SearchActivityLogger` records
+        // them as web-search / URL-extract rows with the query and URLs.
+        let logged = Self.shouldLogControlPlaneCall(path: request.url?.path)
+        let attribution = logged ? InsightsService.ActivityAttribution.current() : .none
+        let started = Date()
         do {
-            return try await (overrideSession ?? session).data(for: request)
+            let result = try await (overrideSession ?? session).data(for: request)
+            if logged {
+                Self.logControlPlaneCall(
+                    request: request, response: result.1 as? HTTPURLResponse,
+                    responseBytes: result.0.count, error: nil,
+                    durationMs: Date().timeIntervalSince(started) * 1000, attribution: attribution)
+            }
+            return result
         } catch {
+            if logged {
+                Self.logControlPlaneCall(
+                    request: request, response: nil, responseBytes: nil, error: error.localizedDescription,
+                    durationMs: Date().timeIntervalSince(started) * 1000, attribution: attribution)
+            }
             throw OsaurusRouterAPIError.transport(error.localizedDescription)
         }
+    }
+
+    /// Hosted search/contents are logged by the search layer with richer
+    /// facts; everything else on the Router is a control-plane call. The
+    /// unauthenticated announcements feed and health probe carry no account
+    /// data (no wallet headers, no body) and are excluded like theme fetches
+    /// and the appcast.
+    nonisolated static func shouldLogControlPlaneCall(path: String?) -> Bool {
+        guard let path else { return true }
+        return path != "/v1/search" && path != "/v1/contents"
+            && path != "/announcements" && path != "/health"
+    }
+
+    /// Plain-language purpose for a Router path, so the activity row reads
+    /// "Credits balance" rather than a bare URL.
+    nonisolated static func controlPlanePurpose(path: String) -> String {
+        let p = path.lowercased()
+        if p.hasPrefix("/support") { return L("Help & feedback") }
+        if p.contains("/workspace") { return L("Workspaces") }
+        if p.contains("/credit") || p.contains("/balance") || p.contains("/billing") { return L("Credits") }
+        if p.contains("/media") { return L("Media generation") }
+        if p.contains("/pair") || p.contains("/relay") { return L("Secure channel pairing") }
+        if p.contains("/account") || p.contains("/identity") || p.contains("/me") { return L("Account") }
+        if p.contains("/models") { return L("Model catalog") }
+        return L("Router control plane")
+    }
+
+    nonisolated static func logControlPlaneCall(
+        request: URLRequest,
+        response: HTTPURLResponse?,
+        responseBytes: Int?,
+        error: String?,
+        durationMs: Double,
+        attribution: InsightsService.ActivityAttribution
+    ) {
+        let path = request.url?.path ?? "/"
+        let host = request.url?.host
+        let status = response?.statusCode ?? (error == nil ? 200 : 0)
+        let isError = error != nil || !(200 ..< 300).contains(status)
+        var details: [String: String] = [
+            "purpose": controlPlanePurpose(path: path),
+            "method": request.httpMethod ?? "GET",
+        ]
+        if let query = request.url?.query, !query.isEmpty { details["query_string"] = query }
+        if let error { details["error"] = error }
+        InsightsService.logEgress(
+            category: .routerControl,
+            source: .system,
+            method: request.httpMethod ?? "GET",
+            path: path,
+            statusCode: status,
+            durationMs: durationMs,
+            egress: EgressInfo(
+                destinationLabel: L("Osaurus Router"),
+                destinationHost: host,
+                bytesSent: request.httpBody?.count ?? 0,
+                bytesReceived: responseBytes,
+                dataClasses: ["account"],
+                details: details
+            ),
+            errorMessage: isError ? (error ?? "HTTP \(status)") : nil,
+            attribution: attribution
+        )
     }
 
     private func sign(request: inout URLRequest, body: Data?) async throws {
@@ -309,6 +930,13 @@ actor OsaurusRouterAPIClient {
     }
 
     private func mediaJobIDPathComponent(_ value: String) throws -> String {
+        try routerPathComponent(value)
+    }
+
+    /// Validates a caller-supplied path segment (media job id, workspace id,
+    /// invite id, account id, `0x…` agent address) so it can never smuggle
+    /// separators or query syntax into a signed path.
+    private func routerPathComponent(_ value: String) throws -> String {
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
         guard !value.isEmpty, value.unicodeScalars.allSatisfy(allowed.contains) else {
             throw OsaurusRouterAPIError.invalidURL

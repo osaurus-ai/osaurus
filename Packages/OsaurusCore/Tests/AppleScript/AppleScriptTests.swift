@@ -3122,7 +3122,7 @@ struct AppleScriptMapOutcomeTests {
 
     @Test("token/s + elapsed are reported when measured, never fabricated")
     func tokensPerSecondReported() throws {
-        // A live-model run: tokens + model time measured → token/s present.
+        // Reported tokens + step wall time do not establish decode speed.
         let live = AppleScriptRunResult(
             outcome: .done(summary: "Done."),
             scriptsExecuted: 1,
@@ -3137,7 +3137,8 @@ struct AppleScriptMapOutcomeTests {
         let mapped = try AppleScriptKind.mapOutcome(live, model: "m", mode: .automate)
         #expect(mapped.payload["elapsed_seconds"] as? Double == 12.5)
         #expect(mapped.payload["model_tokens"] as? Int == 300)
-        #expect(mapped.payload["tokens_per_second"] as? Double == 30.0)
+        #expect(mapped.payload["tokens_per_second"] == nil)
+        #expect(live.modelStepThroughputTokensPerSecond == 30.0)
 
         // A scripted/injected run (no tokens, no model time) → NO token/s key.
         let scripted = AppleScriptRunResult(
@@ -3182,6 +3183,16 @@ struct AppleScriptMapOutcomeTests {
 
 @Suite("AppleScriptWarmResidencyCoordinator")
 struct AppleScriptWarmResidencyCoordinatorTests {
+    private var owner: AppleScriptWarmResidencyOwner {
+        AppleScriptWarmResidencyOwner(
+            scope: SubagentScope(
+                sessionId: "warm",
+                toolCallId: "call",
+                agentId: Agent.defaultId,
+                parentModelName: "chat-A"
+            )
+        )
+    }
     private func lease(_ names: String...) -> ChatResidencyLease {
         ChatResidencyLease(unloadedModelNames: names)
     }
@@ -3193,17 +3204,18 @@ struct AppleScriptWarmResidencyCoordinatorTests {
     }
 
     @Test("a follow-up run for the SAME model adopts the held lease and skips restore")
-    func adoptsSameModel() async {
+    func adoptsSameModel() async throws {
         let restored = RestoreCollector()
         let coord = AppleScriptWarmResidencyCoordinator(
             restore: { await restored.record($0) },
+            canAdopt: { _, _ in true },
             sleep: parkedSleep
         )
         let held = lease("chat-A")
-        await coord.endRun(lease: held, model: "AS-16B", keepWarmSeconds: 90)
+        try await coord.endRun(lease: held, model: "AS-16B", owner: owner, keepWarmSeconds: 90)
         #expect(await coord.heldModelForTesting() == "AS-16B")
 
-        let adopted = await coord.beginRun(model: "AS-16B")
+        let adopted = try await coord.beginRun(model: "AS-16B", owner: owner, allowAdoption: true)
         #expect(adopted == held)
         // Adopting reuses the unloaded lease — nothing is restored.
         #expect(await restored.all().isEmpty)
@@ -3211,49 +3223,50 @@ struct AppleScriptWarmResidencyCoordinatorTests {
     }
 
     @Test("a run for a DIFFERENT model restores the held lease and does not adopt")
-    func replacesDifferentModel() async {
+    func replacesDifferentModel() async throws {
         let restored = RestoreCollector()
         let coord = AppleScriptWarmResidencyCoordinator(
             restore: { await restored.record($0) },
+            canAdopt: { _, _ in true },
             sleep: parkedSleep
         )
         let held = lease("chat-A")
-        await coord.endRun(lease: held, model: "AS-16B", keepWarmSeconds: 90)
+        try await coord.endRun(lease: held, model: "AS-16B", owner: owner, keepWarmSeconds: 90)
 
-        let adopted = await coord.beginRun(model: "AS-Other")
+        let adopted = try await coord.beginRun(model: "AS-Other", owner: owner, allowAdoption: true)
         #expect(adopted == nil)
         #expect(await restored.all() == [held])
     }
 
     @Test("flush restores the held lease immediately")
-    func flushRestores() async {
+    func flushRestores() async throws {
         let restored = RestoreCollector()
         let coord = AppleScriptWarmResidencyCoordinator(
             restore: { await restored.record($0) },
             sleep: parkedSleep
         )
         let held = lease("chat-A")
-        await coord.endRun(lease: held, model: "AS-16B", keepWarmSeconds: 90)
-        await coord.flush()
+        try await coord.endRun(lease: held, model: "AS-16B", owner: owner, keepWarmSeconds: 90)
+        try await coord.flush()
         #expect(await restored.all() == [held])
         #expect(await coord.heldModelForTesting() == nil)
     }
 
     @Test("keepWarmSeconds == 0 restores immediately (single-residency policy)")
-    func zeroWindowRestoresNow() async {
+    func zeroWindowRestoresNow() async throws {
         let restored = RestoreCollector()
         let coord = AppleScriptWarmResidencyCoordinator(
             restore: { await restored.record($0) },
             sleep: parkedSleep
         )
         let held = lease("chat-A")
-        await coord.endRun(lease: held, model: "AS-16B", keepWarmSeconds: 0)
+        try await coord.endRun(lease: held, model: "AS-16B", owner: owner, keepWarmSeconds: 0)
         #expect(await restored.all() == [held])
         #expect(await coord.heldModelForTesting() == nil)
     }
 
     @Test("the deferred restore fires when the keep-warm window elapses")
-    func deferredRestoreFires() async {
+    func deferredRestoreFires() async throws {
         let restored = RestoreCollector()
         // Immediate sleep → the window "elapses" at once, so the deferred
         // restore runs on the scheduled task.
@@ -3262,7 +3275,7 @@ struct AppleScriptWarmResidencyCoordinatorTests {
             sleep: { _ in }
         )
         let held = lease("chat-A")
-        await coord.endRun(lease: held, model: "AS-16B", keepWarmSeconds: 90)
+        try await coord.endRun(lease: held, model: "AS-16B", owner: owner, keepWarmSeconds: 90)
         let fired = await restored.waitForOne()
         #expect(fired == held)
     }
@@ -3320,17 +3333,19 @@ struct AppleScriptCapabilityGatingTests {
         #expect(!disabledWithModel.contains(AppleScriptTool.toolName))
     }
 
-    @Test("the Default agent is gated by the global switch, not the snapshot flag")
-    func defaultAgentUsesGlobalSwitch() {
-        let config = SubagentConfiguration(appleScriptDelegationEnabled: true)
+    @Test("the Default agent (Orchestrator) never resolves AppleScript, even with a ready model")
+    func defaultAgentNeverResolvesAppleScript() {
+        // AppleScript lives on custom agents only; the Orchestrator delegates
+        // to such an agent instead of carrying the tools itself.
         let names = SubagentToolVisibility.visibleDelegationToolNames(
             agentId: Agent.defaultId,
-            snapshot: snapshot(agentId: Agent.defaultId, appleScript: false),
-            config: config,
+            snapshot: snapshot(agentId: Agent.defaultId, appleScript: true),
+            config: SubagentConfiguration(),
             hasReadyImageModel: false,
             hasReadyAppleScriptModel: true
         )
-        #expect(names.contains(AppleScriptTool.toolName))
+        #expect(!names.contains(AppleScriptTool.toolName))
+        #expect(!names.contains(MacQueryTool.toolName))
     }
 
     @Test("the applescript capability gates both sibling tools (applescript + mac_query)")
@@ -3342,11 +3357,13 @@ struct AppleScriptCapabilityGatingTests {
         #expect(cap.perAgentFlag == .appleScript)
         #expect(cap.supportsModelOverride == false)
         #expect(SubagentCapabilityRegistry.delegationFamily.contains { $0.id == "applescript" })
-        // Both tools gate together: enabling AppleScript exposes both.
+        // Both tools gate together: enabling AppleScript on a custom agent
+        // exposes both.
+        let agentId = UUID()
         let names = SubagentToolVisibility.visibleDelegationToolNames(
-            agentId: Agent.defaultId,
-            snapshot: snapshot(agentId: Agent.defaultId, appleScript: false),
-            config: SubagentConfiguration(appleScriptDelegationEnabled: true),
+            agentId: agentId,
+            snapshot: snapshot(agentId: agentId, appleScript: true),
+            config: SubagentConfiguration(),
             hasReadyImageModel: false,
             hasReadyAppleScriptModel: true
         )

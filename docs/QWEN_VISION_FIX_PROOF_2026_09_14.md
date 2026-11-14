@@ -1,0 +1,357 @@
+# Installed vision evidence — implementation and proof
+
+PR #2756 fixes local image admission using installed configuration and actual
+weight headers, and preserves attachments when switching to an unsupported model.
+**PARTIAL for the reporter's exact artifact, general caption fidelity and video
+quality.** This does not qualify the separate 16 GB RAM-safety issue.
+
+## Latest tested production source
+
+- Source `bd30588099097b7ae4967e6aca5d46e30f249921`.
+- Engine pin unchanged: `67ccb4b347a23820b838a98f0c195b0c29c676d2`.
+- Isolated Release executable SHA256
+  `2a8224de51bb7ec0e78607bf059b063d07e367f96aed3248083c7d7716cabac4`.
+- Development bundle `com.dinoki.osaurus.visionproof20260913`, version 1.0;
+  `/private/tmp/osaurus-qwen-vision-derived/Build/Products/Release/osaurus.app`.
+- Local Apple M5 Max, 18 logical cores, 128 GiB physical RAM. Inference remained
+  local. Model source files were referenced in place and not modified.
+- Private artifacts `/Users/eric/vmlx-private-evidence/qwen-vision-2026-09-13/`;
+  current rows use `arch-*`, `*-architecture*`, and `release-build-architecture.json`.
+  Screenshots are outside the repository.
+- Test root `/private/tmp/osaurus-qwen-vision-ui`; API `127.0.0.1:19314`.
+  Vision Probe agent has empty instructions and no tools, knowledge, memory,
+  delegation, web or screen context. UI Thinking was Off. Sampler fields were
+  blank; live cache records expose bundle temperature 1, top-p .95, Gemma top-k
+  64/Qwen top-k 20, `sampler_was_changed=false`. API max tokens explicitly 1024.
+
+## Main integration boundary
+
+Main advanced to `83eac58f064e6ad6ee43ed17efae77c62a75d1b0` (#2757) during
+proof. The integration preserves its directory-keyed MLXModel caches, cache-only
+composer lookup, context-budget snapshot and other UI performance changes.
+The overlapping ModelMediaCapabilities memo is supplied by LocalVisionEvidence's
+existing directory memo and generation-aware invalidation, rather than a second
+memo that could hide a refreshed preflight result. The evidence below predates
+this integration. **Combined-head Release UI/API verification and CI are required
+before merge; their exact SHA, executable hash and results belong in the PR's
+current verification record.** No engine change is part of this integration.
+
+## Source trace and additional architecture coverage
+
+`LocalVisionEvidence.swift:29` shares cached installed evidence;
+`:63` checks the engine architecture registry; `:68` mirrors selected processor
+file precedence; `:168` reads bounded actual safetensors headers, checks offsets
+and validates index declarations against the selected shard's actual keys.
+Qwen2/2.5/3VL, Qwen35/MoE and Qwen4Exp require input, every configured encoder
+block and merger. Traditional Gemma4 requires input, encoder blocks and projection.
+These are component-presence checks, not full tensor-shape/numerical validation.
+
+The broader installed audit exposed an actual false refusal in the initial patch:
+Gemma4 Unified has an encoder-free vision embedder. `:112` now follows its nested
+`gemma4_unified_vision` config and requires patch dense/norm, position/norm and
+language-projection tensors. No fabricated encoder depth is required.
+Pixtral's `patch_conv` and Apertus's configured discrete vision tokenizer/codebook
+are also represented by source-traced fixtures. Pixtral/Apertus have no local
+inference row and remain header/fixture coverage only.
+
+`VLMDetection`, `MLXModel`, `ModelMediaCapabilities`, composer/send and
+`MLXService` preflight share this evidence. Model names neither grant nor deny
+installed vision. Preflight refreshes the actual directory. ChatView validates
+new attachments before filtering old history and retains drafts across model
+changes. ModelRuntime compares the constructed model's modalities with installed
+vision expectations so a silent text-factory fallback cannot consume an image.
+Independent audio tensor evidence remains available without a vision tower.
+
+Nine additional installed header probes report positive evidence, including
+Gemma4 Unified 12B, Gemma4 MoE 26B, ZAYA, Muse Glimmer, Ornith, Qwen4Exp 4M,
+LFM2VL, GLM5Next and DeepSeekOCR. These are not nine inference passes.
+`additional-vision-evidence-after.json/log` records exact paths and tensors.
+AgentWorld has vision config but zero actual vision weights: its refusal is
+correct. API `arch-config-only-negative.json` returns HTTP 400 in 36.36 ms;
+`arch-vl-name-negative.json` refuses a text-only bundle aliased with “VL” in
+14.23 ms. No inference ran for either negative.
+
+## Current local image matrix at bd3058809
+
+Image A: red circle left, blue square right. Image B reverses colors. Each family
+has a real app image turn and follow-up, plus API A/repeat A/B. All API rows ended
+normally with visible content. These are bounded shape/color tests.
+
+| Config / installed bundle | UI image / follow-up tok/s | API A / repeat A / B tok/s | Result |
+| --- | --- | --- | --- |
+| gemma4 / OsaurusAI/gemma-4-E2B-it-8bit snapshot 433003a1e3fbfd10819ad15179d5e3c4d02d7ea7 | 90.4 / 92.6 | 93.9919 / 93.3623 / 93.2887 | Shape/color/order 5/5 |
+| qwen3_5 / JANGQ-AI/Qwen3.8-27B-JANG_4D | 25.6 / 25.4 | 25.7704 / 25.8043 / 25.8811 | Shape/color/order 5/5 |
+| qwen4_exp / JANGQ-AI/Qwen3.8-Flash-Next-JANG_1L | 46.4 / 47.6 | 46.8509 / 47.0263 / 47.8346 | Shape/color/order 5/5; incidental caption detail not comprehensively scored |
+| gemma4_unified / OsaurusAI/OsaurusAI--gemma-4-12B-it-qat-JANG_4M | 30.5 / 31.4 | 32.3086 / 32.1076 / 32.1071 | Admission succeeds; color/order 5/5, shape/caption quality PARTIAL |
+
+Unified repeat-A invents a gray horizontal rectangle; B invents a serrated
+semi-circle. These are quality failures, not an image-fidelity pass. No sampler,
+prompt, thinking, template or output coercion was added to conceal them.
+Artifacts: `arch-{gemma,qwen35,qwen4exp,unified}-*.json/ax.txt/png`.
+
+Draft regression: attaching under Qwen4Exp then switching to **Qwen3 VL Proof
+Text** retains the draft image. Send produces the explicit unsupported-image
+error. Switching to Gemma and Regenerate recovers the retained image; its follow-up
+is correct. `arch-retained-draft.*`, `arch-unsupported-attachment.*`,
+`arch-gemma-{recovery,followup}.*`.
+Settings Force Off → Save returns HTTP 400 in 24.29 ms. Auto → Save → navigate
+away/back → quit/relaunch returns a correct Gemma image answer, HTTP 200,
+95.3887 tok/s. `arch-force-off*`, `arch-auto-settings.ax.txt`, `arch-auto-relaunch*`.
+
+## Memory and cache evidence
+
+`physical-footprint-architecture.jsonl` samples actual `proc_pid_rusage`
+`phys_footprint` every .5 seconds, not RSS or MLX allocator bytes. Windows derive
+from live model-load decision timestamps. Sampled process peaks: Unified 5.868
+GiB; Qwen35 5.089 GiB; Qwen4Exp 47.629 GiB. The subsequent Gemma transition
+window still contains 16.569 GiB during outgoing Qwen4Exp reclamation; after the
+first Gemma API snapshot its sampled peak is 1.998 GiB. Both windows are retained
+in `physical-footprint-architecture-summary.json`; do not attribute the transition
+peak to Gemma alone or claim this establishes 16 GB safety.
+
+Actual cache topology: E2B 3 KV + 12 rotating; Unified 8 KV + 40 rotating;
+Qwen35 16 KV + 48 Mamba; Qwen4Exp 12 KV + 36 Mamba. All require disk-backed
+restore; TurboQuant KV-layer counts are zero, paged RAM is off. Repeat-A increases
+the actual disk-L2 hit counter for all four. Changed media have distinct salts.
+`arch-*-cache-summary.json` contains defaults, effective generation and topology.
+Earlier actual disk-header inspection found inline Mamba state despite zero
+separate-sidecar hit counters; details below remain applicable to the unchanged
+engine pin. Do not claim separate-sidecar reuse or TurboQuant KV topology.
+
+## Automated results at bd3058809
+
+- Focused Core **173/173, 9 suites, 3.619 s**;
+  `focused-tests-architecture-final.log`.
+- Evals unit **345/345, 42 suites, 1.504 s**;
+  `eval-unit-tests-architecture.log`.
+- Full HTTPAPI: Gemma E2B **16 pass/1 unsupported-video skip**; Unified12B
+  **16 pass/1 unsupported-video skip**; Qwen35 **17/17**; Qwen4Exp **17/17**.
+  Total **66 pass, 2 skips / 68**. `evals-architecture-*-httpapi.json/log`.
+- Evals executable SHA256
+  `920a64e90d6e738df79592195afb69c78a39c34e5f007692edbdc6dca2642bf0`;
+  `eval-build-architecture.json` records dependency graph and engine pin.
+
+## Video and reporter limitations — PARTIAL
+
+The same real eight-frame red/blue and reversed H264 clips with the open-ended
+sequence question remain unreliable in the current app: Qwen35 **0/2** (both
+claimed a static blue image), Qwen4Exp **1/2** (A invented an intervening black
+band; B correct), all normal stops. Rates: Qwen35 25.8108/25.8483; Qwen4Exp
+47.706/47.7807 tok/s. Raw `arch-qwen35-video-{a,b}.json` and
+`arch-qwen4exp-video-{a,b}.json`. The automated video's narrower structured
+question does not override these failures. Prior cold-cache/frame-delivery
+investigation and preserved failures follow below. Video quality is not fixed
+by this image-admission PR and its engine cause is not established.
+
+The original Discord URLs returned HTTP 403. Exact reporter bundle IDs,
+quantization and error remain missing. Historical fixes #2389/#2427/#2442/#2504
+are still ancestors. No evidence establishes another contributor as the cause.
+See [the historical audit](QWEN_VISION_REGRESSION_2026_09_13.md).
+
+---
+
+The remainder preserves the earlier checkpoint and failures. It is historical,
+not the latest binary's proof, and must not be substituted for the matrix above.
+
+# Historical checkpoint before architecture coverage and main integration
+
+Image admission and attachment preservation have current source and local Release
+UI/API evidence below. **PARTIAL for the original reporter's exact failure and
+broad video quality**: the reporter's bundle/error are unavailable, and open-ended
+video answers remain unreliable. This is not a 16 GB RAM-safety qualification.
+Merge status belongs to PR #2756; this document does not imply it is merged.
+
+## Change and source trace
+
+`Models/Configuration/LocalVisionEvidence.swift:29` reads the installed config,
+processor config and actual safetensors headers. The configured architecture must
+exist in the engine's VLM registry. Index entries must exist in their selected
+shard headers. Qwen2/2.5/3VL, Qwen35/MoE and Qwen4Exp require patch input, every
+declared encoder block, and merger weights; Traditional Gemma4 requires patch input, encoder blocks and projection. The
+then-incorrect unified requirement was subsequently replaced as recorded above. Other registered
+architectures require encoder input and block evidence. Header reads are bounded
+to 64 MiB per shard and validate offsets against actual file size. These are
+component-presence checks, not full shape, quantization or numerical validation.
+
+`VLMDetection`, `MLXModel`, `ModelMediaCapabilities`, composer/send resolution and
+MLX preflight share this evidence. Local display names neither grant nor deny
+vision. External HF/model locators participate in API resolution. Explicit local
+negative evidence overrides picker hints. Preflight refreshes the directory;
+invalidation generations stop an older read from republishing after notification.
+
+`Views/Chat/ChatView.swift:6645` validates new attachments before history filtering.
+The selected-model subscriber preserves draft attachments. Unsupported sends show
+a visible error; switching to a compatible model can recover the image.
+`Services/ModelRuntime.swift:4444` reconciles installed vision expectations with
+constructed model modalities, rejecting a silent text-factory fallback.
+Independent audio projection evidence survives an absent optional vision tower.
+`qwen4_exp` receives its engine architecture's video capability; no product-name
+pattern was added. Video quality is limited as recorded below.
+
+Core's swift-http-types lock moves 1.5.1 to the app's existing 1.6.0 to resolve
+NIO's FoundationURL trait for SwiftPM tests. The vMLX pin is unchanged.
+The HTTPAPI prefix probe now checks successful, nonempty responses and a hit in
+either the memory-prefix or disk-L2 tier. A zero memory-prefix counter is not a
+failure when the active topology requires disk restore. No hit in either tier
+still fails. No sampler, thinking control, template, or runtime output repair was
+introduced.
+
+## Tested source and artifacts
+
+- Core/app production source: `7a4f5057326ea3c5e95aa33572577d25fba693d4`.
+- Evals source: `0e5d76f79abfdef3cd80ad029e31f14a651a4765`; app/Core production files are
+  identical to 7a4f50573. Later changes only update tests and proof documents.
+- vMLX: `67ccb4b347a23820b838a98f0c195b0c29c676d2`, checked in both build trees.
+- Fresh isolated Release binary SHA256:
+  `da840573f8da69e6e104270b4587928fad4fe52903a61d5965b54de4a2031173`.
+- App: `/private/tmp/osaurus-qwen-vision-derived/Build/Products/Release/osaurus.app`,
+  bundle `com.dinoki.osaurus.visionproof20260913`, development version 1.0.
+- Test root `/private/tmp/osaurus-qwen-vision-ui`, API `127.0.0.1:19314`.
+- Private evidence: `/Users/eric/vmlx-private-evidence/qwen-vision-2026-09-13/`.
+  Images remain outside the repository. `release-build-final.json` and
+  `eval-build-settled.json` identify binaries/locks. Evals resolves some other
+  dependency versions differently; it supplements, rather than replaces, the
+  actual app tests.
+
+Host: local 128 GiB Mac. Models are referenced in place, with no changes to their
+source files. Test agent has empty system instructions and no tools, knowledge,
+memory, web, delegation or screen context. Actual UI Thinking control is Off.
+Sampler overrides are blank; live cache-stats reports `sampler_was_changed=false`,
+temperature 1, top-p .95, top-k 64 for Gemma and 20 for both Qwen bundles. API
+probes explicitly cap output at 1024 tokens. Runtime policy: safe_auto slider 2,
+strict one-model residency, continuous batching on/max 1, prefix on, paged RAM KV
+off, disk block cache on, legacy disk cache off, live KV engine_selected, stored
+KV auto. This is a vision lane, not a low-RAM/batching stress campaign.
+
+## Current Release image matrix
+
+Real image A: red circle left, blue square right. B swaps their colors. UI tests
+ask for the shapes/colors and follow up asking which is on the right. API tests
+send A, repeat A, then B. All have correct shape/color/order, visible final text,
+no protocol leakage or loop, and a normal terminal state. UI Stop disappears and
+input unlocks. These simple-image results do not establish arbitrary captioning
+quality.
+
+| Config architecture / exact bundle | UI image / follow-up tok/s | API A / repeat A / B tok/s | Score | Peak physical footprint GiB |
+| --- | --- | --- | --- | --- |
+| gemma4 / OsaurusAI/gemma-4-E2B-it-8bit, snapshot 433003a1e3fbfd10819ad15179d5e3c4d02d7ea7 | 93.1 / 89.7 | 93.2677 / 92.4023 / 91.9156 | UI 2/2, API 3/3 | 1.888 |
+| qwen3_5 / JANGQ-AI/Qwen3.8-27B-JANG_4D | 25.4 / 25.7 | 25.6658 / 25.7521 / 25.7504 | UI 2/2, API 3/3 | 6.560 |
+| qwen4_exp / JANGQ-AI/Qwen3.8-Flash-Next-JANG_1L | 46.4 / 46.8 | 47.4869 / 47.3792 / 47.2869 | UI 2/2, API 3/3 | 46.873 |
+
+Evidence: `final-gemma-{recovery,followup}.ax.txt/png`,
+`final-qwen35-{first,followup}.ax.txt/png`,
+`final-qwen4exp-{first,followup}.ax.txt/png`; API JSON/request/cache artifacts
+`final-gemma-api-*`, `final-qwen35-image-*`, `final-qwen4exp-image-*`.
+Gemma's first current UI row recovers the retained image from the negative test.
+
+Footprint uses `proc_pid_rusage` rusage_info_v2 `phys_footprint`, sampled every
+0.5 seconds, not RSS or allocator bytes. Model windows derive from live
+`last_load_decision.timestamp` records. Raw `physical-footprint-final.jsonl` and
+`physical-footprint-final-summary.json` name the windows and source records.
+These sampled peaks are not instantaneous maxima, a 16 GB qualification, or a
+claim that Qwen4Exp has a small working set.
+
+## Negative cases, policy, and cache
+
+- Real text Qwen3-0.6B-8bit exposed as **Qwen3 VL Proof Text**: picker has no
+  Vision badge; switching to it preserves the attached draft image; Send shows
+  the typed unsupported-image error and settles. API rejects with HTTP 400
+  before inference. Artifacts: `final-retained-draft.*`,
+  `final-unsupported-attachment.*`, `final-vl-name-negative*`.
+- Switching back to Gemma recovers the retained image and answers its follow-up.
+- Current Release Settings Force Off → Save: HTTP 400, explicit server vision
+  policy error, 28 ms. Auto → Save → navigate away/back → quit/relaunch: Gemma
+  image returns the correct answer, HTTP 200, 96.7491 tok/s. Artifacts:
+  `final-force-off*`, `final-auto-settings.ax.txt`, `final-auto-relaunch*`.
+- Actual topology: Gemma 3 KV + 12 rotating layers; Qwen35 16 KV + 48 Mamba;
+  Qwen4Exp 12 KV + 36 Mamba. All require disk-backed restore; all report
+  `turbo_quant_kv_layer_count=0`; paged RAM is off. Repeated images hit disk L2;
+  changed images have different media salts and correct changed answers.
+- Qwen sidecar counters are zero, but v2 disk payloads contain recurrent state:
+  Qwen35 48 state0/state1 pairs at offset 216; Qwen4Exp 36 pairs plus state2/3
+  at offset 155. `qwen-inline-ssm-cache-evidence.json` records actual headers.
+  Engine source: `Cache/TQDiskSerializer.swift` serialization/deserialization and
+  `Evaluate.swift` disk restore. `hasArrays=false` refers to a separate sidecar;
+  it does not mean the inline Mamba state is absent. Do not claim sidecar reuse
+  or TurboQuant KV-layer topology.
+
+## Automated scores
+
+- Focused Core: **170/170, 9 suites**, 3.037 s after build:
+  ModelMediaCapabilitiesMCDCTests, VLMDetectionTests,
+  CapabilityFromDirectoryTests, MultiTurnCapabilityStabilityTests,
+  CapabilityFromModelIdTests, ComposerAudioCapabilityTests,
+  ChatAttachmentSecurityTests, RuntimePolicySourceTests, MLXServiceRuntimePolicyTests.
+  Raw `focused-tests-final-170.log`. Previous settled selection was 156/156.
+  The separately executed MLXService policy suite is 14/14 (`mlxservice-policy-tests.log`).
+- Evals unit: **345/345, 42 suites**, 1.686 s; `eval-unit-tests.log`.
+- Full HTTPAPI lane at 0e5d76f79: Gemma **16 pass / 1 unsupported-video skip / 17**;
+  Qwen35 **17/17**; Qwen4Exp **17/17**. Total **50 pass, 1 skip / 51**.
+  `evals-final-{gemma,qwen35,qwen4exp}-httpapi.json/log`,
+  `evals-final-summary.json`. The simple video grader is narrower than open-ended
+  video quality; the next section records its counterexamples.
+- Installed-header probes (not inference): Gemma 2649 tensors/27.9 ms;
+  Qwen35 2379/23.8 ms; Qwen4Exp 3257/47.7 ms. Neutral and misleading aliases
+  produce identical capabilities. Nemotron Omni header-only extra row:
+  1835 tensors/33.3 ms, image/video/audio. No Omni inference claim.
+- Regression fixtures cover missing/null config, processor/input/encoder/projection,
+  stale index, invalid headers/offsets, directory isolation, invalidation/refresh,
+  provider fallback, current attachments, and independent optional audio.
+
+## Video diagnostic — PARTIAL, not repaired by prompt changes
+
+Additional app API tests use independently ffmpeg-encoded H264, 224x224, 2 fps,
+8 frames/4 seconds: A red then blue; B blue then red. With the open-ended question
+"Which color appears first and which appears second in this video?":
+
+- Qwen35 **0/3** (A, repeat A, B): describes only the first color as a still image,
+  normal stop, 25.1–25.65 tok/s. Raw `final-qwen35-video-{a,repeat-a,b}.json`.
+- Qwen4Exp **2/2 for color order**, but **0/2 for faithful scene details**: invents
+  a split-screen transition or incorrect timestamps. 47.0092 / 47.222 tok/s.
+  Raw `final-qwen4exp-video-{a,b}.json`.
+- Diagnostic with the existing eval's structured question on the SAME Qwen35
+  clips: **2/2**, `first=red second=blue` and reverse, 25.4966 / 26.0141 tok/s.
+  `final-qwen35-video-eval-prompt-{a,b}.json`. This demonstrates prompt-dependent
+  behavior, not a runtime fix; no production prompt/template change was made.
+
+AVFoundation probe decoded all eight frames with both color halves (raw
+`video-frame-probe-a.json`); it reproduces engine timestamp sampling but is not a
+processor tensor probe. Actual engine traces show video token 248057, 222 input
+tokens, a cold all-tier miss for A, disk reuse for repeat A, and distinct media
+salts/all-tier miss for B. This rules out a simple stale-image cache hit and
+supports video delivery. It does not establish tensor/position correctness or
+attribute the remaining quality defect. Engine video/template/temporal behavior
+and exact reporter bundles still need separate investigation before claiming
+broad video support is reliable.
+
+## Preserved earlier failures and investigation limits
+
+Full CI at 5bed81bd5 also caught four stale MLXService policy fixtures omitted
+from the earlier focused selection: two granted media from names/config alone;
+two asserted old diagnostic wording. The suite now supplies real header fixtures,
+checks removal of weights after a positive preflight, and keeps independent video
+policy/audio rejection checks. No app production file changed for this follow-up.
+Raw `ci-old-core-failure.log` preserves those failures; final-head CI is required.
+
+Initial focused tests were 153/154: an obsolete source assertion demanded the
+removed name exclusion. Earlier full HTTPAPI scores were Gemma 15 pass/1 fail/
+1 skip and Qwen 16 pass/1 fail each: all three failures were the memory-prefix-only
+counter assertion despite disk L2 hit delta 1. Both sets of raw failures remain.
+An Evals compile attempted during a source change was discarded and rebuilt.
+The original background app launcher exited and CUA relaunched without test env;
+that process was closed before inference, then a persistent exec launch used.
+
+Earlier app source f780f6ef75f774832203256e582eb386105b8601 had image UI/API
+15/15 correct but exposed silent draft deletion on model switch. Commit 5bed81bd5
+repairs it; current negative/recovery rows above re-exercise that path. Earlier
+Qwen4Exp cancel-load/retry evidence is retained but is not a final-head cancel
+proof. A transient file picker Open-disabled state on the final Gemma attempt
+resolved by cancelling/reopening; later pickers worked. Cause is unattributed.
+
+The original Discord images returned HTTP 403. Exact reporter repository IDs,
+quantization and error text remain missing. No causal regression was assigned to
+another contributor: older Osaurus #2389/#2427/#2442/#2504 fixes remain ancestors;
+engine #315/#359 optional-tower construction and first app pin #2598 are inspected
+boundaries, not proven culprits. See
+[the historical audit](QWEN_VISION_REGRESSION_2026_09_13.md) for source traces,
+executed old-detector cases, PR links, and remaining reporter questions.

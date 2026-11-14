@@ -216,6 +216,29 @@ public struct AgentView: Sendable, Equatable {
 
     // MARK: Model rendering
 
+    /// Roles whose value is running content the model has to read (terminal
+    /// scrollback, logs, editors, chat transcripts) rather than a short
+    /// field value.
+    static let contentRoles: Set<String> = ["textarea"]
+    /// Characters of a content element shown to the model.
+    static let contentValueChars = 1_500
+    /// Characters of any other element's value shown to the model.
+    static let fieldValueChars = 60
+
+    /// Clip an element value for the model. Short fields keep the leading 60
+    /// characters. Content areas keep their TAIL: new terminal output, log
+    /// lines, and replies land at the end, and a 60-character head only ever
+    /// showed the "Last login" banner, so the model could run a command but
+    /// never read its result and retried until the step limit.
+    static func renderedValue(_ value: String, role: String) -> String {
+        if contentRoles.contains(role.lowercased()) {
+            guard value.count > contentValueChars else { return value }
+            return "…(\(value.count - contentValueChars) earlier characters not shown; scroll up to read them)… "
+                + String(value.suffix(contentValueChars))
+        }
+        return value.count > fieldValueChars ? String(value.prefix(fieldValueChars)) + "…" : value
+    }
+
     /// Render the view as compact text for the model — id-free, one line per
     /// element, with a `*` marking elements that just changed (verify hint).
     public func renderForModel(maxItems: Int = 120) -> String {
@@ -242,8 +265,7 @@ public struct AgentView: Sendable, Equatable {
             }
             if let label = item.label, !label.isEmpty { line += " \"\(label)\"" }
             if let value = item.value, !value.isEmpty {
-                let clipped = value.count > 60 ? String(value.prefix(60)) + "…" : value
-                line += " = \"\(clipped)\""
+                line += " = \"\(Self.renderedValue(value, role: item.role))\""
             }
             if !item.enabled { line += " (disabled)" }
             lines.append(line)
@@ -253,6 +275,14 @@ public struct AgentView: Sendable, Equatable {
         }
         if items.isEmpty {
             lines.append("(no actionable elements found)")
+        } else if truncated {
+            // The traversal hit its deadline / element cap before reading the
+            // whole window. Left unsaid, the model treats an absent control as
+            // nonexistent and re-observes the same partial list until dead end.
+            lines.append(
+                "(accessibility read was cut off before the whole window was covered — a control "
+                    + "that isn't listed may still exist; use `find` with a query, or `scroll`)"
+            )
         }
         return lines.joined(separator: "\n")
     }

@@ -1,0 +1,69 @@
+{
+  "id": "ram_admission.critical-pressure-refuses-resident",
+  "domain": "subagent",
+  "label": "critical-pressure-refuses-resident",
+  "query": "Replay explicit host facts through production planner, recovery and one persistent reservation actor.",
+  "notes": "Explicit host pressure and memory facts replayed through production planner/recovery/reservation actor.",
+  "fixtures": {},
+  "expect": {
+    "subagent": {
+      "lane": "ram_admission",
+      "ramAdmission": {
+        "scenario": {
+          "localJobs": 1,
+          "remoteJobs": 0,
+          "agentLimit": 1,
+          "engineLimit": 1,
+          "batching": true,
+          "ramSafety": true,
+          "steps": [
+            {
+              "before": {
+                "model": "gemma-4-e2b-it-8bit",
+                "resident": true,
+                "loadBytes": 5899232198,
+                "childCapBytes": 6055526640,
+                "childBytes": 536870912,
+                "availableBytes": 17179869184,
+                "parentCreditBytes": 0,
+                "loadBudgetBytes": 12025908428,
+                "reserveBytes": 3221225472,
+                "memoryPressure": "critical",
+                "allocatorCacheAllowanceBytes": 1474808049
+              },
+              "after": {
+                "model": "gemma-4-e2b-it-8bit",
+                "resident": true,
+                "loadBytes": 5899232198,
+                "childCapBytes": 6055526640,
+                "childBytes": 536870912,
+                "availableBytes": 17179869184,
+                "parentCreditBytes": 0,
+                "loadBudgetBytes": 12025908428,
+                "reserveBytes": 3221225472,
+                "memoryPressure": "critical",
+                "allocatorCacheAllowanceBytes": 1474808049
+              },
+              "reclaimSucceeds": true
+            }
+          ]
+        },
+        "expected": [
+          {
+            "capacity": 0,
+            "width": 0,
+            "weightCharge": 0,
+            "limitingFactors": [
+              "memoryCapacity"
+            ],
+            "samples": 2,
+            "reclaims": 1,
+            "subwaves": [],
+            "remainingReservations": 0,
+            "reservationError": false
+          }
+        ]
+      }
+    }
+  }
+}

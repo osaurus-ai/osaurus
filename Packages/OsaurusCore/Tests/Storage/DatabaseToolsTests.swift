@@ -52,26 +52,28 @@ struct DatabaseToolsTests {
 
     @Test
     func pathResolverReadsFromSandboxAgentDir() async throws {
-        let agentName = "test-agent-\(UUID().uuidString.prefix(8))"
-        let agentDir = OsaurusPaths.containerAgentDir(agentName)
-        try FileManager.default.createDirectory(at: agentDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: agentDir) }
+        try await StoragePathsTestLock.shared.run {
+            let agentName = "test-agent-\(UUID().uuidString.prefix(8))"
+            let agentDir = OsaurusPaths.containerAgentDir(agentName)
+            try FileManager.default.createDirectory(at: agentDir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: agentDir) }
 
-        let file = agentDir.appendingPathComponent("output.csv")
-        try "x\n1\n".write(to: file, atomically: true, encoding: .utf8)
+            let file = agentDir.appendingPathComponent("output.csv")
+            try "x\n1\n".write(to: file, atomically: true, encoding: .utf8)
 
-        let agentId = UUID()
-        let result = await ChatExecutionContext.$sandboxAgentName.withValue(agentName) {
-            await ChatExecutionContext.$currentAgentId.withValue(agentId) {
-                await DatabaseFilePathResolver.resolveForRead(path: "output.csv", tool: "db_import")
+            let agentId = UUID()
+            let result = await ChatExecutionContext.$sandboxAgentName.withValue(agentName) {
+                await ChatExecutionContext.$currentAgentId.withValue(agentId) {
+                    await DatabaseFilePathResolver.resolveForRead(path: "output.csv", tool: "db_import")
+                }
             }
+            guard case .resolved(let resolved) = result else {
+                Issue.record("expected success, got \(result)")
+                return
+            }
+            #expect(resolved.scope == .sandbox)
+            #expect(resolved.url.path == file.path)
         }
-        guard case .resolved(let resolved) = result else {
-            Issue.record("expected success, got \(result)")
-            return
-        }
-        #expect(resolved.scope == .sandbox)
-        #expect(resolved.url.path == file.path)
     }
 
     @Test
@@ -189,6 +191,106 @@ struct DatabaseToolsTests {
     }
 
     @Test
+    func exportImportXlsxRoundTripKeepsTypes() throws {
+        let db = AgentDatabase(agentId: UUID())
+        try db.openInMemory()
+        defer { db.close() }
+
+        try db.createTable(
+            name: "budget",
+            purpose: "xlsx export test",
+            columns: [
+                AgentColumnSpec(name: "item", type: "TEXT", nullable: false),
+                AgentColumnSpec(name: "qty", type: "INTEGER", nullable: true),
+                AgentColumnSpec(name: "price", type: "REAL", nullable: true),
+            ],
+            indexes: [],
+            actor: .agent,
+            runId: nil
+        )
+        _ = try db.insert(
+            table: "budget",
+            row: ["item": .text("widget"), "qty": .integer(3), "price": .double(9.5)],
+            actor: .agent,
+            runId: nil
+        )
+        _ = try db.insert(
+            table: "budget",
+            row: ["item": .text("gadget, deluxe"), "qty": .integer(10), "price": .null],
+            actor: .agent,
+            runId: nil
+        )
+
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("export-\(UUID().uuidString).xlsx")
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
+        #expect(DatabaseExport.Format.detect(path: tempURL.path, explicit: nil) == .xlsx)
+        let sql = "SELECT item, qty, price FROM budget ORDER BY id"
+        let probe = try db.query(sql: sql)
+        let exported = try DatabaseExport.streamWrite(
+            url: tempURL,
+            format: .xlsx,
+            maxBytes: DatabaseImport.maxBytes,
+            headerColumns: probe.columns
+        ) { emit in
+            _ = try db.forEachQueryRow(sql: sql) { columns, row in
+                try emit(columns, row)
+            }
+        }
+        #expect(exported.rowsExported == 2)
+        #expect(!exported.truncated)
+        #expect(exported.columns == ["item", "qty", "price"])
+        // A real OOXML package, not CSV bytes with a spreadsheet extension.
+        let head = try Data(contentsOf: tempURL).prefix(2)
+        #expect(Array(head) == [0x50, 0x4B])
+
+        let parsed = try AgentImportRunner.parse(url: tempURL)
+        #expect(parsed.columns == ["item", "qty", "price"])
+        #expect(parsed.rows.count == 2)
+        #expect(parsed.rows[0]["item"] == .text("widget"))
+        #expect(parsed.rows[0]["qty"] == .integer(3))
+        #expect(parsed.rows[0]["price"] == .double(9.5))
+        #expect(parsed.rows[1]["item"] == .text("gadget, deluxe"))
+        #expect(parsed.rows[1]["price"] == nil)
+        #expect(parsed.inferredTypes["qty"] == "INTEGER")
+        #expect(parsed.inferredTypes["price"] == "REAL")
+    }
+
+    @Test
+    func importXlsxHonorsSheetNameAndReportsMissingSheets() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("osaurus-xlsx-import-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("multi.xlsx")
+
+        let json = """
+            {"sheets":[{"name":"People","rows":[["name","age"],["Ada",36]]},
+                       {"name":"Cities","rows":[["city","pop"],["Oslo",700000]]}]}
+            """
+        let workbook = try FileWriteDocumentRouting.buildWorkbook(from: json)
+        try XLSXEmitter.packageBytes(for: workbook).write(to: url)
+
+        let first = try AgentImportRunner.parse(url: url)
+        #expect(first.columns == ["name", "age"])
+        #expect(first.rows.first?["age"] == .integer(36))
+
+        let cities = try AgentImportRunner.parse(url: url, sheetName: "cities")
+        #expect(cities.columns == ["city", "pop"])
+        #expect(cities.rows.first?["city"] == .text("Oslo"))
+
+        do {
+            _ = try AgentImportRunner.parse(url: url, sheetName: "Nope")
+            Issue.record("expected sheetNotFound")
+        } catch let error as DatabaseImport.ImportError {
+            let text = error.errorDescription ?? ""
+            #expect(text.contains("`Nope`"))
+            #expect(text.contains("`People`") && text.contains("`Cities`"))
+        }
+    }
+
+    @Test
     func importCsvParsesCRLFAndQuotedMultilineFields() throws {
         let csv = "id,note\r\n1,\"first\r\nsecond\"\r\n2,\"quoted \"\"value\"\"\"\r\n"
         let parsed = try DatabaseImport.parse(
@@ -294,43 +396,45 @@ struct DatabaseToolsTests {
 
     @Test
     func exportOverwriteGuard() async throws {
-        // Pin the resolver to a sandbox root via the TaskLocal (checked
-        // before any process-global state), so parallel sibling suites
-        // can't redirect the write candidate mid-test.
-        let agentName = "test-agent-\(UUID().uuidString.prefix(8))"
-        let agentDir = OsaurusPaths.containerAgentDir(agentName)
-        try FileManager.default.createDirectory(at: agentDir, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: agentDir) }
+        try await StoragePathsTestLock.shared.run {
+            // The agent dir comes from the process-global root, so hold the
+            // storage-paths lock: a sibling suite swapping the root mid-test
+            // would otherwise redirect the write candidate.
+            let agentName = "test-agent-\(UUID().uuidString.prefix(8))"
+            let agentDir = OsaurusPaths.containerAgentDir(agentName)
+            try FileManager.default.createDirectory(at: agentDir, withIntermediateDirectories: true)
+            defer { try? FileManager.default.removeItem(at: agentDir) }
 
-        let dest = agentDir.appendingPathComponent("out.csv")
-        try "old\n".write(to: dest, atomically: true, encoding: .utf8)
+            let dest = agentDir.appendingPathComponent("out.csv")
+            try "old\n".write(to: dest, atomically: true, encoding: .utf8)
 
-        let result = await ChatExecutionContext.$sandboxAgentName.withValue(agentName) {
-            await DatabaseFilePathResolver.resolveForWrite(
-                path: "out.csv",
-                tool: "db_export",
-                overwrite: false
-            )
-        }
-        guard case .failed(let envelope) = result else {
-            Issue.record("expected overwrite failure")
-            return
-        }
-        #expect(envelope.contains("overwrite"))
+            let result = await ChatExecutionContext.$sandboxAgentName.withValue(agentName) {
+                await DatabaseFilePathResolver.resolveForWrite(
+                    path: "out.csv",
+                    tool: "db_export",
+                    overwrite: false
+                )
+            }
+            guard case .failed(let envelope) = result else {
+                Issue.record("expected overwrite failure")
+                return
+            }
+            #expect(envelope.contains("overwrite"))
 
-        // Same path with overwrite: true must resolve to the sandbox file.
-        let allowed = await ChatExecutionContext.$sandboxAgentName.withValue(agentName) {
-            await DatabaseFilePathResolver.resolveForWrite(
-                path: "out.csv",
-                tool: "db_export",
-                overwrite: true
-            )
+            // Same path with overwrite: true must resolve to the sandbox file.
+            let allowed = await ChatExecutionContext.$sandboxAgentName.withValue(agentName) {
+                await DatabaseFilePathResolver.resolveForWrite(
+                    path: "out.csv",
+                    tool: "db_export",
+                    overwrite: true
+                )
+            }
+            guard case .resolved(let resolved) = allowed else {
+                Issue.record("expected overwrite:true to resolve")
+                return
+            }
+            #expect(resolved.scope == .sandbox)
+            #expect(resolved.url.path == dest.path)
         }
-        guard case .resolved(let resolved) = allowed else {
-            Issue.record("expected overwrite:true to resolve")
-            return
-        }
-        #expect(resolved.scope == .sandbox)
-        #expect(resolved.url.path == dest.path)
     }
 }

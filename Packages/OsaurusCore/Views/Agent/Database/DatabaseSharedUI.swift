@@ -52,14 +52,13 @@ struct MutationsInFlightIndicator: View {
 
     var body: some View {
         if activity[agentId] > 0 {
-            HStack(spacing: 4) {
-                ProgressView()
-                    .controlSize(.mini)
+            HStack(spacing: theme.space.s4) {
+                SettingsSpinner(size: .mini)
                 Text("\(activity[agentId]) write\(activity[agentId] == 1 ? "" : "s")")
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
             }
-            .padding(.horizontal, 6)
+            .padding(.horizontal, theme.space.s6)
             .localizedHelp("The agent is writing to its database right now.")
         }
     }
@@ -85,74 +84,13 @@ struct StorageQuotaBadge: View {
 
     var body: some View {
         if agentManager.storageWarningAgentIds.contains(agentId) {
-            Label(localized: "Approaching storage limit", systemImage: "exclamationmark.triangle.fill")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(.orange)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(
-                    Capsule(style: .continuous).fill(Color.orange.opacity(0.12))
-                )
-                .overlay(
-                    Capsule(style: .continuous).stroke(Color.orange.opacity(0.4), lineWidth: 1)
-                )
-                .localizedHelp("This agent's database is approaching its storage limit.")
+            StatusChip(
+                L("Approaching storage limit"),
+                tone: .warning,
+                icon: "exclamationmark.triangle.fill",
+                help: L("This agent's database is approaching its storage limit.")
+            )
         }
-    }
-}
-
-// MARK: - Empty State Card
-
-/// Centered onboarding card used by the workspace's empty states.
-/// Wraps an SF Symbol, a title, optional sub-copy, and optional CTA
-/// button into one consistent block so each empty state has the same
-/// shape, weight, and rhythm.
-struct DatabaseEmptyState: View {
-    let systemImage: String
-    let title: LocalizedStringKey
-    let subtitle: LocalizedStringKey?
-    let actionTitle: LocalizedStringKey?
-    let actionSystemImage: String?
-    let action: (() -> Void)?
-    let theme: ThemeProtocol
-
-    var body: some View {
-        VStack(spacing: 12) {
-            Image(systemName: systemImage)
-                .font(.system(size: 28, weight: .regular))
-                .foregroundColor(theme.tertiaryText)
-            Text(title, bundle: .module)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.primaryText)
-                .multilineTextAlignment(.center)
-                .fixedSize(horizontal: false, vertical: true)
-            if let subtitle {
-                Text(subtitle, bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: 380)
-            }
-            if let actionTitle, let action {
-                Button {
-                    action()
-                } label: {
-                    if let systemImage = actionSystemImage {
-                        Label(actionTitle, systemImage: systemImage)
-                            .font(.system(size: 11, weight: .medium))
-                    } else {
-                        Text(actionTitle, bundle: .module)
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .padding(.top, 2)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(32)
     }
 }
 
@@ -174,7 +112,9 @@ struct EditingDatabaseRow: Identifiable {
 // MARK: - Row Editor Sheet
 
 struct DatabaseRowEditorSheet: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
 
     let row: EditingDatabaseRow
     let onSave: ([String: AgentSQLValue]) -> Void
@@ -186,27 +126,27 @@ struct DatabaseRowEditorSheet: View {
     @State private var nullValues: Set<String> = []
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            AgentSheetHeader(
+        VStack(alignment: .leading, spacing: theme.space.s0) {
+            SettingsSheetHeader(
                 icon: "square.and.pencil",
                 title: "Edit row",
                 subtitle: LocalizedStringKey("ID \(agentSQLDisplayString(row.rowId))"),
                 onClose: onCancel
             )
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: theme.space.s12) {
                     ForEach(row.columns, id: \.name) { column in
                         editorField(for: column)
                     }
                 }
-                .padding(.horizontal, 20)
-                .padding(.vertical, 16)
+                .padding(.horizontal, theme.space.s16)
+                .padding(.vertical, theme.space.s16)
             }
             .frame(minHeight: 200, maxHeight: 400)
             footer
         }
         .frame(width: 520)
-        .background(theme.primaryBackground)
+        .settingsSheetSurface()
         .onAppear { hydrateDraft() }
     }
 
@@ -214,22 +154,19 @@ struct DatabaseRowEditorSheet: View {
     private func editorField(for column: AgentColumnInfo) -> some View {
         let isReadOnly = isSystemColumn(column.name)
         let isNull = nullValues.contains(column.name)
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                AgentSheetSectionLabel(LocalizedStringKey(column.name))
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(spacing: theme.space.s8) {
+                SettingsFieldLabel(LocalizedStringKey(column.name))
                 Text(column.type)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 1)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(theme.inputBackground)
-                    )
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.chip)
+                    .foregroundColor(theme.text.tertiary)
+                    .padding(.horizontal, theme.space.s6)
+                    .padding(.vertical, theme.space.s2)
+                    .settingsChrome(.inset)
                 if isReadOnly {
                     Text("read-only", bundle: .module)
-                        .font(.system(size: 9, weight: .medium))
-                        .foregroundColor(theme.tertiaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.chip)
+                        .foregroundColor(theme.text.tertiary)
                 }
                 Spacer()
                 if !isReadOnly, column.nullable {
@@ -245,13 +182,12 @@ struct DatabaseRowEditorSheet: View {
                             }
                         )
                     ) {
-                        Text("NULL", bundle: .module).font(.system(size: 10))
+                        Text("NULL", bundle: .module).catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
                     }
-                    .toggleStyle(.switch)
-                    .controlSize(.mini)
+                    .settingsSwitch(showsLabel: true)
                 }
             }
-            StyledTextField(
+            SettingsTextField(
                 placeholder: "",
                 text: Binding(
                     get: { draftValues[column.name] ?? "" },
@@ -266,37 +202,37 @@ struct DatabaseRowEditorSheet: View {
 
     @ViewBuilder
     private var footer: some View {
-        VStack(spacing: 0) {
-            Divider().opacity(0.5)
-            HStack(spacing: 10) {
+        VStack(spacing: theme.space.s0) {
+            ThemeHairlineDivider()
+            HStack(spacing: theme.space.s8) {
                 if row.isDeleted {
                     Button(action: onRestore) {
                         Text("Restore", bundle: .module)
                     }
-                    .buttonStyle(SecondaryButtonStyle())
+                    .assignedSettingsButtonStyle(.secondary)
                 } else {
                     Button(action: onSoftDelete) {
                         Text("Delete", bundle: .module)
                     }
-                    .buttonStyle(DestructiveButtonStyle())
+                    .assignedSettingsButtonStyle(.destructive)
                 }
                 Spacer()
                 Button(action: onCancel) {
                     Text("Cancel", bundle: .module)
                 }
-                .buttonStyle(SecondaryButtonStyle())
+                .assignedSettingsButtonStyle(.secondary)
                 .keyboardShortcut(.cancelAction)
                 Button {
                     onSave(buildUpdates())
                 } label: {
                     Text("Save", bundle: .module)
                 }
-                .buttonStyle(PrimaryButtonStyle())
+                .assignedSettingsButtonStyle(.primary)
                 .keyboardShortcut(.return, modifiers: .command)
             }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
-            .background(theme.secondaryBackground)
+            .padding(.horizontal, theme.space.s24)
+            .padding(.vertical, theme.space.s16)
+            .background(theme.surface.subtle)
         }
     }
 

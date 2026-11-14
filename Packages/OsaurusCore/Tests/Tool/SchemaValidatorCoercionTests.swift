@@ -232,6 +232,19 @@ struct SchemaValidatorCoercionTests {
         #expect(r.field == "xs")
     }
 
+    @Test func arrayRejectsBrokenEncodedString_sayingAStringArrived() {
+        // Observed live on Raptor: `state.facts` sent as an encoded array
+        // whose inner quote was not escaped, repeated four times against a
+        // bare "must be an array".
+        let r = SchemaValidator.validate(
+            arguments: ["xs": #"["This chat runs: On this Mac.", "returned: '[{"'"]"#],
+            against: arraySchema
+        )
+        #expect(!r.isValid)
+        #expect(r.field == "xs")
+        #expect(r.errorMessage?.contains("must be an array, not a string") == true)
+    }
+
     // MARK: - String (regression guard — must stay strict)
 
     @Test func stringStillRejectsInteger() {
@@ -325,6 +338,17 @@ struct SchemaValidatorCoercionTests {
             ) as? [String: Any]
         #expect(coerced?["description"] == nil)
         #expect((coerced?["path"] as? String) == "report.pdf")
+    }
+
+    @Test func preservedEmptyOptionalStringIsKept() throws {
+        // `file_edit` `new_string: ""` is the delete form, not filler (#3031).
+        let coerced =
+            SchemaValidator.coerceArguments(
+                ["path": "report.pdf", "description": ""],
+                against: optionalStringSchema,
+                preservingEmpty: ["description"]
+            ) as? [String: Any]
+        #expect((coerced?["description"] as? String) == "")
     }
 
     @Test func whitespaceOnlyOptionalStringIsDropped() throws {

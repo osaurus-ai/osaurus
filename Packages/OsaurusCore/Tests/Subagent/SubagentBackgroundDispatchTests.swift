@@ -4,7 +4,7 @@
 //
 //  Pins the `background: true` spawn contract: the tool call returns an
 //  acknowledgment immediately while the prepared run continues detached;
-//  the pre-registered feed drives the notch mirror; a local-model helper
+//  the pre-registered feed drives the Activity mirror; a local-model helper
 //  defers its start behind the injectable gate; Stop reaches the detached
 //  run through the interrupt center; and the terminal digest is delivered
 //  to the launching session as a follow-up turn once that session is idle
@@ -136,6 +136,44 @@ struct SubagentBackgroundDispatchTests {
         SubagentFeedRegistry.shared.removeNow(toolCallId: toolCallId)
     }
 
+    @Test("the ack names the worker session when the kind plans one; scripted kinds carry none")
+    func ackCarriesPlannedSessionId() throws {
+        let planned = UUID()
+        let ack = SubagentSession.backgroundAck(tool: "spawn_agent", helper: "Writer", sessionId: planned)
+        #expect(SubagentSession.isBackgroundAck(ack))
+        let payload = ToolEnvelope.successPayload(ack) as? [String: Any]
+        #expect(payload?["session_id"] as? String == planned.uuidString)
+
+        let anonymous = SubagentSession.backgroundAck(tool: "bg_test", helper: "x", sessionId: nil)
+        #expect(SubagentSession.isBackgroundAck(anonymous))
+        #expect((ToolEnvelope.successPayload(anonymous) as? [String: Any])?["session_id"] == nil)
+
+        // A settled result is not an ack, so the chat loop's Stop bookkeeping
+        // and the compaction never confuse the two.
+        let settled = ToolEnvelope.success(
+            tool: "spawn_agent", result: ["kind": "spawn_result", "summary": "done"])
+        #expect(!SubagentSession.isBackgroundAck(settled))
+        #expect(ScriptedKind().plannedSessionId == nil)
+    }
+
+    @Test("a delegated text spawn plans its session id before the run; continue reuses the handle")
+    func textSpawnPlansSessionId() {
+        let fresh = TextSubagentKind(agentID: UUID(), agentName: "Writer", input: "go")
+        let planned = fresh.plannedSessionId
+        #expect(planned != nil)
+        #expect(fresh.plannedSessionId == planned, "the planned id must be stable for the run")
+
+        let resume = UUID()
+        let continued = TextSubagentKind(
+            agentID: UUID(), agentName: "Writer", input: "more", continueSessionId: resume)
+        #expect(continued.plannedSessionId == resume)
+
+        // The in-memory eval path (model override) has no persisted session.
+        let ephemeral = TextSubagentKind(
+            agentID: UUID(), agentName: "Writer", input: "go", modelOverride: "local/x")
+        #expect(ephemeral.plannedSessionId == nil)
+    }
+
     @Test("a preparation failure returns the failure envelope synchronously")
     func prepareFailureStaysSynchronous() async throws {
         let toolCallId = "bg-dispatch-\(UUID().uuidString)"
@@ -147,7 +185,7 @@ struct SubagentBackgroundDispatchTests {
         }
 
         #expect(ToolEnvelope.isError(envelope))
-        // The pre-registered feed finished as a failure so the notch row
+        // The pre-registered feed finished as a failure so the Activity row
         // can't spin forever behind a dead dispatch.
         if let feed = SubagentFeedRegistry.shared.feed(for: toolCallId) {
             #expect(feed.currentStatus() != .running)
@@ -162,8 +200,15 @@ struct SubagentBackgroundDispatchTests {
             _ = context
             let box = WeakChatSessionBox(session)
             let toolCallId = "bg-dispatch-\(UUID().uuidString)"
+            let workerID = UUID()
             let kind = ScriptedKind(body: { _, _, _, _ in
-                SubagentResult(payload: ["summary": "digest-report-123"], summary: "digest-report-123")
+                SubagentResult(
+                    payload: [
+                        "kind": "spawn_result", "summary": "digest-report-123",
+                        "session_id": workerID.uuidString,
+                    ],
+                    summary: "digest-report-123"
+                )
             })
 
             let envelope = await ChatExecutionContext.$currentToolCallId.withValue(toolCallId) {
@@ -179,10 +224,53 @@ struct SubagentBackgroundDispatchTests {
                         && $0.content.contains("[Helper report]")
                         && $0.content.contains("finished")
                         && $0.content.contains("digest-report-123")
+                        && $0.content.contains("Worker session_id (spawn_agent continue): \(workerID.uuidString)")
                 }
             }
             SubagentFeedRegistry.shared.removeNow(toolCallId: toolCallId)
         }
+    }
+
+    @Test("report-back never invents a resume handle from a summary or failed result")
+    func reportBackRejectsUnqualifiedHandles() {
+        let id = UUID().uuidString
+        let baseline = "[Helper report] Helper finished: summary \(id)"
+        let malformed = [
+            "not-json",
+            ToolEnvelope.success(tool: "browser_use", result: ["kind": "browser_result", "session_id": id]),
+            ToolEnvelope.success(tool: "spawn_agent", result: ["kind": "spawn_result", "session_id": "bad-id"]),
+            ToolEnvelope.success(tool: "spawn_agent", result: ["kind": "spawn_result"]),
+            ToolEnvelope.failure(kind: .executionError, message: id, tool: "spawn_agent"),
+        ]
+        for envelope in malformed {
+            #expect(
+                SubagentReportBack.message(
+                    title: "Helper",
+                    success: true,
+                    summary: "summary \(id)",
+                    completedEnvelope: envelope
+                ) == baseline
+            )
+        }
+        let completed = ToolEnvelope.success(
+            tool: "spawn_agent",
+            result: ["kind": "spawn_result", "session_id": id]
+        )
+        #expect(
+            SubagentReportBack.message(
+                title: "Helper",
+                success: false,
+                summary: "cancelled",
+                completedEnvelope: completed
+            ) == "[Helper report] Helper failed: cancelled"
+        )
+        #expect(
+            SubagentReportBack.message(
+                title: "Helper",
+                success: true,
+                summary: "summary \(id)"
+            ) == baseline
+        )
     }
 
     @Test("delivery waits out a streaming session and a pending clarify")
@@ -271,8 +359,8 @@ struct SubagentBackgroundDispatchTests {
         SubagentFeedRegistry.shared.removeNow(toolCallId: toolCallId)
     }
 
-    @Test("notch Stop aborts a detached helper through its mirror row")
-    func notchCancelAbortsDetachedRun() async throws {
+    @Test("Activity Stop aborts a detached helper through its mirror row")
+    func activityStopAbortsDetachedRun() async throws {
         let manager = BackgroundTaskManager.makeForTesting()
         let bridge = SubagentBackgroundTaskBridge(
             manager: manager,

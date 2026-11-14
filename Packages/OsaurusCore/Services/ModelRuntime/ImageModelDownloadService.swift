@@ -13,6 +13,9 @@
 //
 
 import Foundation
+import OSLog
+
+private let imageDownloadLog = Logger(subsystem: "com.dinoki.osaurus", category: "ImageModelDownload")
 
 /// A downloadable image model. `id` is the local bundle directory name (and the
 /// request id used everywhere else); it's derived from the repo's last path
@@ -62,9 +65,9 @@ final class ImageModelDownloadService: ObservableObject {
     /// Curated image bundles that aren't published under the OsaurusAI org, so
     /// they'd otherwise never appear in Available. These are mflux mirrors the
     /// engine's family registry recognizes; users can still Import any other
-    /// repo. The official `ideogram-ai` fp8/nf4 repos are CUDA/PyTorch
-    /// checkpoints (no diffusers/MLX support) and are deliberately excluded
-    /// because they would not load in the MLX engine.
+    /// repo. The port also supports the official Ideogram fp8 layout; those
+    /// gated repositories require the user's existing Hub access and are not
+    /// added to this public curated mirror list.
     static let curatedCatalog: [ImageModelDownload] = [
         ImageModelDownload(
             repoId: "cocktailpeanut/ideogram-4-fp8",
@@ -82,6 +85,7 @@ final class ImageModelDownloadService: ObservableObject {
     /// subdirectories, so nested `transformer/*.safetensors` etc. are included.
     private static let patterns = [
         "*.safetensors", "*.json", "*.txt", "*.model", "*.jinja", "*.bin", "*.merges",
+        "LICENSE", "LICENSE.md", "NOTICE", "NOTICE.md",
     ]
     private static let excluded: Set<String> = ["README.md", ".gitattributes"]
 
@@ -97,6 +101,7 @@ final class ImageModelDownloadService: ObservableObject {
     private static let maxConcurrentFiles = 4
 
     private var tasks: [String: Task<Void, Never>] = [:]
+    private var linkedCatalog: [ImageModelDownload] = []
     /// All in-flight downloaders for a bundle, so `cancel` can stop every lane.
     private var downloaders: [String: [DirectDownloader]] = [:]
     /// Live absolute bytes received per file, keyed `[dirName][remotePath]`. The
@@ -166,6 +171,7 @@ final class ImageModelDownloadService: ObservableObject {
                 NotificationCenter.default.post(name: .localModelsChanged, object: nil)
             }
             await ModelPickerItemCache.shared.buildModelPickerItems()
+            await ModelPickerItemCache.shared.refreshLocalMediaModelItems()
         }
     }
 
@@ -189,10 +195,8 @@ final class ImageModelDownloadService: ObservableObject {
     /// Heuristic: does this HF repo look like a diffusers/mflux image bundle?
     /// Used by the global Import flow to route image repos here instead of the
     /// LLM path (which rejects them and would stage to the wrong directory).
-    /// Detects the diffusers layout — a top-level `model_index.json`, or a
-    /// `vae/` alongside a `transformer/`/`unet/` subdir — which mflux mirrors
-    /// preserve. Returns `false` on any listing failure so the caller falls
-    /// back to the existing LLM compatibility check.
+    /// Returns `false` on any listing failure so the caller falls back to the
+    /// existing LLM compatibility check.
     static func isImageRepo(_ repoId: String) async -> Bool {
         guard
             let files = await HuggingFaceService.shared.fetchMatchingFiles(
@@ -201,14 +205,34 @@ final class ImageModelDownloadService: ObservableObject {
                 excludedFiles: excluded
             )
         else { return false }
-        let paths = files.map { $0.path.lowercased() }
+        return isImageBundle(paths: files.map(\.path))
+    }
+
+    /// The diffusers layout mflux mirrors preserve (a top-level
+    /// `model_index.json`, or a `vae/` alongside a `transformer/`/`unet/`
+    /// subdir), or a single-file `vae.safetensors` beside a
+    /// `transformer.safetensors` (SeedVR2).
+    nonisolated static func isImageBundle(paths: [String]) -> Bool {
+        let paths = paths.map { $0.lowercased() }
         let hasModelIndex = paths.contains { $0 == "model_index.json" }
         let hasVAE = paths.contains { $0.hasPrefix("vae/") || $0.contains("/vae/") }
         let hasTransformer = paths.contains { path in
             path.hasPrefix("transformer/") || path.contains("/transformer/")
                 || path.hasPrefix("unet/") || path.contains("/unet/")
         }
-        return hasModelIndex || (hasVAE && hasTransformer)
+        let hasSingleFilePair = paths.contains("vae.safetensors") && paths.contains("transformer.safetensors")
+        return hasModelIndex || (hasVAE && hasTransformer) || hasSingleFilePair
+    }
+
+    /// Offer a linked bundle in Images without starting a download. Keep it
+    /// through catalog refreshes, including repos outside the curated org.
+    func offer(repoId: String) {
+        let entry = ImageModelDownload(
+            repoId: repoId,
+            displayName: ImageModelDownload.directoryName(forRepoId: repoId)
+        )
+        linkedCatalog = Self.dedupedByID(linkedCatalog + [entry])
+        fetchedCatalog = Self.dedupedByID([entry] + fetchedCatalog)
     }
 
     func download(_ entry: ImageModelDownload) {
@@ -231,7 +255,7 @@ final class ImageModelDownloadService: ObservableObject {
             .map(Self.makeCatalogEntry(from:))
         // Curated entries first, then the OsaurusAI org listing (already sorted
         // by downloads, most popular first), deduped by id.
-        fetchedCatalog = Self.dedupedByID(Self.curatedCatalog + orgEntries)
+        fetchedCatalog = Self.dedupedByID(linkedCatalog + Self.curatedCatalog + orgEntries)
     }
 
     /// Map an HF org listing row to a downloadable catalog entry. The display
@@ -289,7 +313,7 @@ final class ImageModelDownloadService: ObservableObject {
             .appendingPathComponent(dirName, isDirectory: true)
 
         guard
-            let files = await HuggingFaceService.shared.fetchMatchingFiles(
+            let files = try? await HuggingFaceService.shared.fetchDownloadFiles(
                 repoId: repoId,
                 patterns: Self.patterns,
                 excludedFiles: Self.excluded
@@ -333,6 +357,7 @@ final class ImageModelDownloadService: ObservableObject {
             // bundle becomes selectable without a relaunch.
             NotificationCenter.default.post(name: .localModelsChanged, object: nil)
             await ModelPickerItemCache.shared.buildModelPickerItems()
+            await ModelPickerItemCache.shared.refreshLocalMediaModelItems()
         } catch is CancellationError {
             states[dirName] = .notStarted
             metrics[dirName] = nil
@@ -368,23 +393,46 @@ final class ImageModelDownloadService: ObservableObject {
         // probes off it; they have stalled main on slow disks.
         let filePath = file.path
         let expectedSize = file.size
-        let staged: (destination: URL, alreadyComplete: Bool)? =
-            await Task.detached(priority: .userInitiated) {
-                guard
-                    let destination = HuggingFaceService.destinationURL(
-                        forRemotePath: filePath, under: root)
-                else { return nil }
-                let existing =
-                    try? FileManager.default.attributesOfItem(atPath: destination.path)[.size]
-                    as? Int64
-                return (destination, existing == expectedSize)
-            }.value
+        let legacyRoot = MLXModel(id: repoId, name: "", description: "", downloadURL: "").localDirectory
+        let staging = Task.detached(priority: .userInitiated) {
+            () throws -> (destination: URL, alreadyComplete: Bool)? in
+            guard
+                let destination = HuggingFaceService.destinationURL(
+                    forRemotePath: filePath,
+                    under: root
+                )
+            else { return nil }
+            let complete =
+                (try? ModelFileIntegrity.matches(
+                    destination,
+                    size: expectedSize,
+                    digest: file.digest
+                )) == true
+            if complete { return (destination, true) }
+            let recovered = try Self.recoverMisroutedFile(file, from: legacyRoot, to: destination)
+            if recovered {
+                imageDownloadLog.info(
+                    "Recovered verified image-model file from the managed model folder: \(expectedSize) bytes"
+                )
+            }
+            return (destination, recovered)
+        }
+        let staged = try await withTaskCancellationHandler {
+            try await staging.value
+        } onCancel: {
+            staging.cancel()
+        }
+        try Task.checkCancellation()
         guard
             let (destination, alreadyComplete) = staged,
-            let url = ModelDownloadService.resolveURL(repoId: repoId, path: file.path)
-        else { return }
+            let url = ModelDownloadService.resolveURL(
+                repoId: repoId,
+                path: file.path,
+                revision: file.revision ?? "main"
+            )
+        else { throw URLError(.badURL) }
 
-        // Skip files already present at the expected size (resume).
+        // Skip verified files already present or recovered from the old route.
         if alreadyComplete {
             liveBytes[dirName, default: [:]][file.path] = file.size
             updateProgress(dirName, total: total)
@@ -396,7 +444,8 @@ final class ImageModelDownloadService: ObservableObject {
         try await downloader.download(
             from: url,
             to: destination,
-            expectedSize: file.size
+            expectedSize: file.size,
+            expectedDigest: file.digest
         ) { [weak self] received, _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -406,6 +455,34 @@ final class ImageModelDownloadService: ObservableObject {
         }
         liveBytes[dirName, default: [:]][file.path] = file.size
         updateProgress(dirName, total: total)
+    }
+
+    /// Repair the old language-model download route without re-downloading
+    /// weights or deleting the user's original bundle. Size alone cannot
+    /// establish that a file belongs to the current published revision.
+    nonisolated static func recoverMisroutedFile(
+        _ file: HuggingFaceService.MatchedFile,
+        from legacyRoot: URL,
+        to destination: URL
+    ) throws -> Bool {
+        guard let digest = file.digest,
+            let source = HuggingFaceService.destinationURL(forRemotePath: file.path, under: legacyRoot),
+            source.standardizedFileURL != destination.standardizedFileURL,
+            (try? ModelFileIntegrity.matches(source, size: file.size, digest: digest)) == true
+        else { return false }
+        try Task.checkCancellation()
+        let fm = FileManager.default
+        try fm.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let staged = destination.deletingLastPathComponent().appendingPathComponent(
+            ".image-recovery-\(UUID().uuidString)"
+        )
+        defer { try? fm.removeItem(at: staged) }
+        try fm.copyItem(at: source, to: staged)
+        // Validate the copy too: the source may have changed during copying.
+        try ModelFileIntegrity.validate(staged, size: file.size, digest: digest)
+        try Task.checkCancellation()
+        try ModelFileIntegrity.commit(staged: staged, to: destination)
+        return true
     }
 
     /// Recompute aggregate progress + throughput from the live per-file byte

@@ -37,6 +37,8 @@ public struct WorkbookExportPolicy: Codable, Equatable, Sendable {
     }
 
     public static let xlsxExport = WorkbookExportPolicy()
+    /// `file_write` workbooks: cells the model wrote as `=…` are real formulas.
+    public static let xlsxExportWithFormulas = WorkbookExportPolicy(allowFormulaCells: true)
 }
 
 public struct WorkbookValidationIssue: Codable, Equatable, Sendable {

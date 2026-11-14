@@ -114,7 +114,7 @@ public actor MemoryContextAssembler {
         var blocks: [String] = []
         if includeGlobalBlocks {
             let today = Self.naturalOutputFormatter.string(from: Date())
-            blocks.append("Current date: \(today)")
+            blocks.append("\(Self.currentDatePrefix)\(today)")
         }
         if !overridesBlock.isEmpty { blocks.append(overridesBlock) }
         if !dynamic.isEmpty { blocks.append(dynamic) }
@@ -151,6 +151,17 @@ public actor MemoryContextAssembler {
         } else {
             cache.removeAll()
         }
+    }
+
+    static let currentDatePrefix = "Current date: "
+
+    /// `section` without its `Current date:` line, for turns that already
+    /// carry a `[Current Time]` block.
+    static func removingCurrentDateLine(_ section: String) -> String {
+        section
+            .components(separatedBy: "\n\n")
+            .filter { !$0.hasPrefix(currentDatePrefix) }
+            .joined(separator: "\n\n")
     }
 
     private static let naturalOutputFormatter: DateFormatter = {

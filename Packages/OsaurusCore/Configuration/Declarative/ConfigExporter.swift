@@ -7,14 +7,18 @@
 //  exporter only reads the plain configuration stores (never Keychain).
 //
 //  Deliberately unmanaged (left out of the document):
-//   - server runtime, chat behavior, and app shell settings (removed in
-//     scope reduction 2 — Settings UI only; server tuning is in flux)
+//   - server runtime settings (removed in scope reduction 2 — Settings UI
+//     only; server tuning is in flux), and the Chat / General page controls
+//     that `chat` / `app` do not list (sampling, dock icon, updates, reset)
 //   - plugin-imported MCP entries (owned by the plugin lifecycle)
 //   - provider endpoint CHANGES on existing providers (changing an endpoint
 //     under a stored credential is the classic bait-and-switch; endpoints
 //     export for visibility and are create-only)
-//   - skills (content installation, not configuration) and custom search
-//     definitions (nested endpoint templates with interleaved secrets)
+//   - skill content (installation, not configuration; `osaurus import`
+//     installs it from a bundle). An agent's skill allow-list does export,
+//     as `agents[].skills`, when the agent has one.
+//   - custom search definitions (nested endpoint templates with
+//     interleaved secrets)
 //   - channel credentials, custom HTTP channel connections, per-room
 //     dispatch routes, platform extras (polling, attachments, receipts)
 //   - per-agent autonomy ceilings, telemetry, identity/pairing, storage
@@ -31,8 +35,13 @@ enum ConfigExporter {
         var doc = OsaurusConfigDocument()
         doc.version = 1
         doc.memory = exportMemory()
+        doc.harnessRuntimes = exportHarnessRuntimes()
         doc.defaultAgent = exportDefaultAgent()
+        doc.configurator = exportConfigurator()
         doc.activeAgent = exportActiveAgent()
+        doc.modelDefaults = exportModelDefaults()
+        doc.chat = exportChat()
+        doc.app = exportApp()
         doc.agents = exportAgents()
         doc.tools = exportTools()
         doc.delegation = exportDelegation()
@@ -44,8 +53,7 @@ enum ConfigExporter {
         doc.plugins = exportPlugins()
         doc.providers = exportProviders()
         doc.searchProviders = exportSearchProviders()
-        doc.schedules = exportSchedules()
-        doc.watchers = exportWatchers()
+        doc.automations = ConfigEvents.export()
         if let sections {
             return doc.filtered(to: sections)
         }
@@ -71,48 +79,218 @@ enum ConfigExporter {
         section.temperature = config.temperature.map { .value(Double($0)) } ?? .null
         section.maxTokens = config.maxTokens.map { .value($0) } ?? .null
         section.systemPrompt = config.systemPrompt
+        section.runtime = ConfigHarness.runtimeKey(for: config.runtime)
+        section.claudeCode = config.claudeCode.map { ConfigHarness.export($0, includeConfigWrites: true) }
         return section
     }
 
+    private static func exportHarnessRuntimes() -> [HarnessRuntimeEntry] {
+        HarnessRuntimeStore.shared.all().map { runtime in
+            var entry = HarnessRuntimeEntry(name: runtime.displayName)
+            entry.kind = ConfigHarness.key(for: runtime.kind)
+            entry.executable = runtime.executable
+            entry.arguments = runtime.arguments
+            entry.environment = runtime.environment
+            return entry
+        }
+    }
+
+    /// `new_chat_agent`: the agent NEW chats open with — the persisted
+    /// choice, never the foreground window's agent.
     private static func exportActiveAgent() -> String {
         let manager = AgentManager.shared
-        if manager.activeAgentId == Agent.defaultId { return "default" }
-        return manager.agents.first { $0.id == manager.activeAgentId }?.name ?? "default"
+        if manager.newChatAgentId == Agent.defaultId { return "default" }
+        return manager.agents.first { $0.id == manager.newChatAgentId }?.name ?? "default"
+    }
+
+    private static func exportConfigurator() -> ConfiguratorSection {
+        let config = ConfiguratorConfigurationStore.load()
+        var section = ConfiguratorSection()
+        section.model = config.resolvedModel.map { .value($0) } ?? .null
+        section.temperature = config.temperature.map { .value(Double($0)) } ?? .null
+        section.systemPrompt = config.systemPrompt
+        return section
+    }
+
+    private static func exportModelDefaults() -> ModelDefaultsSection {
+        let chat = ChatConfigurationStore.load()
+        var section = ModelDefaultsSection()
+        section.coreModel = chat.coreModelIdentifier.map { .value($0) } ?? .null
+        section.compactionModel = chat.compactionModelIdentifier.map { .value($0) } ?? .null
+        return section
+    }
+
+    /// Reads each switch the way its runtime consumer does, so an unset
+    /// default exports as its effective value.
+    private static func exportChat() -> ChatSection {
+        let defaults = UserDefaults.standard
+        let chat = ChatConfigurationStore.load()
+        var section = ChatSection()
+        section.smoothStreaming = defaults.object(forKey: ChatSection.smoothStreamingKey) as? Bool ?? true
+        section.groupActivity = ContentBlock.ActivityRollupSetting.isEnabled
+        section.expandThinking = defaults.bool(forKey: ChatSection.expandThinkingKey)
+        section.spellCheck = ComposerSpellCheckSetting.isEnabled
+        section.autoTitles = chat.autoGenerateChatTitles
+        section.followUpSuggestions = chat.generateFollowUpSuggestions
+        section.clipboardMonitoring = chat.enableClipboardMonitoring
+        section.keepMacAwake = AgentRunPowerManager.isKeepAwakeEnabled()
+        return section
+    }
+
+    private static func exportApp() -> AppSection {
+        var section = AppSection()
+        section.hotkey = currentHotkeyText().map { .value($0) } ?? .null
+        section.startAtLogin = (ServerConfigurationStore.load() ?? .default).startAtLogin
+        section.showNotifications = ToastConfigurationStore.load().enabled
+        return section
+    }
+
+    /// The stored global hotkey in `app.hotkey` text form; nil when off.
+    static func currentHotkeyText() -> String? {
+        ChatConfigurationStore.load().hotkey.map(HotkeyText.text(for:))
     }
 
     // MARK: - Agents
 
     private static func exportAgents() -> [AgentEntry] {
         let relay = RelayConfigurationStore.load()
-        return AgentManager.shared.agents
+        let agents = AgentManager.shared.agents
+        let toolGroups = ToolRegistry.shared.portableToolGroups()
+        return agents
             .filter { !$0.isBuiltIn }
             .map { agent in
-                var entry = AgentEntry(name: agent.name)
-                entry.description = agent.description
-                entry.systemPrompt = agent.systemPrompt
-                entry.model = agent.defaultModel.map { .value($0) } ?? .null
-                entry.temperature = agent.temperature.map { .value(Double($0)) } ?? .null
-                entry.maxTokens = agent.maxTokens.map { .value($0) } ?? .null
-                var caps = AgentCapabilitiesEntry()
-                caps.toolsEnabled = agent.toolsEnabled
-                caps.memoryEnabled = agent.memoryEnabled
-                caps.searchMemoryEnabled = agent.settings.searchMemoryEnabled
-                caps.webSearchEnabled = agent.settings.webSearchEnabled
-                caps.knowledgeEnabled = agent.settings.knowledgeEnabled
-                caps.knowledgeCollectionIds =
-                    agent.settings.knowledgeCollectionIds.isEmpty
-                    ? nil
-                    : agent.settings.knowledgeCollectionIds.map { $0.uuidString }
-                caps.dbEnabled = agent.settings.dbEnabled
-                caps.selfSchedulingEnabled = agent.settings.selfSchedulingEnabled
-                caps.computerUseEnabled = agent.settings.computerUseEnabled
-                caps.browserUseEnabled = agent.settings.browserUseEnabled
-                caps.speakEnabled = agent.settings.speakEnabled
-                caps.renderChartEnabled = agent.settings.renderChartEnabled
-                caps.relayEnabled = relay.isEnabled(for: agent.id)
-                entry.capabilities = caps
-                return entry
+                exportAgent(agent, agents: agents, relay: relay, toolGroups: toolGroups)
             }
+    }
+
+    /// One custom agent as a document entry. Shared by the `agents` section
+    /// export and by agent templates (`AgentTemplate.make(from:)`).
+    static func exportAgent(_ agent: Agent) -> AgentEntry {
+        exportAgent(
+            agent,
+            agents: AgentManager.shared.agents,
+            relay: RelayConfigurationStore.load(),
+            toolGroups: ToolRegistry.shared.portableToolGroups())
+    }
+
+    private static func exportAgent(
+        _ agent: Agent, agents: [Agent], relay: RelayConfiguration,
+        toolGroups: [PortableToolGroup: [String]]
+    ) -> AgentEntry {
+        var entry = AgentEntry(name: agent.name)
+        entry.description = agent.description
+        entry.systemPrompt = agent.systemPrompt
+        entry.avatar = agent.avatar.flatMap(AgentMascot.init(storedID:))?.rawValue
+        entry.model = agent.defaultModel.map { .value($0) } ?? .null
+        entry.modelLocked = agent.modelLocked == true ? true : nil
+        entry.temperature = agent.temperature.map { .value(Double($0)) } ?? .null
+        entry.maxTokens = agent.maxTokens.map { .value($0) } ?? .null
+        entry.generationSettings = agent.generationSettings.map { .value($0) } ?? .null
+        entry.showResponseMetrics = agent.settings.showResponseMetrics
+        entry.followUpSuggestions = agent.settings.followUp.enabled
+        var caps = AgentCapabilitiesEntry()
+        caps.toolsEnabled = agent.toolsEnabled
+        caps.memoryEnabled = agent.memoryEnabled
+        caps.searchMemoryEnabled = agent.settings.searchMemoryEnabled
+        caps.webSearchEnabled = agent.settings.webSearchEnabled
+        caps.knowledgeEnabled = agent.settings.knowledgeEnabled
+        caps.knowledgeCollectionIds =
+            agent.settings.knowledgeCollectionIds.isEmpty
+            ? nil
+            : agent.settings.knowledgeCollectionIds.map { $0.uuidString }
+        caps.dbEnabled = agent.settings.dbEnabled
+        caps.selfSchedulingEnabled = agent.settings.selfSchedulingEnabled
+        caps.computerUseEnabled = agent.settings.computerUseEnabled
+        caps.browserUseEnabled = agent.settings.browserUseEnabled
+        caps.appleApps = AppleApp.sorted(agent.settings.enabledAppleApps).map(\.rawValue)
+        caps.imageEnabled = agent.settings.imageEnabled
+        caps.applescriptEnabled = agent.settings.appleScriptEnabled
+        caps.speakEnabled = agent.settings.speakEnabled
+        caps.renderChartEnabled = agent.settings.renderChartEnabled
+        caps.calculatorEnabled = agent.settings.calculatorEnabled
+        caps.redactionToolsEnabled = agent.settings.redactionToolsEnabled
+        caps.taskChecklistEnabled = agent.settings.taskChecklistEnabled
+        caps.clarifyEnabled = agent.settings.clarifyEnabled
+        caps.artifactsEnabled = agent.settings.artifactsEnabled
+        caps.relayEnabled = relay.isEnabled(for: agent.id)
+        entry.capabilities = caps
+        exportToolSelection(of: agent, into: &entry, groups: toolGroups)
+        if let skillNames = agent.skillNames { entry.skills = .value(skillNames) }
+        entry.pluginInstructions =
+            (agent.pluginInstructions?.isEmpty ?? true) ? nil : agent.pluginInstructions
+        entry.sandbox = exportSandbox(of: agent)
+        entry.subagents = exportSubagents(of: agent, agents: agents)
+        entry.workingFolder = agent.workingFolderPath.map { .value($0) } ?? .null
+        entry.workingFolderReadOnly = agent.settings.workingFolderReadOnly ? true : nil
+        entry.sourceTemplate = agent.sourceTemplateName
+        let workflows = agent.settings.enabledWorkflowIDs.compactMap { InstalledWorkflowStore.shared.workflow(id: $0)?.name }
+        entry.workflows = workflows.isEmpty ? nil : workflows
+        entry.runtime = ConfigHarness.runtimeKey(for: agent.runtime)
+        entry.claudeCode = agent.claudeCode.map { ConfigHarness.export($0, includeConfigWrites: false) }
+        entry.sharedToolApproval = agent.sharedToolApproval
+        return entry
+    }
+
+    /// Manual tool selection splits into tool names plus MCP / plugin group
+    /// enablement. Fully selected groups travel by name so the document
+    /// survives a move to a machine where the same server exposes different
+    /// tool names; partly selected groups travel as their exact tool names.
+    /// Auto mode only records the mode.
+    private static func exportToolSelection(
+        of agent: Agent, into entry: inout AgentEntry,
+        groups: [PortableToolGroup: [String]]
+    ) {
+        var tools = AgentToolsEntry()
+        let mode = agent.toolSelectionMode ?? .auto
+        tools.mode = mode.rawValue
+        guard mode == .manual else {
+            entry.tools = tools
+            return
+        }
+        let split = AgentToolSelectionResolver.export(
+            manualToolNames: agent.manualToolNames ?? [], groups: groups)
+        tools.enabled = split.toolNames
+        entry.tools = tools
+        if !split.enabledMCPServers.isEmpty || !split.disabledMCPServers.isEmpty {
+            var mcp = AgentToolGroupsEntry()
+            mcp.enabled = split.enabledMCPServers
+            mcp.disabled = split.disabledMCPServers.isEmpty ? nil : split.disabledMCPServers
+            entry.mcpServers = mcp
+        }
+        if !split.enabledPlugins.isEmpty || !split.disabledPlugins.isEmpty {
+            var plugins = AgentToolGroupsEntry()
+            plugins.enabled = split.enabledPlugins
+            plugins.disabled = split.disabledPlugins.isEmpty ? nil : split.disabledPlugins
+            entry.plugins = plugins
+        }
+    }
+
+    private static func exportSandbox(of agent: Agent) -> AgentSandboxEntry? {
+        // Unconfigured agents resolve to the host default; export what the
+        // agent EFFECTIVELY runs with so a template pins the behaviour.
+        guard let exec = AgentManager.shared.effectiveAutonomousExec(for: agent.id) else {
+            var off = AgentSandboxEntry()
+            off.enabled = false
+            return off
+        }
+        var section = AgentSandboxEntry()
+        section.enabled = exec.enabled
+        section.networkEnabled = exec.sandboxNetworkEnabled
+        section.allowedDomains = exec.sandboxAllowedDomains ?? []
+        section.maxCommandsPerTurn = exec.maxCommandsPerTurn
+        section.backgroundProcessEnabled = exec.backgroundProcessEnabled
+        section.pluginCreate = exec.pluginCreate
+        return section
+    }
+
+    private static func exportSubagents(of agent: Agent, agents: [Agent]) -> AgentSubagentsEntry {
+        var section = AgentSubagentsEntry()
+        section.enabled = agent.settings.spawnDelegationEnabled
+        // Ids without a live agent are dropped, matching the delegation section.
+        section.agents = agent.settings.spawnableAgentIDs.compactMap { id in
+            agents.first { $0.id == id }?.name
+        }
+        return section
     }
 
     // MARK: - App behavior (Wave 3b)
@@ -122,9 +300,6 @@ enum ConfigExporter {
         let agents = AgentManager.shared.agents
         var section = DelegationSection()
         section.localTextEnabled = config.localTextDelegationEnabled
-        section.imageEnabled = config.imageDelegationEnabled
-        section.videoEnabled = config.videoDelegationEnabled
-        section.applescriptEnabled = config.appleScriptDelegationEnabled
         section.applescriptExecutionMode =
             ConfigAppBehaviorEnums.applescriptModeKey(for: config.defaultAppleScriptExecutionMode)
         // The pool stores agent UUIDs; the document uses names. Ids without a
@@ -132,8 +307,12 @@ enum ConfigExporter {
         section.spawnableAgents = config.spawnableAgentIDs.compactMap { id in
             agents.first { $0.id == id }?.name
         }
-        section.spawnableModels = config.spawnableModelNames
-        section.spawnToolAccess = config.spawnToolAccess.rawValue
+        section.spawnableWorkspaceAgents = config.spawnableWorkspaceAgents.map(\.key)
+        if !config.workspaceAutoJoinDisabledIds.isEmpty {
+            section.workspaceAutoJoin = Dictionary(
+                uniqueKeysWithValues: config.workspaceAutoJoinDisabledIds.map { ($0, false) }
+            )
+        }
         var defaults: [String: String] = [:]
         for kindId in ConfigAppBehaviorEnums.permissionKindIds {
             defaults[kindId] = config.permissionDefaults.policy(for: kindId).rawValue
@@ -142,9 +321,9 @@ enum ConfigExporter {
         let budgets = config.budgets.normalized
         section.budgetMaxTokens = budgets.maxDelegateTokens
         section.budgetMaxTurns = budgets.maxDelegateTurns
-        section.budgetMaxToolCalls = budgets.maxToolCalls
         section.budgetMaxSeconds = budgets.maxElapsedSeconds
         section.budgetMaxParallelSpawns = budgets.maxParallelSpawns
+        section.budgetMaxRemoteParallelSpawns = budgets.maxRemoteParallelSpawns
         section.ramSafetyPreflight = config.ramSafetyPreflightEnabled
         section.coexistenceEnabled = config.subagentCoexistenceEnabled
         return section
@@ -196,28 +375,48 @@ enum ConfigExporter {
     private static func exportChannels() -> ChannelsSection {
         var section = ChannelsSection()
         section.writeEnabled = ChannelWriteKillSwitch.shared.snapshot().writeEnabled
-        let agents = AgentManager.shared.agents
         for platform in ConfigChannelPlatform.allCases {
-            let snapshot = platform.snapshot()
-            var entry = ChannelPlatformSection()
-            entry.writeEnabled = snapshot.writeEnabled
-            entry.defaultReadLimit = snapshot.defaultReadLimit
-            entry.spaceAllowlist = snapshot.spaceAllowlist
-            entry.readAllowlist = snapshot.readAllowlist
-            entry.writeAllowlist = snapshot.writeAllowlist
-            entry.senderAllowlist = snapshot.senderAllowlist
-            entry.inboundEnabled = snapshot.inbound.enabled
-            // A dangling target id (deleted agent) exports as null.
-            entry.inboundAgent =
-                snapshot.inbound.targetAgentId
-                .flatMap { id in agents.first { $0.id == id && !$0.isBuiltIn }?.name }
-                .map { .value($0) } ?? .null
-            entry.requireMention = snapshot.inbound.requireMention
-            entry.continueThreads = snapshot.inbound.continueThreads
-            entry.autoReplyEnabled = snapshot.inbound.autoReplyEnabled
+            var entry = exportChannelAccount(platform, connectionId: platform.primaryConnectionId)
+            let extras = ChannelAccounts.accounts(kind: platform.kind).filter {
+                !$0.isPrimary && $0.connectionId != platform.primaryConnectionId
+            }
+            if !extras.isEmpty {
+                entry.accounts = extras.map { account in
+                    var extra = exportChannelAccount(platform, connectionId: account.connectionId)
+                    extra.id = account.connectionId
+                    return extra
+                }
+            }
             platform.setSection(entry, in: &section)
         }
+        let connections = AgentChannelConfigurationStore.load().connections.compactMap {
+            connection -> ChannelConnectionEntry? in
+            let rules = ConfigChannelRouting.exportRules(kind: connection.kind, connectionId: connection.id)
+            guard !rules.isEmpty else { return nil }
+            var entry = ChannelConnectionEntry(connection: connection.name.isEmpty ? connection.id : connection.name)
+            entry.routing = rules
+            return entry
+        }
+        section.connections = connections.isEmpty ? nil : connections
         return section
+    }
+
+    private static func exportChannelAccount(
+        _ platform: ConfigChannelPlatform, connectionId: String
+    ) -> ChannelPlatformSection {
+        let snapshot = platform.snapshot(connectionId: connectionId)
+        var entry = ChannelPlatformSection()
+        entry.writeEnabled = snapshot.writeEnabled
+        entry.defaultReadLimit = snapshot.defaultReadLimit
+        entry.spaceAllowlist = snapshot.spaceAllowlist
+        entry.readAllowlist = snapshot.readAllowlist
+        entry.writeAllowlist = platform.hasWriteAllowlist ? snapshot.writeAllowlist : nil
+        entry.senderAllowlist = snapshot.senderAllowlist
+        let rules = ConfigChannelRouting.exportRules(kind: platform.kind, connectionId: connectionId)
+        entry.routing = rules.isEmpty ? nil : rules
+        let posting = platform.supportsPosting ? ConfigChannelPosting.export(platform, connectionId: connectionId) : []
+        entry.posting = posting.isEmpty ? nil : posting
+        return entry
     }
 
     // MARK: - MCP
@@ -254,8 +453,7 @@ enum ConfigExporter {
     // MARK: - Models / Plugins
 
     private static func exportModels() -> [String] {
-        ModelManager.shared.availableModels
-            .filter { $0.isDownloaded }
+        ModelManager.shared.installedModels()
             .map { $0.id }
             .sorted()
     }
@@ -300,43 +498,46 @@ enum ConfigExporter {
         }
         return section
     }
-
-    // MARK: - Schedules / Watchers
-
-    private static func agentName(for id: UUID?) -> String? {
-        guard let id else { return nil }
-        return AgentManager.shared.agents.first { $0.id == id }?.name
-    }
-
-    private static func exportSchedules() -> [ScheduleEntry] {
-        ScheduleManager.shared.schedules.map { schedule in
-            var entry = ScheduleEntry(name: schedule.name)
-            entry.agent = agentName(for: schedule.agentId)
-            entry.instructions = schedule.instructions
-            let parts = ConfigScheduleFrequency.components(of: schedule.frequency)
-            entry.frequency = parts.frequency
-            entry.frequencyValue = parts.value
-            entry.frequencyTimeOfDay = parts.timeOfDay
-            entry.enabled = schedule.isEnabled
-            return entry
-        }
-    }
-
-    private static func exportWatchers() -> [WatcherEntry] {
-        WatcherManager.shared.watchers.map { watcher in
-            var entry = WatcherEntry(name: watcher.name)
-            entry.agent = agentName(for: watcher.agentId)
-            entry.instructions = watcher.instructions
-            entry.path = watcher.watchPath
-            entry.recursive = watcher.recursive
-            entry.responsiveness = watcher.responsiveness.rawValue
-            entry.enabled = watcher.isEnabled
-            return entry
-        }
-    }
 }
 
 // MARK: - Small shared key mappings
+
+/// The `agent` value of an event entry: a custom agent NAME for
+/// an agent hosted here, or a workspace ref key (`<workspaceId>:<0x-address>`)
+/// for a teammate's shared agent. Names never contain a `0x` address suffix
+/// after a colon, so the two forms cannot collide.
+enum ConfigAgentTargetReference {
+    @MainActor
+    static func export(_ target: AgentDispatchTarget?) -> String? {
+        switch target {
+        case .none:
+            return nil
+        case .local(let id):
+            return AgentManager.shared.agents.first { $0.id == id }?.name
+        case .workspace(let ref):
+            return ref.key
+        }
+    }
+
+    /// The workspace ref a document value names, or nil when it is a
+    /// (local) agent name.
+    static func workspaceRef(_ value: String) -> WorkspaceAgentRef? {
+        WorkspaceAgentRef(key: value.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    /// Human label for the target a stored row currently runs on.
+    @MainActor
+    static func currentLabel(_ target: AgentDispatchTarget?) -> String {
+        switch target {
+        case .none:
+            return "(unknown)"
+        case .local(let id):
+            return AgentManager.shared.agents.first { $0.id == id }?.name ?? "(unknown)"
+        case .workspace(let ref):
+            return ref.key
+        }
+    }
+}
 
 enum ConfigMCPAuth {
     static func key(for auth: MCPProviderAuthType) -> String {

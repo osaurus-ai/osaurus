@@ -51,6 +51,21 @@ struct ModelCompatibilityDiagnosticsTests {
         }
     }
 
+    @Test func symlinkedBundleReportsAvailableAndKeepsSelectedPath() throws {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let actual = root.appendingPathComponent("actual", isDirectory: true)
+        writeBundle(at: actual)
+        let link = root.appendingPathComponent("bundle-link", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: actual)
+        let report = ModelCompatibilityDiagnostics.report(
+            modelId: "org/repo", modelName: "Repo", modelTypeHint: nil,
+            bundleURL: link, externalSource: ExternalModelLocator.Source.huggingFaceCache.rawValue)
+        #expect(report.localBundle.kind == .available)
+        #expect(report.localBundle.path == link.path)
+        #expect(report.runtime.reason != .incompleteBundle)
+    }
+
     @Test func externalBundle_reportsUnprovenRuntimeAndMissingProof() {
         let root = makeTempDir()
         defer { try? FileManager.default.removeItem(at: root) }

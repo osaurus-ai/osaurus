@@ -15,6 +15,8 @@
 //
 
 import Foundation
+import MLX
+import MLXLMCommon
 import Sentry
 
 @MainActor
@@ -84,7 +86,31 @@ public final class CrashReportingService {
     /// Whether crash reporting is enabled. Opt-out: true unless the user has
     /// explicitly turned it off, so a fresh install (absent key) reports on.
     public var isEnabled: Bool {
-        defaults.object(forKey: Self.consentKey) as? Bool ?? true
+        if let enabledOverride { return enabledOverride }
+        return defaults.object(forKey: Self.consentKey) as? Bool ?? true
+    }
+
+    /// Consent value written this process, authoritative over `defaults`.
+    ///
+    /// `setEnabled` blocked the main thread here: writing the key goes through
+    /// cfprefsd over XPC, and a busy prefs daemon stalls the caller for seconds
+    /// while the toggle sits mid-layout. The write is now deferred to
+    /// `writeQueue`, so the value has to stay in memory as well: `isEnabled`
+    /// and `startIfConsented()` read it back immediately after `setEnabled`,
+    /// and a `defaults` read racing the queued write would see the old value.
+    /// The cache cannot go stale because `setEnabled` is the only writer of
+    /// the key and it updates both sides.
+    private var enabledOverride: Bool?
+
+    /// Serial queue owning the consent write, so two rapid toggles land in the
+    /// order they were made and the last one also wins in `defaults`.
+    private let writeQueue = DispatchQueue(
+        label: "com.dinoki.osaurus.crash-consent-write")
+
+    /// Blocks until any queued consent write has reached `defaults`. Tests and
+    /// shutdown paths use this to observe the persisted value.
+    public func flushPendingWrites() {
+        writeQueue.sync {}
     }
 
     // MARK: - Lifecycle
@@ -112,7 +138,10 @@ public final class CrashReportingService {
     /// further is sent. Called from the onboarding consent step and
     /// Settings → Privacy.
     public func setEnabled(_ enabled: Bool) {
-        defaults.set(enabled, forKey: Self.consentKey)
+        enabledOverride = enabled
+        let defaults = self.defaults
+        let key = Self.consentKey
+        writeQueue.async { defaults.set(enabled, forKey: key) }
         if enabled {
             startIfConsented()
         } else {
@@ -167,6 +196,62 @@ public final class CrashReportingService {
 
     private nonisolated static let breadcrumbQueue = DispatchQueue(
         label: "com.dinoki.osaurus.crash-breadcrumbs", qos: .utility)
+
+    /// Handled eval failures do not produce a fatal crash event. Record the
+    /// known interactivity signature without the raw error, prompt or output.
+    /// Limits and occupancy are sampled when terminal info arrives. Producer
+    /// drain may still be in progress; this is neither peak nor at-fault policy.
+    nonisolated static func recordHandledGPUFailure(
+        _ failure: GenerationFailure, modelName: String, promptTokens: Int, generatedTokens: Int,
+        context: HandledGPUFailureContext = HandledGPUFailureContext()
+    ) {
+        guard SentrySDK.isEnabled,
+            let report = HandledGPUFailureReport(failure: failure, modelName: modelName,
+                promptTokens: promptTokens, generatedTokens: generatedTokens, context: context)
+        else { return }
+        let saved = ServerRuntimeSettingsStore.snapshot().memorySafety
+        let status = MemoryStatus.snapshot()
+        let allocator = MLX.Memory.snapshot()
+        var observed: [String: Any] = [
+            "scope": "process_wide_not_request_peak",
+            "observed_at_unix_seconds": Date().timeIntervalSince1970,
+            "memory_limit_bytes": status.memoryLimit,
+            "allocator_cache_limit_bytes": status.cacheLimit,
+            "physical_memory_bytes": status.physicalMemory,
+            "rss_bytes": status.currentRSS,
+            "mlx_active_bytes": allocator.activeMemory,
+            "mlx_cached_bytes": allocator.cacheMemory,
+            "host_memory_pressure": SubagentMemoryPressure.sampled().rawValue,
+            "gpu_architecture": MLX.GPU.deviceInfo().architecture,
+        ]
+        if let footprint = ProcessMemoryProbe.currentPhysFootprintMB() {
+            observed["phys_footprint_bytes"] = UInt64(footprint * 1024 * 1024)
+        }
+        let savedProfile = HandledGPUFailureReport.savedProfileContext(saved)
+        // Serialize before crossing the queue: [String: Any] is not Sendable.
+        // All values are the numeric/identifier allowlist constructed above.
+        guard let data = try? JSONSerialization.data(withJSONObject: [
+            "saved_profile": savedProfile, "observed_at_terminal_info": observed,
+        ]) else { return }
+        breadcrumbQueue.async {
+            // Consent can be revoked while a report is queued.
+            guard SentrySDK.isEnabled,
+                let memory = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { return }
+            SentrySDK.capture(event: makeHandledGPUFailureEvent(report: report, memory: memory))
+        }
+    }
+
+    nonisolated static func makeHandledGPUFailureEvent(
+        report: HandledGPUFailureReport, memory: [String: Any]
+    ) -> Event {
+        let event = Event(level: .error)
+        event.message = SentryMessage(formatted: "Handled Metal GPU failure: Impacting Interactivity")
+        event.fingerprint = ["handled-metal-gpu-failure", "impacting-interactivity"]
+        event.tags = ["gpu.failure": "impacting_interactivity", "gpu.stage": report.stage]
+        event.context = ["gpu_generation_failure": report.context, "gpu_memory_snapshot": memory]
+        return event
+    }
 
     // MARK: - Main-thread stall reporting
 

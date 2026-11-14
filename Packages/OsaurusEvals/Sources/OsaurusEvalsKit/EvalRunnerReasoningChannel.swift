@@ -56,6 +56,7 @@ extension EvalRunner {
         let started = Date()
         let transcript = await ReasoningChannelEvaluator.run(
             queries: queries,
+            model: modelId,
             maxTokens: exp.maxTokens ?? 1_024
         )
         let elapsedMs = Date().timeIntervalSince(started) * 1000
@@ -198,9 +199,10 @@ extension EvalRunner {
         }
 
         // Every generation row carries token/s when the runtime reported it.
-        let tpsValues = transcript.turns.compactMap(\.decodeTokensPerSecond)
-        if let last = tpsValues.last {
-            notes.append(String(format: "decode tok/s (last turn): %.1f", last))
+        for (index, turn) in transcript.turns.enumerated() {
+            notes.append(turn.decodeTokensPerSecond.map {
+                String(format: "turn %d decode tok/s: %.3f", index + 1, $0)
+            } ?? "turn \(index + 1): runtime decode tok/s unavailable")
         }
 
         return EvalCaseReport(
@@ -213,7 +215,7 @@ extension EvalRunner {
             modelId: modelId,
             latencyMs: elapsedMs,
             telemetry: EvalCaseTelemetry(
-                decodeTokensPerSecond: tpsValues.last,
+                decodeTokensPerSecond: transcript.turns.last?.decodeTokensPerSecond,
                 completionTokens: {
                     let counts = transcript.turns.compactMap(\.tokenCount)
                     return counts.isEmpty ? nil : counts.reduce(0, +)

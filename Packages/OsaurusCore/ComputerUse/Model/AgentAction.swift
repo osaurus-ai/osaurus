@@ -356,7 +356,10 @@ extension AgentAction {
             ]),
             "app": .object([
                 "type": .string("string"),
-                "description": .string("App name, bundle id, or path (for open)."),
+                "description": .string(
+                    "For open: an app name or bundle id to launch or switch to, or an absolute or ~ folder path "
+                        + "(e.g. ~/Downloads) to open that folder in a new front Finder window."
+                ),
             ]),
             "query": .object([
                 "type": .string("string"),

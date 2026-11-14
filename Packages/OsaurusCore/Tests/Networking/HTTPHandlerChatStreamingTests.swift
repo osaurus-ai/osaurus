@@ -19,6 +19,178 @@ fileprivate extension URLRequest {
 
 struct HTTPHandlerChatStreamingTests {
 
+    @Test func activityLoggingPreservesReportedCountsWithoutChangingWireSchema() async throws {
+        let model = "provenance-http-sse-\(UUID().uuidString)"
+        let engine = MockChatEngine(deltas: [StreamingInputTokenHint.encode(12), "hello",
+            StreamingStatsHint.encode(tokenCount: 2, tokensPerSecond: 3, inputTokenCount: 12)],
+            completeText: "hello", model: model)
+        let server = try await startChatStreamingTestServer(with: engine)
+        defer { Task { await server.shutdown() } }
+        var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/chat/completions")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.authenticate()
+        request.disablePersistenceForTests()
+        request.httpBody = try JSONSerialization.data(withJSONObject: [
+            "model": model, "messages": [["role": "user", "content": "fixture request"]],
+            "stream": true, "stream_options": ["include_usage": true],
+        ])
+        let (data, response) = try await URLSession.shared.data(for: request)
+        #expect((response as? HTTPURLResponse)?.statusCode == 200)
+        #expect(!String(decoding: data, as: UTF8.self).contains("inputTokenSource"))
+        #expect(!String(decoding: data, as: UTF8.self).contains("outputTokenSource"))
+        for _ in 0..<200 {
+            if let row = await MainActor.run(body: { InsightsService.shared.logs.first { $0.model == model } }) {
+                #expect(row.inputTokens == 12)
+                #expect(row.outputTokens == 2)
+                #expect(row.inputTokenSource == .reported)
+                #expect(row.outputTokenSource == .reported)
+                return
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        Issue.record("No HTTP activity row for the completed fixture request")
+    }
+
+    @MainActor
+    @Test(arguments: [true, false], [
+        (reason: "stop", inputTokens: 7),
+        (reason: "stop", inputTokens: nil),
+        (reason: "length", inputTokens: 7),
+    ] as [(reason: String, inputTokens: Int?)])
+    func agentRunRelaysFinalRuntimeUsageOnlyWhenRequested(
+        includeUsage: Bool, terminal: (reason: String, inputTokens: Int?)
+    ) async throws {
+        let stopReason = terminal.reason
+        try await SandboxTestLock.runWithStoragePaths {
+            let agent = Agent(name: "Runtime usage fixture", defaultModel: "fake",
+                              toolsEnabled: false, memoryEnabled: false)
+            AgentManager.shared.add(agent)
+            defer { AgentStore.delete(id: agent.id); AgentManager.shared.refresh() }
+            let engine = MockChatEngine(deltas: [
+                StreamingInputTokenHint.encode(257),
+                "red",
+                StreamingStatsHint.encode(tokenCount: 20, tokensPerSecond: 10),
+                StreamingStatsHint.encode(tokenCount: 40, tokensPerSecond: 20,
+                                          stopReason: stopReason, inputTokenCount: terminal.inputTokens),
+            ], completeText: "", model: "fake")
+            let server = try await startChatStreamingTestServer(with: engine, trustLoopback: true)
+            defer { Task { await server.shutdown() } }
+            var request = URLRequest(url: URL(string:
+                "http://\(server.host):\(server.port)/agents/\(agent.id.uuidString)/run")!)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.authenticate()
+            request.disablePersistenceForTests()
+            request.httpBody = try JSONSerialization.data(withJSONObject: [
+                "model": "fake", "messages": [["role": "user", "content": "Describe the image"]],
+                "stream": true, "stream_options": ["include_usage": includeUsage],
+            ])
+            let (data, response) = try await URLSession.shared.data(for: request)
+            #expect((response as? HTTPURLResponse)?.statusCode == 200)
+            #expect(!String(decoding: data, as: UTF8.self).contains("\u{FFFE}"))
+            let payloads = String(decoding: data, as: UTF8.self).components(separatedBy: .newlines)
+                .filter { $0.hasPrefix("data: ") }.map { String($0.dropFirst(6)) }
+            #expect(payloads.last == "[DONE]")
+            let chunks = payloads.compactMap {
+                (try? JSONSerialization.jsonObject(with: Data($0.utf8))) as? [String: Any]
+            }
+            let usage = chunks.compactMap { $0["usage"] as? [String: Any] }
+            #expect(usage.count == (includeUsage && stopReason == "stop" ? 1 : 0))
+            if stopReason == "length" {
+                #expect(chunks.contains { $0["error"] != nil })
+                #expect(!String(decoding: data, as: UTF8.self).contains("\"finish_reason\":\"stop\""))
+            } else if includeUsage {
+                #expect(usage.first?["completion_tokens"] as? Int == 40)
+                #expect(usage.first?["prompt_tokens"] as? Int == (terminal.inputTokens ?? 257))
+                #expect(usage.first?["tokens_per_second"] as? Double == 20)
+            }
+        }
+    }
+
+    /// A locked agent refuses a different `model` and runs its own when the
+    /// request names it or omits it.
+    @MainActor
+    @Test(arguments: [("other-model", false), ("fake", true), ("", true)])
+    func agentRun_lockedAgentRefusesADifferentModel(requested: String, runs: Bool) async throws {
+        try await SandboxTestLock.runWithStoragePaths {
+            let agent = Agent(name: "Locked model fixture", defaultModel: "fake", modelLocked: true,
+                              toolsEnabled: false, memoryEnabled: false)
+            AgentManager.shared.add(agent)
+            defer { AgentStore.delete(id: agent.id); AgentManager.shared.refresh() }
+            let engine = MockChatEngine(deltas: ["red"], completeText: "", model: "fake")
+            let server = try await startChatStreamingTestServer(with: engine, trustLoopback: true)
+            defer { Task { await server.shutdown() } }
+            var request = URLRequest(url: URL(string:
+                "http://\(server.host):\(server.port)/agents/\(agent.id.uuidString)/run")!)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.authenticate()
+            request.disablePersistenceForTests()
+            var body: [String: Any] = ["messages": [["role": "user", "content": "hi"]], "stream": true]
+            if !requested.isEmpty { body["model"] = requested }
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            let (data, _) = try await URLSession.shared.data(for: request)
+            let text = String(decoding: data, as: UTF8.self)
+            #expect(text.contains("locked to model 'fake'") == !runs, "\(text)")
+            #expect(text.contains("red") == runs, "\(text)")
+        }
+    }
+
+    @Test(arguments: [1, 2])
+    func localToolCompletionSSEKeepsCallsChannelsAndRuntimeUsage(_ callCount: Int) async throws {
+        let capture = LocalToolCompletionContractTests.Capture()
+        let engine = ChatEngine(
+            services: [LocalToolCompletionContractTests.Service(capture: capture, callCount: callCount)],
+            installedModelsProvider: { [] }
+        )
+        let server = try await startChatStreamingTestServer(with: engine)
+        defer { Task { await server.shutdown() } }
+        var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/chat/completions")!)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.authenticate()
+        request.disablePersistenceForTests()
+        request.httpBody = Data(#"""
+            {"model":"tool-contract-fixture","stream":true,"stream_options":{"include_usage":true},
+             "messages":[{"role":"user","content":"Read both zones."}],
+             "tools":[{"type":"function","function":{"name":"lookup_zone","parameters":{
+               "type":"object","properties":{"zone":{"type":"string"}},"required":["zone"]}}}]}
+            """#.utf8)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        #expect((response as? HTTPURLResponse)?.statusCode == 200)
+        let body = String(decoding: data, as: UTF8.self)
+        let payloads = body.components(separatedBy: .newlines).filter { $0.hasPrefix("data: ") }
+            .map { String($0.dropFirst(6)) }
+        #expect(payloads.filter { $0 == "[DONE]" }.count == 1)
+        let frames = try payloads.filter { $0 != "[DONE]" }.map {
+            try #require(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any])
+        }
+        let usages = frames.compactMap { $0["usage"] as? [String: Any] }
+        #expect(usages.count == 1)
+        #expect(usages.first?["prompt_tokens"] as? Int == 257)
+        #expect(usages.first?["completion_tokens"] as? Int == 59)
+        #expect(usages.first?["tokens_per_second"] as? Double == 17.5)
+        let choices = frames.flatMap { $0["choices"] as? [[String: Any]] ?? [] }
+        #expect(choices.filter { $0["finish_reason"] as? String == "tool_calls" }.count == 1)
+        let deltas = choices.compactMap { $0["delta"] as? [String: Any] }
+        #expect(deltas.compactMap { $0["content"] as? String }.joined() == "Checking both zones.")
+        #expect(deltas.compactMap { $0["reasoning_content"] as? String }.joined() == "Need both readings.")
+        let calls = deltas.flatMap { $0["tool_calls"] as? [[String: Any]] ?? [] }
+        #expect(Set(calls.compactMap { $0["index"] as? Int }) == Set(0 ..< callCount))
+        for index in 0 ..< callCount {
+            let fragments = calls.filter { $0["index"] as? Int == index }
+                .compactMap { $0["function"] as? [String: Any] }
+            #expect(fragments.compactMap { $0["name"] as? String }.joined() == "lookup_zone")
+            let arguments = fragments.compactMap { $0["arguments"] as? String }.joined()
+            let object = try #require(JSONSerialization.jsonObject(with: Data(arguments.utf8)) as? [String: String])
+            #expect(object == ["zone": index == 0 ? "east" : "west"])
+        }
+        #expect(!body.contains("\u{FFFE}"))
+        #expect(!body.contains("<tool_call>"))
+    }
+
     @Test func requestTaskRegistryCancelsTaskInsertedAfterChannelCancellation() async throws {
         actor Probe {
             private(set) var cancelled = false
@@ -56,6 +228,10 @@ struct HTTPHandlerChatStreamingTests {
 
             func streamChat(request _: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
                 fatalError("not used")
+            }
+
+            func streamResponses(request: ResponsesInferenceRequest) async throws -> AsyncThrowingStream<ResponsesGenerationEvent, Error> {
+                httpFixtureResponseEvents(try await completeChat(request: request.chatCompletionsCompatibilityRequest()))
             }
 
             func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
@@ -101,7 +277,7 @@ struct HTTPHandlerChatStreamingTests {
             AgentManager.shared.add(agent)
 
             let capture = Capture()
-            let server = try await startTestServer(with: CaptureEngine(capture: capture))
+            let server = try await startChatStreamingTestServer(with: CaptureEngine(capture: capture))
             defer { Task { await server.shutdown() } }
 
             let clientTool = Tool(
@@ -161,6 +337,10 @@ struct HTTPHandlerChatStreamingTests {
                 fatalError("not used")
             }
 
+            func streamResponses(request: ResponsesInferenceRequest) async throws -> AsyncThrowingStream<ResponsesGenerationEvent, Error> {
+                httpFixtureResponseEvents(try await completeChat(request: request.chatCompletionsCompatibilityRequest()))
+            }
+
             func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
                 ChatCompletionResponse(
                     id: "chatcmpl-test",
@@ -184,7 +364,7 @@ struct HTTPHandlerChatStreamingTests {
             }
         }
 
-        let server = try await startTestServer(with: StatsEngine())
+        let server = try await startChatStreamingTestServer(with: StatsEngine())
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(
@@ -205,7 +385,7 @@ struct HTTPHandlerChatStreamingTests {
     }
 
     @Test func sse_path_writes_role_content_finish_done() async throws {
-        let server = try await startTestServer(
+        let server = try await startChatStreamingTestServer(
             with: MockChatEngine(deltas: ["a", "b", "c"], completeText: "", model: "fake")
         )
         defer { Task { await server.shutdown() } }
@@ -247,7 +427,7 @@ struct HTTPHandlerChatStreamingTests {
     }
 
     @Test func ndjson_path_writes_content_and_done_when_streaming() async throws {
-        let server = try await startTestServer(
+        let server = try await startChatStreamingTestServer(
             with: MockChatEngine(deltas: ["x", "y"], completeText: "", model: "fake")
         )
         defer { Task { await server.shutdown() } }
@@ -284,8 +464,8 @@ struct HTTPHandlerChatStreamingTests {
     }
 
     @Test func ollama_chat_non_streaming_returns_single_message_object() async throws {
-        let server = try await startTestServer(
-            with: MockChatEngine(deltas: [], completeText: "hello", model: "fake")
+        let server = try await startChatStreamingTestServer(
+            with: MockChatEngine(deltas: ["hello"], completeText: "hello", model: "fake")
         )
         defer { Task { await server.shutdown() } }
 
@@ -323,7 +503,7 @@ struct HTTPHandlerChatStreamingTests {
     }
 
     @Test func ollama_generate_streaming_writes_response_chunks_and_done() async throws {
-        let server = try await startTestServer(
+        let server = try await startChatStreamingTestServer(
             with: MockChatEngine(deltas: ["x", "y"], completeText: "", model: "fake")
         )
         defer { Task { await server.shutdown() } }
@@ -348,8 +528,8 @@ struct HTTPHandlerChatStreamingTests {
     }
 
     @Test func ollama_generate_non_streaming_returns_single_response_object() async throws {
-        let server = try await startTestServer(
-            with: MockChatEngine(deltas: [], completeText: "hello", model: "fake")
+        let server = try await startChatStreamingTestServer(
+            with: MockChatEngine(deltas: ["hello"], completeText: "hello", model: "fake")
         )
         defer { Task { await server.shutdown() } }
 
@@ -372,8 +552,8 @@ struct HTTPHandlerChatStreamingTests {
         #expect(body.split(separator: "\n").count <= 1)
     }
 
-    @Test func ollama_chat_drops_reasoning_sentinel_from_plaintext_ndjson() async throws {
-        let server = try await startTestServer(
+    @Test func ollama_chat_preserves_reasoning_in_thinking_without_plaintext_leakage() async throws {
+        let server = try await startChatStreamingTestServer(
             with: MockChatEngine(
                 deltas: [StreamingReasoningHint.encode("private reasoning"), "visible"],
                 completeText: "",
@@ -409,7 +589,12 @@ struct HTTPHandlerChatStreamingTests {
         let body = String(decoding: data, as: UTF8.self)
         #expect(status == 200)
         #expect(body.contains("visible"))
-        #expect(!body.contains("private reasoning"))
+        let frames = body.components(separatedBy: .newlines).compactMap {
+            (try? JSONSerialization.jsonObject(with: Data($0.utf8))) as? [String: Any]
+        }
+        let messages = frames.compactMap { $0["message"] as? [String: Any] }
+        #expect(messages.compactMap { $0["thinking"] as? String }.joined() == "private reasoning")
+        #expect(messages.compactMap { $0["content"] as? String }.joined() == "visible")
         #expect(!body.contains("\u{FFFE}"))
     }
 
@@ -430,7 +615,7 @@ struct HTTPHandlerChatStreamingTests {
             }
         }
 
-        let server = try await startTestServer(with: ToolCallEngine())
+        let server = try await startChatStreamingTestServer(with: ToolCallEngine())
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/api/chat")!)
@@ -503,7 +688,7 @@ struct HTTPHandlerChatStreamingTests {
             }
         }
 
-        let server = try await startTestServer(with: MockToolCallEngine())
+        let server = try await startChatStreamingTestServer(with: MockToolCallEngine())
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(
@@ -553,8 +738,18 @@ struct HTTPHandlerChatStreamingTests {
         #expect(status == 200)
         #expect(body.contains("\"tool_calls\""))
         #expect(body.contains("\"function\":{\"name\":\"get_weather\""))
-        #expect(body.contains("\\\"count\\\":7"))
-        #expect(!body.contains("\\\"count\\\":\\\"7\\\""))
+        let chunks = try body.components(separatedBy: .newlines)
+            .filter { $0.hasPrefix("data: ") && $0 != "data: [DONE]" }
+            .map { try #require(JSONSerialization.jsonObject(with: Data($0.dropFirst(6).utf8)) as? [String: Any]) }
+        let calls = chunks.flatMap { $0["choices"] as? [[String: Any]] ?? [] }
+            .compactMap { $0["delta"] as? [String: Any] }
+            .flatMap { $0["tool_calls"] as? [[String: Any]] ?? [] }
+        #expect(calls.allSatisfy { $0["index"] as? Int == 0 })
+        let arguments = calls.compactMap { ($0["function"] as? [String: Any])?["arguments"] as? String }.joined()
+        #expect(arguments == #"{"city":"SF","count":"7"}"#)
+        let decoded = try #require(JSONSerialization.jsonObject(with: Data(arguments.utf8)) as? [String: Any])
+        #expect(decoded["count"] as? String == "7")
+        #expect(decoded["count"] as? Int == nil)
         #expect(body.contains("\"finish_reason\":\"tool_calls\""))
     }
     @Test func sse_path_emits_reasoning_content_field() async throws {
@@ -577,7 +772,7 @@ struct HTTPHandlerChatStreamingTests {
             }
         }
 
-        let server = try await startTestServer(with: ReasoningEngine())
+        let server = try await startChatStreamingTestServer(with: ReasoningEngine())
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(
@@ -618,12 +813,15 @@ struct HTTPHandlerChatStreamingTests {
         #expect(!body.contains("\u{FFFE}"))
     }
 
-    @Test func sse_path_uses_engine_stats_for_usage_chunk() async throws {
+    @Test(arguments: [true, false])
+    func sse_path_uses_engine_stats_for_usage_chunk(_ reportsInput: Bool) async throws {
         struct StatsEngine: ChatEngineProtocol {
+            let reportsInput: Bool
             func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<
                 String, Error
             > {
                 AsyncThrowingStream { continuation in
+                    if reportsInput { continuation.yield(StreamingInputTokenHint.encode(257)) }
                     continuation.yield("hello")
                     continuation.yield(
                         StreamingStatsHint.encode(
@@ -640,7 +838,7 @@ struct HTTPHandlerChatStreamingTests {
             }
         }
 
-        let server = try await startTestServer(with: StatsEngine())
+        let server = try await startChatStreamingTestServer(with: StatsEngine(reportsInput: reportsInput))
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(
@@ -660,8 +858,22 @@ struct HTTPHandlerChatStreamingTests {
         let body = String(decoding: data, as: UTF8.self)
         #expect(status == 200)
         #expect(body.contains("\"content\":\"hello\""))
-        #expect(body.contains("\"completion_tokens\":77"))
-        #expect(body.contains("\"tokens_per_second\":12.5"))
+        let chunks = try body.components(separatedBy: .newlines)
+            .filter { $0.hasPrefix("data: ") && $0 != "data: [DONE]" }
+            .map { try #require(JSONSerialization.jsonObject(with: Data($0.dropFirst(6).utf8)) as? [String: Any]) }
+        let usage = chunks.compactMap { $0["usage"] as? [String: Any] }
+        let metrics = try #require(chunks.compactMap { $0["generation_metrics"] as? [String: Any] }.first)
+        #expect(metrics["completion_tokens"] as? Int == 77)
+        #expect(metrics["tokens_per_second"] as? Double == 12.5)
+        #expect(usage.count == (reportsInput ? 1 : 0))
+        if reportsInput {
+            #expect(usage.first?["prompt_tokens"] as? Int == 257)
+            #expect(usage.first?["completion_tokens"] as? Int == 77)
+            #expect(usage.first?["total_tokens"] as? Int == 334)
+            #expect(usage.first?["tokens_per_second"] as? Double == 12.5)
+        } else {
+            #expect(metrics["prompt_tokens"] == nil && metrics["total_tokens"] == nil)
+        }
         #expect(body.contains("\"finish_reason\":\"length\""))
         #expect(!body.contains("\u{FFFE}"))
     }
@@ -691,7 +903,7 @@ struct HTTPHandlerChatStreamingTests {
             }
         }
 
-        let server = try await startTestServer(with: PrefillEngine())
+        let server = try await startChatStreamingTestServer(with: PrefillEngine())
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(
@@ -749,7 +961,7 @@ struct HTTPHandlerChatStreamingTests {
             }
         }
 
-        let server = try await startTestServer(with: MultiToolEngine())
+        let server = try await startChatStreamingTestServer(with: MultiToolEngine())
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(
@@ -861,7 +1073,7 @@ struct HTTPHandlerChatStreamingTests {
             // Loopback-trusted: remote plaintext `/agents/{id}/run` is now
             // refused with 426 (Secure Channel hard-require); this test is
             // about tool-loop sentinel scrubbing, not transport security.
-            let server = try await startTestServer(with: engine, trustLoopback: true)
+            let server = try await startChatStreamingTestServer(with: engine, trustLoopback: true)
             defer { Task { await server.shutdown() } }
 
             // The built-in Default agent UUID is locked to in-app surfaces
@@ -934,7 +1146,12 @@ struct HTTPHandlerChatStreamingTests {
             #expect(!body.contains("\u{FFFE}tool:"))
             #expect(!body.contains("\u{FFFE}args:"))
             #expect(!body.contains("\u{FFFE}done:"))
-            #expect(!body.contains("agent-run sentinel test"))
+            // A loopback caller owns this Mac, so its tool events carry the
+            // call's arguments (the owner detail the paired phone renders).
+            // They must never leak into the reply itself: any line carrying
+            // them is an `osaurus_agent_tool` event, not content.
+            let argumentLines = body.split(separator: "\n").filter { $0.contains("agent-run sentinel test") }
+            #expect(argumentLines.allSatisfy { $0.contains("\"osaurus_agent_tool\"") })
         }
     }
 
@@ -987,7 +1204,7 @@ struct HTTPHandlerChatStreamingTests {
             }
 
             let engine = GemmaQATToolChoiceEngine()
-            let server = try await startTestServer(with: engine, trustLoopback: true)
+            let server = try await startChatStreamingTestServer(with: engine, trustLoopback: true)
             defer { Task { await server.shutdown() } }
 
             var request = URLRequest(
@@ -1089,7 +1306,7 @@ struct HTTPHandlerChatStreamingTests {
                 try? FileManager.default.removeItem(at: root)
             }
 
-            let server = try await startTestServer(with: StatusToolEngine(), trustLoopback: true)
+            let server = try await startChatStreamingTestServer(with: StatusToolEngine(), trustLoopback: true)
             defer { Task { await server.shutdown() } }
 
             var request = URLRequest(
@@ -1165,7 +1382,7 @@ struct HTTPHandlerChatStreamingTests {
             AgentManager.shared.add(custom)
 
             let engine = CaptureEngine()
-            let server = try await startTestServer(with: engine, trustLoopback: true)
+            let server = try await startChatStreamingTestServer(with: engine, trustLoopback: true)
             defer { Task { await server.shutdown() } }
 
             func postRun(agentId: UUID, authenticate: Bool) async throws -> String {
@@ -1195,6 +1412,7 @@ struct HTTPHandlerChatStreamingTests {
             let requests = await engine.requests
             #expect(requests.count == 2)
             let defaultNames = Set(requests[0].tools?.map(\.function.name) ?? [])
+            // The built-in worker wrappers keep `run_workflow` with nothing installed.
             #expect(defaultNames == ToolRegistry.orchestratorAllowedToolNames)
 
             let customSystemMessage = requests[1].messages.first { $0.role == "system" }
@@ -1230,7 +1448,7 @@ struct HTTPHandlerChatStreamingTests {
             }
         }
 
-        let server = try await startTestServer(with: EchoEngine(), trustLoopback: true)
+        let server = try await startChatStreamingTestServer(with: EchoEngine(), trustLoopback: true)
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(
@@ -1271,7 +1489,7 @@ struct HTTPHandlerChatStreamingTests {
             }
         }
 
-        let server = try await startTestServer(with: EchoEngine(), trustLoopback: true)
+        let server = try await startChatStreamingTestServer(with: EchoEngine(), trustLoopback: true)
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(
@@ -1311,7 +1529,7 @@ struct HTTPHandlerChatStreamingTests {
 
         // trustLoopback: false makes `isLoopbackConnection` return false, so the
         // 127.0.0.1 test client is treated as a remote caller.
-        let server = try await startTestServer(with: UnusedEngine(), trustLoopback: false)
+        let server = try await startChatStreamingTestServer(with: UnusedEngine(), trustLoopback: false)
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(
@@ -1344,8 +1562,10 @@ struct HTTPHandlerChatStreamingTests {
                 String, Error
             > {
                 AsyncThrowingStream { continuation in
+                    continuation.yield(StreamingInputTokenHint.encode(7))
                     continuation.yield(StreamingReasoningHint.encode("hi"))
                     continuation.yield("answer")
+                    continuation.yield(StreamingStatsHint.encode(tokenCount: 20, tokensPerSecond: 5))
                     continuation.finish()
                 }
             }
@@ -1353,7 +1573,7 @@ struct HTTPHandlerChatStreamingTests {
                 fatalError("not used")
             }
         }
-        let server = try await startTestServer(with: ReasoningEngine())
+        let server = try await startChatStreamingTestServer(with: ReasoningEngine())
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/messages")!)
@@ -1384,6 +1604,7 @@ struct HTTPHandlerChatStreamingTests {
                 String, Error
             > {
                 AsyncThrowingStream { continuation in
+                    continuation.yield(StreamingInputTokenHint.encode(7))
                     continuation.yield("answer")
                     continuation.yield(StreamingStatsHint.encode(tokenCount: 77, tokensPerSecond: 12.5))
                     continuation.finish()
@@ -1393,7 +1614,7 @@ struct HTTPHandlerChatStreamingTests {
                 fatalError("not used")
             }
         }
-        let server = try await startTestServer(with: StatsEngine())
+        let server = try await startChatStreamingTestServer(with: StatsEngine())
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/messages")!)
@@ -1421,6 +1642,8 @@ struct HTTPHandlerChatStreamingTests {
                 String, Error
             > {
                 AsyncThrowingStream { continuation in
+                    continuation.yield(StreamingInputTokenHint.encode(7))
+                    continuation.yield(StreamingStatsHint.encode(tokenCount: 20, tokensPerSecond: 5))
                     continuation.finish(
                         throwing: ServiceToolInvocations(
                             invocations: [
@@ -1441,7 +1664,7 @@ struct HTTPHandlerChatStreamingTests {
                 fatalError("not used")
             }
         }
-        let server = try await startTestServer(with: MultiToolEngine())
+        let server = try await startChatStreamingTestServer(with: MultiToolEngine())
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/messages")!)
@@ -1480,6 +1703,10 @@ struct HTTPHandlerChatStreamingTests {
                 fatalError("not used")
             }
 
+            func streamResponses(request: ResponsesInferenceRequest) async throws -> AsyncThrowingStream<ResponsesGenerationEvent, Error> {
+                httpFixtureResponseEvents(try await completeChat(request: request.chatCompletionsCompatibilityRequest()))
+            }
+
             func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
                 let output: String = lock.withLock {
                     defer { callCount += 1 }
@@ -1505,7 +1732,7 @@ struct HTTPHandlerChatStreamingTests {
             }
         }
 
-        let server = try await startTestServer(with: ContextEchoEngine())
+        let server = try await startChatStreamingTestServer(with: ContextEchoEngine())
         defer { Task { await server.shutdown() } }
 
         func post(_ json: String) async throws -> OpenResponsesResponse {
@@ -1552,7 +1779,7 @@ struct HTTPHandlerChatStreamingTests {
                 fatalError("not used")
             }
         }
-        let server = try await startTestServer(with: ReasoningThenTextEngine())
+        let server = try await startChatStreamingTestServer(with: ReasoningThenTextEngine())
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/responses")!)
@@ -1585,6 +1812,7 @@ struct HTTPHandlerChatStreamingTests {
                 String, Error
             > {
                 AsyncThrowingStream { continuation in
+                    continuation.yield(StreamingInputTokenHint.encode(7))
                     continuation.yield("answer")
                     continuation.yield(StreamingStatsHint.encode(tokenCount: 77, tokensPerSecond: 12.5))
                     continuation.finish()
@@ -1594,7 +1822,7 @@ struct HTTPHandlerChatStreamingTests {
                 fatalError("not used")
             }
         }
-        let server = try await startTestServer(with: StatsEngine())
+        let server = try await startChatStreamingTestServer(with: StatsEngine())
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/responses")!)
@@ -1630,7 +1858,7 @@ struct HTTPHandlerChatStreamingTests {
                 fatalError("not used")
             }
         }
-        let server = try await startTestServer(with: OnlyReasoningEngine())
+        let server = try await startChatStreamingTestServer(with: OnlyReasoningEngine())
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/responses")!)
@@ -1681,7 +1909,7 @@ struct HTTPHandlerChatStreamingTests {
                 fatalError("not used")
             }
         }
-        let server = try await startTestServer(with: MultiToolEngine())
+        let server = try await startChatStreamingTestServer(with: MultiToolEngine())
         defer { Task { await server.shutdown() } }
 
         var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/responses")!)
@@ -1726,7 +1954,7 @@ struct HTTPHandlerChatStreamingTests {
             }
         }
 
-        let server = try await startTestServer(with: SlowStreamEngine())
+        let server = try await startChatStreamingTestServer(with: SlowStreamEngine())
 
         var request = URLRequest(
             url: URL(string: "http://\(server.host):\(server.port)/chat/completions")!
@@ -1767,7 +1995,7 @@ struct HTTPHandlerChatStreamingTests {
 
 // MARK: - Test server bootstrap
 
-private struct TestServer {
+struct ChatStreamingTestServer {
     let group: MultiThreadedEventLoopGroup
     let channel: Channel
     let lease: HTTPServerTestLease
@@ -1784,10 +2012,10 @@ private struct TestServer {
 }
 
 @discardableResult
-private func startTestServer(
+func startChatStreamingTestServer(
     with engine: ChatEngineProtocol,
     trustLoopback: Bool = false
-) async throws -> TestServer {
+) async throws -> ChatStreamingTestServer {
     let lease = await HTTPServerTestLock.shared.acquire()
     let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
     do {
@@ -1815,12 +2043,33 @@ private func startTestServer(
         let ch = try await bootstrap.bind(host: "127.0.0.1", port: 0).get()
         let addr = ch.localAddress
         let port = addr?.port ?? 0
-        return TestServer(group: group, channel: ch, lease: lease, host: "127.0.0.1", port: port)
+        return ChatStreamingTestServer(group: group, channel: ch, lease: lease, host: "127.0.0.1", port: port)
     } catch {
         await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
             group.shutdownGracefully { _ in cont.resume() }
         }
         await lease.release()
         throw error
+    }
+}
+
+
+/// Explicit compatibility only for complete-only test doubles. Production HTTP
+/// inference calls the typed engine entry and never uses this helper.
+private func httpFixtureResponseEvents(_ response: ChatCompletionResponse) -> AsyncThrowingStream<ResponsesGenerationEvent, Error> {
+    AsyncThrowingStream { continuation in
+        let message = response.choices.first?.message
+        if let reasoning = message?.reasoning_content { continuation.yield(.reasoningDelta(reasoning)) }
+        if let text = message?.content { continuation.yield(.outputTextDelta(text)) }
+        let calls = (message?.tool_calls ?? []).map {
+            ResponsesFunctionCall(id: "fc_" + $0.id, callID: $0.id, name: $0.function.name,
+                arguments: $0.function.arguments, geminiThoughtSignature: $0.geminiThoughtSignature)
+        }
+        continuation.yield(.responseCompleted(.init(responseID: response.id, status: .completed,
+            functionCalls: calls, tokenCount: response.usage.completion_tokens,
+            tokensPerSecond: response.usage.tokens_per_second, unclosedReasoning: false,
+            stopReason: response.choices.first?.finish_reason, promptTokensPerSecond: nil, mtp: nil,
+            inputTokenCount: response.usage.prompt_tokens)))
+        continuation.finish()
     }
 }

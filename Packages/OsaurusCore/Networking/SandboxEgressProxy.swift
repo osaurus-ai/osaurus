@@ -43,9 +43,10 @@ import NIOPosix
     public actor SandboxEgressProxy {
         public static let shared = SandboxEgressProxy()
 
-        /// Resolve a proxy-auth token to the allowlist it may reach.
-        /// Returns `nil` for unknown tokens (connection is refused).
-        public typealias AllowlistResolver = @Sendable (String) async -> [String]?
+        /// Resolve a proxy-auth token to what it may reach. Returns `nil`
+        /// for unknown tokens and callers whose network is off (the
+        /// connection is refused).
+        public typealias AllowlistResolver = @Sendable (String) async -> SandboxProxyGrant?
 
         private var channel: Channel?
         public private(set) var boundPort: Int?
@@ -169,10 +170,10 @@ import NIOPosix
             let resolver = self.resolver
 
             let setup = Task {
-                guard let allowlist = await resolver(token) else {
+                guard let grant = await resolver(token) else {
                     return SetupResult.denied(.proxyAuthenticationRequired)
                 }
-                guard SandboxEgressPolicy.hostAllowed(target.host, allowlist: allowlist) else {
+                guard SandboxEgressPolicy.hostAllowed(target.host, grant: grant) else {
                     return SetupResult.denied(.forbidden)
                 }
                 // Host-side resolution + rebinding defense: connect to the
@@ -254,11 +255,17 @@ import NIOPosix
             let clientChannel = context.channel
 
             if target.isConnect {
-                // 200 through the still-installed encoder, then strip HTTP
-                // handlers and splice raw bytes.
-                let response = HTTPResponseHead(version: head.version, status: .custom(code: 200, reasonPhrase: "Connection Established"))
-                context.write(wrapOutboundOut(.head(response)), promise: nil)
-                context.writeAndFlush(wrapOutboundOut(.end(nil)), promise: nil)
+                // Raw bytes, with the encoder out first: it frames a
+                // length-less 200 as chunked, and its `.end` writes the
+                // `0\r\n\r\n` terminator into the tunnel ahead of the
+                // upstream's TLS bytes.
+                let sync = context.pipeline.syncOperations
+                if let encoder = try? sync.context(handlerType: HTTPResponseEncoder.self) {
+                    sync.removeHandler(context: encoder, promise: nil)
+                }
+                var reply = context.channel.allocator.buffer(capacity: 48)
+                reply.writeString("HTTP/1.1 200 Connection Established\r\n\r\n")
+                context.writeAndFlush(NIOAny(reply), promise: nil)
             } else {
                 // Absolute-URI plain-HTTP: forward the rewritten request
                 // head (origin-form path, proxy headers stripped) upstream
@@ -305,6 +312,7 @@ import NIOPosix
         ) {
             var headers = HTTPHeaders()
             headers.add(name: "Connection", value: "close")
+            headers.add(name: "Content-Length", value: "0")
             if status == .proxyAuthenticationRequired {
                 headers.add(name: "Proxy-Authenticate", value: "Basic realm=\"osaurus-sandbox\"")
             }

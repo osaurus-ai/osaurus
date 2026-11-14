@@ -28,7 +28,7 @@ struct ChatSessionLocalSetupBridgeTests {
     }
 
     private func makeRouterItem(
-        id: String = "osaurus/deepseek-ai/deepseek-v4-flash",
+        id: String = "osaurus/deepseek-v4-1-flash",
         inputPrice: Int64 = 100_000,
         outputPrice: Int64 = 300_000,
         contextLength: Int = 65_536,
@@ -97,7 +97,7 @@ struct ChatSessionLocalSetupBridgeTests {
         ])
 
         #expect(session.selectedModel == router.id)
-        #expect(session.temporaryCloudModelDisplayName == "DeepSeek V4 Flash")
+        #expect(session.temporaryCloudModelDisplayName == "DeepSeek V4.1 Flash")
         #expect(AgentManager.shared.effectiveModel(for: session.agentId!) == localModelId)
         // Progress must remain addressable while Cloud is selected so the
         // empty state keeps rendering the local download.
@@ -157,8 +157,8 @@ struct ChatSessionLocalSetupBridgeTests {
     }
 
     /// Product policy outranks generic value sorting for first-run: DeepSeek
-    /// V4 Flash wins even when another capable Router model is cheaper.
-    @Test func valueCandidatePinsDeepSeekV4FlashForFirstRun() {
+    /// V4.1 Flash wins even when another capable Router model is cheaper.
+    @Test func valueCandidatePinsDeepSeekV41FlashForFirstRun() {
         let cheaper = makeRouterItem(
             id: "osaurus/provider/cheaper-capable",
             inputPrice: 1,
@@ -173,6 +173,27 @@ struct ChatSessionLocalSetupBridgeTests {
             ChatSession.osaurusRouterValueCandidate(in: [cheaper, deepSeek])?.id
                 == deepSeek.id
         )
+    }
+
+    /// The retired V4 Flash (0423) id is no longer the product pick: it falls
+    /// back into ordinary value sorting and loses to a cheaper capable model.
+    @Test func valueCandidateNoLongerPinsLegacyDeepSeekV4Flash() {
+        let cheaper = makeRouterItem(
+            id: "osaurus/provider/cheaper-capable",
+            inputPrice: 1,
+            outputPrice: 1
+        )
+        let legacy = makeRouterItem(
+            id: "osaurus/deepseek-v4-flash",
+            inputPrice: 500,
+            outputPrice: 1_000
+        )
+
+        #expect(
+            ChatSession.osaurusRouterValueCandidate(in: [legacy, cheaper])?.id
+                == cheaper.id
+        )
+        #expect(!RemoteProviderManager.isFirstRunOsaurusModelId(legacy.id))
     }
 
     /// The recovery adoption path selects the Router model for the session

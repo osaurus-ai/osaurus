@@ -7,6 +7,7 @@
 //
 
 import AppKit
+import Accelerate
 import SwiftUI
 
 /// Catalog of mascot avatars shipped with the app. The `id` is what gets
@@ -18,20 +19,24 @@ public enum AgentMascot: String, CaseIterable, Identifiable, Sendable {
     public var id: String { rawValue }
     public var assetName: String { "osaurus-avatar-\(rawValue)" }
 
-    /// The dino's signature color, used to theme surfaces around the mascot
-    /// (e.g. the onboarding hero glow, avatar tint, and selection ring) so
-    /// the UI reacts in the selected dino's actual color rather than a
-    /// name-hash approximation.
-    public var color: Color {
-        switch self {
-        case .blue: return Color(red: 0.30, green: 0.56, blue: 0.92)
-        case .green: return Color(red: 0.36, green: 0.72, blue: 0.42)
-        case .orange: return Color(red: 0.95, green: 0.58, blue: 0.24)
-        case .purple: return Color(red: 0.62, green: 0.42, blue: 0.92)
-        case .red: return Color(red: 0.91, green: 0.38, blue: 0.36)
-        case .yellow: return Color(red: 0.95, green: 0.78, blue: 0.27)
-        }
+    /// Costumed day-one-team avatars an earlier build stored, and the stock
+    /// dino each one became. Agents, exports, and relay peers may still
+    /// carry these ids.
+    static let retiredIDs: [String: AgentMascot] = [
+        "trice-beret": .orange,
+        "rex-purse": .purple,
+        "bronto-scarf": .yellow,
+        "trice-backpack": .red,
+        "rex-mecha": .blue,
+    ]
+
+    /// The mascot a persisted `Agent.avatar` names, reading a retired id as
+    /// its stock replacement.
+    public init?(storedID: String) {
+        guard let mascot = AgentMascot(rawValue: storedID) ?? Self.retiredIDs[storedID] else { return nil }
+        self = mascot
     }
+
 
     /// Human-friendly label for accessibility / tooltip surfaces. Avoids
     /// leaking the raw enum case (`"blue"`) into help text — the avatar
@@ -62,9 +67,10 @@ public enum AgentMascot: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
-/// Renders an agent avatar at the given diameter. Uses the mascot image when
-/// `mascotId` matches a known `AgentMascot` otherwise draws a tinted circle
-/// with the first letter of `name` (or `?` when name is empty)
+/// Renders an agent avatar at the given diameter. Uses the custom image, then
+/// the mascot image when `mascotId` matches a known `AgentMascot`, otherwise
+/// the first letter of `name` (or `?` when name is empty) tinted in the
+/// agent's colour.
 struct AgentAvatarView: View {
     let mascotId: String?
     let name: String
@@ -81,45 +87,89 @@ struct AgentAvatarView: View {
     /// (no inner inset). Use for hero treatments; leave default for small
     /// list/sidebar avatars where the inset reads as more iconic.
     var bleedsToEdge: Bool = false
+    /// False keeps `diameter` over the library's avatar size, for an avatar
+    /// whose size is part of its layout (the setup's team list).
+    var followsLibrarySize: Bool = true
 
+    @Environment(\.theme) private var baseTheme
+    @Environment(\.isEnabled) private var baseComponentEnabled
+    private var theme: any ThemeProtocol { baseTheme.catalogFamily(11, enabled: baseComponentEnabled) }
+    @Environment(\.displayScale) private var displayScale
+
+    private var resolvedDiameter: CGFloat {
+        followsLibrarySize ? theme.catalogMetric("avatarSize", fallback: diameter) : diameter
+    }
+    /// A circle unless the library pins a numeric radius (`radius.pill` is
+    /// not a number). A pinned radius is set for the library's avatar size
+    /// and scales with the avatar, so a hero keeps the same shape as a row.
+    private var cornerRadius: CGFloat {
+        let half = resolvedDiameter / 2
+        let radius = theme.catalogMetric("radius", fallback: .infinity)
+        guard radius.isFinite else { return half }
+        let librarySize = theme.catalogMetric("avatarSize", fallback: resolvedDiameter)
+        guard librarySize > 0 else { return min(radius, half) }
+        return min(radius * resolvedDiameter / librarySize, half)
+    }
+    private var avatarShape: AnyShape {
+        AnyShape(RoundedRectangle(cornerRadius: cornerRadius))
+    }
     var body: some View {
         ZStack {
-            Circle()
-                .fill(
-                    LinearGradient(
-                        colors: [tint.opacity(0.2), tint.opacity(0.05)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                )
-
-            if let url = customImageURL, let nsImage = AvatarImageCache.shared.image(for: url) {
-                Image(nsImage: nsImage)
-                    .resizable()
-                    .interpolation(.high)
-                    .antialiased(true)
-                    .scaledToFill()
-            } else if let mascot = mascotId.flatMap(AgentMascot.init(rawValue:)) {
-                let mascotImage = Image(mascot.assetName, bundle: .module)
-                    .resizable()
-                    .interpolation(.high)
-                    .antialiased(true)
-                if bleedsToEdge {
-                    mascotImage.scaledToFill()
-                } else {
-                    mascotImage.scaledToFit().padding(diameter * 0.08)
-                }
+            if let artwork {
+                avatarShape.fill(theme.assignedColor("component.library.11." + (baseComponentEnabled ? "background" : "disabledBackground"), fallback: theme.surface.raised))
+                Image(nsImage: artwork)
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .strokeBorder(theme.assignedColor("component.library.11.border", fallback: theme.rule(around: tint)), lineWidth: theme.catalogMetric("borderWidth", fallback: borderWidth))
             } else {
-                Text(name.isEmpty ? "?" : name.prefix(1).uppercased())
-                    .font(.system(size: monogramFontSize, weight: .bold, design: .rounded))
-                    .foregroundColor(tint)
+                monogram
             }
-
-            Circle()
-                .strokeBorder(tint.opacity(0.5), lineWidth: borderWidth)
         }
-        .frame(width: diameter, height: diameter)
-        .clipShape(Circle())
+        .frame(width: resolvedDiameter, height: resolvedDiameter)
+        .clipShape(avatarShape)
+    }
+
+    /// The custom image, else the mascot, pre-rendered at display size.
+    private var artwork: NSImage? {
+        if let url = customImageURL,
+            let image = AvatarBitmapRenderer.shared.image(customURL: url, pointSize: resolvedDiameter, scale: displayScale)
+        {
+            return image
+        }
+        if let mascot = mascotId.flatMap(AgentMascot.init(storedID:)) {
+            return AvatarBitmapRenderer.shared.image(mascot: mascot, pointSize: mascotPointSize, scale: displayScale)
+        }
+        return nil
+    }
+
+    /// No artwork: the name's initial on a soft wash of the agent's own
+    /// colour, borderless, so a list of letter avatars reads as a set of
+    /// distinct agents rather than a column of keycaps. In light mode the
+    /// letter uses primary ink: an agent colour such as yellow cannot hold
+    /// text contrast on a light surface.
+    private var monogram: some View {
+        ZStack {
+            avatarShape.fill(tint.opacity(baseComponentEnabled ? 0.18 : 0.08))
+            Text(name.isEmpty ? "?" : name.prefix(1).uppercased())
+                .glyphSize(points: min(monogramFontSize, resolvedDiameter * 0.5), weight: .semibold, design: .rounded)
+                .foregroundStyle(monogramInk)
+        }
+    }
+
+    private var monogramInk: Color {
+        guard baseComponentEnabled else { return theme.text.disabled }
+        return theme.isDark ? tint : theme.text.primary
+    }
+
+    /// Mascot edge length in points: full bleed, or inset 8% per side. The
+    /// inset is snapped so the leftover margin is a whole number of pixels on
+    /// each side; a half-pixel offset would make the GPU resample the bitmap.
+    private var mascotPointSize: CGFloat {
+        guard !bleedsToEdge else { return resolvedDiameter }
+        let scale = max(displayScale, 1)
+        let outerPixels = (resolvedDiameter * scale).rounded()
+        var innerPixels = (outerPixels * 0.84).rounded()
+        if Int(outerPixels - innerPixels) % 2 != 0 { innerPixels -= 1 }
+        return max(innerPixels, 1) / scale
     }
 }
 
@@ -131,7 +181,7 @@ struct AgentAvatarView: View {
 final class AvatarImageCache: @unchecked Sendable {
     static let shared = AvatarImageCache()
 
-    private struct Entry {
+    struct Entry {
         let mtime: Date
         let image: NSImage
     }
@@ -140,6 +190,10 @@ final class AvatarImageCache: @unchecked Sendable {
     private var entries: [String: Entry] = [:]
 
     func image(for url: URL) -> NSImage? {
+        entry(for: url)?.image
+    }
+
+    func entry(for url: URL) -> Entry? {
         let path = url.path
         let mtime =
             (try? FileManager.default.attributesOfItem(atPath: path)[.modificationDate] as? Date) ?? .distantPast
@@ -147,20 +201,170 @@ final class AvatarImageCache: @unchecked Sendable {
         lock.lock()
         if let hit = entries[path], hit.mtime == mtime {
             lock.unlock()
-            return hit.image
+            return hit
         }
         lock.unlock()
 
         guard let image = NSImage(contentsOf: url) else { return nil }
+        let entry = Entry(mtime: mtime, image: image)
         lock.lock()
-        entries[path] = Entry(mtime: mtime, image: image)
+        entries[path] = entry
         lock.unlock()
-        return image
+        return entry
     }
 
     func invalidate(url: URL) {
         lock.lock()
         entries.removeValue(forKey: url.path)
         lock.unlock()
+        AvatarBitmapRenderer.shared.invalidate(url: url)
+    }
+}
+
+// MARK: - Avatar Bitmap Renderer
+
+/// Pre-renders avatar artwork at the exact pixel size it is displayed at.
+/// The bundled mascots are 1000px+ bitmaps shown in 16–108pt circles; letting
+/// Core Animation minify them at draw time (linear sampling, no mipmaps)
+/// leaves the outlines soft and jagged. Resampling once with a high-quality
+/// filter and drawing the result 1:1 keeps them crisp.
+///
+/// Output is always square: the source is center-cropped (aspect fill) and
+/// resampled to `round(pointSize * scale)` pixels. The returned image's point
+/// size is `pixels / scale`, so callers must draw it unscaled.
+final class AvatarBitmapRenderer: @unchecked Sendable {
+    static let shared = AvatarBitmapRenderer()
+
+    private let lock = NSLock()
+    private var cache: [String: NSImage] = [:]
+
+    static func pixelSize(pointSize: CGFloat, scale: CGFloat) -> Int {
+        max(1, Int((pointSize * max(scale, 1)).rounded()))
+    }
+
+    func image(mascot: AgentMascot, pointSize: CGFloat, scale: CGFloat) -> NSImage? {
+        let pixels = Self.pixelSize(pointSize: pointSize, scale: scale)
+        return cached(key: "mascot|\(mascot.rawValue)|\(pixels)", pixels: pixels, scale: scale) {
+            Bundle.module.image(forResource: mascot.assetName)
+        }
+    }
+
+    func image(customURL url: URL, pointSize: CGFloat, scale: CGFloat) -> NSImage? {
+        guard let entry = AvatarImageCache.shared.entry(for: url) else { return nil }
+        let pixels = Self.pixelSize(pointSize: pointSize, scale: scale)
+        let key = "\(Self.customPrefix(for: url))\(entry.mtime.timeIntervalSinceReferenceDate)|\(pixels)"
+        return cached(key: key, pixels: pixels, scale: scale) { entry.image }
+    }
+
+    func invalidate(url: URL) {
+        let prefix = Self.customPrefix(for: url)
+        lock.lock()
+        cache = cache.filter { !$0.key.hasPrefix(prefix) }
+        lock.unlock()
+    }
+
+    func removeAll() {
+        lock.lock()
+        cache.removeAll()
+        lock.unlock()
+    }
+
+    private static func customPrefix(for url: URL) -> String {
+        "custom|\(url.path)|"
+    }
+
+    private func cached(
+        key: String,
+        pixels: Int,
+        scale: CGFloat,
+        source: () -> NSImage?
+    ) -> NSImage? {
+        lock.lock()
+        if let hit = cache[key] {
+            lock.unlock()
+            return hit
+        }
+        lock.unlock()
+
+        guard let sourceImage = source(),
+            let image = Self.render(sourceImage, pixels: pixels, scale: scale)
+        else { return nil }
+
+        lock.lock()
+        // Reset-on-overflow cap: keys vary by avatar × size × scale and
+        // entries are cheap to re-render.
+        if cache.count >= 256 { cache.removeAll() }
+        cache[key] = image
+        lock.unlock()
+        return image
+    }
+
+    /// Uncached resample of `source` into a `pixels`-square bitmap whose point
+    /// size is `pixels / scale`.
+    static func render(_ source: NSImage, pixels: Int, scale: CGFloat) -> NSImage? {
+        guard let cgSource = bestCGImage(in: source, minimumPixels: pixels),
+            let resampled = resample(cgSource, toSquarePixels: pixels)
+        else { return nil }
+        let pointSize = CGFloat(pixels) / max(scale, 1)
+        return NSImage(cgImage: resampled, size: NSSize(width: pointSize, height: pointSize))
+    }
+
+    /// Smallest representation that still covers `minimumPixels`, falling
+    /// back to the largest one; avoids decoding a 3x rep for a 16pt avatar.
+    private static func bestCGImage(in image: NSImage, minimumPixels: Int) -> CGImage? {
+        let candidates: [CGImage] = image.representations.compactMap { rep in
+            if let bitmap = rep as? NSBitmapImageRep { return bitmap.cgImage }
+            return rep.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        }
+        let covering = candidates.filter { min($0.width, $0.height) >= minimumPixels }
+        if let smallest = covering.min(by: { $0.width * $0.height < $1.width * $1.height }) {
+            return smallest
+        }
+        if let largest = candidates.max(by: { $0.width * $0.height < $1.width * $1.height }) {
+            return largest
+        }
+        var rect = CGRect(x: 0, y: 0, width: minimumPixels, height: minimumPixels)
+        return image.cgImage(forProposedRect: &rect, context: nil, hints: nil)
+    }
+
+    private static func resample(_ source: CGImage, toSquarePixels pixels: Int) -> CGImage? {
+        let side = min(source.width, source.height)
+        guard side > 0 else { return nil }
+        let crop = CGRect(
+            x: (source.width - side) / 2,
+            y: (source.height - side) / 2,
+            width: side,
+            height: side
+        )
+        guard let square = source.cropping(to: crop) else { return nil }
+
+        // Premultiplied alpha so the filter doesn't bleed color from fully
+        // transparent pixels into the antialiased edges.
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
+            let format = vImage_CGImageFormat(
+                bitsPerComponent: 8,
+                bitsPerPixel: 32,
+                colorSpace: colorSpace,
+                bitmapInfo: CGBitmapInfo(
+                    rawValue: CGImageAlphaInfo.premultipliedFirst.rawValue
+                        | CGBitmapInfo.byteOrder32Little.rawValue
+                )
+            ),
+            var sourceBuffer = try? vImage_Buffer(cgImage: square, format: format),
+            var destination = try? vImage_Buffer(width: pixels, height: pixels, bitsPerPixel: 32)
+        else { return nil }
+        defer {
+            sourceBuffer.free()
+            destination.free()
+        }
+
+        let error = vImageScale_ARGB8888(
+            &sourceBuffer,
+            &destination,
+            nil,
+            vImage_Flags(kvImageHighQualityResampling)
+        )
+        guard error == kvImageNoError else { return nil }
+        return try? destination.createCGImage(format: format)
     }
 }

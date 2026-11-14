@@ -14,6 +14,18 @@ import Testing
 @Suite("MCP tool filter")
 struct MCPToolFilterTests {
 
+    // MARK: - Call timeout
+
+    /// `workflow_test` runs a whole workflow inside one call; the old fixed
+    /// 30 seconds cut it off.
+    @Test func callTimeoutAllowsLongRunsAndHonorsTheOverride() {
+        #expect(MCPCommand.callTimeout(environment: [:]) == 900)
+        #expect(MCPCommand.callTimeout(environment: [MCPCommand.callTimeoutEnvironmentKey: "45"]) == 45)
+        for bad in ["0", "-3", "soon"] {
+            #expect(MCPCommand.callTimeout(environment: [MCPCommand.callTimeoutEnvironmentKey: bad]) == 900)
+        }
+    }
+
     // MARK: - Matching
 
     @Test func exactNamesMatchOnlyThemselves() throws {
@@ -99,7 +111,7 @@ struct MCPToolFilterTests {
 
 @Suite("MCP bridge grant header")
 struct MCPBridgeGrantTests {
-    /// Pins both literals. `ClaudeCodeBridgeGrantStore` in OsaurusCore declares
+    /// Pins both literals. `HarnessGrantStore` in OsaurusCore declares
     /// the same two strings; the CLI cannot import Core, so a rename on either
     /// side silently breaks the bridge unless something asserts the values.
     @Test("constants match the OsaurusCore contract")

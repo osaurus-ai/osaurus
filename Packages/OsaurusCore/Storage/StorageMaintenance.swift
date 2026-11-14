@@ -45,6 +45,8 @@ public actor StorageMaintenance {
     public func start() {
         guard timerTask == nil else { return }
         loadState()
+        // Temp copies of history blobs from the previous run are stale now.
+        FileObjectStore.removeTempExports()
         timerTask = Task.detached(priority: .background) { [weak self] in
             // Run once a few seconds after launch (don't fight startup
             // contention) then every 30 minutes after.
@@ -72,9 +74,17 @@ public actor StorageMaintenance {
     // MARK: - Tick
 
     private func tick() async {
+        await runFileHistoryRetention()
         await runOptimize(force: false)
         await runWALCheckpoint(force: false)
         await runVacuum(force: false)
+    }
+
+    /// Cheap (index scan + store size), so it runs every tick; the user's
+    /// retention choice can change at any time.
+    private func runFileHistoryRetention() async {
+        let policy = await MainActor.run { ChatConfigurationStore.load().fileHistoryRetention }
+        await FileChangeJournal.shared.performMaintenance(policy)
     }
 
     private func runOptimize(force: Bool) async {
@@ -240,6 +250,17 @@ public final class OsaurusDatabaseHandle: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         handles.removeValue(forKey: name)
+    }
+
+    /// Frees each open connection's page cache (`PRAGMA shrink_memory`).
+    /// Pages refill from disk on demand. Each handle runs on its own queue,
+    /// so a busy database delays only its own release.
+    public static func releaseCachedPages() {
+        for handle in allOpenHandles {
+            DispatchQueue.global(qos: .utility).async {
+                handle.exec("PRAGMA shrink_memory")
+            }
+        }
     }
 
     /// Briefly close every registered DB handle while `body` runs,

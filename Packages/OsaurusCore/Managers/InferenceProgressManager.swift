@@ -75,6 +75,10 @@ final class InferenceProgressManager: ObservableObject, @unchecked Sendable {
     /// because the underlying `@Published` storage is annotated.
     @MainActor var isLoadingModel: Bool { loadInFlightCount > 0 }
 
+    /// Cold loads in flight per request session id, so a chat can label its
+    /// own wait without borrowing another window's load.
+    @MainActor @Published private(set) var loadingSessionIDs: [String: Int] = [:]
+
     /// Non-nil while a prefill is in progress.  Set to the prompt token count
     /// just before `prepareAndGenerate` is called; cleared as soon as the first
     /// generated token arrives (or on error / cancellation).
@@ -139,13 +143,17 @@ final class InferenceProgressManager: ObservableObject, @unchecked Sendable {
     }
 
     @MainActor
-    private func beginModelLoad(at: Date) {
+    private func beginModelLoad(at: Date, sessionID: String? = nil) {
         if loadInFlightCount == 0 { openLoadStart = at }
         loadInFlightCount += 1
+        if let sessionID { loadingSessionIDs[sessionID, default: 0] += 1 }
     }
 
     @MainActor
-    private func endModelLoad(at: Date) {
+    private func endModelLoad(at: Date, sessionID: String? = nil) {
+        if let sessionID, let count = loadingSessionIDs[sessionID] {
+            loadingSessionIDs[sessionID] = count > 1 ? count - 1 : nil
+        }
         loadInFlightCount = max(0, loadInFlightCount - 1)
         guard loadInFlightCount == 0, let start = openLoadStart else { return }
         openLoadStart = nil
@@ -163,8 +171,12 @@ final class InferenceProgressManager: ObservableObject, @unchecked Sendable {
     #if DEBUG
         /// Test seam: drive the accounting with explicit timestamps so the
         /// overlap arithmetic can be verified without real loads.
-        @MainActor func _testBeginModelLoad(at: Date) { beginModelLoad(at: at) }
-        @MainActor func _testEndModelLoad(at: Date) { endModelLoad(at: at) }
+        @MainActor func _testBeginModelLoad(at: Date, sessionID: String? = nil) {
+            beginModelLoad(at: at, sessionID: sessionID)
+        }
+        @MainActor func _testEndModelLoad(at: Date, sessionID: String? = nil) {
+            endModelLoad(at: at, sessionID: sessionID)
+        }
     #endif
 
     #if DEBUG
@@ -226,9 +238,9 @@ final class InferenceProgressManager: ObservableObject, @unchecked Sendable {
     /// to matter, that hop can itself be delayed, and stamping after it would
     /// shorten the measured load by exactly the amount the machine was
     /// struggling — biasing the number in the reassuring direction.
-    func modelLoadWillStartAsync() {
+    func modelLoadWillStartAsync(sessionID: String? = nil) {
         let at = Date()
-        Task { @MainActor in self.beginModelLoad(at: at) }
+        Task { @MainActor in self.beginModelLoad(at: at, sessionID: sessionID) }
     }
 
     /// Signal that model container loading has finished. Decrements the
@@ -241,8 +253,8 @@ final class InferenceProgressManager: ObservableObject, @unchecked Sendable {
     /// path (success, throw, cancel). See
     /// `ModelRuntime.generateEventStream` for the canonical pattern —
     /// a narrow do/catch scoped to just the container load.
-    func modelLoadDidFinishAsync() {
+    func modelLoadDidFinishAsync(sessionID: String? = nil) {
         let at = Date()
-        Task { @MainActor in self.endModelLoad(at: at) }
+        Task { @MainActor in self.endModelLoad(at: at, sessionID: sessionID) }
     }
 }

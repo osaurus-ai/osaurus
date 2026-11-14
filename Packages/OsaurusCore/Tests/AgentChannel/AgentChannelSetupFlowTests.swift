@@ -71,25 +71,38 @@ struct AgentChannelSetupFlowTests {
         #expect(landing == "verify")
     }
 
-    @Test func providerSetupSectionsAreTheFourFocusedSections() {
+    @Test func providerSetupSectionsFollowAMessage() {
         let ids = AgentChannelProviderSetupSection.sections.map(\.id)
-        #expect(ids == ["connect", "access", "behavior", "verify"])
-        #expect(AgentChannelProviderSetupSection.requiredSectionIds == ["connect", "access"])
+        #expect(ids == ["connect", "receiving", "routing", "sending", "verify"])
+        #expect(AgentChannelProviderSetupSection.requiredSectionIds == ["connect", "receiving"])
     }
 
     @Test func providerSetupStagesReadAsUserIntents() {
         // The rail is the setup's table of contents; stages must read as
         // what the user is doing, not as internal configuration areas.
         #expect(AgentChannelProviderSetupSection.connect.title == "Connect")
-        #expect(AgentChannelProviderSetupSection.access.title == "Conversations")
-        #expect(AgentChannelProviderSetupSection.behavior.title == "Agent Behavior")
+        #expect(AgentChannelProviderSetupSection.receiving.title == "Receiving")
+        #expect(AgentChannelProviderSetupSection.routing.title == "Routing")
+        #expect(AgentChannelProviderSetupSection.sending.title == "Sending")
         #expect(AgentChannelProviderSetupSection.verify.title == "Test")
+    }
+
+    @Test func n8nSetupSectionsAreFiveWorkflowSteps() {
+        let ids = N8nSetupSection.sections.map(\.id)
+        // Name it → Where is your n8n? → Who answers? → Pair → Prove it.
+        #expect(ids == ["basics", "location", "reply", "connect", "live"])
+        #expect(N8nSetupSection.requiredSectionIds == ["basics", "location", "reply", "connect"])
+        #expect(N8nSetupSection.fallbackSectionId == "live")
+        #expect(N8nSetupSection.basics.caption == L("Display name and id"))
+        #expect(N8nSetupSection.sections.map(\.title) == [
+            L("Name it"), L("Where is your n8n?"), L("Who answers?"), L("Pair"), L("Prove it"),
+        ])
     }
 
     @Test func addCatalogListsGuidedProvidersFirstAndCustomLastAsAdvanced() {
         #expect(
             AgentChannelAddCatalog.choices == [
-                .discord, .slack, .telegram, .imessage, .whatsapp, .customHTTP,
+                .discord, .slack, .telegram, .imessage, .whatsapp, .email, .n8n, .customHTTP,
             ]
         )
         #expect(AgentChannelAddCatalog.choices.last == .customHTTP)

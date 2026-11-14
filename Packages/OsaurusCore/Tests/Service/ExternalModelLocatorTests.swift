@@ -15,6 +15,59 @@ import Testing
 
 struct ExternalModelLocatorTests {
 
+    @Test func symlinkedCustomModelRootDiscoversRenamedBundles() throws {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let actual = root.appendingPathComponent("mounted-models", isDirectory: true)
+        writeBundle(at: actual.appendingPathComponent("publisher/ordinary-renamed-bundle", isDirectory: true))
+        let link = root.appendingPathComponent("models", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: actual)
+        let report = ExternalModelLocator.scanCustomModelFolderReport(root: link)
+        #expect(report.discovered.map(\.id) == ["publisher/ordinary-renamed-bundle"])
+        #expect(report.skipped.isEmpty)
+        #expect(report.discovered.first?.bundlePath == actual.appendingPathComponent("publisher/ordinary-renamed-bundle").path)
+    }
+
+    @Test func failedRootEnumerationIsReportedInsteadOfAnEmptySuccessfulScan() {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let missing = root.appendingPathComponent("not-mounted", isDirectory: true)
+        let report = ExternalModelLocator.scanCustomModelFolderReport(root: missing)
+        #expect(report.discovered.isEmpty)
+        #expect(report.skipped.contains { $0.reason == .unreadableRoot && $0.path == missing.path })
+    }
+
+    @Test(arguments: [false, true])
+    func symlinkedBundleDiagnosticFindsWeights(enforceContainment: Bool) throws {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let actual = root.appendingPathComponent("actual", isDirectory: true)
+        writeBundle(at: actual)
+        let link = root.appendingPathComponent("bundle-link", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: actual)
+        let diagnostic = ExternalModelLocator.bundleDiagnostic(
+            at: link, root: link, enforceSymlinkContainment: enforceContainment)
+        #expect(diagnostic.isValid)
+        #expect(diagnostic.reason == nil)
+    }
+
+    @Test func symlinkedBundleStillRejectsEscapingWeight() throws {
+        let root = makeTempDir()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let actual = root.appendingPathComponent("actual", isDirectory: true)
+        writeBundle(at: actual)
+        let weight = actual.appendingPathComponent("model.safetensors")
+        try FileManager.default.removeItem(at: weight)
+        let outside = root.appendingPathComponent("outside.safetensors")
+        try Data("w".utf8).write(to: outside)
+        try FileManager.default.createSymbolicLink(at: weight, withDestinationURL: outside)
+        let link = root.appendingPathComponent("bundle-link", isDirectory: true)
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: actual)
+        let diagnostic = ExternalModelLocator.bundleDiagnostic(at: link, root: link)
+        #expect(!diagnostic.isValid)
+        #expect(diagnostic.reason == .symlinkEscapesRoot)
+    }
+
     // MARK: - Helpers
 
     private func makeTempDir() -> URL {
@@ -297,10 +350,18 @@ struct ExternalModelLocatorTests {
 
         let bundle = customRoot.appendingPathComponent("publisher/repo", isDirectory: true)
         writeBundle(at: bundle)
-        try? Data(#"{"model_type":"gemma4"}"#.utf8)
-            .write(to: bundle.appendingPathComponent("config.json"))
-        try? Data(#"{"metadata":{"total_size":44298536392}}"#.utf8)
-            .write(to: bundle.appendingPathComponent("model.safetensors.index.json"))
+        let config = Data(#"{"model_type":"gemma4"}"#.utf8)
+        let index = Data(#"{"metadata":{"total_size":44298536392}}"#.utf8)
+        try? config.write(to: bundle.appendingPathComponent("config.json"))
+        try? index.write(to: bundle.appendingPathComponent("model.safetensors.index.json"))
+        let engram = Data(repeating: 7, count: 517)
+        try? FileManager.default.createDirectory(
+            at: bundle.appendingPathComponent("engram"), withIntermediateDirectories: true)
+        try? engram.write(to: bundle.appendingPathComponent("engram/table.safetensors"))
+        // The index deliberately advertises a stale 44 GB payload. Actual installed
+        // files win; nested SSD tables count toward download, not target weights.
+        let expectedDownloadBytes = Int64(config.count + index.count + engram.count + 2 + 1)
+        #expect(MLXModel.localBundleDownloadSizeBytes(at: bundle) == expectedDownloadBytes)
 
         ExternalModelLocator.testRootsOverride = [(root: customRoot, source: .customModelFolder)]
         ExternalModelLocator.rescan()
@@ -314,14 +375,12 @@ struct ExternalModelLocatorTests {
         #expect(resolved?.standardizedFileURL.path == bundle.standardizedFileURL.path)
 
         let models = ExternalModelLocator.models()
-        #expect(
-            models.contains {
-                $0.id == "publisher/repo"
-                    && $0.externalSource == "Custom model folder"
-                    && $0.modelType == "gemma4"
-                    && $0.downloadSizeBytes == 44_298_536_392
-            }
-        )
+        let model = models.first { $0.id == "publisher/repo" }
+        #expect(model != nil)
+        #expect(model?.externalSource == "Custom model folder")
+        #expect(model?.modelType == "gemma4")
+        #expect(model?.downloadSizeBytes == expectedDownloadBytes)
+        #expect(model?.weightSizeBytes == 1)
 
         #expect(report?.discovered.contains { $0.id == "publisher/repo" } == true)
         #expect(report?.skipped.isEmpty == true)
@@ -439,6 +498,55 @@ struct ExternalModelLocatorTests {
         #expect(info?.capabilities.contains("completion") == true)
         #expect(info?.capabilities.contains("tools") == true)
         #expect(info?.capabilities.contains("thinking") == true)
+    }
+
+    @Test func modelInfo_resolvesExternalBundleByTagsName() async {
+        await OsaurusTestGlobals.withPathsLock {
+            modelInfo_resolvesExternalBundleByTagsName_body()
+        }
+    }
+
+    private func modelInfo_resolvesExternalBundleByTagsName_body() {
+        let previousRoot = OsaurusPaths.overrideRoot
+        let previousOverride = ExternalModelLocator.testRootsOverride
+        let manifestRoot = makeTempDir()
+        let hfRoot = makeTempDir()
+        OsaurusPaths.overrideRoot = manifestRoot
+        ExternalModelLocator.invalidateInMemory()
+        defer {
+            OsaurusPaths.overrideRoot = previousRoot
+            ExternalModelLocator.testRootsOverride = previousOverride
+            ExternalModelLocator.invalidateInMemory()
+            NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+            try? FileManager.default.removeItem(at: manifestRoot)
+            try? FileManager.default.removeItem(at: hfRoot)
+        }
+
+        let fm = FileManager.default
+        let rev = "abc123"
+        let repo = "Show-Alias-\(UUID().uuidString.prefix(8).lowercased())"
+        let modelDir = hfRoot.appendingPathComponent("models--org--\(repo)", isDirectory: true)
+        let refsDir = modelDir.appendingPathComponent("refs", isDirectory: true)
+        try? fm.createDirectory(at: refsDir, withIntermediateDirectories: true)
+        try? Data(rev.utf8).write(to: refsDir.appendingPathComponent("main"))
+        let snapshot = modelDir.appendingPathComponent("snapshots/\(rev)", isDirectory: true)
+        writeBundle(at: snapshot)
+        try? Data(#"{"model_type":"qwen3","max_position_embeddings":4096}"#.utf8)
+            .write(to: snapshot.appendingPathComponent("config.json"))
+
+        ExternalModelLocator.testRootsOverride = [(root: hfRoot, source: .huggingFaceCache)]
+        ExternalModelLocator.rescan()
+        NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+
+        // /api/tags lists the model by its lowercased bare repo name
+        // (`ModelManager.installedModelNames()`), and Ollama clients pass that
+        // name straight back to /api/show. Before the installed-model
+        // fallback, ModelInfo only matched the full `org/repo` id and
+        // /api/show returned 404 (issue #2629).
+        let info = ModelInfo.load(modelId: repo.lowercased())
+        #expect(info != nil)
+        #expect(info?.model.architecture == "qwen3")
+        #expect(info?.model.contextLength == 4096)
     }
 
     @Test func rescan_reportsHFCacheSnapshotSkipReason() async {

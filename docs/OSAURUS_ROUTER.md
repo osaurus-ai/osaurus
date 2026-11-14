@@ -5,7 +5,9 @@ implemented as an OpenAI-compatible remote provider with a few Router-only
 contracts for billing, request deduplication, and upstream compatibility.
 
 This document captures the invariants that keep Router behavior reliable in the
-chat UI and agent loop.
+chat UI and agent loop. The Workspaces surface (shared agents, invites, the
+single-plan subscription with its free trial, in-app Stripe Checkout, and pool
+billing) is documented separately in [Osaurus Workspaces](OSAURUS_WORKSPACES.md).
 
 ## Data Handling
 
@@ -24,6 +26,14 @@ extends those policies. The in-app and marketing copy must match this posture �
 usage metadata needed to bill credits" — with upstream providers disclaimed
 rather than guaranteed.
 
+Help reports are the one exception, and only by the user's own action. A report
+sent from Help stores what the user wrote (the description and any
+later messages in that thread) on the router, together with the app and macOS
+version, the Mac's model, chip and memory, and a metadata-only diagnostics
+bundle. Nothing is sent until the user ticks the Terms and Privacy box for
+that report, and the form shows the exact attached JSON first. Chat content
+is never part of it. See [Help and Bug Reports](#help-and-bug-reports).
+
 ## Money Representation and Credits Display
 
 Money crosses the wire and moves through the app as integer **micro-USD**
@@ -40,10 +50,14 @@ residue as two decimals (`"7250037"` -> `72,500.37 credits`), and shows
 `<1 credit` for non-zero legacy charges below one credit. Cloud media costs
 held as USD doubles convert through `OsaurusRouter.formatUSDAsCredits`.
 
-Dollars appear in exactly one place: the Stripe top-up flow (`$` presets, the
-`$5.00` minimum, and the payment amount), because that is a real-money
-purchase. The top-up sheet shows the credits the user receives alongside the
-`$` amount they pay. Model pricing in the picker prefers the router's
+Dollars appear only where real money changes hands: the Stripe top-up flow
+(`$` presets, the `$5.00` minimum, and the payment amount), the Workspaces
+subscription price (`$20/month` / `$200/year` per workspace, formatted from
+`price_usd_micro` by `OsaurusRouterWorkspacePrice.formatUSD`), and the
+workspace pool's top-up / auto-reload amounts (presets and bounds in
+`OsaurusRouterWorkspacePoolCredits`; see
+[Osaurus Workspaces](OSAURUS_WORKSPACES.md)). The top-up sheet shows the
+credits the user receives alongside the `$` amount they pay. Model pricing in the picker prefers the router's
 ready-to-show `input_credits_display` / `output_credits_display` strings and
 falls back to the legacy `$` display fields when a server doesn't ship them.
 
@@ -87,6 +101,15 @@ Router-specific fields and transforms:
   (subagent runner, plugin completions) get a synthesized per-request `auto-`
   key in `buildChatRequest` so connect-phase retries still dedupe.
 - `clamp_to_balance` is explicitly set to `false` for Router.
+- `prompt_cache_key` is sent as `osaurus-session-{sessionId}` whenever the
+  chat surface has a stable conversation id (every turn, including agent-loop
+  tool rounds). Router validates it (`[A-Za-z0-9._:-]{1,200}`) and forwards it
+  to upstreams with keyed prompt caches (OpenAI Responses, xAI); Anthropic
+  needs no key because Router injects `cache_control` server-side. The same
+  helper (`RemoteProviderService.supportsPromptCacheKey`) allowlists genuine
+  OpenAI hosts, Azure OpenAI Foundry, and OpenRouter for direct BYOK; every
+  other OpenAI-compatible gateway gets no key so strict schemas never 400.
+  See [Prompt Cache Contract](#prompt-cache-contract).
 - User multimodal content parts are preserved.
 - Assistant history is normalized to string `content` because several upstreams
   reject assistant content arrays or omitted assistant content on tool-call
@@ -130,6 +153,48 @@ tool call was emitted, the parser treats it as an error. That state usually
 means the provider spent output tokens without producing usable assistant
 content, so it must not silently look like a successful empty answer.
 
+## Prompt Cache Contract
+
+Router is the paid path, so upstream prompt-cache savings must reach the user.
+The contract is split between this app and the router:
+
+Client (this repo):
+
+- Sends `prompt_cache_key` (above) on every Router request that has a session.
+- Decodes the optional `cached_input_tokens` / `cache_write_tokens` fields from
+  the `osaurus` summary frame (`OsaurusRouterSummaryEvent`), from
+  `GET /credits/usage` rows (`OsaurusRouterUsageItem`), and persists them on
+  `RouterBillingSummary` (chat turn) and `RouterBillingEntry` (ledger schema
+  v3, additive `INTEGER NOT NULL DEFAULT 0` columns). Missing fields decode as
+  `0`, so a pre-cache router and pre-migration ledger rows keep working.
+- Shows the split as "N cached · P%": in the composer wallet panel
+  (session aggregate under "This session"), in Osaurus ID → Wallet & Credits → Credits Activity
+  ("Cached input" total, shown only when non-zero), and on each activity row's
+  token line.
+
+Router (`osaurus-ai/osaurus-router`):
+
+- Forwards `prompt_cache_key` to OpenAI Responses and xAI (plus catalog-flagged
+  `prompt_cache_retention`), injects Anthropic `cache_control` with a 1h TTL
+  when the last message is a user turn and 5m when it is a tool result, parses
+  the provider's cache buckets, and bills `uncached × input + cached × cached
+  rate + write × write rate + output × output rate` with the margin applied
+  after. Holds are sized at the priciest input bucket so `hold >= settle`
+  always. Per-provider env kill switches (`CACHE_FORWARD_OPENAI`,
+  `CACHE_FORWARD_ANTHROPIC`, `CACHE_ANTHROPIC_1H_TTL`, `CACHE_FORWARD_XAI`)
+  disable forwarding without a deploy revert.
+
+Conservative defaults: a price row without cache rates bills at full price, a
+provider that reports no cache split bills at full price, and the tokenizer
+fallback never assumes a hit. Because the app sends no cache hints beyond the
+key, an older router that ignores `prompt_cache_key` behaves exactly as before.
+
+Unproven live (post-launch telemetry checks, not source guarantees): real
+upstream acceptance of `prompt_cache_key` on xAI, GPT-5.6 retention params,
+OpenRouter's use of `session_id` + `prompt_cache_key`, and observed Anthropic
+hit rates. Watch for `cached_input_tokens > 0` on production usage rows per
+provider; a provider that stays at zero has a forwarding or parsing gap.
+
 ## Billing Reliability
 
 Router billing metadata is carried through the stream separately from visible
@@ -165,6 +230,31 @@ unless one of these holds:
 
 App-internal sources (chat UI, plugins, P2P) are not affected by this gate.
 
+### Local read-only balance
+
+`GET /credits/balance` (also `/v1/credits/balance`) on the local HTTP API lets
+local tools such as usage dashboards read the remaining balance. Osaurus signs
+the hosted `/credits/balance` request itself, so the caller never touches the
+wallet key. Access is stricter than the loopback spend gate above
+(403 `credits_access_not_authorized` otherwise):
+
+- a valid **master-scoped** access key, on loopback too. Agent-scoped and
+  workspace-minted keys are refused even though loopback trust skips the
+  global scope confinement, or
+- "Allow local API access without a key", but only for requests without an
+  `Origin` header. Loopback responses carry `Access-Control-Allow-Origin: *`,
+  so browser requests always need a key.
+
+The endpoint keeps its own cache, separate from the Credits screen state: only
+Router-fetched values are served (never the UI's optimistic post-request
+deductions), and polling never touches the UI's loading or error state. Values
+are fresh for 30 seconds, concurrent callers share one in-flight request with
+an 8 second timeout, and after a failure the Router is not retried for 10
+seconds. `stale: true` marks a last known value returned after a failed
+refresh. The cache is dropped when the Router is turned off or the identity
+changes. Non-success states: `409 router_disabled`, `409 no_account`,
+`503 router_unavailable` (unreachable), `502 router_error` (Router refused).
+
 ## On-Device Billing Ledger
 
 Router charges are also persisted to a local ledger so support can
@@ -180,8 +270,9 @@ Ledger properties:
   metadata-only either way (no prompt/response/tool text).
 - Retention: newest 10,000 rows and at most 365 days
 - Export: metadata-only diagnostics from the Dashboard
-- Correlation: request id, session id, assistant turn id, model, token counts,
-  cost, status, app version, and rendered outcome
+- Correlation: request id, session id, assistant turn id, model, token counts
+  (including the router's cached-input / cache-write split), cost, status, app
+  version, and rendered outcome
 
 Outcomes are classified as `rendered`, `toolOnly`, `reasoningOnly`, `empty`,
 `error`, or `cancelled`. This mirrors what the user saw in chat and lets support
@@ -217,6 +308,154 @@ tool arguments, tool results, private keys, bearer tokens, cookies, or raw
 wallet signatures. Wallet signatures are replaced with `<redacted>` and only a
 SHA-256 fingerprint of the signature is retained for local/server correlation.
 
+## Announcements
+
+Community announcements (launches, events, heads-ups) are served by the router
+instead of being hard-coded in the app, so copy and schedules change — or get
+pulled — without a release. `AnnouncementsService` owns the client side:
+
+- Endpoint: `GET /announcements?app_version=<CFBundleShortVersionString>`,
+  unauthenticated (no wallet headers), IP rate-limited, 60s cacheable. The
+  router already filtered on status and schedule against its own clock; the
+  app never shows anything by its own clock. The call is not logged to
+  Insights (no account data leaves the Mac).
+- Triggers: ~2s after a non-silent launch and on foreground activation. The
+  service enforces a 60s floor between any two fetches and throttles
+  activation fetches to one per 30 minutes; a `429` is honored via
+  `retry-after`. The router counts each feed response as a delivery, so there
+  is no timer and no view-reporting call.
+- Eligibility: the first announcement in server order whose
+  `body_format == "markdown"` and whose `slug` has not been dismissed.
+  Dismissal is persisted as `ai.osaurus.announcement.<slug>.seen` the moment
+  the dialog is presented; operators re-show by publishing a new slug.
+- Presentation: `AppDelegate.presentAnnouncementIfEligible()` applies the
+  same "don't stack" deferrals as the other first-run dialogs (onboarding,
+  telemetry consent, modal sheets, active streaming) and hosts
+  a `ThemedAlertCenter` dialog whose body is `AnnouncementDialogContent`
+  (optional `https://` image + `MarkdownDocument`). CTAs: `external_url`
+  (`https://` only) opens in the browser; `deeplink` (`osaurus://` only)
+  routes through `handleOsaurusDeepLink`. Anything else is dropped; at most
+  three buttons plus the app's own Close.
+- Help: every live announcement also sits at the top of the Help page
+  (`HelpAnnouncementCard`, from `AnnouncementsService.standingAnnouncements`)
+  with the same title, image, body and buttons, whether or not its dialog
+  was dismissed, and with no way to dismiss it there. It leaves when the
+  router stops serving it (ended or archived) or once its `ends_at` passes on
+  this Mac's clock, which only ever hides. Opening Help refreshes the feed
+  under the activation throttle.
+- Failure handling: network errors, non-200s and malformed bodies mean "no
+  announcements"; the previous in-memory list is kept and nothing is shown
+  to the user.
+- Telemetry: `announcement_shown` / `announcement_clicked`, keyed by `slug`,
+  for the dialog only; buttons on the Help page are not counted.
+- DEBUG: Dock menu → "Reset Announcements & Fetch" clears the seen flags of
+  the cached slugs, bypasses the throttles and runs the production presenter
+  (point `ai.osaurus.router.baseURL` at staging to test a draft campaign).
+
+## Help and Bug Reports
+
+Help, a page of the main window opened by the question mark on its rail, lets
+a user report a problem to the Osaurus team and read the replies in the app.
+Each report is a two-way thread on the router; staff answer from the admin
+console (`/support`). `SupportService` owns the client side, `HelpView` /
+`HelpThreadView` the page (`ChatWindowState.MainSurface.help`).
+
+- Identity: every `/support/*` call is wallet-signed, like `/credits/*`. A
+  report belongs to the wallet that sent it; there is no email and no separate
+  account. Without an Osaurus ID the window explains that and links to Osaurus
+  ID instead of showing the form.
+- Endpoints: `GET /support/threads` (summaries plus `unread_count`),
+  `POST /support/threads` (new report), `GET /support/threads/:id` (with
+  messages), `POST /support/threads/:id/messages` (the user writes back, which
+  reopens a closed thread), `POST /support/threads/:id/read` (clears unread).
+- Consent: `consent` must be the literal `true`. The app sets it only in
+  `SupportReport.body(description:)`, which the form calls after the user
+  ticked the box for that report. The box resets after every send.
+- What is sent: the description (10 to 5,000 characters), `app` (version,
+  build, macOS version), `hardware` (model, chip, memory from `MacProfile`),
+  and `diagnostics`, the existing `SupportDiagnosticsBundle`: tool names, the
+  current agent's name and model id, and per-request metadata for the 25 most
+  recent requests (path, status, timing, token counts). No prompt, response,
+  wire body, tool argument, tool result or free-form error text, and stable
+  identifiers only as one-way fingerprints.
+- What you see is what is sent: `SupportReportBuilder` serializes the bundle
+  once into a `JSONValue`. The "What's Included" preview and the request body
+  are rendered from that same value, and the page sends the instance it
+  previewed.
+- Size: the router rejects diagnostics over 200 KB. The builder keeps 8 KB of
+  headroom, halves the recent-request list until the bundle fits, then drops
+  the full tool registry, and sends the report with no diagnostics if it
+  still does not fit. The preview says so when that happens.
+- Limits (router-enforced): 3 threads that are not closed per wallet, 5 new
+  threads per 24 hours, 30 messages per hour. The window hides the form at 3
+  open reports rather than letting the send fail.
+- Status wording: `open` is "Waiting for us", `answered` is "Replied",
+  `closed` is "Closed". Staff messages carry no author identity and render as
+  "Osaurus team".
+- Unread: a thread is unread when a staff message is newer than the last time
+  the user read or answered it. Opening a thread fetches it, then calls
+  `/read`; the count drives the dot on the rail's Help icon. There is no push
+  and no system notification: replies are found by the launch, activation
+  and in-front poll refreshes below, so a reply lights the dot within about
+  5 minutes while the app is in front. A reply that arrives while its report
+  is open on screen is loaded and marked read at once.
+- First action: `/support/*` does not count as the account's first action on
+  the router, and `RouterCreditAcquisitionCoordinator.allowsSignedRequest`
+  lets `/support` through while the welcome choice is pending, so reporting a
+  problem never costs a first-time redeem code or the welcome credit.
+- Failure handling: background refresh failures keep the previous list and
+  show nothing. On the Help page, errors are mapped to plain sentences by
+  `SupportService.userMessage(for:)`; router error text is never shown.
+- Known limit: the app polls only while it knows of a report that is not
+  closed. A staff reply on a closed thread moves it to `answered`, but the
+  dot appears only after the user next opens Help.
+- Operator guide: `docs/support.md` in the router repository.
+
+## Control-Plane Request Budget
+
+Every signed control-plane call shows up as a `routerControl` row in Insights,
+so the app treats them as a budget: the Router is asked when the user does
+something or opens a surface, not on a schedule.
+
+- App activation (Cmd-Tab back in) asks for nothing by default. The only
+  activation-driven requests are the bounded Stripe return polls: the
+  personal `/credits/balance` while a top-up Checkout is pending
+  (`OsaurusRouterAccountService.handleAppActivation`, cleared by the first
+  observed increase or after 10 fruitless activations) and the workspace
+  `pendingConfirmation` poll in `WorkspacesService.handleAppActivation`.
+- Billed-stream summaries never fetch `/credits/usage`. They deduct locally
+  and bump the debounced `usageRevision`; only a mounted usage list (Credits
+  tab, wallet popover, Account Usage Center) refetches on that change.
+- Passive balance chrome (composer credits chip) calls
+  `refreshBalance(ifOlderThan: 300)`; concurrent callers share one request.
+  User-opened surfaces still force a refresh.
+- `/workspaces/sync` runs only for an account known to belong to at least one
+  workspace (`ai.osaurus.workspaces.hasMembership`, set from every
+  authoritative list or snapshot). A fresh install issues one `GET
+  /workspaces` probe per launch and stays off until a workspace appears.
+  While the stream is unverified the fallback poll backs off 10 s → 5 min and
+  fetches only the roster list and the selected workspace (no billing or
+  prices). Prices are fetched once per session.
+- `WorkspaceRosterStore.refresh(reason: .activation)` is skipped while the
+  stream is verified and otherwise throttled to 15 minutes; its fetched list
+  is handed to `WorkspacesService.applyWorkspaceList` so the Settings tab
+  never fetches a second copy. The detail view's 30 s presence poll and the
+  connect service's auto-connect sweep both read the roster the stream
+  already delivered instead of fetching their own.
+- `/support/threads` (Help) is fetched on launch, on activation, and by a
+  poll while the app is in front (`SupportService.startPolling`, a 60 s tick
+  that sends nothing unless a fetch is due), only while
+  `ai.osaurus.support.hasOpenThreads` is set, which happens once the account
+  is known to have a report that is not closed. Activation and the poll share
+  one fetch per 5 minutes, so an open report costs at most 12 calls an hour
+  while the app is in front and none while it is in the background. Any two
+  background attempts are at least 60 s apart, a `429` is honored via `retry-after`, and nothing is fetched while
+  **Use Osaurus Router** is off. An account that never sent a report makes no
+  `/support` calls. Opening Help always fetches, and sending or replying works
+  with the switch off, so someone who turned the Router off because it is
+  broken can still say so. These rows are labeled "Help & feedback" in
+  Insights.
+
 ## Empty Stream Diagnostics
 
 Router has a low-volume diagnostic path for terminal streams that produce no
@@ -250,7 +489,11 @@ ledger explains what was charged and how the turn rendered.
 Keep tests close to the contract:
 
 - `RemoteChatRequestEncodingTests` covers Router-only request fields, message
-  normalization, idempotency keys, and implicit `max_tokens`.
+  normalization, idempotency keys, implicit `max_tokens`, and the
+  `prompt_cache_key` / OpenRouter `session_id` allowlist per provider and host.
+- `RouterCacheTelemetryDecodingTests` covers decoding the cache split on the
+  summary frame, usage rows, and persisted billing summaries with and without
+  the fields, the "N cached" label formatting, and the ledger v3 migration.
 - `OpenAICompatibleStreamParserTests` covers shared SSE framing, raw JSON
   fallback, split-data repair, streaming tool-call accumulation, and
   `finish_reason=length` handling.
@@ -262,6 +505,19 @@ Keep tests close to the contract:
 - `RouterBillingDatabaseTests`, `RouterBillingLedgerTests`, and
   `RouterBillingOutcomeTests` cover local metadata persistence and outcome
   classification.
+- `SupportServiceTests` and `SupportReportBuilderTests` cover the Help request
+  budget (throttle, open-report flag, Router-off suppression), unread
+  counting, and the report's size cap and content rules. The signed
+  `/support/*` paths are covered in `OsaurusRouterAPIClientTests`, and the
+  welcome-choice allowlist in `RouterCreditAcquisitionCoordinatorTests`.
+  `SupportLiveRouterTests` runs the same client and service against a real
+  router (report, staff reply, unread, read, answer, close, reopen, the
+  open-report limit, wallet isolation, consent). It is skipped unless
+  `OSAURUS_SUPPORT_LIVE_ROUTER_URL` and `OSAURUS_SUPPORT_LIVE_ADMIN_KEY` are
+  set; point it at a local or staging router, never production.
+- `OsaurusWorkspacesTests` covers the Workspaces wire types, API client,
+  service (create / Checkout / reactivate / return polling), and workspace-billed
+  inference; see [Osaurus Workspaces](OSAURUS_WORKSPACES.md#regression-coverage).
 
 When a regression is shared by multiple OpenAI-compatible providers, add it to
 the shared parser tests first. Router-specific tests should only cover Router

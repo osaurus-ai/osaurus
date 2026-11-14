@@ -1,0 +1,40 @@
+{
+  "id": "agent_loop.read-xlsx-directly",
+  "domain": "agent_loop",
+  "label": "agent loop • answer from an Excel workbook via file_read preview",
+  "query": "Open budget.xlsx and tell me the Marketing department's Q3 figure and how many sheets the workbook has.",
+  "notes": "file_read returns a bounded workbook preview (kind: workbook) for .xlsx; the agent must use it rather than unzip/convert. Both answers (61000 and 2 sheets) exist only in the workbook.",
+  "fixtures": {
+    "workspaceFiles": [
+      {
+        "path": "budget.xlsx",
+        "contentsFromFixture": "Documents/budget.xlsx"
+      }
+    ]
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 5,
+      "maxToolCalls": 3,
+      "mustCallTools": [
+        "file_read"
+      ],
+      "mustNotCallTools": [
+        "shell_run"
+      ],
+      "noToolErrors": true,
+      "toolUsageAudit": [
+        {
+          "tool": "file_read",
+          "minCalls": 1,
+          "maxCalls": 2,
+          "maxErrors": 0,
+          "argsMustContain": "budget.xlsx"
+        }
+      ],
+      "finalTextContains": [
+        "61"
+      ]
+    }
+  }
+}

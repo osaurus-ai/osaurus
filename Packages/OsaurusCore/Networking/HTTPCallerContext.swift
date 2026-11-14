@@ -20,6 +20,10 @@ struct HTTPCallerContext: Sendable {
     /// loopback callers skip the gate, so this is `true` for them only when
     /// they volunteered a key that validated.
     let hasVerifiedAccessKey: Bool
+    /// The request came through the Secure Channel, as it was when the
+    /// request's task started: a later request on the same connection
+    /// changes the handler's own flag, but not this.
+    var isSecureChannel = false
 
     @TaskLocal static var current: HTTPCallerContext?
 }

@@ -21,7 +21,9 @@ import SwiftUI
 
 struct RedactionReviewSheet: View {
     @Environment(\.dismiss) private var dismiss
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
     @ObservedObject var state: RedactionReviewState
 
     /// True when the user has toggled every detected entity off. We
@@ -34,9 +36,8 @@ struct RedactionReviewSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             header
-            Divider().padding(.bottom, 4)
             listToolbar
             // Master/detail split: the row list on the left stays
             // scannable for a quick approve-all pass, while the right
@@ -50,96 +51,86 @@ struct RedactionReviewSheet: View {
                 ContextPreview(state: state)
                     .frame(minWidth: 360, idealWidth: 440)
             }
-            Divider()
+            ThemeHairlineDivider()
             footer
         }
-        .frame(minWidth: 820, idealWidth: 880, minHeight: 480, idealHeight: 520)
-        .background(theme.primaryBackground)
+        .frame(minWidth: 820, idealWidth: 880,
+            minHeight: 480 * max(1, theme.fontScale), idealHeight: 520 * max(1, theme.fontScale))
+        .background(theme.surface.canvas)
         .onDisappear { state.sheetDismissed() }
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("privacy.review.title", bundle: .module)
-                .font(.system(size: 18, weight: .semibold, design: .rounded))
-                .foregroundColor(theme.primaryText)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-            Text("privacy.review.subtitle", bundle: .module)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
-                .lineLimit(3)
-                .fixedSize(horizontal: false, vertical: true)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 20)
-        .padding(.top, 20)
-        .padding(.bottom, 12)
+        SettingsSheetHeader(
+            icon: "eye.slash.fill",
+            title: "privacy.review.title",
+            subtitle: "privacy.review.subtitle",
+            onClose: {
+                state.cancel()
+                dismiss()
+            }
+        )
     }
 
     /// Small toolbar above the list. Hosts the bulk-toggle buttons so
     /// the footer can be reserved for terminal actions (Cancel / Send
     /// / Send anyway) with stable layout.
     private var listToolbar: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Button(action: state.approveAll) {
                 Text("privacy.review.approveAll", bundle: .module)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+            .buttonStyle(.settings(.secondary, size: .compact))
             .fixedSize()
 
             Button(action: state.skipAll) {
                 Text("privacy.review.skipAll", bundle: .module)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+            .buttonStyle(.settings(.secondary, size: .compact))
             .fixedSize()
 
             Spacer()
         }
-        .padding(.horizontal, 20)
-        .padding(.bottom, 6)
+        .padding(.horizontal, theme.settingsSheetInset)
+        .padding(.top, theme.space.s12)
+        .padding(.bottom, theme.space.s6)
     }
 
     private var list: some View {
         ScrollView {
-            VStack(spacing: 8) {
+            VStack(spacing: theme.space.s8) {
                 ForEach(state.entities) { entity in
                     row(for: entity)
                 }
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 8)
+            .padding(.horizontal, theme.settingsSheetInset)
+            .padding(.vertical, theme.space.s8)
         }
     }
 
     private func row(for entity: DetectedEntity) -> some View {
         let isSelected = state.selectedEntityID == entity.id
-        return HStack(alignment: .center, spacing: 12) {
+        return HStack(alignment: .center, spacing: theme.space.s12) {
             Image(systemName: entity.category.reviewIcon)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(theme.accentColor)
+                .glyphSize(.body, weight: .medium)
+                .foregroundColor(theme.text.link)
                 .frame(width: 22, height: 22)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(theme.accentColor.opacity(0.12))
-                )
+                .settingsChrome(.selected)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 // Long URLs / addresses get middle-truncated across at
                 // most two lines so the salient parts (scheme + host;
                 // street + city) stay visible without exploding the
                 // sheet height.
                 Text(entity.original)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.heading, theme: theme, fallback: SettingsFont.sectionTitle)
+                    .foregroundColor(theme.text.primary)
                     .lineLimit(2)
                     .truncationMode(.middle)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Text(verbatim: "\(entity.category.localizedName)  →  \(entity.placeholder.token)")
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.secondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
             }
@@ -152,45 +143,34 @@ struct RedactionReviewSheet: View {
                     set: { newValue in state.setApproval(entity, to: newValue) }
                 )
             )
-            .toggleStyle(SwitchToggleStyle(tint: theme.accentColor))
-            .labelsHidden()
+            .settingsSwitch()
             .fixedSize()
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.horizontal, theme.space.s12)
+        .padding(.vertical, theme.space.s8)
         // Selected rows pick up an accent border so the user has a
         // visual link to the highlighted match in the right pane.
         // Tapping anywhere outside the toggle (which we explicitly
         // let bubble its own gesture) updates the selection.
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(isSelected ? theme.accentColor.opacity(0.10) : theme.inputBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(
-                            isSelected ? theme.accentColor.opacity(0.55) : theme.inputBorder,
-                            lineWidth: isSelected ? 1.5 : 1
-                        )
-                )
-        )
+        .settingsChrome(isSelected ? .selected : .control)
         .contentShape(Rectangle())
         .onTapGesture { state.select(entity) }
     }
 
     private var footer: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             // Row 1: always-approve toggle on its own line so its
             // localised string ("Always approve in this conversation"
             // and similar long Latin variants) doesn't fight with the
             // Cancel / Send buttons.
             Toggle(isOn: $state.alwaysApprove) {
                 Text("privacy.review.alwaysApprove", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.secondary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .toggleStyle(.checkbox)
+            .settingsCheckbox()
 
             // Row 2: skip-all warning banner. Only shown when the user
             // has actively toggled every detection off — this is a
@@ -203,13 +183,13 @@ struct RedactionReviewSheet: View {
             // Row 3: summary + cancel / send. Summary uses
             // `layoutPriority(0)` and truncates so the buttons stay
             // pinned to the trailing edge.
-            HStack(spacing: 12) {
+            HStack(spacing: theme.space.s12) {
                 Text(
                     "privacy.review.summary \(state.approvedCount) \(state.skippedCount)",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .layoutPriority(0)
@@ -222,14 +202,15 @@ struct RedactionReviewSheet: View {
                 }) {
                     Text("privacy.review.cancel", bundle: .module)
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.settings(.secondary))
                 .keyboardShortcut(.cancelAction)
                 .fixedSize()
 
                 sendButton
             }
         }
-        .padding(20)
+        .padding(theme.settingsSheetInset)
+        .background(theme.surface.subtle)
     }
 
     /// Primary commit button. Two variants:
@@ -252,43 +233,35 @@ struct RedactionReviewSheet: View {
                 Text(LocalizedStringKey(label), bundle: .module)
                     .frame(minWidth: minWidth)
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.red)
+            .buttonStyle(.settings(.destructive))
             .fixedSize()
         } else {
             Button(action: action) {
                 Text(LocalizedStringKey(label), bundle: .module)
                     .frame(minWidth: minWidth)
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.settings(.primary))
             .keyboardShortcut(.defaultAction)
             .fixedSize()
         }
     }
 
     private var skipAllBanner: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: theme.space.s8) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 12))
-                .foregroundColor(.orange)
-                .padding(.top, 1)
+                .catalogTypography(.caption, theme: theme, fallback: SettingsFont.glyphSmall)
+                .foregroundColor(theme.status.warning.foreground)
+                .padding(.top, theme.space.s2)
             Text("privacy.review.skipAllWarning", bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.primaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.primary)
                 .lineLimit(3)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.horizontal, theme.space.s12)
+        .padding(.vertical, theme.space.s8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.orange.opacity(0.12))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.orange.opacity(0.4), lineWidth: 1)
-                )
-        )
+        .settingsChrome(.status(.warning))
     }
 
 }
@@ -305,7 +278,9 @@ struct RedactionReviewSheet: View {
 /// Without this pane the user is approving redactions blind — fine
 /// for `My name is Alice`, painful for "paste a document" workflows.
 private struct ContextPreview: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
     @ObservedObject var state: RedactionReviewState
 
     /// Approved (original, placeholder) pairs whose container
@@ -327,7 +302,7 @@ private struct ContextPreview: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             if let entity = state.selectedEntity {
                 header(for: entity)
                 bodyView(for: entity)
@@ -336,66 +311,56 @@ private struct ContextPreview: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(theme.primaryBackground)
+        .background(theme.surface.canvas)
     }
 
     private func header(for entity: DetectedEntity) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: entity.category.reviewIcon)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundColor(theme.accentColor)
+                .glyphSize(.body, weight: .medium)
+                .foregroundColor(theme.text.link)
                 .frame(width: 26, height: 26)
-                .background(
-                    RoundedRectangle(cornerRadius: 7)
-                        .fill(theme.accentColor.opacity(0.14))
-                )
+                .settingsChrome(.selected)
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
                 Text(entity.original)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.heading, theme: theme, fallback: SettingsFont.sectionTitle)
+                    .foregroundColor(theme.text.primary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     Text(entity.category.localizedName)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
+                        .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                        .foregroundColor(theme.text.secondary)
                     Image(systemName: "arrow.right")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
-                    Text(entity.placeholder.token)
-                        .font(.system(size: 11, weight: .medium, design: .monospaced))
-                        .foregroundColor(theme.accentColor)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(theme.accentColor.opacity(0.12)))
+                        .glyphSize(.tiny, weight: .semibold)
+                        .foregroundColor(theme.text.tertiary)
+                    StatusChip(entity.placeholder.token, tone: .accent)
                 }
             }
             Spacer()
         }
-        .padding(.horizontal, 18)
-        .padding(.top, 16)
-        .padding(.bottom, 10)
+        .padding(.horizontal, theme.space.s16)
+        .padding(.top, theme.space.s16)
+        .padding(.bottom, theme.space.s8)
     }
 
     @ViewBuilder
     private func bodyView(for entity: DetectedEntity) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(spacing: theme.space.s6) {
                 Text("privacy.review.context.header", bundle: .module)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-                    .textCase(.uppercase)
-                    .tracking(0.4)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.tertiary)
                 Spacer()
                 if !activePairs.isEmpty {
-                    HStack(spacing: 4) {
+                    HStack(spacing: theme.space.s4) {
                         Image(systemName: "shield.lefthalf.filled")
-                            .font(.system(size: 9, weight: .semibold))
+                            .glyphSize(.tiny, weight: .semibold)
                         Text("privacy.review.context.hoverHint", bundle: .module)
-                            .font(.system(size: 10))
+                            .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
                     }
-                    .foregroundColor(theme.tertiaryText)
+                    .foregroundColor(theme.text.tertiary)
                 }
             }
 
@@ -409,60 +374,46 @@ private struct ContextPreview: View {
                     highlights: preview.highlights,
                     theme: theme
                 )
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .padding(14)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(theme.codeBlockBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(theme.accentColor.opacity(0.18), lineWidth: 1)
-                        )
-                )
+                .frame(maxWidth: .infinity, minHeight: max(100, theme.lineHeight(.body) * 3), maxHeight: .infinity, alignment: .topLeading)
+                .padding(.horizontal, theme.space.s12).padding(.vertical, theme.space.s12)
+                .settingsChrome(.subtle)
             } else {
                 emptyContextCard
             }
         }
-        .padding(.horizontal, 18)
-        .padding(.bottom, 16)
+        .padding(.horizontal, theme.space.s16)
+        .padding(.bottom, theme.space.s16)
         .frame(maxHeight: .infinity, alignment: .top)
     }
 
     private var emptyContextCard: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: theme.space.s8) {
             Image(systemName: "text.viewfinder")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundColor(theme.tertiaryText)
-                .padding(.top, 1)
+                .glyphSize(.footnote, weight: .semibold)
+                .foregroundColor(theme.text.tertiary)
+                .padding(.top, theme.space.s2)
             Text("privacy.review.context.empty", bundle: .module)
-                .font(.system(size: 11))
-                .foregroundColor(theme.secondaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer()
         }
-        .padding(14)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.codeBlockBackground.opacity(0.6))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.primaryBorder.opacity(0.2), lineWidth: 1)
-                )
-        )
+        .padding(.horizontal, theme.space.s12).padding(.vertical, theme.space.s12)
+        .settingsChrome(.subtle)
     }
 
     private var emptySelection: some View {
         HStack {
             Spacer()
-            VStack(spacing: 8) {
+            VStack(spacing: theme.space.s8) {
                 Image(systemName: "shield.lefthalf.filled")
-                    .font(.system(size: 24))
-                    .foregroundColor(theme.tertiaryText.opacity(0.6))
+                    .glyphSize(.xxlarge)
+                    .foregroundColor(theme.text.disabled)
                 Text("privacy.review.context.empty", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
             }
-            .padding(.vertical, 60)
+            .padding(.vertical, theme.space.s64)
             Spacer()
         }
     }

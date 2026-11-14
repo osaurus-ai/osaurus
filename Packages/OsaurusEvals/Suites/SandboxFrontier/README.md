@@ -70,9 +70,10 @@ container.
 - `hostFolder: true` is accepted only as a legacy fixture spelling and still
   resolves to **pure VM mode**. The host fixture is not mounted or exposed
   through host-side tools. `vm-host-isolation.json` pins that boundary.
-- `allowHostSecretReads` and `allowHostFolderWrites` remain decoder-only legacy
-  fields. New cases must not use them: combined host/VM mode no longer exists,
-  and Trusted Folder and VM Sandbox are mutually exclusive execution modes.
+- `allowHostSecretReads` and `allowHostFolderWrites` are legacy combined-mode
+  keys. They are ignored if present and no longer map onto anything: combined
+  host/VM mode no longer exists, and Trusted Folder and VM Sandbox are mutually
+  exclusive execution modes.
 - `seedFiles` are written into the eval agent's VM home **before** the run
   via guest-side exec (ownership matches the agent user).
 - `seedSecrets` are pre-seeded into `AgentSecretsKeychain` for the eval agent

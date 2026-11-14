@@ -9,9 +9,9 @@
 //  in the provider's `MCPOAuthConfig` so we don't re-register on every
 //  sign-in / refresh.
 //
-//  Production servers (Linear, Notion, Atlassian) all support DCR per the
-//  MCP `2025-06-18` spec; servers that don't will fail with 404, in which
-//  case the user has to provide a `client_id` manually (future feature).
+//  DCR is the fallback after Client ID Metadata Documents (see
+//  `MCPOAuthClientMetadata`); servers that support neither need a manually
+//  entered `client_id`.
 //
 
 import Foundation
@@ -43,6 +43,7 @@ public struct MCPDynamicClientRegistration: Sendable, Equatable {
 
 public enum MCPOAuthRegistrationError: LocalizedError, Sendable {
     case missingRegistrationEndpoint
+    case metadataDocumentUnavailable
     case invalidRegistrationURL
     case httpError(Int, String?)
     case decodeFailed(String)
@@ -52,6 +53,9 @@ public enum MCPOAuthRegistrationError: LocalizedError, Sendable {
         switch self {
         case .missingRegistrationEndpoint:
             return "Authorization server does not support Dynamic Client Registration"
+        case .metadataDocumentUnavailable:
+            return
+                "This service only registers apps through a Client ID Metadata Document, which Osaurus can't offer yet. Enter a Client ID under Advanced if the service issued you one."
         case .invalidRegistrationURL:
             return "Authorization server returned an invalid registration_endpoint"
         case .httpError(let code, let body):

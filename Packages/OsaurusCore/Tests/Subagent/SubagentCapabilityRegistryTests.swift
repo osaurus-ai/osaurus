@@ -21,9 +21,10 @@ struct SubagentCapabilityRegistryTests {
     @Test("the delegation tool-name set is the union of the delegation family")
     func delegationToolNames() {
         let names = SubagentToolVisibility.delegationToolNames
-        // The spawn family is two sibling tools now.
+        // The spawn family is the single `spawn_agent` tool.
         #expect(names.contains("spawn_agent"))
-        #expect(names.contains("spawn_model"))
+        #expect(!names.contains("spawn_model"))
+        #expect(!names.contains("spawn_batch"))
         // The two image tools merged into one `image` tool.
         #expect(names.contains("image"))
         #expect(!names.contains("image_generate"))
@@ -39,8 +40,7 @@ struct SubagentCapabilityRegistryTests {
         agentId: UUID,
         spawn: Bool = false,
         image: Bool = false,
-        targets: [UUID] = [],
-        models: [String] = []
+        targets: [UUID] = []
     ) -> AgentConfigSnapshot {
         AgentConfigSnapshot(
             agentId: agentId,
@@ -55,68 +55,50 @@ struct SubagentCapabilityRegistryTests {
             spawnDelegationEnabled: spawn,
             imageEnabled: image,
             spawnableAgentIDs: targets,
-            spawnableModelNames: models
+            spawnableAgentNames: []
         )
     }
 
-    @Test("the Default agent uses its own pools/image; a custom agent its own per-agent toggles + lists")
+    @Test("the Default agent uses its own pool and never Image; a custom agent its own toggles + list")
     func delegationVisibilitySemantics() {
         let custom = UUID()
         let helper = UUID()
         let nested = UUID()
-        // There is no master switch: the Default / main chat's own AGENT pool has
-        // one agent, its MODEL pool has one model, and its image switch is on.
-        let config = SubagentConfiguration(
-            spawnableAgentIDs: [helper],
-            imageDelegationEnabled: true,
-            spawnableModelNames: ["pool-model"]
-        )
+        // There is no master switch: the Default / main chat's own AGENT pool
+        // has one agent. Image lives on custom agents only.
+        let config = SubagentConfiguration(spawnableAgentIDs: [helper])
 
-        // Default agent: governed by its own pools + image switch (its own
-        // snapshot flags are irrelevant). Both spawn tools surface (each pool is
-        // non-empty), plus image.
+        // Default agent (Orchestrator): governed by its own pool; its snapshot
+        // flags are irrelevant, and `image` never surfaces on it.
         #expect(
             SubagentToolVisibility.visibleDelegationToolNames(
                 agentId: Agent.defaultId,
-                snapshot: snapshot(agentId: Agent.defaultId),
+                snapshot: snapshot(agentId: Agent.defaultId, image: true),
                 config: config,
                 hasReadyImageModel: true
-            ) == ["spawn_agent", "spawn_model", "spawn_batch", "image"]
+            ) == ["spawn_agent"]
         )
 
-        // Custom agent: each spawn tool needs its own toggle AND a non-empty pool
-        // of its own kind; image needs its own toggle. Here spawn on with an AGENT
-        // target only → spawn_agent plus the batch surface for that pool.
+        // Custom agent: spawn needs its own toggle AND a non-empty pool of its
+        // own; image needs its own toggle.
         #expect(
             SubagentToolVisibility.visibleDelegationToolNames(
                 agentId: custom,
                 snapshot: snapshot(agentId: custom, spawn: true, image: false, targets: [nested]),
                 config: config,
                 hasReadyImageModel: true
-            ) == ["spawn_agent", "spawn_batch"]
+            ) == ["spawn_agent"]
         )
-
-        // Custom agent with a MODEL pool only → spawn_model plus batch.
         #expect(
             SubagentToolVisibility.visibleDelegationToolNames(
                 agentId: custom,
-                snapshot: snapshot(agentId: custom, spawn: true, models: ["m"]),
+                snapshot: snapshot(agentId: custom, spawn: true, image: true, targets: [nested]),
                 config: config,
                 hasReadyImageModel: true
-            ) == ["spawn_model", "spawn_batch"]
+            ) == ["spawn_agent", "image"]
         )
 
-        // Custom agent with both pools → both compatibility tools plus batch.
-        #expect(
-            SubagentToolVisibility.visibleDelegationToolNames(
-                agentId: custom,
-                snapshot: snapshot(agentId: custom, spawn: true, targets: [nested], models: ["m"]),
-                config: config,
-                hasReadyImageModel: true
-            ) == ["spawn_agent", "spawn_model", "spawn_batch"]
-        )
-
-        // Custom agent with spawn on but BOTH pools empty → spawn hidden.
+        // Custom agent with spawn on but an empty pool → spawn hidden.
         #expect(
             SubagentToolVisibility.visibleDelegationToolNames(
                 agentId: custom,
@@ -127,7 +109,7 @@ struct SubagentCapabilityRegistryTests {
         )
 
         // A custom agent that has opted into nothing → nothing visible, even
-        // when the main chat's own pools/image are populated.
+        // when the main chat's own pool is populated.
         #expect(
             SubagentToolVisibility.visibleDelegationToolNames(
                 agentId: custom,
@@ -138,27 +120,12 @@ struct SubagentCapabilityRegistryTests {
         )
     }
 
-    @Test("image is withheld when no ready image model is installed, even with the switch on")
+    @Test("image is withheld from a custom agent when no ready image model is installed")
     func imageGatedOnInstalledModel() {
-        // The Default / main chat has its image switch on and a spawn pool, but
-        // NO ready on-device image model exists. The installed-capability gate
-        // must withhold `image` so the model is never offered an image
-        // capability the runtime can't satisfy; spawn is unaffected.
-        let config = SubagentConfiguration(
-            spawnableAgentIDs: [UUID()],
-            imageDelegationEnabled: true,
-            spawnableModelNames: ["pool-model"]
-        )
-        #expect(
-            SubagentToolVisibility.visibleDelegationToolNames(
-                agentId: Agent.defaultId,
-                snapshot: snapshot(agentId: Agent.defaultId),
-                config: config,
-                hasReadyImageModel: false
-            ) == ["spawn_agent", "spawn_model", "spawn_batch"]
-        )
-        // A custom agent with its image toggle on but no installed model → no
-        // `image` either.
+        // A custom agent with its image toggle on but NO ready on-device image
+        // model → the installed-capability gate withholds `image` so the model
+        // is never offered a capability the runtime can't satisfy.
+        let config = SubagentConfiguration(spawnableAgentIDs: [UUID()])
         let custom = UUID()
         #expect(
             !SubagentToolVisibility.visibleDelegationToolNames(
@@ -167,6 +134,15 @@ struct SubagentCapabilityRegistryTests {
                 config: config,
                 hasReadyImageModel: false
             ).contains("image")
+        )
+        // The Orchestrator keeps only spawn_agent regardless.
+        #expect(
+            SubagentToolVisibility.visibleDelegationToolNames(
+                agentId: Agent.defaultId,
+                snapshot: snapshot(agentId: Agent.defaultId),
+                config: config,
+                hasReadyImageModel: false
+            ) == ["spawn_agent"]
         )
     }
 
@@ -214,56 +190,6 @@ struct SubagentCapabilityRegistryTests {
         )
     }
 
-    @Test("spawn model validation: Default uses its own model pool; custom uses its own allow-list")
-    func spawnModelTargetValidation() {
-        let config = SubagentConfiguration(
-            spawnableModelNames: ["pool-model"]
-        )
-        // Default: the global model pool decides (exact, trimmed match).
-        #expect(
-            SubagentToolVisibility.spawnModelAllowed(
-                "  pool-model  ",
-                isDefault: true,
-                config: config,
-                perAgentModelTargets: []
-            )
-        )
-        #expect(
-            !SubagentToolVisibility.spawnModelAllowed(
-                "other-model",
-                isDefault: true,
-                config: config,
-                perAgentModelTargets: ["other-model"]
-            )
-        )
-        // Custom: only the agent's OWN model list counts, not the global pool.
-        #expect(
-            SubagentToolVisibility.spawnModelAllowed(
-                "agent-model",
-                isDefault: false,
-                config: config,
-                perAgentModelTargets: ["agent-model"]
-            )
-        )
-        #expect(
-            !SubagentToolVisibility.spawnModelAllowed(
-                "pool-model",
-                isDefault: false,
-                config: config,
-                perAgentModelTargets: ["agent-model"]
-            )
-        )
-        // Empty id never matches.
-        #expect(
-            !SubagentToolVisibility.spawnModelAllowed(
-                "   ",
-                isDefault: true,
-                config: config,
-                perAgentModelTargets: []
-            )
-        )
-    }
-
     @Test("capability descriptors expose the right primary tool + guidance shape")
     func capabilityShape() {
         #expect(SubagentCapabilityRegistry.computerUse.primaryToolName == "computer_use")
@@ -271,12 +197,8 @@ struct SubagentCapabilityRegistryTests {
         // Image generation + editing now share the single `image` tool.
         #expect(SubagentCapabilityRegistry.image.primaryToolName == "image")
         #expect(SubagentCapabilityRegistry.image.guidance != nil)
-        // The spawn family lists both compatibility tools plus bounded batch;
-        // `spawn_agent` remains primary.
-        #expect(
-            SubagentCapabilityRegistry.spawn.toolNames
-                == ["spawn_agent", "spawn_model", "spawn_batch"]
-        )
+        // One delegation tool: several calls in one message are the fan-out.
+        #expect(SubagentCapabilityRegistry.spawn.toolNames == ["spawn_agent"])
         #expect(SubagentCapabilityRegistry.spawn.primaryToolName == "spawn_agent")
         // Spawn has no inline capability guidance — its prompt block is rendered
         // by a dedicated dynamic `.static` section in the composer instead.
@@ -526,10 +448,19 @@ struct SubagentCapabilityRegistryTests {
                 settings: custom
             ) == .ask
         )
-        // nil settings (custom agent unknown to AgentManager) → `.ask`.
+        // nil settings (custom agent unknown to AgentManager) → the kind's
+        // default: spawn is Always Allow (the worker's own tools still ask).
         #expect(
             SubagentToolVisibility.effectivePermission(
                 capabilityId: SubagentCapabilityRegistry.spawn.id,
+                isDefault: false,
+                config: config,
+                settings: nil
+            ) == .alwaysAllow
+        )
+        #expect(
+            SubagentToolVisibility.effectivePermission(
+                capabilityId: SubagentCapabilityRegistry.image.id,
                 isDefault: false,
                 config: config,
                 settings: nil

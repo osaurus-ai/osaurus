@@ -52,3 +52,26 @@ struct ToolDisplayNameFailedTenseTests {
         #expect(title == L("Preparing tool call"))
     }
 }
+
+@MainActor
+struct WorkflowCallTitleTests {
+    private func args(_ workflow: String) -> String { #"{"workflow":"\#(workflow)"}"# }
+
+    @Test("a workflow named by id reads as its name, never the id")
+    func workflowIdResolvesToItsName() throws {
+        let ask = try #require(PreparedAskCatalog.templates().first)
+        let title = ToolDisplayName.friendly(for: RunWorkflowTool.toolName, running: false, arguments: args(ask.id.uuidString))
+        #expect(title == String(format: L("Ran %@"), ask.name))
+        let unknown = ToolDisplayName.friendly(for: RunWorkflowTool.toolName, running: false, arguments: args(UUID().uuidString))
+        #expect(unknown == L("Ran a workflow"))
+    }
+
+    @Test("a failed workflow call names the workflow")
+    func failedWorkflowCallNamesTheWorkflow() {
+        let title = ToolDisplayName.friendly(
+            for: RunWorkflowTool.toolName, running: false, arguments: args("Research Brief"), failed: true)
+        #expect(title == String(format: L("Failed: %@"), "Research Brief"))
+        let bare = ToolDisplayName.friendly(for: RunWorkflowTool.toolName, running: false, failed: true)
+        #expect(bare == String(format: L("Failed: %@"), "Run workflow"))
+    }
+}

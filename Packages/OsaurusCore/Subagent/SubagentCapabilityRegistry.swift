@@ -214,27 +214,20 @@ public enum SubagentCapabilityRegistry {
         guidanceLabelKey: "Browser Use"
     )
 
-    /// Stable tool name for the agent-context spawn (`spawn_agent(input,
+    /// Stable tool name for the one delegation tool (`spawn_agent(input,
     /// agent)`). SSOT so the tool, registry gating, and visibility resolver agree.
     public static let spawnAgentToolName = "spawn_agent"
-    /// Stable tool name for the model-only spawn (`spawn_model(input, model)`).
-    public static let spawnModelToolName = "spawn_model"
-    /// Stable tool name for bounded heterogeneous fan-out. Each job explicitly
-    /// selects one allow-listed agent or model and carries a caller-stable id.
-    public static let spawnBatchToolName = "spawn_batch"
 
-    /// The text-spawn family — three sibling tools, one shared capability:
-    /// `spawn_agent` (delegate WITH an agent's system prompt + model) and
-    /// `spawn_model` (delegate to a bare model id, no agent). `spawn_batch`
-    /// accepts several explicitly typed jobs and is available when either pool
-    /// is non-empty. The single-target tools remain the compatibility surface.
-    /// No static guidance — the composer renders one dynamic spawn block
-    /// enumerating the live agents / models, so `guidance == nil` keeps the
-    /// generic guidance loop off it. Names are the SSOT here; `ToolRegistry`'s
-    /// derived sets read these for gating.
+    /// The spawn capability — ONE tool, `spawn_agent`, which delegates a task
+    /// to a configured agent (its system prompt + model, local or a teammate's
+    /// shared workspace agent). Parallelism is "several calls in one message"
+    /// (`SpawnWaveGate`), never a second tool. No static guidance — the
+    /// composer renders one dynamic spawn block enumerating the live agents,
+    /// so `guidance == nil` keeps the generic guidance loop off it. The name
+    /// is the SSOT here; `ToolRegistry`'s derived sets read it for gating.
     public static let spawn = SubagentCapability(
         id: "spawn",
-        toolNames: [spawnAgentToolName, spawnModelToolName, spawnBatchToolName],
+        toolNames: [spawnAgentToolName],
         gate: .delegation,
         perAgentFlag: .spawn,
         modelSource: .agent,
@@ -317,6 +310,44 @@ public enum SubagentCapabilityRegistry {
     /// The delegation-gated capabilities (spawn + image + applescript).
     public static let delegationFamily: [SubagentCapability] = [spawn, image, video, appleScript]
 
+    /// The Orchestrator's settings handoff. Labeled for the user ("Settings"),
+    /// never with the hidden agent's name. Not in `all`: it has no per-agent
+    /// toggle, guidance, or strip; only the feed and tool chip read it.
+    public static let configuratorHandoff = SubagentCapability(
+        id: "configurator_handoff",
+        toolNames: [ConfiguratorHandoffTool.toolName],
+        gate: .sandboxExec,
+        modelSource: .agent,
+        displayLabel: "Settings",
+        iconName: "gearshape"
+    )
+
+    /// The Architect run inline from chat.
+    public static let architectHandoff = SubagentCapability(
+        id: "architect_handoff",
+        toolNames: [ArchitectHandoffTool.toolName],
+        gate: .sandboxExec,
+        modelSource: .agent,
+        displayLabel: "Workflow",
+        iconName: "point.3.connected.trianglepath.dotted"
+    )
+
+    /// A built-in worker's run inside its wrapper workflow. Like the
+    /// handoffs: no per-agent toggle, guidance, or strip.
+    public static func worker(_ worker: BuiltInWorker) -> SubagentCapability {
+        SubagentCapability(
+            id: "worker_\(worker.rawValue)",
+            toolNames: [],
+            gate: .sandboxExec,
+            modelSource: .agent,
+            displayLabel: worker.displayName,
+            iconName: worker.iconName)
+    }
+
+    /// Hidden-agent handoffs and built-in workers, looked up by kind id only.
+    public static let handoffs: [SubagentCapability] =
+        [configuratorHandoff, architectHandoff] + BuiltInWorker.allCases.map(worker)
+
     /// Distinct per-agent toggle flags, in registry order (computer_use, spawn,
     /// image, applescript). One entry per *toggle* (deduped, so a future kind
     /// that shares a flag would collapse) — the AgentsView Subagents tab renders
@@ -334,7 +365,7 @@ public enum SubagentCapabilityRegistry {
 
     /// The descriptor for a kind id (`SubagentFeed.kindId` / `capability.id`).
     public static func capability(forKindId id: String) -> SubagentCapability? {
-        all.first { $0.id == id }
+        all.first { $0.id == id } ?? handoffs.first { $0.id == id }
     }
 
     /// The descriptor bound to a per-agent toggle flag — lets the AgentsView
@@ -351,6 +382,11 @@ public enum SubagentCapabilityRegistry {
         all.first { $0.toolNames.contains(name) }
     }
 
+    /// Feed lookup that also knows the hidden-agent handoffs.
+    public static func feedCapability(forToolName name: String) -> SubagentCapability? {
+        capability(forToolName: name) ?? handoffs.first { $0.toolNames.contains(name) }
+    }
+
     /// Feed-header / tool-chip label for a kind id.
     public static func displayLabel(forKindId id: String) -> String? {
         capability(forKindId: id)?.displayLabel
@@ -358,12 +394,12 @@ public enum SubagentCapabilityRegistry {
 
     /// Tool-chip label for a subagent tool name (`nil` for non-subagent tools).
     public static func displayLabel(forToolName name: String) -> String? {
-        capability(forToolName: name)?.displayLabel
+        feedCapability(forToolName: name)?.displayLabel
     }
 
     /// Tool-chip icon for a subagent tool name (`nil` for non-subagent tools).
     public static func iconName(forToolName name: String) -> String? {
-        capability(forToolName: name)?.iconName
+        feedCapability(forToolName: name)?.iconName
     }
 }
 
@@ -396,28 +432,42 @@ public enum SubagentToolVisibility {
         return perAgentEnabled ? perAgentTargets : []
     }
 
-    /// The bare model ids effectively spawnable from a launching agent (the
-    /// `spawn_model` pool). Same Default-vs-custom shape as
-    /// `effectiveSpawnableAgents`; a custom agent's list is live only while its
-    /// `spawn` toggle is on.
-    static func effectiveSpawnableModels(
+    /// The shared workspace agents effectively spawnable from a launching
+    /// agent. Same Default-vs-custom shape as `effectiveSpawnableAgents`; a
+    /// custom agent's list is live only while its `spawn` toggle is on. Pure
+    /// configuration — never filtered by live presence (see the liveness
+    /// contract in `WorkspaceAgentLiveness`).
+    static func effectiveSpawnableWorkspaceAgents(
         isDefault: Bool,
         config: SubagentConfiguration,
         perAgentEnabled: Bool,
-        perAgentModelTargets: [String]
-    ) -> [String] {
-        if isDefault { return config.spawnableModelNames }
-        return perAgentEnabled ? perAgentModelTargets : []
+        perAgentTargets: [WorkspaceAgentRef]
+    ) -> [WorkspaceAgentRef] {
+        if isDefault { return config.spawnableWorkspaceAgents }
+        return perAgentEnabled ? perAgentTargets : []
+    }
+
+    /// Whether a specific shared workspace agent is reachable from a
+    /// launching agent — the execution-time check the spawn kind enforces.
+    static func spawnWorkspaceAgentAllowed(
+        _ ref: WorkspaceAgentRef,
+        isDefault: Bool,
+        config: SubagentConfiguration,
+        perAgentTargets: [WorkspaceAgentRef]
+    ) -> Bool {
+        if isDefault { return config.isWorkspaceAgentSpawnable(ref) }
+        return perAgentTargets.contains(ref)
     }
 
     /// Whether `spawn_agent` is available for an agent — i.e. it has at least one
-    /// spawnable agent (nothing to spawn → hide the tool). There is no global
-    /// master switch; each agent opts in for itself.
+    /// spawnable agent, local or workspace (nothing to spawn → hide the tool).
+    /// There is no global master switch; each agent opts in for itself.
     static func spawnAgentAvailable(
         isDefault: Bool,
         config: SubagentConfiguration,
         perAgentEnabled: Bool,
-        perAgentTargets: [UUID]
+        perAgentTargets: [UUID],
+        perAgentWorkspaceTargets: [WorkspaceAgentRef] = []
     ) -> Bool {
         !effectiveSpawnableAgents(
             isDefault: isDefault,
@@ -425,54 +475,47 @@ public enum SubagentToolVisibility {
             perAgentEnabled: perAgentEnabled,
             perAgentTargets: perAgentTargets
         ).isEmpty
+            || !effectiveSpawnableWorkspaceAgents(
+                isDefault: isDefault,
+                config: config,
+                perAgentEnabled: perAgentEnabled,
+                perAgentTargets: perAgentWorkspaceTargets
+            ).isEmpty
     }
 
-    /// Whether `spawn_model` is available for an agent — i.e. it has at least one
-    /// spawnable model id.
-    static func spawnModelAvailable(
-        isDefault: Bool,
-        config: SubagentConfiguration,
-        perAgentEnabled: Bool,
-        perAgentModelTargets: [String]
-    ) -> Bool {
-        !effectiveSpawnableModels(
-            isDefault: isDefault,
-            config: config,
-            perAgentEnabled: perAgentEnabled,
-            perAgentModelTargets: perAgentModelTargets
-        ).isEmpty
-    }
-
-    /// Whether `image` is available for an agent. The Default / main chat is
-    /// governed by its own image switch (`imageDelegationActive`); a custom
-    /// agent by its own toggle. There is no global master switch.
+    /// Whether `image` is available for an agent. Only a custom agent's own
+    /// toggle can enable it — the Orchestrator (Default agent) never carries
+    /// media tools itself; it delegates to an agent that has them.
     static func imageAvailable(
         isDefault: Bool,
         config: SubagentConfiguration,
         perAgentEnabled: Bool
     ) -> Bool {
-        isDefault ? config.imageDelegationActive : perAgentEnabled
+        isDefault ? false : perAgentEnabled
     }
 
+    /// Whether `video` is available for an agent. Same contract as `image`:
+    /// only a custom agent's own toggle enables it. The Orchestrator never
+    /// generates video itself — it delegates to an agent that has it — so
+    /// the legacy `delegation.video_enabled` switch is ignored here.
     static func videoAvailable(
         isDefault: Bool,
         config: SubagentConfiguration,
         perAgentEnabled: Bool
     ) -> Bool {
-        isDefault ? config.videoDelegationEnabled : perAgentEnabled
+        isDefault ? false : perAgentEnabled
     }
 
-    /// Whether `applescript` is available for an agent. The Default / main chat
-    /// is governed by its own AppleScript switch (`appleScriptDelegationActive`);
-    /// a custom agent by its own toggle. There is no global master switch. The
-    /// installed-model gate is applied separately (`hasReadyAppleScriptModel` in
-    /// `visibleDelegationToolNames`), mirroring `image`.
+    /// Whether `applescript` is available for an agent. Only a custom agent's
+    /// own toggle can enable it; the Orchestrator never runs AppleScript
+    /// itself. The installed-model gate is applied separately
+    /// (`hasReadyAppleScriptModel` in `visibleDelegationToolNames`).
     static func appleScriptAvailable(
         isDefault: Bool,
         config: SubagentConfiguration,
         perAgentEnabled: Bool
     ) -> Bool {
-        isDefault ? config.appleScriptDelegationActive : perAgentEnabled
+        isDefault ? false : perAgentEnabled
     }
 
     /// Whether a specific `spawn_agent` TARGET agent is reachable from a
@@ -489,7 +532,7 @@ public enum SubagentToolVisibility {
         return perAgentTargets.contains(id)
     }
 
-    /// Resolution of a `spawn_agent` / `spawn_batch` target supplied as a
+    /// Resolution of a `spawn_agent` target supplied as a
     /// display NAME instead of a UUID. Small local models reliably echo an
     /// agent's name but not its opaque UUID (issue #2408), so the tools accept
     /// either. Authorization stays UUID-exact downstream — this only maps a
@@ -541,22 +584,94 @@ public enum SubagentToolVisibility {
         )
     }
 
-    /// Whether a specific `spawn_model` TARGET model id is reachable from a
-    /// launching agent — the execution-time check the spawn kind enforces before
-    /// any residency handoff (reject-before-evict). Default / main chat uses its
-    /// own pool; a custom agent its own allow-list. Model ids are canonical, so
-    /// this matches exactly (trimmed), unlike the case-insensitive agent check.
-    static func spawnModelAllowed(
-        _ id: String,
-        isDefault: Bool,
-        config: SubagentConfiguration,
-        perAgentModelTargets: [String]
-    ) -> Bool {
-        let trimmed = id.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
-        if isDefault { return config.isModelSpawnable(trimmed) }
-        return perAgentModelTargets.contains {
-            $0.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed
+    /// Result of resolving a `spawn_agent` agent identifier
+    /// against BOTH of the launching agent's pools (local + workspace).
+    public struct SpawnableAgentTargetResolution: Sendable {
+        /// The uniquely-matching allow-listed target, or nil.
+        public let target: AgentDispatchTarget?
+        /// True when the identifier matched more than one target (a local and
+        /// a workspace agent sharing a display name, or two shared agents with
+        /// the same name in different workspaces). The caller must use the
+        /// UUID / address instead.
+        public let isAmbiguous: Bool
+        /// Display names of every allow-listed target (local first), for a
+        /// corrective error message.
+        public let allowedNames: [String]
+    }
+
+    /// Map an identifier (local UUID, local display name, workspace `0x…`
+    /// address, `<workspaceId>:<address>` key, or workspace display name) to
+    /// the launching agent's uniquely-matching spawnable target. Scoped to that
+    /// agent's own allow-lists — never widens authorization. Names match
+    /// case-insensitively and trimmed; identity forms match exactly.
+    static func resolveSpawnableAgentTarget(
+        _ raw: String,
+        scope: SubagentScope
+    ) async -> SpawnableAgentTargetResolution {
+        let needle = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isDefault = scope.agentId == Agent.defaultId
+        let config = SubagentConfigurationStore.snapshot()
+        let (local, workspace): ([(id: UUID, name: String)], [(ref: WorkspaceAgentRef, name: String)]) =
+            await MainActor.run {
+                let settings = AgentManager.shared.agent(for: scope.agentId)?.settings
+                let enabled = settings?.spawnDelegationEnabled ?? false
+                let localIDs = effectiveSpawnableAgents(
+                    isDefault: isDefault,
+                    config: config,
+                    perAgentEnabled: enabled,
+                    perAgentTargets: settings?.spawnableAgentIDs ?? []
+                )
+                let refs = effectiveSpawnableWorkspaceAgents(
+                    isDefault: isDefault,
+                    config: config,
+                    perAgentEnabled: enabled,
+                    perAgentTargets: settings?.spawnableWorkspaceAgents ?? []
+                )
+                return (
+                    localIDs.compactMap { id in
+                        AgentManager.shared.agent(for: id).map { (id, $0.name) }
+                    },
+                    refs.map { ($0, AgentTargetResolver.displayName(for: $0)) }
+                )
+            }
+        return resolveSpawnableAgentTarget(needle, local: local, workspace: workspace)
+    }
+
+    /// Pure resolution seam for `resolveSpawnableAgentTarget`.
+    static func resolveSpawnableAgentTarget(
+        _ needle: String,
+        local: [(id: UUID, name: String)],
+        workspace: [(ref: WorkspaceAgentRef, name: String)]
+    ) -> SpawnableAgentTargetResolution {
+        let allowedNames = local.map(\.name) + workspace.map(\.name)
+        func result(_ target: AgentDispatchTarget?, ambiguous: Bool = false) -> SpawnableAgentTargetResolution {
+            SpawnableAgentTargetResolution(
+                target: target, isAmbiguous: ambiguous, allowedNames: allowedNames
+            )
+        }
+        guard !needle.isEmpty else { return result(nil) }
+        if let uuid = UUID(uuidString: needle) {
+            return result(local.contains { $0.id == uuid } ? .local(uuid) : nil)
+        }
+        if WorkspaceAgentRef.looksLikeAddress(needle) {
+            let lowered = needle.lowercased()
+            let hits = workspace.filter { $0.ref.agentAddress == lowered }
+            if hits.count == 1 { return result(.workspace(hits[0].ref)) }
+            return result(nil, ambiguous: hits.count > 1)
+        }
+        if let ref = WorkspaceAgentRef(key: needle) {
+            return result(workspace.contains { $0.ref == ref } ? .workspace(ref) : nil)
+        }
+        let localHits = local.filter { $0.name.caseInsensitiveCompare(needle) == .orderedSame }
+        let workspaceHits = workspace.filter {
+            $0.name.caseInsensitiveCompare(needle) == .orderedSame
+        }
+        switch localHits.count + workspaceHits.count {
+        case 0: return result(nil)
+        case 1:
+            if let hit = localHits.first { return result(.local(hit.id)) }
+            return result(.workspace(workspaceHits[0].ref))
+        default: return result(nil, ambiguous: true)
         }
     }
 
@@ -580,32 +695,19 @@ public enum SubagentToolVisibility {
     ) -> Set<String> {
         let isDefault = (agentId == Agent.defaultId)
         var names = Set<String>()
-        // The two compatibility tools gate independently; the batch tool is
-        // available whenever either exact target pool is non-empty.
+        // `spawn_agent` is visible whenever the launcher has at least one
+        // spawnable target (local or workspace).
         let hasAgents =
-            snapshot.spawnConfiguration.map { !$0.agentIDs.isEmpty }
+            snapshot.spawnConfiguration.map { !$0.agentIDs.isEmpty || !$0.workspaceAgents.isEmpty }
             ?? spawnAgentAvailable(
                 isDefault: isDefault,
                 config: config,
                 perAgentEnabled: snapshot.spawnDelegationEnabled,
-                perAgentTargets: snapshot.spawnableAgentIDs
-            )
-        let hasModels =
-            snapshot.spawnConfiguration.map { !$0.modelNames.isEmpty }
-            ?? spawnModelAvailable(
-                isDefault: isDefault,
-                config: config,
-                perAgentEnabled: snapshot.spawnDelegationEnabled,
-                perAgentModelTargets: snapshot.spawnableModelNames
+                perAgentTargets: snapshot.spawnableAgentIDs,
+                perAgentWorkspaceTargets: snapshot.spawnableWorkspaceAgents
             )
         if hasAgents {
             names.insert(SubagentCapabilityRegistry.spawnAgentToolName)
-        }
-        if hasModels {
-            names.insert(SubagentCapabilityRegistry.spawnModelToolName)
-        }
-        if hasAgents || hasModels {
-            names.insert(SubagentCapabilityRegistry.spawnBatchToolName)
         }
         if hasReadyImageModel,
             imageAvailable(
@@ -734,7 +836,7 @@ public enum SubagentToolVisibility {
 
     /// The effective permission policy for a delegation capability. Default / main
     /// chat uses the global permission map; a custom agent uses its own. A missing
-    /// entry resolves to the safe `.ask` default.
+    /// entry resolves to `SubagentPermissionDefaults.defaultPolicy(for:)`.
     static func effectivePermission(
         capabilityId: String,
         isDefault: Bool,
@@ -766,16 +868,5 @@ public enum SubagentToolVisibility {
             sharedParallelLimit,
             to: budgets
         )
-    }
-
-    /// The effective child-tool grant for spawn runs launched by an agent.
-    /// Default / main chat uses the global setting; a custom agent uses its
-    /// own. Missing settings resolve to the safe text-only `.none`.
-    static func effectiveSpawnToolAccess(
-        isDefault: Bool,
-        config: SubagentConfiguration,
-        settings: AgentSettings?
-    ) -> SpawnToolAccess {
-        isDefault ? config.spawnToolAccess : (settings?.spawnToolAccess ?? .none)
     }
 }

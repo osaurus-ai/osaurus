@@ -3,9 +3,9 @@
 //  osaurusTests
 //
 //  Pins the spawned-helper → background-task mirror contract: a registered
-//  spawn feed surfaces as a running notch task, feed phases drive the
+//  spawn feed surfaces as a running Activity task, feed phases drive the
 //  mirror's step/activity, the feed's terminal status closes the row, a
-//  notch cancel trips the run's interrupt token, and mirrors never consume
+//  Stop from the Activity section trips the run's interrupt token, and mirrors never consume
 //  a dispatch execution slot.
 //
 
@@ -82,13 +82,13 @@ struct SubagentBackgroundTaskBridgeTests {
         #expect(state.isSubagentMirror)
         #expect(state.taskTitle == "spawn → Research helper")
         #expect(state.agentId == Agent.defaultId)
-        // Visible in the notch ordering (no window owns a spawn mirror).
+        // Visible in the Activity section ordering (no window owns a spawn mirror).
         #expect(manager.sortedToastTasks.contains { $0.id == state.id })
 
         manager.finalizeTask(state.id)
     }
 
-    @Test("true-delegation feeds are not mirrored (their dispatched run owns the notch row)")
+    @Test("true-delegation feeds are not mirrored (their dispatched run owns the Activity row)")
     func delegatedFeedsAreNotMirrored() async throws {
         let (bridge, manager, registry) = makeBridge()
         _ = bridge
@@ -101,11 +101,11 @@ struct SubagentBackgroundTaskBridgeTests {
                 title: "spawn → Delegated Helper",
                 agentId: Agent.defaultId,
                 parentSessionId: nil,
-                suppressNotchMirror: true
+                suppressActivityMirror: true
             )
         )
         // Give delivery a beat, then confirm nothing was adopted — the real
-        // dispatched chat task is the run's single notch row.
+        // dispatched chat task is the run's single Activity row.
         try await Task.sleep(for: .milliseconds(50))
         #expect(mirror(in: manager, toolCallId: toolCallId) == nil)
     }

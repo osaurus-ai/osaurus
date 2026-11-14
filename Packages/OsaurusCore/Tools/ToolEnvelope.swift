@@ -51,6 +51,11 @@ public enum ToolEnvelope {
         /// User clicked "Deny" on an interactive approval prompt.
         /// Distinct from `rejected` (configured policy refusal).
         case userDenied = "user_denied"
+        /// A macOS privacy permission (Calendar, Contacts, Automation, Full
+        /// Disk Access, …) the tool needs is not granted. Not retryable
+        /// until the user changes it in System Settings; the message names
+        /// the exact permission and pane.
+        case permissionDenied = "permission_denied"
     }
 
     // MARK: - Construction
@@ -234,6 +239,57 @@ public enum ToolEnvelope {
                     expected: "relative path under the working folder",
                     tool: tool
                 )
+            case .pathOutsideWorkflowScopes(let path, let absolutePath, let allowed):
+                var seen = Set<String>()
+                let folders = allowed.filter { seen.insert($0).inserted }
+                return failure(
+                    kind: .rejected,
+                    message:
+                        "'\(path)' is outside the folders this workflow may use: "
+                        + folders.joined(separator: ", ") + ". Save into one of them, use a folder the "
+                        + "person picks (a `folder` input), or declare a fixed folder with `declare_folder` and "
+                        + "write to {{folders.<key>}}/<name>.",
+                    field: "path",
+                    expected: "a path inside one of the workflow's folders",
+                    tool: tool,
+                    retryable: false,
+                    metadata: [
+                        WorkflowFolderGrant.needsGrantKey: absolutePath,
+                        WorkflowFolderGrant.accessKey: FolderRequirement.Access.read.rawValue,
+                        "allowed_folders": folders,
+                    ]
+                )
+            case .pathOutsideWorkflowWriteScope(let path, let absolutePath, let writable):
+                var seen = Set<String>()
+                let folders = writable.filter { seen.insert($0).inserted }
+                return failure(
+                    kind: .rejected,
+                    message:
+                        "'\(path)' is in a folder this workflow may only read. It may save only in: "
+                        + folders.joined(separator: ", ") + ". Save the result there (for example a subfolder "
+                        + "the steps already write to), or write it in the run's workspace.",
+                    field: "path",
+                    expected: "a path inside one of the folders the workflow saves to",
+                    tool: tool,
+                    retryable: false,
+                    metadata: [
+                        WorkflowFolderGrant.needsGrantKey: absolutePath,
+                        WorkflowFolderGrant.accessKey: FolderRequirement.Access.write.rawValue,
+                        "writable_folders": folders,
+                    ]
+                )
+            case .replaceDenied(let path, let folder):
+                return failure(
+                    kind: .rejected,
+                    message:
+                        "'\(path)' already exists and the person did not allow this workflow to replace files in "
+                        + "\(folder). Save under a new name instead, or ask them to allow replacing files.",
+                    field: "path",
+                    expected: "a new file name, or the person's approval to replace",
+                    tool: tool,
+                    retryable: false,
+                    metadata: [WorkflowFolderGrant.replaceDeniedKey: folder]
+                )
             case .fileNotFound(let path):
                 return failure(
                     kind: .notFound,
@@ -270,38 +326,59 @@ public enum ToolEnvelope {
                 // Without this the model dead-ends on binaries (observed
                 // live: a PDF-to-PNG request flailed for turns).
                 let combinedMode = ChatExecutionContext.hostReadOnlyScope != nil
-                let pivot =
-                    combinedMode
-                    ? "copy it into the sandbox with `file_copy` (a `/workspace/...` destination), then process it there with `sandbox_exec` (e.g. `unzip`, `pdftotext`, `file`)"
-                    : "pivot to shell_run with an appropriate tool (e.g. `unzip`, `pdftotext`, `file`)"
-                var pivotTail = detail.pivotHint.map { " \($0)" } ?? ""
-                if combinedMode {
-                    pivotTail = pivotTail.replacingOccurrences(
-                        of: "shell_run",
-                        with: "`file_copy` + `sandbox_exec`"
-                    )
+                var message = detail.explanation(path: path, extLabel: extLabel)
+                if detail.suggestsShellPivot {
+                    let pivot =
+                        combinedMode
+                        ? "copy it into the sandbox with `file_copy` (a `/workspace/...` destination) and process it there with `sandbox_exec` (e.g. `unzip`, `pdftotext`, `file`)"
+                        : "process it with shell_run and an appropriate tool (e.g. `unzip`, `pdftotext`, `file`)"
+                    let connector: String
+                    if case .unsupportedFormat = detail {
+                        connector = ", or "
+                    } else {
+                        connector = " Instead of retrying, "
+                    }
+                    message += "\(connector)\(pivot)."
+                } else {
+                    message += "."
                 }
+                if var pivotTail = detail.pivotHint {
+                    if combinedMode {
+                        pivotTail = pivotTail.replacingOccurrences(
+                            of: "shell_run",
+                            with: "`file_copy` + `sandbox_exec`"
+                        )
+                    }
+                    message += " \(pivotTail)"
+                }
+                var metadata: [String: String] = ["readable_formats": WorkspaceFileFormatPolicy.readableFormatsSummary]
+                if let ext { metadata["extension"] = ext }
+                if let family = detail.family { metadata["document_family"] = family.rawValue }
                 return failure(
                     kind: .executionError,
-                    message:
-                        "file_read only supports text. '\(path)' looks like a binary file\(extLabel) — \(pivot) instead of retrying.\(pivotTail)",
+                    message: message,
                     tool: tool,
-                    retryable: false
+                    retryable: false,
+                    metadata: metadata
                 )
             }
         }
 
         // MCP provider errors map to their honest kinds so the model can
-        // branch (retry on timeout, pivot on unavailable) instead of
-        // treating every remote failure as a generic execution error.
+        // branch instead of treating every remote failure as a generic
+        // execution error. A timeout is not retryable: cancellation is
+        // advisory in MCP, so the server may still be running the work and
+        // a blind retry would start it a second time.
         if let mcpErr = error as? MCPProviderError {
             switch mcpErr {
             case .timeout:
                 return failure(
                     kind: .timeout,
-                    message: "MCP provider call timed out.",
+                    message:
+                        "MCP provider call timed out. The server may still be running it, so do not call it "
+                        + "again unless the user asks. Use the provider's own status tool if it has one.",
                     tool: tool,
-                    retryable: true
+                    retryable: false
                 )
             case .notConnected, .providerDisabled, .providerNotFound, .invalidURL:
                 return failure(
@@ -380,11 +457,18 @@ public enum ToolEnvelope {
                     retryable: false
                 )
             case 7:  // missing system permissions
+                var metadata: [String: Any] = [:]
+                if let permission = nserr.userInfo[ToolRegistry.missingPermissionUserInfoKey] as? String {
+                    metadata["permission"] = permission
+                    metadata["system_settings_url"] =
+                        (nserr.userInfo[ToolRegistry.missingPermissionSettingsURLUserInfoKey] as? String) ?? ""
+                }
                 return failure(
-                    kind: .unavailable,
+                    kind: .permissionDenied,
                     message: nserr.localizedDescription,
                     tool: tool,
-                    retryable: false
+                    retryable: false,
+                    metadata: metadata.isEmpty ? nil : metadata
                 )
             default:
                 break
@@ -400,15 +484,11 @@ public enum ToolEnvelope {
 
     // MARK: - Detection
 
-    /// True when `result` looks like a failure envelope (new shape) OR a
-    /// legacy `ToolErrorEnvelope` JSON OR a legacy `[REJECTED]` /
-    /// `[TIMEOUT]` prefix string. Used by UI / accounting code that
-    /// needs to count failures without a full parse.
     /// Leading window used for envelope detection.
     ///
     /// `isError`/`isSuccess` only need the head of the payload: the canonical
-    /// envelope emits `ok`/`error`/`retryable` as leading top-level keys, and
-    /// the `[REJECTED]`/`[TIMEOUT]` tags are prefixes. Tool outputs can be
+    /// envelope emits `ok` as its leading key, and the `[REJECTED]`/`[TIMEOUT]`
+    /// tags are prefixes. Tool outputs can be
     /// hundreds of megabytes (file reads, base64 blobs) and these checks run
     /// on the main-actor registry path, so trimming and scanning the whole
     /// string could hang the UI. Skipping leading whitespace and bounding the
@@ -426,6 +506,24 @@ public enum ToolEnvelope {
         return result[start ..< end]
     }
 
+    /// The value of a leading `"ok"` key, the canonical envelope's first key.
+    /// A success whose payload describes a failure (a failed workflow run's
+    /// `error` and `retryable`, a nested `"ok":false`) is still a success.
+    private static func leadingOK(_ head: Substring) -> Bool? {
+        var rest = head.dropFirst().drop(while: \.isWhitespace)
+        guard rest.hasPrefix("\"ok\"") else { return nil }
+        rest = rest.dropFirst(4).drop(while: \.isWhitespace)
+        guard rest.first == ":" else { return nil }
+        rest = rest.dropFirst().drop(while: \.isWhitespace)
+        if rest.hasPrefix("true") { return true }
+        if rest.hasPrefix("false") { return false }
+        return nil
+    }
+
+    /// True when `result` looks like a failure envelope (new shape) OR a
+    /// legacy `ToolErrorEnvelope` JSON OR a legacy `[REJECTED]` /
+    /// `[TIMEOUT]` prefix string. Used by UI / accounting code that
+    /// needs to count failures without a full parse.
     public static func isError(_ result: String) -> Bool {
         let head = envelopeHead(result)
         if head.isEmpty { return false }
@@ -433,7 +531,8 @@ public enum ToolEnvelope {
             return true
         }
         guard head.first == "{" else { return false }
-        // New envelope: `"ok":false`. Cheap structural sniff before parse.
+        if let ok = leadingOK(head) { return !ok }
+        // Envelopes from other emitters may not lead with `ok`.
         if head.contains("\"ok\":false") || head.contains("\"ok\": false") {
             return true
         }
@@ -449,6 +548,7 @@ public enum ToolEnvelope {
     public static func isSuccess(_ result: String) -> Bool {
         let head = envelopeHead(result)
         guard head.first == "{" else { return false }
+        if let ok = leadingOK(head) { return ok }
         return head.contains("\"ok\":true") || head.contains("\"ok\": true")
     }
 
@@ -463,6 +563,17 @@ public enum ToolEnvelope {
             let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
         return dict["result"]
+    }
+
+    /// The `warnings` array of a success envelope (empty when absent or
+    /// unparseable). Lets a re-labelling bridge carry model-facing notes
+    /// (relaxed-match quotes, dry-run PREVIEW ONLY) across tool names.
+    public static func warnings(_ result: String) -> [String] {
+        guard isSuccess(result),
+            let data = result.data(using: .utf8),
+            let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return [] }
+        return dict["warnings"] as? [String] ?? []
     }
 
     /// Extract a structured `result` payload from either a success envelope
@@ -495,7 +606,7 @@ public enum ToolEnvelope {
 
     private static func defaultRetryable(for kind: Kind) -> Bool {
         switch kind {
-        case .rejected, .toolNotFound, .userDenied, .notFound: return false
+        case .rejected, .toolNotFound, .userDenied, .notFound, .permissionDenied: return false
         case .invalidArgs, .timeout, .executionError, .unavailable: return true
         }
     }

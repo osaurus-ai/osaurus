@@ -941,40 +941,46 @@ struct UnattendedAskQueueDispositionTests {
     }
 
     @Test func queueCapableToolProceedsIntoItsBodyOnUnattendedAsk() async throws {
-        let tool = QueueDispositionProbeTool(
-            name: "test_unattended_queue_probe",
-            queuesUnattendedAsk: true
-        )
-        ToolRegistry.shared.register(tool)
-        defer { ToolRegistry.shared.unregister(names: [tool.name]) }
+        try await DynamicToolProbeFixture.run { fixture in
+            let tool = QueueDispositionProbeTool(
+                name: "test_unattended_queue_probe",
+                queuesUnattendedAsk: true
+            )
+            try fixture.register(tool)
+            ToolRegistry.shared.setPolicy(.ask, for: tool.name)
+            UserDefaults.standard.set(false, forKey: ToolApprovalSettings.autoAllowAllDefaultsKey)
 
-        // Unattended dispatch + `.ask`: instead of stalling on a card nobody
-        // can answer, the gate lets the tool body run — the body is
-        // responsible for queuing the side effect for operator approval.
-        let result = try await ChatExecutionContext.$isUnattendedDispatch.withValue(true) {
-            try await ToolRegistry.shared.execute(name: tool.name, argumentsJSON: "{}")
+            // Unattended dispatch + `.ask`: instead of stalling on a card nobody
+            // can answer, the gate lets the tool body run — the body is
+            // responsible for queuing the side effect for operator approval.
+            let result = try await ChatExecutionContext.$isUnattendedDispatch.withValue(true) {
+                try await ToolRegistry.shared.execute(name: tool.name, argumentsJSON: "{}")
+            }
+            #expect(tool.executions == 1)
+            #expect(!ToolEnvelope.isError(result))
         }
-        #expect(tool.executions == 1)
-        #expect(!ToolEnvelope.isError(result))
     }
 
-    @Test func headlessDenialStillWinsOverQueueDisposition() async {
-        let tool = QueueDispositionProbeTool(
-            name: "test_unattended_queue_denied_probe",
-            queuesUnattendedAsk: true
-        )
-        ToolRegistry.shared.register(tool)
-        defer { ToolRegistry.shared.unregister(names: [tool.name]) }
+    @Test func headlessDenialStillWinsOverQueueDisposition() async throws {
+        try await DynamicToolProbeFixture.run { fixture in
+            let tool = QueueDispositionProbeTool(
+                name: "test_unattended_queue_denied_probe",
+                queuesUnattendedAsk: true
+            )
+            try fixture.register(tool)
+            ToolRegistry.shared.setPolicy(.ask, for: tool.name)
+            UserDefaults.standard.set(false, forKey: ToolApprovalSettings.autoAllowAllDefaultsKey)
 
-        // `denyUnapprovedToolPrompts` (headless evals, external MCP) is a
-        // stricter gate than the queue disposition: nothing may proceed.
-        await #expect(throws: (any Error).self) {
-            _ = try await ChatExecutionContext.$isUnattendedDispatch.withValue(true) {
-                try await ChatExecutionContext.$denyUnapprovedToolPrompts.withValue(true) {
-                    try await ToolRegistry.shared.execute(name: tool.name, argumentsJSON: "{}")
+            // `denyUnapprovedToolPrompts` (headless evals, external MCP) is a
+            // stricter gate than the queue disposition: nothing may proceed.
+            await #expect(throws: (any Error).self) {
+                _ = try await ChatExecutionContext.$isUnattendedDispatch.withValue(true) {
+                    try await ChatExecutionContext.$denyUnapprovedToolPrompts.withValue(true) {
+                        try await ToolRegistry.shared.execute(name: tool.name, argumentsJSON: "{}")
+                    }
                 }
             }
+            #expect(tool.executions == 0)
         }
-        #expect(tool.executions == 0)
     }
 }

@@ -18,6 +18,57 @@ import Testing
 @Suite(.serialized)
 struct MLXBatchAdapterTests {
 
+    @Test func tiedHeadCacheIdentitySeparatesCodecsAndVersionsActivationContract() {
+        let keys = VMLXTiedHeadCodec.allCases.map { codec in
+            ModelRuntime.tiedHeadCacheIdentity(codec: codec, environment: [:])
+        }
+        #expect(Set(keys).count == VMLXTiedHeadCodec.allCases.count)
+        #expect(keys.allSatisfy { $0.contains("activation=source-dtype-v1") })
+        let native = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "gemma-4-26b-a4b-it-qat",
+            kvModeTag: "none",
+            weightsFingerprint: "same-weights",
+            tiedHeadCodec: .fp16Passthrough
+        )
+        let q6 = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "gemma-4-26b-a4b-it-qat",
+            kvModeTag: "none",
+            weightsFingerprint: "same-weights",
+            tiedHeadCodec: .q6
+        )
+        #expect(native != q6)
+        #expect(q6.contains("tied-head=q6-gs64;activation=source-dtype-v1"))
+    }
+
+    @Test func tiedHeadCacheIdentityMatchesLoaderOverridePrecedence() {
+        let q6 = ModelRuntime.tiedHeadCacheIdentity(codec: .q6, environment: [:])
+        #expect(
+            ModelRuntime.tiedHeadCacheIdentity(
+                codec: .q4,
+                environment: ["VMLX_QUANT_TIED_HEAD_BITS": "6"]
+            ) == q6
+        )
+        #expect(
+            ModelRuntime.tiedHeadCacheIdentity(
+                codec: .q6,
+                environment: ["VMLX_QUANT_TIED_HEAD_GS": "32"]
+            ) != q6
+        )
+        #expect(
+            ModelRuntime.tiedHeadCacheIdentity(
+                codec: .q6,
+                environment: ["VMLX_QUANT_TIED_HEAD_BITS": "0"]
+            )
+                == ModelRuntime.tiedHeadCacheIdentity(codec: .fp16Passthrough, environment: [:])
+        )
+        #expect(
+            ModelRuntime.tiedHeadCacheIdentity(
+                codec: .q6,
+                environment: ["VMLX_QUANT_TIED_HEAD_BITS": "invalid"]
+            ) == q6
+        )
+    }
+
     @Test func processLifetimeDiagnosticsKeepOccupancyLiveAndCountersMonotonic() {
         var retired = ProcessLifetimeBatchCounters(
             activeHighWatermark: 3,
@@ -279,6 +330,50 @@ struct MLXBatchAdapterTests {
         #expect(params.prefillStepSize == 256)
     }
 
+    @Test("Loaded bundle defaults survive ambiguous catalog aliases", arguments: [false, true])
+    func loadedBundleDefaultsSurviveAliasCollision(explicitOverride: Bool) throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let models = ["Org-A", "Org-B"].map { org in
+            MLXModel(
+                id: "\(org)/Shared-Bundle", name: "Shared", description: "",
+                downloadURL: "https://example.com/unused", rootDirectory: root
+            )
+        }
+        for (index, model) in models.enumerated() {
+            try FileManager.default.createDirectory(at: model.localDirectory, withIntermediateDirectories: true)
+            let config = index == 0
+                ? #"{"temperature":0.2,"top_p":0.8,"top_k":7}"#
+                : #"{"temperature":1.0,"top_p":0.95,"top_k":20,"do_sample":true}"#
+            try Data(config.utf8).write(to: model.localDirectory.appendingPathComponent("generation_config.json"))
+        }
+        // Keep the safety rule: only the full selected ID resolves. Never
+        // choose the first organization merely to make defaults non-empty.
+        #expect(ModelManager.matchInstalledMLXModel(named: "Shared-Bundle", in: models) == nil)
+        let selected = try #require(ModelManager.matchInstalledMLXModel(named: "Org-B/Shared-Bundle", in: models))
+        let snapshot = LocalGenerationDefaults.load(fromDirectory: selected.localDirectory)
+        // Same load-time snapshot supplied by SessionHolder in production.
+        // Removing metadata afterwards must not make telemetry rediscover a
+        // different model or turn the already-resolved defaults into nil.
+        try FileManager.default.removeItem(at: selected.localDirectory.appendingPathComponent("generation_config.json"))
+        let effective = MLXBatchAdapter.effectiveGenerationSettings(
+            modelName: "shared-bundle",
+            generation: GenerationParameters(
+                temperature: explicitOverride ? 0 : nil, maxTokens: 128,
+                topKOverride: explicitOverride ? 5 : nil
+            ),
+            runtimeDefaults: VMLXServerGenerationDefaults(),
+            maxBatchSize: 1,
+            modelDefaults: snapshot
+        )
+        #expect(effective.temperature == (explicitOverride ? 0 : 1))
+        #expect(effective.topP == 0.95)
+        #expect(effective.topK == (explicitOverride ? 5 : 20))
+        #expect(effective.modelDefaults == snapshot)
+        #expect(effective.modelDefaults.temperature == 1)
+        #expect(effective.modelDefaults.topK == 20)
+    }
+
     @Test func effectiveGenerationSettings_honorsBundleDefaultsWhenRequestOmitted() {
         let generation = GenerationParameters(
             temperature: nil,
@@ -307,12 +402,39 @@ struct MLXBatchAdapterTests {
         )
 
         #expect(effective.temperature == 1.0)
+        #expect(effective.modelDefaults == defaults)
         #expect(effective.maxTokens == 300)
         #expect(effective.topP == 0.95)
         #expect(effective.topK == 40)
         #expect(effective.minP == 0.03)
         #expect(effective.repetitionPenalty == 1.05)
         #expect(!effective.compiledBatchDecode)
+    }
+
+    @Test("Reloaded bundle output aliases preserve request and saved-setting precedence")
+    func outputAliasReloadAndPrecedence() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        for cap in [1_048_576, 512] {
+            try Data("{\"max_tokens\":\(cap),\"temperature\":0.7,\"top_p\":0.9,\"top_k\":32}".utf8)
+                .write(to: root.appendingPathComponent("generation_config.json"))
+            let bundle = LocalGenerationDefaults.load(fromDirectory: root)
+            for saved in [nil, 128] as [Int?] {
+                for explicit in [false, true] {
+                    let effective = MLXBatchAdapter.effectiveGenerationSettings(
+                        modelName: "output-alias-probe",
+                        generation: GenerationParameters(temperature: nil, maxTokens: 64,
+                            maxTokensExplicit: explicit),
+                        runtimeDefaults: VMLXServerGenerationDefaults(maxTokens: saved),
+                        maxBatchSize: 1, modelDefaults: bundle)
+                    #expect(effective.maxTokens == (explicit ? 64 : saved ?? cap))
+                    #expect(effective.temperature == 0.7)
+                    #expect(effective.topP == 0.9)
+                    #expect(effective.topK == 32)
+                }
+            }
+        }
     }
 
     /// Settings → Sampling Defaults must actually change sampling.
@@ -467,10 +589,12 @@ struct MLXBatchAdapterTests {
 
         #expect(
             effective.temperature == 0,
-            "a stored agent temperature must still win — this is the documented precedence")
+            "a stored agent temperature must still win — this is the documented precedence"
+        )
         #expect(
             effective.topP == 0.95,
-            "top_p is still resolved from the bundle, but argmax ignores it")
+            "top_p is still resolved from the bundle, but argmax ignores it"
+        )
     }
 
     @Test func lastEffectiveGenerationTelemetry_excludesChatPrefillWarmups() {
@@ -675,7 +799,7 @@ struct MLXBatchAdapterTests {
         #expect(effective.minP == 0)
     }
 
-    @Test func effectiveGenerationSettings_nativeMTPKeepsStrategyAndReportsGreedy() {
+    @Test func effectiveGenerationSettings_nativeMTPKeepsStrategyAndRequestedSampler() {
         let generation = GenerationParameters(
             temperature: 0.7,
             maxTokens: 128,
@@ -706,18 +830,14 @@ struct MLXBatchAdapterTests {
             maxBatchSize: 1,
             modelDefaults: mtpBundleDefaults,
             draftStrategy: effectiveDraftStrategy,
-            forcesGreedyForNativeMTP: effectiveDraftStrategy?.usesNativeMTP == true,
             nativeMTPRequestFallback: effectiveDraftStrategy == nil
         )
 
-        // Sampling no longer drops MTP: the submit path coerces the running
-        // parameters to greedy, so the strategy survives and the readout must
-        // report the greedy values that actually execute — not the request's
-        // temp 0.7 / top-k 32 that argmax ignores.
+        // Sampling neither drops MTP nor changes the request's sampler.
         #expect(effectiveDraftStrategy?.usesNativeMTP == true)
-        #expect(effective.temperature == 0)
-        #expect(effective.topP == 1)
-        #expect(effective.topK == 0)
+        #expect(effective.temperature == 0.7)
+        #expect(effective.topP == 0.95)
+        #expect(effective.topK == 32)
         #expect(effective.minP == 0)
         #expect(effective.repetitionPenalty == nil)
         #expect(effective.draftStrategy == DraftStrategy.nativeMTP(depth: 3).kindName)
@@ -1016,7 +1136,8 @@ struct MLXBatchAdapterTests {
 
         #expect(
             beforeRebake != afterRebake,
-            "re-baked weights under the same name must not inherit the old pack's KV cache")
+            "re-baked weights under the same name must not inherit the old pack's KV cache"
+        )
         #expect(beforeRebake.contains("weights=aaaaaaaaaaaaaaaa"))
         #expect(afterRebake.contains("weights=bbbbbbbbbbbbbbbb"))
 
@@ -1054,7 +1175,31 @@ struct MLXBatchAdapterTests {
             .write(to: dir.appendingPathComponent("model.safetensors"))
         #expect(
             ModelRuntime.weightsFingerprint(for: dir) != first,
-            "a changed shard must invalidate the cache")
+            "a changed shard must invalidate the cache"
+        )
+    }
+
+    @Test func weightsFingerprint_jangMetadataEditInvalidatesAtSameSizeAndTimestamp() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jang-fp-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sidecar = dir.appendingPathComponent("jang_config.json")
+        try Data("weights".utf8).write(to: dir.appendingPathComponent("model.safetensors"))
+        let withoutSidecar = ModelRuntime.weightsFingerprint(for: dir)
+        let raw = #"{"runtime":{"norm_convention":"qwen3_5_raw_weight"}}"#
+        let changed = raw.replacingOccurrences(of: "raw", with: "new")
+        let timestamp = Date(timeIntervalSince1970: 1_700_000_000)
+        try Data(raw.utf8).write(to: sidecar)
+        try FileManager.default.setAttributes([.modificationDate: timestamp], ofItemAtPath: sidecar.path)
+        let before = ModelRuntime.weightsFingerprint(for: dir)
+        #expect(before != withoutSidecar)
+        #expect(before == ModelRuntime.weightsFingerprint(for: dir))
+        try Data(changed.utf8).write(to: sidecar)
+        try FileManager.default.setAttributes([.modificationDate: timestamp], ofItemAtPath: sidecar.path)
+        let after = ModelRuntime.weightsFingerprint(for: dir)
+        #expect(after != before, "storage metadata must invalidate cached activations")
+        #expect(after == ModelRuntime.weightsFingerprint(for: dir))
     }
 
     /// An unreadable bundle must take a cold prefill rather than risk reusing some
@@ -1115,19 +1260,22 @@ struct MLXBatchAdapterTests {
         let renamedDSV4Topology = ModelCacheTopologySnapshot(
             layerCount: 43,
             rotatingKVLayerCount: 2,
-            hybridPoolLayerCount: 41)
+            hybridPoolLayerCount: 41
+        )
         let renamedDSV4Off = ModelRuntime.cacheCoordinatorModelKey(
             modelName: "my-renamed-local-model",
             kvModeTag: "fp16",
             weightsFingerprint: "testfp",
             cacheTopology: renamedDSV4Topology,
-            deepseekV4ActivationQAT: false)
+            deepseekV4ActivationQAT: false
+        )
         let renamedDSV4On = ModelRuntime.cacheCoordinatorModelKey(
             modelName: "my-renamed-local-model",
             kvModeTag: "fp16",
             weightsFingerprint: "testfp",
             cacheTopology: renamedDSV4Topology,
-            deepseekV4ActivationQAT: true)
+            deepseekV4ActivationQAT: true
+        )
         #expect(renamedDSV4Off.contains("activation-qat=off"))
         #expect(renamedDSV4On.contains("activation-qat=on"))
         #expect(renamedDSV4Off != renamedDSV4On)
@@ -1147,7 +1295,8 @@ struct MLXBatchAdapterTests {
             modelName: "Mistral-Medium-3.5-128B-MXFP4",
             kvModeTag: "fp16",
             weightsFingerprint: "testfp",
-            deepseekV4ActivationQAT: true)
+            deepseekV4ActivationQAT: true
+        )
         #expect(genericQATOn == generic)
 
         #expect(Set([dsv4, zaya, ling, omni, generic]).count == 5)
@@ -1783,6 +1932,21 @@ struct MLXBatchAdapterTests {
         await nextLease.release()
     }
 
+    @Test func additionalContext_unknownBundlesPreserveDefaultsEvenWithRequiredTools() {
+        let generation = GenerationParameters(temperature: nil, maxTokens: 16)
+        let context = MLXBatchAdapter.additionalContext(
+            for: generation,
+            modelName: "publisher/future-multimodal-checkpoint",
+            toolChoice: .required,
+            toolChoiceName: "inspect_image"
+        )
+        #expect(context["enable_thinking"] == nil)
+        #expect(context["reasoning_effort"] == nil)
+        #expect(context["reasoning_strength"] == nil)
+        #expect(context["tool_choice"] as? String == "required")
+        #expect(context["tool_choice_name"] as? String == "inspect_image")
+    }
+
     @Test func additionalContext_mapsDisableThinkingToEnableThinkingKwarg() {
         let disabled = GenerationParameters(
             temperature: nil,
@@ -1804,8 +1968,7 @@ struct MLXBatchAdapterTests {
             MLXBatchAdapter.additionalContext(for: enabled, modelName: modelName)["enable_thinking"] as? Bool == true
         )
         #expect(
-            MLXBatchAdapter.additionalContext(for: unspecified, modelName: modelName)["enable_thinking"] as? Bool
-                == false
+            MLXBatchAdapter.additionalContext(for: unspecified, modelName: modelName)["enable_thinking"] == nil
         )
 
         let zayaUnspecified = MLXBatchAdapter.additionalContext(
@@ -1813,8 +1976,8 @@ struct MLXBatchAdapterTests {
             modelName: "zaya1-8b-jangtq_k"
         )
         #expect(
-            zayaUnspecified["enable_thinking"] as? Bool == false,
-            "ZAYA text bundles default to closed/no-thinking prompts; omitting enable_thinking must not route direct answers into reasoning-only output."
+            zayaUnspecified["enable_thinking"] == nil,
+            "Omitting enable_thinking must preserve the bundle template default."
         )
 
         let staleOffEffort = MLXBatchAdapter.additionalContext(
@@ -2051,7 +2214,7 @@ struct MLXBatchAdapterTests {
             toolChoice: .required
         )
         #expect(stepRequired["tool_choice"] as? String == "required")
-        #expect(stepRequired["enable_thinking"] as? Bool == false)
+        #expect(stepRequired["enable_thinking"] == nil)
 
         let stepJang2LRequired = MLXBatchAdapter.additionalContext(
             for: generation,
@@ -2059,7 +2222,7 @@ struct MLXBatchAdapterTests {
             toolChoice: .required
         )
         #expect(stepJang2LRequired["tool_choice"] as? String == "required")
-        #expect(stepJang2LRequired["enable_thinking"] as? Bool == false)
+        #expect(stepJang2LRequired["enable_thinking"] == nil)
     }
 
     @Test func additionalContext_keepsGemmaRequiredToolChoiceAsMetadata() {
@@ -2079,11 +2242,11 @@ struct MLXBatchAdapterTests {
 
             #expect(required["tool_choice"] as? String == "required")
             #expect(required["tool_choice_name"] as? String == "get_weather")
-            #expect(required["enable_thinking"] as? Bool == false)
+            #expect(required["enable_thinking"] == nil)
         }
     }
 
-    @Test func additionalContext_letsMiMoN2JANGUseBundleDefaultButControlsRequiredTools() {
+    @Test func additionalContext_letsMiMoN2JANGUseBundleDefaultIncludingRequiredTools() {
         let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
         let userEnabled = GenerationParameters(
             temperature: nil,
@@ -2102,7 +2265,7 @@ struct MLXBatchAdapterTests {
                     for: unspecified,
                     modelName: modelName
                 )["enable_thinking"] == nil,
-                "MiMo/N2 JANG follow-ups must use the bundle default unless the user or tool-choice contract overrides it: \(modelName)"
+                "MiMo/N2 JANG follow-ups must use the bundle default unless the user overrides it: \(modelName)"
             )
 
             let required = MLXBatchAdapter.additionalContext(
@@ -2112,8 +2275,8 @@ struct MLXBatchAdapterTests {
                 toolChoiceName: "line_count"
             )
             #expect(
-                required["enable_thinking"] as? Bool == false,
-                "MiMo/N2 required tool turns still use the direct tool-call rail: \(modelName)"
+                required["enable_thinking"] == nil,
+                "Omitted thinking options must preserve the bundle default: \(modelName)"
             )
             #expect(required["tool_choice"] as? String == "required")
             #expect(required["tool_choice_name"] as? String == "line_count")
@@ -2176,7 +2339,7 @@ struct MLXBatchAdapterTests {
         }
     }
 
-    @Test func additionalContext_defaultsLingThinkingOffButHonorsExplicitOptIn() {
+    @Test func additionalContext_preservesLingBundleDefaultButHonorsExplicitOptIn() {
         let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
         let userEnabled = GenerationParameters(
             temperature: nil,
@@ -2235,14 +2398,8 @@ struct MLXBatchAdapterTests {
         }
     }
 
-    /// Qwen 3.5/3.6 reasoning-capable bundles expose an `enable_thinking`
-    /// template branch. Live Qwen 27B MXFP4 MTP tool-history proof showed the
-    /// default thinking rail can spend the whole response budget in
-    /// `reasoning_content` after a tool result, while the explicit
-    /// no-thinking rail returns the visible answer immediately. Keep ordinary
-    /// local chat on the closed/no-thinking rail by default, while preserving
-    /// explicit user/API opt-in for thinking.
-    @Test func additionalContext_defaultsQwenThinkingOffButHonorsExplicitOptIn() {
+    /// Omitted thinking options preserve the bundle; explicit overrides still apply.
+    @Test func additionalContext_preservesQwenBundleDefaultButHonorsExplicitOptIn() {
         let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
         let userEnabled = GenerationParameters(
             temperature: nil,
@@ -2260,8 +2417,8 @@ struct MLXBatchAdapterTests {
                 MLXBatchAdapter.additionalContext(
                     for: unspecified,
                     modelName: modelName
-                )["enable_thinking"] as? Bool == false,
-                "Qwen local chat should default to the closed/no-thinking rail: \(modelName)"
+                )["enable_thinking"] == nil,
+                "Omitted thinking options must preserve the bundle default: \(modelName)"
             )
             #expect(
                 MLXBatchAdapter.additionalContext(
@@ -2309,13 +2466,8 @@ struct MLXBatchAdapterTests {
         }
     }
 
-    /// ZAYA1 text bundles (Zyphra; `model_type=zaya`) are reasoning-capable,
-    /// but their stable chat rail is the closed/no-thinking path. When no
-    /// request option is present, pass `enable_thinking=false` explicitly so a
-    /// direct follow-up does not decode into hidden reasoning-only output.
-    /// Explicit user/API opt-in via `disableThinking=false` still passes
-    /// `enable_thinking=true`.
-    @Test func additionalContext_defaultsZayaThinkingOffButHonorsExplicitOptIn() {
+    /// Omitted thinking options preserve the bundle; explicit overrides still apply.
+    @Test func additionalContext_preservesZayaBundleDefaultButHonorsExplicitOptIn() {
         let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
         let userEnabled = GenerationParameters(
             temperature: nil,
@@ -2335,8 +2487,8 @@ struct MLXBatchAdapterTests {
                 MLXBatchAdapter.additionalContext(
                     for: unspecified,
                     modelName: modelName
-                )["enable_thinking"] as? Bool == false,
-                "ZAYA text bundles should default to the closed/no-thinking rail: \(modelName)"
+                )["enable_thinking"] == nil,
+                "Omitted thinking options must preserve the bundle default: \(modelName)"
             )
             #expect(
                 MLXBatchAdapter.additionalContext(
@@ -2387,13 +2539,8 @@ struct MLXBatchAdapterTests {
         }
     }
 
-    /// LFM2.5 JANG tool rows use the explicit required-tool rail when
-    /// `tool_choice` requires a local call. Live strict rows showed the
-    /// ordinary reasoning-capable rail can spend the whole budget thinking
-    /// about the correct call after tool-result history without emitting it.
-    /// Keep this scoped to required/named tool turns; ordinary follow-up chat
-    /// keeps the bundle's default behavior unless the request opts in/out.
-    @Test func additionalContext_closesLFMThinkingOnlyForRequiredToolTurns() {
+    /// Omitted thinking options preserve the bundle; explicit overrides still apply.
+    @Test func additionalContext_preservesLFMThinkingDefaultForRequiredToolTurns() {
         let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
         let userDisabled = GenerationParameters(
             temperature: nil,
@@ -2430,8 +2577,8 @@ struct MLXBatchAdapterTests {
                     for: unspecified,
                     modelName: modelName,
                     toolChoice: .required
-                )["enable_thinking"] as? Bool == false,
-                "required LFM tool turns must use the closed tool rail: \(modelName)"
+                )["enable_thinking"] == nil,
+                "Omitted thinking options must preserve the bundle default: \(modelName)"
             )
             #expect(
                 MLXBatchAdapter.additionalContext(
@@ -2443,8 +2590,8 @@ struct MLXBatchAdapterTests {
                             function: ToolChoiceOption.Name(name: "line_count")
                         )
                     )
-                )["enable_thinking"] as? Bool == false,
-                "named LFM tool turns must use the closed tool rail: \(modelName)"
+                )["enable_thinking"] == nil,
+                "Omitted thinking options must preserve the bundle default: \(modelName)"
             )
             #expect(
                 MLXBatchAdapter.additionalContext(
@@ -2493,12 +2640,8 @@ struct MLXBatchAdapterTests {
         }
     }
 
-    /// Nemotron reasoning workloads default to the closed/no-thinking
-    /// rail for ordinary chat. Live JANGTQ rows otherwise stream only hidden
-    /// reasoning_content and length-stop with empty visible content. Explicit
-    /// user/API opt-in still enables thinking and explicit direct/off efforts
-    /// still disable it.
-    @Test func additionalContext_defaultsNemotronThinkingOffButHonorsExplicitOptIn() {
+    /// Omitted thinking options preserve the bundle; explicit overrides still apply.
+    @Test func additionalContext_preservesNemotronBundleDefaultButHonorsExplicitOptIn() {
         let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
         let userEnabled = GenerationParameters(
             temperature: nil,
@@ -2517,8 +2660,8 @@ struct MLXBatchAdapterTests {
                 MLXBatchAdapter.additionalContext(
                     for: unspecified,
                     modelName: modelName
-                )["enable_thinking"] as? Bool == false,
-                "Nemotron should default to the closed/no-thinking rail: \(modelName)"
+                )["enable_thinking"] == nil,
+                "Omitted thinking options must preserve the bundle default: \(modelName)"
             )
             #expect(
                 MLXBatchAdapter.additionalContext(
@@ -2552,13 +2695,8 @@ struct MLXBatchAdapterTests {
         }
     }
 
-    /// MiniMax M2/M2.7 bundles are reasoning-capable. Live post-tool proof on
-    /// `minimax-m2.7-jang_k-crack` showed the omitted-template-default path can
-    /// spend the whole response in hidden reasoning after a tool result. Keep
-    /// ordinary local chat on the closed/no-thinking rail by default, matching
-    /// the other reasoning-capable local families while preserving explicit
-    /// thinking opt-in.
-    @Test func additionalContext_defaultsMiniMaxThinkingOffButHonorsExplicitOptIn() {
+    /// Omitted thinking options preserve the bundle; explicit overrides still apply.
+    @Test func additionalContext_preservesMiniMaxBundleDefaultButHonorsExplicitOptIn() {
         let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
         let userEnabled = GenerationParameters(
             temperature: nil,
@@ -2575,8 +2713,8 @@ struct MLXBatchAdapterTests {
                 MLXBatchAdapter.additionalContext(
                     for: unspecified,
                     modelName: modelName
-                )["enable_thinking"] as? Bool == false,
-                "MiniMax should default to the closed/no-thinking rail: \(modelName)"
+                )["enable_thinking"] == nil,
+                "Omitted thinking options must preserve the bundle default: \(modelName)"
             )
             #expect(
                 MLXBatchAdapter.additionalContext(
@@ -2610,10 +2748,8 @@ struct MLXBatchAdapterTests {
         }
     }
 
-    /// Gemma4 defaults to the closed/no-thinking rail for ordinary local API
-    /// requests, matching the UI profile default. This is model-option wiring,
-    /// not output repair: explicit thinking opt-in still reaches the template.
-    @Test func additionalContext_defaultsGemma4ThinkingOffButHonorsExplicitOptIn() {
+    /// Omitted thinking options preserve the bundle; explicit overrides still apply.
+    @Test func additionalContext_preservesGemma4BundleDefaultButHonorsExplicitOptIn() {
         let unspecified = GenerationParameters(temperature: nil, maxTokens: 16)
         let userEnabled = GenerationParameters(
             temperature: nil,
@@ -2633,8 +2769,8 @@ struct MLXBatchAdapterTests {
                 MLXBatchAdapter.additionalContext(
                     for: unspecified,
                     modelName: modelName
-                )["enable_thinking"] as? Bool == false,
-                "Gemma4 should default to the closed/no-thinking rail: \(modelName)"
+                )["enable_thinking"] == nil,
+                "Omitted thinking options must preserve the bundle default: \(modelName)"
             )
             #expect(
                 MLXBatchAdapter.additionalContext(
@@ -2744,52 +2880,42 @@ struct MLXBatchAdapterTests {
         )
     }
 
-    @Test func forcedToolChoiceUsesSchemaFilteringWithoutPromptDirectiveForNonGemma() {
-        let messages = [
-            ChatMessage(role: "user", content: "Ignore tools and answer in plain text.")
-        ]
-
-        let augmented = ModelRuntime.applyForcedToolChoiceDirective(
-            messages,
-            toolChoice: .function(
-                ToolChoiceOption.FunctionName(
-                    type: "function",
-                    function: ToolChoiceOption.Name(name: "record_count")
-                )
-            ),
-            modelName: "DeepSeek-V4-Flash"
-        )
-
-        #expect(augmented.count == 1)
-        #expect(augmented.first?.role == "user")
-        #expect(augmented.first?.content == "Ignore tools and answer in plain text.")
-    }
-
-    @Test func forcedToolChoiceAddsGemmaRequestLocalDirective() {
+    @Test func requiredAndNamedChoicesLeavePromptAndSamplingUntouched() throws {
         let messages = [
             ChatMessage(role: "system", content: "Agent context."),
-            ChatMessage(role: "user", content: "Finish this task."),
+            ChatMessage(role: "user", content: "Ignore tools and answer in plain text."),
         ]
+        let tools = ["record_count", "complete"].map { name in
+            Tool(type: "function", function: ToolFunction(name: name, description: "Fixture", parameters: .object([:])))
+        }
+        let named = ToolChoiceOption.function(.init(type: "function", function: .init(name: "record_count")))
+        for model in ["DeepSeek-V4-Flash", "OsaurusAI/gemma-4-E2B-it-qat-JANG_4M"] {
+            for choice in [ToolChoiceOption.required, named] {
+                let request = ResponsesInferenceRequest(model: model, input: messages, tools: tools, toolChoice: choice)
+                let prepared = ModelRuntime.applyJSONMode(request.input, jsonMode: false)
+                #expect(prepared.map(\.content) == messages.map(\.content))
+                #expect(prepared.map(\.role) == messages.map(\.role))
+                let mapped = try ModelRuntime.makeMLXChatMessages(prepared)
+                #expect(mapped.map(\.content) == ["Agent context.", "Ignore tools and answer in plain text."])
+                #expect(request.generation.temperature == nil && request.generation.topP == nil && request.generation.topK == nil)
+                let schemas = try #require(ModelRuntime.makeTokenizerTools(tools: request.tools, toolChoice: choice))
+                let names = schemas.compactMap { ($0["function"] as? [String: any Sendable])?["name"] as? String }
+                switch choice {
+                case .function: #expect(names == ["record_count"])
+                default: #expect(names == ["record_count", "complete"])
+                }
+            }
+        }
+    }
 
-        let augmented = ModelRuntime.applyForcedToolChoiceDirective(
-            messages,
-            toolChoice: .function(
-                ToolChoiceOption.FunctionName(
-                    type: "function",
-                    function: ToolChoiceOption.Name(name: "complete")
-                )
-            ),
-            modelName: "OsaurusAI/gemma-4-E2B-it-qat-JANG_4M"
-        )
-
-        #expect(augmented.count == 2)
-        #expect(augmented[0].content == "Agent context.")
-        #expect(augmented[1].role == "user")
-        #expect(augmented[1].content?.contains("Finish this task.") == true)
-        #expect(
-            augmented[1].content?.contains("The current assistant response MUST be a function call.") == true
-        )
-        #expect(augmented[1].content?.contains("Use the `complete` function.") == true)
+    @Test func nativeAndLegacyRuntimeEntrypointsDoNotInjectForcedToolProse() throws {
+        let package = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: package.appendingPathComponent("Services/ModelRuntime.swift"), encoding: .utf8)
+        #expect(!source.contains("applyForcedToolChoiceDirective"))
+        #expect(!source.contains("The current assistant response MUST be a function call."))
+        #expect(source.components(separatedBy: "let augmented = ModelRuntime.applyJSONMode(messages, jsonMode: parameters.jsonMode)").count == 3,
+            "Native and explicit legacy tool entrypoints must transform only the original caller messages for explicit JSON mode")
     }
 
     private func isolatedDefaults() -> UserDefaults {
@@ -2863,7 +2989,8 @@ struct MLXBatchAdapterTests {
         #expect(warmup.cachePromptIntent == .reusablePrefixWarmup)
         #expect(
             warmup.withToolSchemas(nil).cachePromptIntent
-                == .reusablePrefixWarmup)
+                == .reusablePrefixWarmup
+        )
     }
 
     @Test func bothWarmupConstructionPathsSetTheTypedCacheIntent() throws {
@@ -2875,12 +3002,14 @@ struct MLXBatchAdapterTests {
             contentsOf: coreRoot.appendingPathComponent(
                 "Services/ModelRuntime/MLXBatchAdapter.swift"
             ),
-            encoding: .utf8)
+            encoding: .utf8
+        )
 
         #expect(
             source.components(
                 separatedBy: "cachePromptIntent: .reusablePrefixWarmup"
-            ).count - 1 == 2)
+            ).count - 1 == 2
+        )
     }
 
     @Test func requiredToolChoiceRequestsFreshDiskBackedSelection() throws {
@@ -2892,13 +3021,17 @@ struct MLXBatchAdapterTests {
             contentsOf: coreRoot.appendingPathComponent(
                 "Services/ModelRuntime/MLXBatchAdapter.swift"
             ),
-            encoding: .utf8)
+            encoding: .utf8
+        )
         let prepareInput = try #require(source.range(of: "private static func prepareInput("))
         let preparedInputSource = source[prepareInput.lowerBound...]
 
         #expect(preparedInputSource.contains("if toolChoiceRequiresLocalCall(toolChoice)"))
-        #expect(preparedInputSource.contains(
-            "lmInput = lmInput.withCacheRestorePolicy(.freshRequiredToolSelection)"))
+        #expect(
+            preparedInputSource.contains(
+                "lmInput = lmInput.withCacheRestorePolicy(.freshRequiredToolSelection)"
+            )
+        )
     }
 
     /// VLM processors (e.g. Gemma 4) never populate `cachePrefixTokenCounts`,

@@ -75,4 +75,55 @@ struct BuiltInAgentGuardTests {
         #expect(err.message.contains("plugin/planDispatch"))
         #expect(err.message.contains(Agent.defaultId.uuidString))
     }
+
+    /// Every `source:` literal passed to the guard in production code.
+    private static func productionSources() throws -> Set<String> {
+        let coreRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()  // Agent
+            .deletingLastPathComponent()  // Tests
+            .deletingLastPathComponent()  // OsaurusCore
+        let call = try NSRegularExpression(
+            pattern: #"rejectBuiltInForExternalSurface\([^;]*?source:\s*"([^"]+)""#,
+            options: [.dotMatchesLineSeparators])
+        var found: Set<String> = []
+        let files = FileManager.default.enumerator(at: coreRoot, includingPropertiesForKeys: nil)
+        while let url = files?.nextObject() as? URL {
+            let path = url.path
+            guard url.pathExtension == "swift", !path.contains("/Tests/"), !path.contains("/.build/") else { continue }
+            let text = try String(contentsOf: url, encoding: .utf8)
+            let range = NSRange(text.startIndex..., in: text)
+            for match in call.matches(in: text, range: range) {
+                guard let r = Range(match.range(at: 1), in: text) else { continue }
+                found.insert(String(text[r]).replacingOccurrences(of: #"\(eventName)"#, with: "*"))
+            }
+        }
+        return found
+    }
+
+    @Test
+    func everyBuiltInIdIsRejectedOnEveryExternalSurface() throws {
+        let sources = try Self.productionSources()
+        for expected in [
+            "http/agents/run", "http/agents/dispatch", "http/mcp/call", "plugin/planDispatch",
+            "background/dispatchChat", "event/*",
+        ] {
+            #expect(sources.contains(expected), "no guard call with source \(expected)")
+        }
+        let builtIns =
+            [Agent.defaultId, Agent.architectId, Agent.configuratorId] + BuiltInWorker.allCases.map(\.agentId)
+        for source in sources.union(["plugin/host"]) {
+            for id in builtIns {
+                let err = Agent.rejectBuiltInForExternalSurface(id, source: source)
+                #expect(err == .builtInAgentNotExposable(agentId: id, source: source), "\(id) via \(source)")
+            }
+            #expect(Agent.rejectBuiltInForExternalSurface(UUID(), source: source) == nil)
+        }
+    }
+
+    @Test
+    func theArchitectStaysListedButUnreachableFromOutside() {
+        #expect(!Agent.isHiddenBuiltIn(Agent.architectId))
+        #expect(Agent.builtInAgents.contains { $0.id == Agent.architectId })
+        #expect(Agent.rejectBuiltInForExternalSurface(Agent.architectId, source: "http/agents/run") != nil)
+    }
 }

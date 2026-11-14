@@ -252,6 +252,111 @@ struct SecureChannelE2ETests {
         #expect(status != 426)
     }
 
+    // MARK: - 426 For Owner Writes
+
+    /// A relay-origin owner request, plaintext, with the master Bearer.
+    private func plaintextOwnerRequest(
+        server: SecureTestServer,
+        method: String,
+        path: String,
+        body: String? = nil
+    ) -> URLRequest {
+        var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)\(path)")!)
+        request.httpMethod = method
+        request.setValue("1", forHTTPHeaderField: HTTPHandler.relayOriginHeaderName)
+        request.authenticate()
+        if let body {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = Data(body.utf8)
+        }
+        return request
+    }
+
+    /// A leaked pairing key must not change an agent, its tools, an approval
+    /// or a chat over plaintext: each owner write is 426'd before it runs.
+    @Test func plaintextOwnerWrites_relayOrigin_return426() async throws {
+        let server = try await startSecureTestServer(trustLoopback: true)
+        defer { Task { await server.shutdown() } }
+        let id = UUID().uuidString
+        let writes: [(String, String, String?)] = [
+            ("POST", "/agents", #"{"name":"x"}"#),
+            ("PATCH", "/agents/\(id)", #"{"autonomous_exec_enabled":true}"#),
+            ("DELETE", "/agents/\(id)", nil),
+            ("POST", "/agents/\(id)/tools/preset", #"{"preset":"all"}"#),
+            ("POST", "/agents/\(id)/warm", #"{"model":"x"}"#),
+            ("PATCH", "/agents/\(id)/tools/shell", #"{"enabled":true}"#),
+            ("PATCH", "/sessions/\(id)", #"{"title":"x"}"#),
+            ("DELETE", "/sessions/\(id)", nil),
+        ]
+        for (method, path, body) in writes {
+            let request = plaintextOwnerRequest(server: server, method: method, path: path, body: body)
+            let (data, resp) = try await URLSession.shared.data(for: request)
+            #expect((resp as? HTTPURLResponse)?.statusCode == 426, "\(method) \(path)")
+            #expect(String(decoding: data, as: UTF8.self).contains("secure_channel_required"), "\(method) \(path)")
+        }
+    }
+
+    /// Owner reads are as private as the writes: chat history, live runs,
+    /// review queues and secret prompts are 426'd over plaintext too.
+    @Test func plaintextOwnerReads_relayOrigin_return426() async throws {
+        let server = try await startSecureTestServer(trustLoopback: true)
+        defer { Task { await server.shutdown() } }
+        let id = UUID().uuidString
+        let reads = [
+            "/sessions", "/sessions/\(id)", "/runs/\(id)/events", "/privacy/reviews", "/secrets/prompts",
+            "/approvals", "/config/approvals", "/agents/\(id)", "/models/picker", "/sessions/\(id)/context?agent_id=\(id)",
+        ]
+        for path in reads {
+            let request = plaintextOwnerRequest(server: server, method: "GET", path: path)
+            let (_, resp) = try await URLSession.shared.data(for: request)
+            #expect((resp as? HTTPURLResponse)?.statusCode == 426, "GET \(path)")
+        }
+    }
+
+    /// For one release the plain agent list stays readable, for phones up to
+    /// 1.0(5) that learn their pin from it.
+    @Test func plaintextAgentList_relayOrigin_isNot426ForNow() async throws {
+        let server = try await startSecureTestServer(trustLoopback: true)
+        defer { Task { await server.shutdown() } }
+        let request = plaintextOwnerRequest(server: server, method: "GET", path: "/agents")
+        let (_, resp) = try await URLSession.shared.data(for: request)
+        #expect((resp as? HTTPURLResponse)?.statusCode != 426)
+    }
+
+    /// OpenAI-style routes stay plaintext for third-party SDKs.
+    @Test func plaintextModels_relayOrigin_isNot426() async throws {
+        let server = try await startSecureTestServer(trustLoopback: true)
+        defer { Task { await server.shutdown() } }
+        let request = plaintextOwnerRequest(server: server, method: "GET", path: "/models")
+        let (_, resp) = try await URLSession.shared.data(for: request)
+        #expect((resp as? HTTPURLResponse)?.statusCode != 426)
+    }
+
+    @Test func ownerChannelRoutes_matchWholeSegments() {
+        #expect(HTTPHandler.isOwnerChannelRoute("/sessions"))
+        #expect(HTTPHandler.isOwnerChannelRoute("/agents/abc/run"))
+        #expect(!HTTPHandler.isOwnerChannelRoute("/agentsx"))
+        #expect(!HTTPHandler.isOwnerChannelRoute("/models"))
+        #expect(HTTPHandler.isOwnerChannelRoute("/tasks/abc"))
+        #expect(!HTTPHandler.isOwnerChannelRoute("/mcp/call"))
+        #expect(!HTTPHandler.isOwnerChannelRoute("/mcp/tools"))
+        #expect(!HTTPHandler.isOwnerChannelRoute("/chat/completions"))
+    }
+
+    /// Loopback (the Mac's own CLI) still edits in plaintext.
+    @Test func plaintextOwnerWrite_loopback_isNot426() async throws {
+        let server = try await startSecureTestServer(trustLoopback: true)
+        defer { Task { await server.shutdown() } }
+        var request = URLRequest(
+            url: URL(string: "http://\(server.host):\(server.port)/agents/\(UUID().uuidString)")!
+        )
+        request.httpMethod = "PATCH"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Data("{}".utf8)
+        let (_, resp) = try await URLSession.shared.data(for: request)
+        #expect((resp as? HTTPURLResponse)?.statusCode != 426)
+    }
+
     @Test func secureRun_relayOrigin_passes426Gate() async throws {
         let server = try await startSecureTestServer(trustLoopback: true)
         defer { Task { await server.shutdown() } }
@@ -281,20 +386,33 @@ struct SecureChannelE2ETests {
     }
 
     @Test func secureRun_builtInAgent_stillRejectedInsideChannel() async throws {
-        let server = try await startSecureTestServer(trustLoopback: true)
+        // A caller that doesn't own this Mac: an agent-scoped key. Owner
+        // callers (a master-scoped key like the paired phone's, or loopback)
+        // may run the built-in agent (docs/MOBILE_PROTOCOL.md §18); everyone
+        // else is still refused, the channel notwithstanding.
+        let scopedKey = try TokenBuilder.build(
+            privateKey: agentKey,
+            iss: agentAddress,
+            aud: agentAddress
+        )
+        let validator = APIKeyValidator.forAlice(
+            agentAddress: agentAddress,
+            extraWhitelist: [agentAddress]
+        )
+        let server = try await startSecureTestServer(trustLoopback: true, validator: validator)
         defer { Task { await server.shutdown() } }
         let session = try establishSession()
 
         // The channel satisfies the 426 gate, but the built-in Default agent
-        // remains locked to in-app surfaces: a remote (relay-origin) caller
-        // must still get the 403 guard envelope — now encrypted.
+        // remains locked to owner surfaces: a non-owner remote (relay-origin)
+        // caller must still get the 403 guard envelope — now encrypted.
         let chatBody = Data(
             #"{"model":"fake","stream":true,"messages":[{"role":"user","content":"hi"}]}"#.utf8
         )
         let inner = SecureChannel.InnerRequest(
             method: "POST",
             path: "/agents/\(Agent.defaultId.uuidString)/run",
-            authorization: "Bearer \(TestAuth.bearerToken)",
+            authorization: "Bearer \(scopedKey)",
             contentType: "application/json",
             body: chatBody.base64urlEncoded
         )
@@ -470,6 +588,151 @@ struct SecureChannelE2ETests {
         #expect(String(decoding: body, as: UTF8.self).contains("agent_scope_denied"))
     }
 
+    // MARK: - n8n Channel Ingress Through The Channel
+
+    /// The remote-n8n contract the pairing code relies on: a relay-origin
+    /// caller under the default `secure_channel_required` policy is 426'd in
+    /// plaintext, but the same ping/inbound wrapped in `/secure/call` is
+    /// accepted — no `Remote callers` plaintext toggle, no bearer, secret
+    /// still verified inside the ciphertext.
+    @Test func secureCall_n8nPingAndInbound_relayOrigin_acceptedUnderDefaultPolicy() async throws {
+        let channelSecret = "e2e-channel-secret-0123456789abcdef"
+        struct FixedSecretResolver: AgentChannelSecretResolving {
+            let value: String
+            func secret(named name: String, keychainId: String, connection: AgentChannelConnection) -> String? {
+                value
+            }
+        }
+        let connection = AgentChannelConnection(
+            id: "n8n-remote",
+            name: "n8n remote",
+            kind: .n8n,
+            supportedActions: [.diagnostics],
+            spaceAllowlist: [AgentChannelN8nConfiguration.spaceId],
+            inboundAuthorization: AgentChannelInboundAuthorizationPolicy(
+                senderAllowlist: ["workflow"],
+                roomAllowlist: ["conv-remote"]
+            ),
+            n8n: AgentChannelN8nConfiguration(
+                inboundVerification: AgentChannelN8nInboundVerification(method: .hmacSHA256),
+                remoteTransportPolicy: .secureChannelRequired
+            )
+        )
+
+        try await AgentChannelConfigurationTestLock.shared.run {
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("osaurus-n8n-secure-\(UUID().uuidString)", isDirectory: true)
+            let previousDirectory = AgentChannelConfigurationStore.overrideDirectory
+            let previousIngress = AgentChannelWebhookIngress.shared
+            AgentChannelConfigurationStore.overrideDirectory = root
+            defer {
+                AgentChannelConfigurationStore.overrideDirectory = previousDirectory
+                AgentChannelWebhookIngress.shared = previousIngress
+                try? FileManager.default.removeItem(at: root)
+            }
+            try AgentChannelConfigurationStore.save(AgentChannelConfiguration(connections: [connection]))
+            let store = AgentChannelMessageStore()
+            try store.openInMemory()
+            AgentChannelWebhookIngress.shared = AgentChannelWebhookIngress(
+                secretResolver: FixedSecretResolver(value: channelSecret),
+                messageStore: store,
+                activityCenter: AgentChannelInboundActivityCenter(),
+                transportHealth: AgentChannelTransportHealthCenter(),
+                relaySubmit: { _ in .dispatched(agentId: UUID(), rule: "default") },
+                taskLookup: { _ in nil },
+                rateLimiter: PairingRateLimiter(window: 60, maxPerWindow: 1_000, denialCooldown: 0)
+            )
+
+            let server = try await startSecureTestServer(trustLoopback: true)
+            defer { Task { await server.shutdown() } }
+            let session = try establishSession()
+            let base = "http://\(server.host):\(server.port)"
+
+            // Control: plaintext relay-origin ping is refused.
+            var plain = URLRequest(url: URL(string: "\(base)/channels/n8n/n8n-remote/ping")!)
+            plain.setValue("1", forHTTPHeaderField: HTTPHandler.relayOriginHeaderName)
+            plain.setValue(
+                "sha256=\(AgentChannelAsyncSubstrate.hmacSHA256Hex(body: Data(), secret: channelSecret))",
+                forHTTPHeaderField: "X-Osaurus-Channel-Signature"
+            )
+            let (plainData, plainResp) = try await URLSession.shared.data(for: plain)
+            #expect((plainResp as? HTTPURLResponse)?.statusCode == 426)
+            #expect(String(decoding: plainData, as: UTF8.self).contains("secure_channel_required"))
+
+            // Ping through the channel: inner 200 with secure_channel: true.
+            let pingInner = SecureChannel.InnerRequest(
+                method: "GET",
+                path: "/channels/n8n/n8n-remote/ping",
+                authorization: nil,
+                accept: "application/json",
+                headers: [
+                    "X-Osaurus-Channel-Signature":
+                        "sha256=\(AgentChannelAsyncSubstrate.hmacSHA256Hex(body: Data(), secret: channelSecret))"
+                ]
+            )
+            let (pingCall, pingSeq) = try session.sealCall(innerRequest: JSONEncoder().encode(pingInner))
+            var pingRequest = try secureCallRequest(server: server, call: pingCall)
+            pingRequest.setValue("1", forHTTPHeaderField: HTTPHandler.relayOriginHeaderName)
+            let (pingData, pingResp) = try await URLSession.shared.data(for: pingRequest)
+            #expect((pingResp as? HTTPURLResponse)?.statusCode == 200)
+            let pingOpened = try SecureChannelClient.openBufferedResponse(
+                pingData, opener: session.makeResponseOpener(requestSeq: pingSeq))
+            #expect(pingOpened.status == 200)
+            let pingBody = String(decoding: pingOpened.body.flatMap { Data(base64urlEncoded: $0) } ?? Data(), as: UTF8.self)
+            #expect(pingBody.contains("\"secure_channel\":true"))
+            #expect(pingBody.contains("\"transport\":\"secure_channel\""))
+
+            // Inbound envelope through the channel: inner 202 accepted.
+            let envelope = Data(
+                #"{"v":1,"event_id":"evt-secure-1","conversation_id":"conv-remote","sender":{"id":"workflow"},"content":"ping"}"#
+                    .utf8)
+            let inboundInner = SecureChannel.InnerRequest(
+                method: "POST",
+                path: "/channels/n8n/n8n-remote/inbound",
+                authorization: nil,
+                accept: "application/json",
+                contentType: "application/json",
+                headers: [
+                    "X-Osaurus-Channel-Signature":
+                        "sha256=\(AgentChannelAsyncSubstrate.hmacSHA256Hex(body: envelope, secret: channelSecret))"
+                ],
+                body: envelope.base64urlEncoded
+            )
+            let (inboundCall, inboundSeq) = try session.sealCall(innerRequest: JSONEncoder().encode(inboundInner))
+            var inboundRequest = try secureCallRequest(server: server, call: inboundCall)
+            inboundRequest.setValue("1", forHTTPHeaderField: HTTPHandler.relayOriginHeaderName)
+            let (inboundData, inboundResp) = try await URLSession.shared.data(for: inboundRequest)
+            #expect((inboundResp as? HTTPURLResponse)?.statusCode == 200)
+            // The wire never shows the envelope status or the task id.
+            #expect(!String(decoding: inboundData, as: UTF8.self).contains("accepted"))
+            let inboundOpened = try SecureChannelClient.openBufferedResponse(
+                inboundData, opener: session.makeResponseOpener(requestSeq: inboundSeq))
+            #expect(inboundOpened.status == 202)
+            let inboundBody =
+                (try? JSONSerialization.jsonObject(
+                    with: inboundOpened.body.flatMap { Data(base64urlEncoded: $0) } ?? Data())) as? [String: Any]
+                ?? [:]
+            #expect(inboundBody["status"] as? String == "accepted")
+            #expect((inboundBody["poll_url"] as? String)?.hasPrefix("/channels/n8n/n8n-remote/tasks/") == true)
+
+            // A wrong secret inside the channel is still a 401 — encryption
+            // never substitutes for the channel secret.
+            let badInner = SecureChannel.InnerRequest(
+                method: "GET",
+                path: "/channels/n8n/n8n-remote/ping",
+                authorization: nil,
+                headers: ["X-Osaurus-Channel-Signature": "sha256=00"]
+            )
+            let (badCall, badSeq) = try session.sealCall(innerRequest: JSONEncoder().encode(badInner))
+            var badRequest = try secureCallRequest(server: server, call: badCall)
+            badRequest.setValue("1", forHTTPHeaderField: HTTPHandler.relayOriginHeaderName)
+            let (badData, _) = try await URLSession.shared.data(for: badRequest)
+            let badOpened = try SecureChannelClient.openBufferedResponse(
+                badData, opener: session.makeResponseOpener(requestSeq: badSeq))
+            #expect(badOpened.status == 401)
+        }
+    }
+
     // MARK: - Inner Auth Still Enforced
 
     @Test func secureCall_missingInnerBearer_401Inside() async throws {
@@ -496,18 +759,110 @@ struct SecureChannelE2ETests {
         defer { Task { await server.shutdown() } }
         let session = try establishSession()
 
-        // No nesting: an inner request pointing back at /secure/* is malformed.
+        // No nesting: an inner request pointing back at /secure/* is
+        // malformed, under any prefix that normalises to it.
+        for path in ["/secure/call", "/v1/secure/call", "/api/secure/session", "/v1/api/secure/call?x=1"] {
+            let inner = SecureChannel.InnerRequest(
+                method: "POST",
+                path: path,
+                authorization: nil
+            )
+            let (call, _) = try session.sealCall(innerRequest: JSONEncoder().encode(inner))
+            let request = try secureCallRequest(server: server, call: call)
+
+            let (data, resp) = try await URLSession.shared.data(for: request)
+            #expect((resp as? HTTPURLResponse)?.statusCode == 400, "\(path)")
+            #expect(String(decoding: data, as: UTF8.self).contains("secure_malformed"), "\(path)")
+        }
+    }
+
+    // MARK: - Call Privacy (osaurus_privacy)
+
+    /// `osaurus_privacy` is honoured only for the owner's paired phone: a
+    /// master-scoped key validated inside the Secure Channel. A local process
+    /// can open its own session (the handshake does not authenticate the
+    /// client) and reaches us over loopback, which skips the Bearer check;
+    /// that must not let it turn the Privacy Filter off for its runs.
+    @Test func secureRun_loopbackOwnSession_ignoresPrivacyOff() async throws {
+        let recorder = CallPrivacyRecorder()
+        let server = try await startSecureTestServer(
+            engine: CallPrivacyRecordingEngine(recorder: recorder),
+            trustLoopback: true
+        )
+        defer { Task { await server.shutdown() } }
+        AgentIdentityRegistry.shared.update(
+            addresses: [agentAddress],
+            indices: [0],
+            addressByAgentId: [UUID(): agentAddress]
+        )
+        let session = try establishSession()
+
+        // No Bearer and no relay-origin header: a plain local caller.
+        let (data, status) = try await sendPrivacyOffRun(
+            server: server,
+            session: session,
+            authorization: nil,
+            relayOrigin: false
+        )
+        #expect(status == 200, "\(String(decoding: data, as: UTF8.self))")
+        #expect(!recorder.sawPrivacy.isEmpty)
+        #expect(recorder.sawPrivacy.allSatisfy { $0 == nil })
+    }
+
+    /// Control for the test above: the paired phone (master key, relayed)
+    /// still turns the filter off for its own call, so the negative case
+    /// cannot pass just because the value never reaches the engine.
+    @Test func secureRun_pairedPhoneMasterKey_honoursPrivacyOff() async throws {
+        let recorder = CallPrivacyRecorder()
+        let server = try await startSecureTestServer(
+            engine: CallPrivacyRecordingEngine(recorder: recorder),
+            trustLoopback: true
+        )
+        defer { Task { await server.shutdown() } }
+        AgentIdentityRegistry.shared.update(
+            addresses: [agentAddress],
+            indices: [0],
+            addressByAgentId: [UUID(): agentAddress]
+        )
+        let session = try establishSession()
+
+        let (data, status) = try await sendPrivacyOffRun(
+            server: server,
+            session: session,
+            authorization: "Bearer \(TestAuth.bearerToken)",
+            relayOrigin: true
+        )
+        #expect(status == 200, "\(String(decoding: data, as: UTF8.self))")
+        #expect(!recorder.sawPrivacy.isEmpty)
+        #expect(recorder.sawPrivacy.allSatisfy { $0 == .off })
+    }
+
+    private func sendPrivacyOffRun(
+        server: SecureTestServer,
+        session: SecureChannelSession,
+        authorization: String?,
+        relayOrigin: Bool
+    ) async throws -> (Data, Int?) {
+        let chatBody = Data(
+            #"{"model":"fake","stream":true,"osaurus_privacy":"off","messages":[{"role":"user","content":"hi"}]}"#
+                .utf8
+        )
         let inner = SecureChannel.InnerRequest(
             method: "POST",
-            path: "/secure/call",
-            authorization: nil
+            path: "/agents/\(agentAddress)/run",
+            authorization: authorization,
+            accept: "text/event-stream",
+            contentType: "application/json",
+            headers: ["X-Persist": "false"],
+            body: chatBody.base64urlEncoded
         )
         let (call, _) = try session.sealCall(innerRequest: JSONEncoder().encode(inner))
-        let request = try secureCallRequest(server: server, call: call)
-
+        var request = try secureCallRequest(server: server, call: call, accept: "text/event-stream")
+        if relayOrigin {
+            request.setValue("1", forHTTPHeaderField: HTTPHandler.relayOriginHeaderName)
+        }
         let (data, resp) = try await URLSession.shared.data(for: request)
-        #expect((resp as? HTTPURLResponse)?.statusCode == 400)
-        #expect(String(decoding: data, as: UTF8.self).contains("secure_malformed"))
+        return (data, (resp as? HTTPURLResponse)?.statusCode)
     }
 }
 
@@ -572,5 +927,39 @@ private func startSecureTestServer(
         }
         await lease.release()
         throw error
+    }
+}
+
+/// Records the call privacy the run's turns see, read where the Privacy
+/// Filter reads it: the task-local around `AgentToolLoop`.
+private final class CallPrivacyRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var seen: [VoiceCallPrivacy?] = []
+
+    func record(_ privacy: VoiceCallPrivacy?) {
+        lock.lock()
+        defer { lock.unlock() }
+        seen.append(privacy)
+    }
+
+    /// One entry per model call the run made, in order.
+    var sawPrivacy: [VoiceCallPrivacy?] {
+        lock.lock()
+        defer { lock.unlock() }
+        return seen
+    }
+}
+
+private struct CallPrivacyRecordingEngine: ChatEngineProtocol {
+    let recorder: CallPrivacyRecorder
+
+    func streamChat(request: ChatCompletionRequest) async throws -> AsyncThrowingStream<String, Error> {
+        recorder.record(ChatExecutionContext.voiceCallPrivacy)
+        return try await MockChatEngine(deltas: ["ok"], model: "fake").streamChat(request: request)
+    }
+
+    func completeChat(request: ChatCompletionRequest) async throws -> ChatCompletionResponse {
+        recorder.record(ChatExecutionContext.voiceCallPrivacy)
+        return try await MockChatEngine(completeText: "ok", model: "fake").completeChat(request: request)
     }
 }

@@ -72,6 +72,29 @@ struct ProviderCredentialPromptServiceTests {
         }
     }
 
+    /// The headless guard, proven by reachability: with no `bypassUI`
+    /// installed this call used to mount a real credential panel from the
+    /// test process and never return (the 2026-09-09 "Connect
+    /// OpenAI-Compatible Server" panel that wedged the full suite). Under
+    /// tests it must resolve `.cancelled` without touching AppKit.
+    @Test
+    func noBypass_underTests_resolvesCancelledInsteadOfMountingAPanel() async {
+        Self.clearBypass()
+        #expect(RuntimeEnvironment.isUnderTests, "guard keys off this; false here means the suite can wedge")
+
+        let request = ProviderCredentialRequest(
+            preset: .custom,
+            providerName: "Headless Probe",
+            mode: .addNew
+        )
+        let result = await ProviderCredentialPromptService.requestCredentials(request)
+        if case .cancelled = result {
+            // ok
+        } else {
+            Issue.record("expected .cancelled, got \(result)")
+        }
+    }
+
     @Test
     func request_picksUpProviderInstructionsFromCatalog() {
         // The sheet derives its title, format hint, and OAuth

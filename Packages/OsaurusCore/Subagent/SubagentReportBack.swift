@@ -6,7 +6,7 @@
 //  session that dispatched it. A `background: true` spawn returns an
 //  acknowledgment as its tool result, so the digest cannot travel the
 //  normal tool-result channel — instead it lands here as a follow-up
-//  user-role turn (`session.send`), the same canonical path the notch
+//  user-role turn (`session.send`), the same canonical path background-task
 //  quick-reply and plugin interrupts use, so the orchestrator narrates
 //  the result in a fresh turn.
 //
@@ -21,26 +21,49 @@ enum SubagentReportBack {
 
     /// The follow-up turn text. Prefixed so the model (and the user) can
     /// tell a helper report from an ordinary user message.
-    static func message(title: String, success: Bool, summary: String) -> String {
+    static func message(
+        title: String,
+        success: Bool,
+        summary: String,
+        completedEnvelope: String? = nil
+    ) -> String {
         let trimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
         let outcome = success ? "finished" : "failed"
         let body = trimmed.isEmpty ? "(no summary provided)" : trimmed
-        return "[Helper report] \(title) \(outcome): \(body)"
+        let report = "[Helper report] \(title) \(outcome): \(body)"
+        // The immediate background ack has no worker yet. Preserve the actual
+        // persisted handle from the completed spawn result, just as foreground
+        // spawn_agent does; a summary alone cannot support `continue`.
+        guard success,
+            let completedEnvelope,
+            ToolEnvelope.isSuccess(completedEnvelope),
+            let payload = ToolEnvelope.successPayload(completedEnvelope) as? [String: Any],
+            payload["kind"] as? String == "spawn_result",
+            let rawID = payload["session_id"] as? String,
+            let sessionID = UUID(uuidString: rawID)
+        else { return report }
+        return report + "\nWorker session_id (spawn_agent continue): \(sessionID.uuidString)"
     }
 
     /// Deliver the digest to the launching session once it is idle —
     /// not streaming and not paused on a clarify prompt (sending during a
     /// clarify would wrongly answer it). The weak box is re-read on every
     /// tick so this loop never extends the session's lifetime; if the chat
-    /// is gone, the report is dropped and the notch background-task row
+    /// is gone, the report is dropped and the Activity row
     /// remains the durable record of the digest.
     static func deliver(
         title: String,
         success: Bool,
         summary: String,
+        completedEnvelope: String? = nil,
         to box: WeakChatSessionBox?
     ) async {
-        let report = message(title: title, success: success, summary: summary)
+        let report = message(
+            title: title,
+            success: success,
+            summary: summary,
+            completedEnvelope: completedEnvelope
+        )
         while !Task.isCancelled {
             guard let session = box?.session else { return }
             if !session.isStreaming, session.awaitingClarify == nil {
@@ -49,7 +72,7 @@ enum SubagentReportBack {
                 // drain them (the ack already returned), so promote them
                 // right before the report lands.
                 await session.promoteWorkerSharedArtifacts()
-                session.send(report)
+                session.send(report, taskIntent: .hostContinuation)
                 return
             }
             try? await Task.sleep(for: idlePollInterval)

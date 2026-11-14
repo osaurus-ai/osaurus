@@ -1,0 +1,84 @@
+{
+  "id": "workflow.team-default-mail-triage",
+  "domain": "workflow",
+  "label": "workflow • Mail Triage sorts the last three days of unread mail",
+  "query": "Mail Triage sorts the last three days of unread mail",
+  "notes": "Runs the shipped file. Every tool step returns its fixture under its teammate, so nothing on this Mac is read. The fixtures are the shapes `mail_list` and `mail_read` return; the newsletter sender is left out of the reads. Fixture dates and expected arguments are `{{date:…}}` tokens on this Mac's calendar at run time.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "bundled": "default-workflow-mail-triage",
+      "input": {},
+      "toolResults": {
+        "mail": {
+          "messages": [
+            {
+              "id": "<contract-1@acme.test>",
+              "subject": "Contract signature needed by Friday",
+              "sender": "Legal Team <legal@acme.test>",
+              "dateReceived": "{{date:today_start+540m}}",
+              "isRead": false,
+              "isFlagged": false,
+              "mailboxPath": "Work/INBOX"
+            },
+            {
+              "id": "<weekly-88@example.test>",
+              "subject": "Weekly newsletter",
+              "sender": "Example News <newsletter@example.test>",
+              "dateReceived": "{{date:yesterday_start+420m}}",
+              "isRead": false,
+              "isFlagged": false,
+              "mailboxPath": "Work/INBOX"
+            }
+          ],
+          "count": 2,
+          "mailbox_path": "INBOX",
+          "truncated": false
+        },
+        "bodies.item": {
+          "message": {
+            "id": "<contract-1@acme.test>",
+            "subject": "Contract signature needed by Friday",
+            "sender": "Legal Team <legal@acme.test>",
+            "to": ["me@example.test"],
+            "cc": [],
+            "dateReceived": "{{date:today_start+540m}}",
+            "isRead": false,
+            "isFlagged": false,
+            "isJunk": false,
+            "mailboxPath": "Work/INBOX",
+            "content": "Hi, could you sign the vendor contract and send it back by Friday? The signature page is attached.",
+            "attachments": [{ "name": "contract.pdf" }]
+          }
+        }
+      },
+      "toolArguments": {
+        "mail": {
+          "unread_only": true,
+          "since": "{{date:days_ago:3}}",
+          "limit": 40
+        },
+        "bodies.item": {
+          "id": "<contract-1@acme.test>",
+          "mailbox_path": "Work/INBOX"
+        }
+      },
+      "outputKeys": [
+        "triage"
+      ],
+      "outputContains": {
+        "triage": [
+          "Contract"
+        ]
+      },
+      "outputExcludes": {
+        "triage": [
+          "{",
+          "}",
+          "\": \"",
+          "\\n"
+        ]
+      }
+    }
+  }
+}

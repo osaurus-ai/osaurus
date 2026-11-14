@@ -18,7 +18,61 @@ final class BlockMemoizer {
     private var lastCount = 0
     private var lastTurnId: UUID?
     private var lastContentLen = 0
+    private var lastContentRevision: UInt64 = 0
     private var lastThinkingLen = 0
+    /// Completed Responses calls can arrive after text/reasoning and preview
+    /// state have stopped changing, so tool state is part of the fast-path
+    /// key. `toolStateRevision` bumps on every `toolCalls` / `toolResults` /
+    /// `toolCallDurations` write, so identity plus revision is the whole key.
+    /// Snapshotting the values instead kept the previous dictionaries alive,
+    /// and the turn's next write then copied its whole tool-result map.
+    private struct ToolStateKey: Equatable {
+        /// Held strongly so a later turn can't reuse its address.
+        let turn: ChatTurn
+        let revision: UInt64
+
+        init(_ turn: ChatTurn) {
+            self.turn = turn
+            revision = turn.toolStateRevision
+        }
+
+        static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.turn === rhs.turn && lhs.revision == rhs.revision
+        }
+    }
+    private var lastToolStates: [ToolStateKey] = []
+    /// Final engine statistics arrive after the last content delta. They can
+    /// change without a text/version tick, so they belong in the cache key.
+    private struct GenerationStatsKey: Equatable {
+        let ttft: TimeInterval?
+        let tokensPerSecond: Double?
+        let tokenCount: Int?
+        let unclosedReasoning: Bool
+        let modelLoad: TimeInterval?
+        /// Ends of the footer's total-response-time span; stamped with no
+        /// content delta, like the stats above.
+        let lastOutputAt: Date?
+        let completedAt: Date?
+        let prefillProgress: PrefillProgressState?
+        let isLoadingModel: Bool
+        let isReasoningActive: Bool
+        let thinkingDuration: TimeInterval?
+
+        init(_ turn: ChatTurn) {
+            ttft = turn.timeToFirstToken
+            tokensPerSecond = turn.generationTokensPerSecond
+            tokenCount = turn.generationTokenCount
+            unclosedReasoning = turn.unclosedReasoning
+            modelLoad = turn.modelLoadSeconds
+            lastOutputAt = turn.lastOutputAt
+            completedAt = turn.completedAt
+            prefillProgress = turn.prefillProgress
+            isLoadingModel = turn.isLoadingModel
+            isReasoningActive = turn.isReasoningActive
+            thinkingDuration = turn.thinkingDuration
+        }
+    }
+    private var lastGenerationStats: GenerationStatsKey?
     private var lastPendingToolName: String?
     private var lastPendingToolArgSize = 0
     /// Remote-agent (Mode 2) tool-activity counter of the streaming turn. A
@@ -32,18 +86,28 @@ final class BlockMemoizer {
     /// from a local agent to a remote one) must force a full rebuild so stale
     /// "Osaurus" headers aren't kept by the fast / incremental paths.
     private var lastAgentName: String?
+    /// The session source baked into cached user-message blocks (it gates the
+    /// marker-less watcher envelope parse). A change forces a full rebuild.
+    private var lastSessionSource: SessionSource?
     /// Must match `streamingTurnId` for the fast path — `generateBlocks` depends on it for typing / prefill UI.
     private var lastStreamingTurnId: UUID?
+    /// Must match `activeTurnId` for the fast path — it drives the pending
+    /// tool chip and the finishing-phase indicator during the engine tail.
+    private var lastActiveTurnId: UUID?
     private let streamingMaxBlocks = 80
     private let nonStreamingMaxBlocks = 400
+    /// Blocks retained in `cached`. The view never shows more than
+    /// `nonStreamingMaxBlocks`, so older blocks were only memory; the
+    /// headroom keeps a turn boundary inside the trimmed range.
+    private let cacheMaxBlocks = 600
     /// callId → occurrence ordinal of that exact call (name + canonical args)
     /// since the last user message; feeds the "×N" repeat badge. Owned HERE
     /// rather than computed inside `generateBlocks` because the incremental /
     /// append paths hand `generateBlocks` only a SUFFIX of the turns — a
     /// counter local to it would undercount repeats spanning earlier turns
     /// and the badge would change value on the next full rebuild. Recomputed
-    /// only when the transcript's total call count changes (canonicalising
-    /// args is a JSON parse per call — too much for every streaming sync).
+    /// only when call/result metadata changes (canonicalising args is a JSON
+    /// parse per call — too much for every unchanged streaming sync).
     private var cachedRepeatCounts: [String: Int] = [:]
     private var lastRepeatCallTotal = -1
 
@@ -54,31 +118,51 @@ final class BlockMemoizer {
     func blocks(
         from turns: [ChatTurn],
         streamingTurnId: UUID?,
+        activeTurnId: UUID? = nil,
         agentName: String,
+        sessionSource: SessionSource = .chat,
         version: Int = 0
     ) -> [ContentBlock] {
         let count = turns.count
+        // The last turn is "live" for incremental purposes while either id
+        // points at it: deltas painting (`streamingTurnId`) or the run still
+        // open on the engine tail (`activeTurnId`, e.g. pending-tool arg ticks).
+        let liveTurnId = streamingTurnId ?? activeTurnId
         let lastId = turns.last?.id
         let contentLen = turns.last?.contentLength ?? 0
+        let contentRevision = turns.last?.contentRevision ?? 0
         let thinkingLen = turns.last?.thinkingLength ?? 0
+        let generationStats = turns.last.map(GenerationStatsKey.init)
         let pendingToolName = turns.last?.pendingToolName
         let pendingToolArgSize = turns.last?.pendingToolArgSize ?? 0
         let remoteToolTick = turns.last?.remoteToolActivityTick ?? 0
+        let toolStates = turns.map(ToolStateKey.init)
+        let toolStateChanged = toolStates != lastToolStates
+        // Incremental/append regeneration may retain a stable prefix only
+        // when the tool state in that prefix really is unchanged. Late calls
+        // still belong to their original assistant, not the current tail.
+        let retainedPrefixCount = max(0, min(count, lastCount) - 1)
+        let earlierToolStateChanged = zip(toolStates, lastToolStates)
+            .prefix(retainedPrefixCount).contains { $0.0 != $0.1 }
         // The header name is baked into cached blocks; a change must invalidate
         // the fast / incremental / append paths so headers re-render with it.
-        let agentNameChanged = agentName != lastAgentName
+        let agentNameChanged = agentName != lastAgentName || sessionSource != lastSessionSource
 
         // Fast path: nothing changed (including which turn is streaming — drives typing indicator / placeholders).
         if !agentNameChanged
             && count == lastCount && lastId == lastTurnId
             && contentLen == lastContentLen && thinkingLen == lastThinkingLen
+            && contentRevision == lastContentRevision
+            && generationStats == lastGenerationStats
             && pendingToolName == lastPendingToolName
             && pendingToolArgSize == lastPendingToolArgSize
             && remoteToolTick == lastRemoteToolTick
+            && !toolStateChanged
             && version == lastVersion && !cached.isEmpty
             && streamingTurnId == lastStreamingTurnId
+            && activeTurnId == lastActiveTurnId
         {
-            return limited(streaming: streamingTurnId != nil)
+            return limited(streaming: liveTurnId != nil)
         }
 
         // Refresh the repeat-badge map when the set of calls could have
@@ -86,7 +170,7 @@ final class BlockMemoizer {
         // structurally replaced (version bump / turn-count change with an
         // unchanged total, e.g. history reload).
         let callTotal = turns.reduce(0) { $0 + ($1.toolCalls?.count ?? 0) }
-        if callTotal != lastRepeatCallTotal || version != lastVersion || count != lastCount {
+        if toolStateChanged || callTotal != lastRepeatCallTotal || version != lastVersion || count != lastCount {
             cachedRepeatCounts = Self.repeatCounts(for: turns)
             lastRepeatCallTotal = callTotal
         }
@@ -94,13 +178,15 @@ final class BlockMemoizer {
         // Incremental: only last turn's content changed during streaming
         let canIncrement =
             !agentNameChanged
-            && streamingTurnId != nil
+            && !earlierToolStateChanged
+            && liveTurnId != nil
             && count == lastCount && lastId == lastTurnId
             && lastId != nil && !cached.isEmpty
 
         // Append: one or more turns added at the end; previous last turn still matches
         let canAppend =
             !agentNameChanged
+            && !earlierToolStateChanged
             && !canIncrement
             && count > lastCount && !cached.isEmpty
             && lastCount >= 1 && turns[lastCount - 1].id == lastTurnId
@@ -114,7 +200,9 @@ final class BlockMemoizer {
                 at: count - 1,
                 in: turns,
                 streamingTurnId: streamingTurnId,
-                agentName: agentName
+                activeTurnId: activeTurnId,
+                agentName: agentName,
+                sessionSource: sessionSource
             )
             wasIncremental = true
         } else if canAppend {
@@ -124,7 +212,9 @@ final class BlockMemoizer {
                 at: lastCount - 1,
                 in: turns,
                 streamingTurnId: streamingTurnId,
-                agentName: agentName
+                activeTurnId: activeTurnId,
+                agentName: agentName,
+                sessionSource: sessionSource
             )
             wasIncremental = false
         } else {
@@ -132,24 +222,31 @@ final class BlockMemoizer {
             blocks = ContentBlock.generateBlocks(
                 from: turns,
                 streamingTurnId: streamingTurnId,
+                activeTurnId: activeTurnId,
                 agentName: agentName,
+                sessionSource: sessionSource,
                 repeatCounts: cachedRepeatCounts
             )
             wasIncremental = false
         }
 
         // Update cache state
-        cached = blocks
+        cached = Self.trimmedAtTurnBoundary(blocks, keeping: cacheMaxBlocks)
         lastCount = count
         lastTurnId = lastId
         lastContentLen = contentLen
+        lastContentRevision = contentRevision
         lastThinkingLen = thinkingLen
+        lastGenerationStats = generationStats
         lastPendingToolName = pendingToolName
         lastPendingToolArgSize = pendingToolArgSize
         lastRemoteToolTick = remoteToolTick
+        lastToolStates = toolStates
         lastVersion = version
         lastStreamingTurnId = streamingTurnId
+        lastActiveTurnId = activeTurnId
         lastAgentName = agentName
+        lastSessionSource = sessionSource
 
         // incremental path: only rebuild the suffix portion of the map; preserve stable prefix
         if wasIncremental, let prefixEnd = blocks.firstIndex(where: { $0.turnId == turns[count - 1].id }) {
@@ -160,7 +257,7 @@ final class BlockMemoizer {
             cachedGroupHeaderMap = Self.buildGroupHeaderMap(from: cached)
         }
 
-        return limited(streaming: streamingTurnId != nil)
+        return limited(streaming: liveTurnId != nil)
     }
 
     // MARK: - Private Helpers
@@ -173,7 +270,9 @@ final class BlockMemoizer {
         at turnIndex: Int,
         in turns: [ChatTurn],
         streamingTurnId: UUID?,
-        agentName: String
+        activeTurnId: UUID?,
+        agentName: String,
+        sessionSource: SessionSource
     ) -> [ContentBlock] {
         let turnId = turns[turnIndex].id
 
@@ -183,7 +282,9 @@ final class BlockMemoizer {
             return ContentBlock.generateBlocks(
                 from: turns,
                 streamingTurnId: streamingTurnId,
+                activeTurnId: activeTurnId,
                 agentName: agentName,
+                sessionSource: sessionSource,
                 repeatCounts: cachedRepeatCounts
             )
         }
@@ -195,28 +296,56 @@ final class BlockMemoizer {
             turnIndex >= 1
             ? turns.prefix(turnIndex).last { $0.role != .tool }
             : nil
+        // The response `previousTurn` belongs to may have started further
+        // back; walk its assistant run so the footer's total time spans it all.
+        // Stop at the latest run's keypress (a regenerated step joins the old
+        // group), matching `ContentBlock.generateBlocks`.
+        var previousGroupStartedAt: Date?
+        if previousTurn?.role == .assistant {
+            for turn in turns.prefix(turnIndex).reversed() where turn.role != .tool {
+                guard turn.role == .assistant else { break }
+                previousGroupStartedAt = turn.requestedAt ?? turn.createdAt
+                if turn.requestedAt != nil { break }
+            }
+        }
 
         // `cachedRepeatCounts` is keyed by call id over the FULL transcript,
         // so handing it to a suffix regeneration stays correct.
         let freshBlocks = ContentBlock.generateBlocks(
             from: turnsToGenerate,
             streamingTurnId: streamingTurnId,
+            activeTurnId: activeTurnId,
             agentName: agentName,
             previousTurn: previousTurn,
+            previousGroupStartedAt: previousGroupStartedAt,
+            sessionSource: sessionSource,
             repeatCounts: cachedRepeatCounts
         )
 
         return stablePrefix + freshBlocks
     }
 
+    /// Drops leading blocks past `cap`, cutting only where a new turn starts
+    /// so incremental regeneration still finds every kept turn whole.
+    static func trimmedAtTurnBoundary(_ blocks: [ContentBlock], keeping cap: Int) -> [ContentBlock] {
+        guard blocks.count > cap, ProcessEnvironment.value("USE_MOCK_CHAT_DATA") != "1" else { return blocks }
+        var start = blocks.count - cap
+        while start < blocks.count, start > 0, blocks[start].turnId == blocks[start - 1].turnId {
+            start += 1
+        }
+        guard start < blocks.count else { return blocks }
+        return Array(blocks[start...])
+    }
+
     private func limited(streaming: Bool) -> [ContentBlock] {
         // synthetic stress thread for profiling — must not truncate (see MockChatData)
-        if ProcessInfo.processInfo.environment["USE_MOCK_CHAT_DATA"] == "1" {
+        if ProcessEnvironment.value("USE_MOCK_CHAT_DATA") == "1" {
             return rolledUp(ContentBlock.coalesceToolGroups(cached))
         }
         // during streaming, cap tightly to prevent layout thrash on every delta.
-        // use a smooth transition: once streaming ends the cap rises gradually so
-        // the table doesn't get a sudden burst of new rows all at once.
+        // when streaming ends the cap widens in one step, prepending older rows
+        // above the reader. the table's scroll anchor resolves by block id so
+        // that insert doesn't move the reading position.
         let target = streaming ? streamingMaxBlocks : nonStreamingMaxBlocks
         let windowed = cached.count > target ? Array(cached.suffix(target)) : cached
         // Coalesce adjacent tool groups for display. `cached` keeps the original
@@ -240,12 +369,17 @@ final class BlockMemoizer {
         lastCount = 0
         lastTurnId = nil
         lastContentLen = 0
+        lastContentRevision = 0
         lastThinkingLen = 0
+        lastToolStates = []
+        lastGenerationStats = nil
         lastPendingToolName = nil
         lastPendingToolArgSize = 0
         lastVersion = -1
         lastStreamingTurnId = nil
+        lastActiveTurnId = nil
         lastAgentName = nil
+        lastSessionSource = nil
         cachedRepeatCounts = [:]
         lastRepeatCallTotal = -1
     }

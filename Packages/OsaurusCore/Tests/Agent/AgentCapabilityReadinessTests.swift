@@ -72,6 +72,41 @@ struct AgentCapabilityReadinessTests {
         #expect(appleScript.primaryBlocker == .noAppleScriptModel)
     }
 
+    @Test("computer use is unavailable without Accessibility even with a model")
+    func computerUseNeedsAccessibility() {
+        let missing = AgentCapabilityReadiness.subagent(
+            flag: .computerUse,
+            configured: true,
+            toolsEnabled: true,
+            hasResolvedModel: true,
+            hasRequiredSystemPermissions: false
+        )
+        #expect(missing.state == .unavailable)
+        #expect(!missing.isCallable)
+        #expect(missing.primaryBlocker == .systemPermissionMissing)
+
+        let granted = AgentCapabilityReadiness.subagent(
+            flag: .computerUse,
+            configured: true,
+            toolsEnabled: true,
+            hasResolvedModel: true,
+            hasRequiredSystemPermissions: true
+        )
+        #expect(granted.state == .active)
+        #expect(granted.blockers.isEmpty)
+
+        // The permission gate is Computer Use's alone: Browser Use has no
+        // Accessibility requirement and must not inherit the blocker.
+        let browser = AgentCapabilityReadiness.subagent(
+            flag: .browserUse,
+            configured: true,
+            toolsEnabled: true,
+            hasResolvedModel: true,
+            hasRequiredSystemPermissions: false
+        )
+        #expect(browser.state == .active)
+    }
+
     @Test("deny policy is an explicit unavailable state")
     func permissionDenied() {
         let readiness = AgentCapabilityReadiness.subagent(

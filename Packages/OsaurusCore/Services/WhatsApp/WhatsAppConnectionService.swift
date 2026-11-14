@@ -207,6 +207,13 @@ final class WhatsAppConnectionService: @unchecked Sendable {
     private let watchStatsLock = NSLock()
     private var watchDroppedNonAllowlistedRows = 0
 
+    /// In-memory cache for the on-disk WhatsApp configuration. Populated on
+    /// first access and invalidated whenever saveConfiguration(_:) succeeds,
+    /// so that repeated synchronous reads (e.g. during message send on the
+    /// main actor) never hit the file system after the first load.
+    private let configurationLock = NSLock()
+    private var cachedConfiguration: WhatsAppConnectionConfiguration?
+
     init(
         transport: any WhatsAppRPCTransport,
         messageStore: AgentChannelMessageStore? = nil,
@@ -228,12 +235,23 @@ final class WhatsAppConnectionService: @unchecked Sendable {
     // MARK: - Configuration
 
     func configuration() -> WhatsAppConnectionConfiguration {
-        WhatsAppConnectionConfigurationStore.load()
+        configurationLock.lock()
+        if let cached = cachedConfiguration {
+            configurationLock.unlock()
+            return cached
+        }
+        let loaded = WhatsAppConnectionConfigurationStore.load()
+        cachedConfiguration = loaded
+        configurationLock.unlock()
+        return loaded
     }
 
     func saveConfiguration(_ configuration: WhatsAppConnectionConfiguration) throws {
         do {
             try WhatsAppConnectionConfigurationStore.save(configuration)
+            configurationLock.lock()
+            cachedConfiguration = nil
+            configurationLock.unlock()
         } catch {
             throw WhatsAppConnectionServiceError.configurationSaveFailed(error.localizedDescription)
         }
@@ -1165,15 +1183,22 @@ final class WhatsAppConnectionService: @unchecked Sendable {
                 dispatchAttempted += submission.dispatchAttempted
                 dispatchSuppressed += submission.dispatchSuppressed
                 switch submission {
-                case .dispatched(let agentId, let rule):
+                case .dispatched(let target, let rule):
                     await activityCenter.record(
                         connectionId: Self.nativeConnectionId,
                         providerEventId: event.providerEventId,
                         stage: .dispatched,
                         reason: await AgentChannelInboundActivityPresentation.dispatchReason(
-                            agentId: agentId,
+                            target: target,
                             rule: rule
                         )
+                    )
+                case .fired(let eventNames, _):
+                    await activityCenter.record(
+                        connectionId: Self.nativeConnectionId,
+                        providerEventId: event.providerEventId,
+                        stage: .dispatched,
+                        reason: AgentChannelInboundActivityPresentation.firedReason(eventNames: eventNames)
                     )
                 case .suppressed(let reason):
                     await activityCenter.record(
@@ -1236,15 +1261,6 @@ final class WhatsAppConnectionService: @unchecked Sendable {
         _ event: WhatsAppNormalizedInboundEvent,
         config: WhatsAppConnectionConfiguration
     ) async -> AgentChannelInboundRelaySubmission {
-        let settings = config.inboundDispatch
-        guard settings.isConfigured else {
-            return .suppressed("inbound_dispatch_not_configured")
-        }
-        // Mentions are detectable in groups (the helper reports mentioned
-        // JIDs); a DM is inherently addressed to the account.
-        if settings.requireMention, event.isGroup, !event.mentionsSelf {
-            return .suppressed("mention_required")
-        }
         guard let senderId = event.senderId else {
             return .suppressed("inbound_sender_missing")
         }
@@ -1255,40 +1271,34 @@ final class WhatsAppConnectionService: @unchecked Sendable {
             sender: ChannelSenderMetadata(senderId: senderId, displayName: event.authorName),
             trustLevel: .verified
         )
-        let responder: AgentChannelInboundReplyHandler?
-        let attachmentResponder: AgentChannelInboundAttachmentReplyHandler?
-        if settings.autoReplyEnabled {
-            responder = { [weak self] reply in
-                guard let self else {
-                    throw WhatsAppConnectionServiceError.helper(
-                        "WhatsApp connection was released before replying."
-                    )
-                }
-                _ = try await self.sendMessage(
-                    chatId: event.roomId,
-                    content: reply,
-                    confirmSend: true
+        let responder: AgentChannelInboundReplyHandler = { [weak self] reply in
+            guard let self else {
+                throw WhatsAppConnectionServiceError.helper(
+                    "WhatsApp connection was released before replying."
                 )
             }
-            attachmentResponder = { [weak self] path, caption in
-                guard let self else {
-                    throw WhatsAppConnectionServiceError.helper(
-                        "WhatsApp connection was released before replying."
-                    )
-                }
-                try await self.sendArtifactReply(
-                    chatId: event.roomId,
-                    hostPath: path,
-                    caption: caption
-                )
-            }
-        } else {
-            responder = nil
-            attachmentResponder = nil
+            _ = try await self.sendMessage(
+                chatId: event.roomId,
+                content: reply,
+                confirmSend: true
+            )
         }
-        return await AgentChannelInboundRelay.shared.submit(
-            AgentChannelInboundRelayRequest(
+        let attachmentResponder: AgentChannelInboundAttachmentReplyHandler = { [weak self] path, caption in
+            guard let self else {
+                throw WhatsAppConnectionServiceError.helper(
+                    "WhatsApp connection was released before replying."
+                )
+            }
+            try await self.sendArtifactReply(
+                chatId: event.roomId,
+                hostPath: path,
+                caption: caption
+            )
+        }
+        return await EventManager.shared.ingestChannelMessage(
+            ChannelInboundMessage(
                 identity: identity,
+                kind: .whatsapp,
                 connectionId: Self.nativeConnectionId,
                 providerEventId: event.providerEventId,
                 providerRoute: AgentChannelProviderRoute(
@@ -1297,8 +1307,10 @@ final class WhatsAppConnectionService: @unchecked Sendable {
                 ),
                 content: event.content,
                 attachments: event.attachments,
-                settings: settings,
                 sourceLabel: "WhatsApp chat \(event.roomId), sender \(senderId)",
+                // Mentions are detectable in groups (the helper reports
+                // mentioned JIDs); a DM is inherently addressed to the account.
+                mentionsBot: event.isGroup ? event.mentionsSelf : nil,
                 reply: responder,
                 replyAttachment: attachmentResponder
             )

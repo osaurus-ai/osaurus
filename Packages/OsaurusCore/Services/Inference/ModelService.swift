@@ -8,23 +8,22 @@
 import Foundation
 
 struct GenerationParameters: Sendable {
+    let responsesProviderOptions: ResponsesProviderOptions?
     let temperature: Float?
     let maxTokens: Int
     /// Whether `maxTokens` came from an explicit client request. When false,
     /// local MLX services may replace the hardcoded app fallback with the
     /// model bundle's `generation_config.json.max_new_tokens`.
     let maxTokensExplicit: Bool
+    let admissionOutputTokensAreImplicit: Bool
     /// Optional per-request top_p override (falls back to server configuration when nil)
     let topPOverride: Float?
     /// Optional per-request top_k override (falls back to model/server configuration when nil).
     let topKOverride: Int?
     /// Optional per-request min_p override (falls back to model configuration when nil).
     let minPOverride: Float?
-    /// Optional repetition penalty (applies when supported by backend).
-    /// Mapped from OpenAI `frequency_penalty` only — `presence_penalty`
-    /// has no MLX analog. The raw OpenAI values below are kept on the
-    /// struct so remote services that natively support both can forward
-    /// them straight through.
+    /// Explicit multiplicative repetition penalty, independent of the additive
+    /// frequency/presence controls below. Nil preserves the bundle default.
     let repetitionPenalty: Float?
     /// True when sampling fields were filled from app/UI defaults rather than
     /// an explicit client request. Local MLX must treat these as defaults to
@@ -47,8 +46,26 @@ struct GenerationParameters: Sendable {
     /// + post-validate; remotes forward natively when the upstream
     /// supports it.
     let jsonMode: Bool
+    /// Explicit constrained-decoding schema for the local MLX runtime, as
+    /// the JSON text handed to vmlx `GenerateParameters.jsonSchema`. Set by
+    /// API callers (`response_format: json_schema`) and derived by
+    /// `MLXService` from `responseSchema`; never implemented with prompt
+    /// injection.
+    var jsonSchema: String?
+    /// JSON Schema the response must satisfy, sent through the backend's
+    /// native structured-output mode (see `StructuredOutputSchema`): a
+    /// cloud provider's schema mode, Apple Foundation Models, or local MLX
+    /// grammar-constrained decoding. Set only by workflow inference nodes;
+    /// backends without native support throw
+    /// `StructuredOutputError.unsupportedModel` instead of generating.
+    var responseSchema: JSONValue? = nil
     /// Model-specific options resolved from the active `ModelProfile` (e.g. aspect ratio).
-    let modelOptions: [String: ModelOptionValue]
+    /// Mutable so `MLXService` can select a model's native non-reasoning
+    /// mode for schema-constrained requests.
+    var modelOptions: [String: ModelOptionValue]
+    /// JSON variables for the active chat template, scoped to this generation.
+    let templateKwargs: [String: JSONValue]?
+    let speculativeDecoding: Bool?
     /// Session identifier for chat/history grouping. Not threaded into the
     /// MLX cache layer — vmlx's `CacheCoordinator` handles prefix reuse
     /// autonomously via content addressing.
@@ -75,6 +92,11 @@ struct GenerationParameters: Sendable {
     /// the plain OpenAI-compatible `/chat/completions` inference path (Mode 1).
     /// Ignored by local services and non-Osaurus remotes.
     let runAsRemoteAgent: Bool
+    /// Mode 2 only: the local agent on whose behalf the remote agent runs
+    /// (a helper this Mac's agent sent to a teammate's agent). The request
+    /// then carries an `osaurus_caller` declaration signed by that agent's
+    /// key. Nil when a person is the caller.
+    var remoteAgentCallerId: UUID? = nil
     /// When true, model-load and prefill progress are not surfaced through
     /// `InferenceProgressManager` (background warm-up requests).
     let suppressProgressUI: Bool
@@ -86,12 +108,17 @@ struct GenerationParameters: Sendable {
     /// user/API control and is consumed only by local MLX as a validated SSD
     /// prefix-boundary hint.
     let cacheStableSystemPrefix: String?
+    let admissionPositionLimit: Int?
     /// Where the request originated (chat UI, HTTP API, plugin, P2P).
     /// `ModelRuntime` records this per model so chat-window close can
     /// accelerate idle unload of chat-sourced models without touching models
     /// kept warm by API clients. Defaults to `.httpAPI` — the conservative
     /// choice (never accelerated) for paths that don't set it explicitly.
     let requestSource: RequestSource
+    /// How the Privacy Filter confirms fresh detections for this request.
+    /// `.autoScrub` is set only by delegated loops (Computer Use,
+    /// AppleScript) so their model steps never wait on a review sheet.
+    let privacyReviewMode: PrivacyReviewMode
     /// Whether this generation's model load may disturb a model someone else is
     /// using. `.interactive` (the default) keeps today's behaviour: a human is
     /// waiting, so the load may evict a resident model or cancel an in-flight
@@ -104,15 +131,14 @@ struct GenerationParameters: Sendable {
     /// argument so it survives the whole ChatEngine → MLXService → ModelRuntime
     /// path without every layer having to re-plumb it.
     let loadIntent: ModelLoadIntent
+    let alignmentRepairModel: String?
 
-    /// Per-agent options for the Claude Code subprocess backend (mode +
-    /// tool opt-ins + working directory). Nil everywhere else; only
-    /// `ClaudeCodeService` reads it.
-    ///
-    /// Rides on `GenerationParameters` for the same reason `loadIntent` does:
-    /// it has to survive the whole ChatEngine → service path without every
-    /// layer re-plumbing an extra argument.
-    let claudeCode: ClaudeCodeRunOptions?
+    func authorizesAlignmentRepair(for modelID: String) -> Bool {
+        alignmentRepairModel == modelID && requestSource == .chatUI
+            && activitySource == .chatUI && loadIntent == .interactive
+            && !auxiliaryCacheIntent && !warmupPrefill && !suppressProgressUI
+            && !runAsRemoteAgent && !preserveExistingResidencyOwner
+    }
 
     /// Preserve a non-nil residency owner when this request reuses an already
     /// resident model. Nested subagents set this so using an API/plugin-owned
@@ -128,11 +154,22 @@ struct GenerationParameters: Sendable {
     /// Rides on `GenerationParameters` for the same reason `loadIntent` does.
     let auxiliaryCacheIntent: Bool
 
+    /// Plain completion APIs retain the full EOF/error and content contract.
+    /// Native loops preview calls immediately and dispatch the whole batch at
+    /// logical completion. Both modes preserve every call and terminal stats.
+    /// Internal transport policy only; never forwarded to a model or provider.
+    let collectCompleteToolResponse: Bool
+
+    /// One-shot callers that must not act on a cut-off reply (compaction
+    /// replaces conversation history with it) ask services to fail with a
+    /// typed error when the output budget ended the generation.
+    let requireCompleteOutput: Bool
 
     init(
         temperature: Float?,
         maxTokens: Int,
         maxTokensExplicit: Bool = true,
+        admissionOutputTokensAreImplicit: Bool = false,
         topPOverride: Float? = nil,
         topKOverride: Int? = nil,
         minPOverride: Float? = nil,
@@ -142,7 +179,10 @@ struct GenerationParameters: Sendable {
         presencePenalty: Float? = nil,
         seed: UInt64? = nil,
         jsonMode: Bool = false,
+        jsonSchema: String? = nil,
         modelOptions: [String: ModelOptionValue] = [:],
+        templateKwargs: [String: JSONValue]? = nil,
+        speculativeDecoding: Bool? = nil,
         sessionId: String? = nil,
         activityID: UUID = UUID(),
         activitySource: RequestSource? = nil,
@@ -152,16 +192,22 @@ struct GenerationParameters: Sendable {
         suppressProgressUI: Bool = false,
         warmupPrefill: Bool = false,
         cacheStableSystemPrefix: String? = nil,
+        admissionPositionLimit: Int? = nil,
         requestSource: RequestSource = .httpAPI,
+        privacyReviewMode: PrivacyReviewMode = .interactive,
         loadIntent: ModelLoadIntent = .interactive,
-        claudeCode: ClaudeCodeRunOptions? = nil,
+        alignmentRepairModel: String? = nil,
         preserveExistingResidencyOwner: Bool = false,
-        auxiliaryCacheIntent: Bool = false
-
+        auxiliaryCacheIntent: Bool = false,
+        collectCompleteToolResponse: Bool = false,
+        requireCompleteOutput: Bool = false,
+        responsesProviderOptions: ResponsesProviderOptions? = nil
     ) {
+        self.responsesProviderOptions = responsesProviderOptions
         self.temperature = temperature
         self.maxTokens = maxTokens
         self.maxTokensExplicit = maxTokensExplicit
+        self.admissionOutputTokensAreImplicit = admissionOutputTokensAreImplicit
         self.topPOverride = topPOverride
         self.topKOverride = topKOverride
         self.minPOverride = minPOverride
@@ -171,7 +217,10 @@ struct GenerationParameters: Sendable {
         self.presencePenalty = presencePenalty
         self.seed = seed
         self.jsonMode = jsonMode
+        self.jsonSchema = jsonSchema
         self.modelOptions = modelOptions
+        self.templateKwargs = templateKwargs
+        self.speculativeDecoding = speculativeDecoding
         self.sessionId = sessionId
         self.activityID = activityID
         self.activitySource = activitySource ?? requestSource
@@ -181,11 +230,15 @@ struct GenerationParameters: Sendable {
         self.suppressProgressUI = suppressProgressUI
         self.warmupPrefill = warmupPrefill
         self.cacheStableSystemPrefix = cacheStableSystemPrefix
+        self.admissionPositionLimit = admissionPositionLimit
         self.requestSource = requestSource
+        self.privacyReviewMode = privacyReviewMode
         self.loadIntent = loadIntent
-        self.claudeCode = claudeCode
+        self.alignmentRepairModel = alignmentRepairModel
         self.preserveExistingResidencyOwner = preserveExistingResidencyOwner
         self.auxiliaryCacheIntent = auxiliaryCacheIntent
+        self.collectCompleteToolResponse = collectCompleteToolResponse
+        self.requireCompleteOutput = requireCompleteOutput
     }
 }
 
@@ -212,9 +265,10 @@ struct ServiceToolInvocation: Error, Sendable {
 /// vmlx-swift's `BatchEngine.generate` surfaces each as its own
 /// `Generation.toolCall(ToolCall)` event; `GenerationEventMapper`
 /// translates them to `ModelRuntimeEvent.toolInvocation(...)`, and
-/// `ModelRuntime.streamWithTools` collects them into this batch error so
-/// the caller (Work loop, HTTP agent loop, plugin streaming) can execute
-/// every call in a single iteration instead of one round-trip per call.
+/// `ModelRuntime.streamWithTools` collects them for both HTTP completions and
+/// native Chat/agent requests. Native previews can arrive before the full batch;
+/// execution starts only once the response is complete. Remote providers may
+/// also return this batch form.
 ///
 /// `invocations` is guaranteed non-empty. Consumers should `catch let invs as
 /// ServiceToolInvocations` BEFORE `catch let inv as ServiceToolInvocation`
@@ -222,6 +276,17 @@ struct ServiceToolInvocation: Error, Sendable {
 /// one-at-a-time streams (OpenAI server-side tool calls).
 struct ServiceToolInvocations: Error, Sendable {
     let invocations: [ServiceToolInvocation]
+}
+
+/// Parsed calls remain provisional when the response exhausts its output
+/// budget. Never signal an executable batch from an incomplete response.
+struct ServiceToolResponseExhausted: Error, LocalizedError, Sendable {
+    let toolCallCount: Int
+
+    var errorDescription: String? {
+        "The model reached its output token limit before finishing the tool response. "
+            + "The queued tools were not run."
+    }
 }
 
 /// In-band signaling for tool name and argument detection during streaming.
@@ -319,6 +384,78 @@ public enum StreamingAgentToolHint: Sendable {
         let json = String(delta.dropFirst(prefix.count))
         guard let data = json.data(using: .utf8) else { return nil }
         return try? JSONDecoder().decode(Trace.self, from: data)
+    }
+}
+
+/// In-band signaling for `osaurus_owner_approval`: a teammate's host is
+/// waiting on its owner to approve one of the run's tool calls. Tool name and
+/// owner label only.
+public enum StreamingOwnerApprovalHint: Sendable {
+    private static let prefix = "\u{FFFE}ownerapproval:"
+
+    public struct Status: Codable, Sendable, Equatable {
+        /// `waiting` | `approved` | `denied` | `timed_out`
+        public let phase: String
+        public let approvalId: String
+        public let name: String
+        public let owner: String
+        public let expiresAt: String?
+
+        public init(phase: String, approvalId: String, name: String, owner: String, expiresAt: String?) {
+            self.phase = phase
+            self.approvalId = approvalId
+            self.name = name
+            self.owner = owner
+            self.expiresAt = expiresAt
+        }
+    }
+
+    public static func encode(_ status: Status) -> String {
+        let json =
+            (try? JSONEncoder().encode(status))
+            .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+        return prefix + json
+    }
+
+    public static func decode(_ delta: String) -> Status? {
+        guard delta.hasPrefix(prefix) else { return nil }
+        guard let data = String(delta.dropFirst(prefix.count)).data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(Status.self, from: data)
+    }
+}
+
+/// In-band signaling for `osaurus_participant_message`: the owner of the
+/// remote shared agent said something in this conversation mid-run.
+public enum StreamingParticipantMessageHint: Sendable {
+    private static let prefix = "\u{FFFE}participant:"
+
+    public struct Message: Codable, Sendable, Equatable {
+        public let id: String
+        public let text: String
+        public let authorKind: String
+        public let authorHandle: String?
+        public let authorWallet: String?
+
+        public init(id: String, text: String, authorKind: String, authorHandle: String?, authorWallet: String?) {
+            self.id = id
+            self.text = text
+            self.authorKind = authorKind
+            self.authorHandle = authorHandle
+            self.authorWallet = authorWallet
+        }
+    }
+
+    public static func encode(_ message: Message) -> String {
+        let json =
+            (try? JSONEncoder().encode(message))
+            .map { String(decoding: $0, as: UTF8.self) } ?? "{}"
+        return prefix + json
+    }
+
+    public static func decode(_ delta: String) -> Message? {
+        guard delta.hasPrefix(prefix) else { return nil }
+        guard let data = String(delta.dropFirst(prefix.count)).data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(Message.self, from: data)
     }
 }
 
@@ -599,6 +736,22 @@ enum StreamingStatsHint: Sendable {
     }
 }
 
+/// Prepared input accounting is independent of terminal completion stats.
+/// In particular, receiving this hint must not disarm stream cancellation or
+/// invent an output-token count for a tool call dispatched before EOS.
+enum StreamingInputTokenHint: Sendable {
+    private static let prefix = "\u{FFFE}input_tokens:"
+
+    static func encode(_ count: Int) -> String { prefix + String(count) }
+
+    static func decode(_ delta: String) -> Int? {
+        guard delta.hasPrefix(prefix), let count = Int(delta.dropFirst(prefix.count)), count >= 0 else {
+            return nil
+        }
+        return count
+    }
+}
+
 /// In-band signaling for an Osaurus Router billing event (cost, token counts,
 /// status). Shares the `\u{FFFE}` sentinel so the generic filters in HTTP
 /// handlers and `ChatEngine` drop it from visible output and skip it for token
@@ -647,6 +800,29 @@ protocol ModelService: Sendable {
         requestedModel: String?,
         stopSequences: [String]
     ) async throws -> AsyncThrowingStream<String, Error>
+
+    /// Seconds `CoreModelService` may wait for the *first* streamed token
+    /// from this service before declaring a primary core-model call hung and
+    /// moving to the chat-model fallback. `nil` (the default) disables the
+    /// deadline. Only a service whose first token is not preceded by a
+    /// local load / process startup, and whose `streamDeltas` yields plain
+    /// text with no inline hint sentinels, should opt in: on MLX the wait can
+    /// legitimately be a weights load, on Claude Code a CLI startup, and the
+    /// remote stream carries billing / reasoning sentinels that `generateOneShot`
+    /// filters. Apple Foundation is always resident and streams plain text.
+    var firstTokenDeadline: TimeInterval? { get }
+
+    /// Whether `streamDeltas` enforces `parameters.responseSchema` the way
+    /// `generateOneShot` does. When false, a schema-bound call that wants
+    /// live tokens falls back to the one-shot path (Apple Foundation only
+    /// applies its `GenerationSchema` in the one-shot entry point; Claude
+    /// Code rejects a schema on either).
+    var streamsResponseSchema: Bool { get }
+}
+
+extension ModelService {
+    var firstTokenDeadline: TimeInterval? { nil }
+    var streamsResponseSchema: Bool { true }
 }
 
 /// Optional capability for services that can natively handle OpenAI-style tools (message-based only).
@@ -668,6 +844,19 @@ protocol ToolCapableService: ModelService {
         toolChoice: ToolChoiceOption?,
         requestedModel: String?
     ) async throws -> AsyncThrowingStream<String, Error>
+}
+
+/// A service with an ordered typed Responses generation stream. Compatibility
+/// providers may continue implementing the legacy boundary during migration.
+protocol ResponsesGenerationService: ModelService {
+    func streamResponses(
+        messages: [ChatMessage],
+        parameters: GenerationParameters,
+        stopSequences: [String],
+        tools: [Tool],
+        toolChoice: ToolChoiceOption?,
+        requestedModel: String?
+    ) async throws -> AsyncThrowingStream<ResponsesGenerationEvent, Error>
 }
 
 /// Simple router that selects a service based on the request and environment.

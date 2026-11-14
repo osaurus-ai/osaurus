@@ -4,12 +4,13 @@
 //
 //  Phase 4 — secrets by reference. A `*_ref` document value names WHERE a
 //  credential can be read at apply time; the credential itself never
-//  appears in a document, a plan, or an apply result. Two sources:
+//  appears in a document, a plan, or an apply result. Three sources:
 //
 //    env:VAR_NAME                 the app process environment
 //    keychain:SERVICE/ACCOUNT     a generic password in the login Keychain
 //                                 (create with: security add-generic-password
 //                                  -s SERVICE -a ACCOUNT -w)
+//    credential:KEY               a key saved for all agents in the Vault
 //
 //  Refs are write-only request values: the exporter never emits them, and
 //  re-applying the same ref is an idempotent overwrite of the stored copy.
@@ -21,6 +22,7 @@ public struct ConfigSecretRef: Equatable, Sendable {
     public enum Source: Equatable, Sendable {
         case env(String)
         case keychain(service: String, account: String)
+        case credential(String)
     }
 
     public let source: Source
@@ -30,6 +32,15 @@ public struct ConfigSecretRef: Equatable, Sendable {
         switch source {
         case .env(let name): return "env:\(name)"
         case .keychain(let service, let account): return "keychain:\(service)/\(account)"
+        case .credential(let key): return "credential:\(key)"
+        }
+    }
+
+    /// Reading the value may touch the Keychain (resolve off the main actor).
+    public var readsKeychain: Bool {
+        switch source {
+        case .env: return false
+        case .keychain, .credential: return true
         }
     }
 
@@ -69,9 +80,17 @@ public struct ConfigSecretRef: Equatable, Sendable {
             }
             return .success(ConfigSecretRef(source: .keychain(service: service, account: account)))
         }
+        if let key = trimmed.removingPrefix("credential:") {
+            guard CredentialKeys.isValid(key) else {
+                return .failure(
+                    "`\(raw)` is not a valid credential reference — expected credential:KEY "
+                        + "(letters, digits, underscore).")
+            }
+            return .success(ConfigSecretRef(source: .credential(key)))
+        }
         return .failure(
-            "`\(raw)` is not a secret reference — expected env:VAR_NAME or "
-                + "keychain:SERVICE/ACCOUNT (secrets themselves never go in the document).")
+            "`\(raw)` is not a secret reference — expected env:VAR_NAME, "
+                + "keychain:SERVICE/ACCOUNT, or credential:KEY (secrets themselves never go in the document).")
     }
 
     /// Read the referenced secret. `nil` means missing or empty — callers
@@ -93,6 +112,9 @@ public struct ConfigSecretRef: Equatable, Sendable {
                 !value.isEmpty
             else { return nil }
             return value
+        case .credential(let key):
+            let value = CredentialResolver.value(key, agentId: nil)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (value?.isEmpty ?? true) ? nil : value
         }
     }
 
@@ -113,6 +135,12 @@ public struct ConfigSecretRef: Equatable, Sendable {
             }
             return nil
         case .keychain:
+            return nil
+        case .credential(let key):
+            // Index-only presence check: never reads the Keychain.
+            if !CredentialStore.current.hasValue(key, scope: .global) {
+                return "\(label): no key named `\(key)` is saved for all agents in the Vault."
+            }
             return nil
         }
     }

@@ -76,6 +76,28 @@ struct StorageMigrationHardeningTests {
         sqlite3_close(conn)
     }
 
+    /// A convergence reopener resolves the current root. Keep unrelated live
+    /// handles out of a fresh catalog, and reopen them only after restoring
+    /// their original root and resident key. Call under StoragePathsTestLock.
+    private func withIsolatedCatalog(_ body: (URL) async throws -> Void) async throws {
+        let previousRoot = OsaurusPaths.overrideRoot
+        let previousKey = StorageKeyManager.shared.hasCachedKey
+            ? try StorageKeyManager.shared.currentKey() : nil
+        let handles = OsaurusDatabaseHandle.allOpenHandles
+        for handle in handles { handle.closer() }
+        let root = tempDir()
+        OsaurusPaths.overrideRoot = root
+        defer {
+            OsaurusPaths.overrideRoot = previousRoot
+            StorageEncryptionPolicy.shared.invalidateCache()
+            StorageKeyManager.shared.wipeCache()
+            if let previousKey { StorageKeyManager.shared._setKeyForTesting(previousKey) }
+            for handle in handles { handle.reopener() }
+            try? FileManager.default.removeItem(at: root)
+        }
+        try await body(root)
+    }
+
     // MARK: - R1: plugin DB quiesce
 
     /// `PluginDatabase.closeAllOpen()` force-closes a live connection (what the
@@ -171,42 +193,52 @@ struct StorageMigrationHardeningTests {
     @Test
     func concurrentConvergeSerializesWithoutDoubleConvertOrCorruption() async throws {
         try await StoragePathsTestLock.shared.run {
-            let root = self.tempDir()
-            OsaurusPaths.overrideRoot = root
-            let k = self.key(seed: 0x6B)
-            defer {
-                OsaurusPaths.overrideRoot = nil
-                StorageEncryptionPolicy.shared.invalidateCache()
-                StorageKeyManager.shared.wipeCache()
-            }
-            try StorageEncryptionPolicy.shared.setDesiredMode(.plaintext)
-            StorageKeyManager.shared._setKeyForTesting(k)
+            try await self.withIsolatedCatalog { outerRoot in
+                try StorageEncryptionPolicy.shared.setDesiredMode(.plaintext)
+                let inheritedActivity = ActivityLogStore()
+                try inheritedActivity.open()
+                defer { inheritedActivity.close() }
+                _ = try inheritedActivity.appendSystemEvent("migration-fixture-sentinel")
+                let outerActivityPath = OsaurusPaths.activityLogDatabaseFile().path
+                #expect(outerActivityPath.hasPrefix(outerRoot.path))
 
-            let path = OsaurusPaths.memoryDatabaseFile().path
-            try self.seedDB(at: path, key: nil, body: "concurrent")
+                try await self.withIsolatedCatalog { _ in
+                    let k = self.key(seed: 0x6B)
+                    try StorageEncryptionPolicy.shared.setDesiredMode(.plaintext)
+                    StorageKeyManager.shared._setKeyForTesting(k)
 
-            let reports = await withTaskGroup(
-                of: StorageMigrationCoordinator.Report.self
-            ) { group -> [StorageMigrationCoordinator.Report] in
-                for _ in 0 ..< 6 {
-                    group.addTask {
-                        await StorageMigrationCoordinator.shared.converge(to: .encrypted)
+                    let path = OsaurusPaths.memoryDatabaseFile().path
+                    try self.seedDB(at: path, key: nil, body: "concurrent")
+
+                    let reports = await withTaskGroup(
+                        of: StorageMigrationCoordinator.Report.self
+                    ) { group -> [StorageMigrationCoordinator.Report] in
+                        for _ in 0 ..< 6 {
+                            group.addTask {
+                                await StorageMigrationCoordinator.shared.converge(to: .encrypted)
+                            }
+                        }
+                        var out: [StorageMigrationCoordinator.Report] = []
+                        for await r in group { out.append(r) }
+                        return out
                     }
+
+                    // One seeded store converts once. Reopening a handle from
+                    // an earlier test must not create a second catalog target.
+                    #expect(reports.reduce(0) { $0 + $1.converted } == 1)
+                    #expect(reports.allSatisfy { $0.failed.isEmpty })
+                    #expect(StorageFileFormat.detect(path: OsaurusPaths.activityLogDatabaseFile().path) == .empty)
+
+                    #expect(StorageFileFormat.detect(path: path) == .encrypted)
+                    let conn = try EncryptedSQLiteOpener.open(path: path, key: k)
+                    #expect(self.readSingleText(conn, "SELECT body FROM notes LIMIT 1") == "concurrent")
+                    sqlite3_close(conn)
                 }
-                var out: [StorageMigrationCoordinator.Report] = []
-                for await r in group { out.append(r) }
-                return out
+
+                #expect(inheritedActivity.isOpen)
+                #expect(StorageFileFormat.detect(path: outerActivityPath) == .plaintext)
+                #expect(try inheritedActivity.appendSystemEvent("migration-fixture-restored").seq == 2)
             }
-
-            // Converted exactly once across all callers — never double, never
-            // corrupted into a failure.
-            #expect(reports.reduce(0) { $0 + $1.converted } == 1)
-            #expect(reports.allSatisfy { $0.failed.isEmpty })
-
-            #expect(StorageFileFormat.detect(path: path) == .encrypted)
-            let conn = try EncryptedSQLiteOpener.open(path: path, key: k)
-            #expect(self.readSingleText(conn, "SELECT body FROM notes LIMIT 1") == "concurrent")
-            sqlite3_close(conn)
         }
     }
 

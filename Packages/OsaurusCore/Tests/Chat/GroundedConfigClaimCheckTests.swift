@@ -414,6 +414,31 @@ struct GroundedConfigClaimCheckPredicateTests {
         )
         #expect(notice == nil)
     }
+
+    /// The live-proof reply that told the user to run a tool.
+    @Test
+    func notice_namedTool_trips() {
+        let notice = GroundedConfigClaimCheck.notice(
+            finalText: "To turn it on, run `osaurus_config` with `chat.web_search: true`.",
+            hasGroundedApply: true
+        )
+        #expect(notice == GroundedConfigClaimCheck.namedToolNotice)
+    }
+
+    @Test
+    func namesConfigureTool_matchesEveryConfigureToolName() {
+        #expect(GroundedConfigClaimCheck.namesConfigureTool("Call osaurus_inspect for the list."))
+        #expect(GroundedConfigClaimCheck.namesConfigureTool("Use osaurus_help, then retry."))
+        #expect(GroundedConfigClaimCheck.namesConfigureTool("osaurus_agents_create made it"))
+        #expect(GroundedConfigClaimCheck.namesConfigureTool("I used configurator_handoff."))
+    }
+
+    @Test
+    func namesConfigureTool_ignoresProseAndEnvironmentNames() {
+        #expect(!GroundedConfigClaimCheck.namesConfigureTool("Osaurus saved your model. Open Settings → Chat."))
+        #expect(!GroundedConfigClaimCheck.namesConfigureTool("Set OSAURUS_WORKFLOW_ROUTING=1 and relaunch."))
+        #expect(!GroundedConfigClaimCheck.namesConfigureTool("See osaurus.ai/docs for more."))
+    }
 }
 
 // MARK: - Driver behavior tests

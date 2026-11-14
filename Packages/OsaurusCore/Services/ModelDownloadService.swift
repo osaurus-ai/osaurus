@@ -66,16 +66,25 @@ final class ModelDownloadService: ObservableObject {
 
     @Published var downloadStates: [String: DownloadState] = [:]
     @Published var downloadMetrics: [String: DownloadMetrics] = [:]
+    /// Repair is a tracked download, including pause/cancel/retry. Keep its
+    /// explanation keyed to the model so changing variants cannot move it.
+    @Published private(set) var repairMessages: [String: String] = [:]
+    private var repairingModels: Set<String> = []
+    private var repairCheckingTokens: Set<UUID> = []
     /// Last download failure surfaced to the UI.
     @Published var downloadAlert: DownloadAlertInfo?
 
-    /// Cached total on-disk size of downloaded models. Computed off the main
-    /// thread by `refreshTotalDownloadedSize` (a recursive filesystem walk) and
-    /// published here so the header can read it without blocking the UI.
-    @Published private(set) var totalDownloadedSizeBytes: Int64 = 0
-
-    /// Keeps the cached size fresh when models are added/removed.
-    private var localModelsObserver: NSObjectProtocol?
+    /// Cached total on-disk size of the installed inventory. Computed off the
+    /// main thread by `refreshTotalDownloadedSize(inventoryCandidates:)` (a
+    /// recursive filesystem walk) and published here so the header can read
+    /// it without blocking the UI. `ModelManager` drives the refresh after
+    /// each local-discovery merge, which is also what `.localModelsChanged`
+    /// triggers, so the figure always covers the same set the header counts.
+    struct DownloadedInventorySize: Equatable, Sendable {
+        let modelCount: Int
+        let allocatedBytes: Int64
+    }
+    @Published private(set) var downloadedInventorySize = DownloadedInventorySize(modelCount: 0, allocatedBytes: 0)
 
     /// Categorised failure info shown in the alert. The `title` describes
     /// the kind of failure, `message` is the human-readable cause, and
@@ -89,6 +98,26 @@ final class ModelDownloadService: ObservableObject {
         let title: String
         let message: String
         let details: String
+    }
+
+    /// Why a completed download can't run, or nil when it can. Embedding
+    /// bundles run on the embedding engine, so they are judged by its
+    /// support rules rather than the chat runtime's.
+    nonisolated static func postDownloadCompatibilityIssue(for model: MLXModel) -> String? {
+        if model.isEmbedding {
+            guard case .unsupported(let reason) = EmbeddingDetection.runtimeSupport(at: model.localDirectory)
+            else { return nil }
+            return "Compatibility preflight: Embedding model not supported. Osaurus can't run it because \(reason)"
+        }
+        let preflight = ModelCompatibilityDiagnostics.report(
+            modelId: model.id,
+            modelName: model.name,
+            modelTypeHint: model.modelType,
+            bundleURL: model.localDirectory,
+            externalSource: model.externalSource
+        ).preflight
+        guard preflight.blocksRuntimeLoad else { return nil }
+        return "Compatibility preflight: \(preflight.title). \(preflight.detail)"
     }
 
     /// Build a categorised alert from a raw error message and the affected
@@ -201,6 +230,16 @@ final class ModelDownloadService: ObservableObject {
     private var downloadTokens: [String: UUID] = [:]
     private var progressSamples: [String: [(timestamp: TimeInterval, completed: Int64)]] = [:]
     private var lastKnownSpeed: [String: Double] = [:]
+    /// Last progress actually published to `downloadStates`/`downloadMetrics`
+    /// per model. Per-file delegates each throttle on their own, so a
+    /// multi-file download can call `updateDownloadProgress` many times per
+    /// second; every write to those `@Published` dictionaries fires
+    /// `objectWillChange`, which `ModelManager` forwards and which
+    /// re-evaluates the whole model grid on the main thread (app hangs).
+    /// Coalesce publishes through `shouldPublishProgress`.
+    private var lastPublishedProgress: [String: (time: TimeInterval, fraction: Double)] = [:]
+    nonisolated static let progressPublishInterval: TimeInterval = 0.5
+    nonisolated static let progressPublishMinDelta: Double = 0.01
     /// Per-model transfer accounting for aggregate progress: bytes from
     /// files already fully on disk (`fileTransferBase`), live per-file byte
     /// counts (`fileTransferProgress`), and the manifest total.
@@ -217,6 +256,7 @@ final class ModelDownloadService: ObservableObject {
     /// outlive the process. Coarse per-file resume (skip files whose on-disk
     /// size matches the expected size) covers the cross-launch case.
     private var pausedDownloads: [String: PausedSnapshot] = [:]
+    private var downloadRevisions: [String: String] = [:]
     private var hasRunTopUp = false
 
     /// Snapshot captured at the moment the user paused, used by `resume(_:)`
@@ -225,6 +265,7 @@ final class ModelDownloadService: ObservableObject {
     /// from the same byte offset.
     private struct PausedSnapshot {
         let resumeDataByFile: [String: Data]
+        let revision: String?
     }
 
     /// Result of one file's transfer inside the download task group.
@@ -252,24 +293,37 @@ final class ModelDownloadService: ObservableObject {
 
     init() {
         HuggingFaceAuth.preloadInBackground()
-        refreshTotalDownloadedSize()
-        // Recompute whenever a download completes, a model is deleted, or the
-        // models directory changes — all of which already post this.
-        localModelsObserver = NotificationCenter.default.addObserver(
-            forName: .localModelsChanged,
-            object: nil,
-            queue: .main
-        ) { _ in
-            Task { @MainActor in ModelDownloadService.shared.refreshTotalDownloadedSize() }
-        }
     }
 
     // MARK: - Download Methods
 
     func download(_ model: MLXModel, route: DownloadRoute = .direct) {
+        guard !isActiveDownload(model.id) else { return }
+        if FileManager.default.fileExists(
+            atPath: model.localDirectory.appendingPathComponent(ModelManifest.pendingUpdateFilename).path
+        ) {
+            repair(model)
+            return
+        }
+        downloadRevisions[model.id] = nil
+        repairingModels.remove(model.id)
+        repairMessages[model.id] = nil
         downloadRoutes[model.id] = route
         proxyPinnedCommits[model.id] = nil
         proxyDisabledModels.remove(model.id)
+        startOrchestration(model: model, resuming: nil)
+    }
+
+    func repair(_ model: MLXModel) {
+        guard !isActiveDownload(model.id) else { return }
+        guard model.bundleDirectory == nil, model.externalSource == nil else {
+            repairMessages[model.id] = L("External models are managed by their original application.")
+            return
+        }
+        downloadRevisions[model.id] = nil
+        repairingModels.insert(model.id)
+        repairMessages[model.id] = L("Checking model files…")
+        downloadRoutes[model.id] = .direct
         startOrchestration(model: model, resuming: nil)
     }
 
@@ -279,6 +333,11 @@ final class ModelDownloadService: ObservableObject {
     /// otherwise.
     func resume(_ model: MLXModel) {
         let snapshot = pausedDownloads.removeValue(forKey: model.id)
+        if FileManager.default.fileExists(
+            atPath: model.localDirectory.appendingPathComponent(ModelManifest.pendingUpdateFilename).path
+        ) {
+            repairingModels.insert(model.id)
+        }
         startOrchestration(model: model, resuming: snapshot)
     }
 
@@ -289,20 +348,9 @@ final class ModelDownloadService: ObservableObject {
         let state = downloadStates[model.id] ?? .notStarted
         if case .downloading = state { return }
 
-        // upfront disk-space preflight so we alert instead of flashing a
-        // progress bar that the in-task check would rip down ~300ms later.
-        if let needed = model.totalSizeEstimateBytes,
-            let probePath = Self.existingAncestor(of: model.localDirectory),
-            let freeBytes = OsaurusPaths.volumeFreeBytes(forPath: probePath.path),
-            let refusal = Self.storageRefusalMessage(neededBytes: needed, freeBytes: freeBytes)
-        {
-            downloadAlert = Self.makeAlert(
-                modelId: model.id,
-                rawError: refusal,
-                stage: "preflight"
-            )
-            return
-        }
+        // The in-task preflight uses the missing/replacement bytes, not the
+        // whole model estimate. A resumed download or tiny repair must not
+        // require enough free space to download every intact shard again.
 
         activeDownloadTasks[model.id]?.cancel()
         invalidateDownloaders(for: model.id)
@@ -318,163 +366,255 @@ final class ModelDownloadService: ObservableObject {
             etaSeconds: nil
         )
         progressSamples[model.id] = []
+        lastPublishedProgress[model.id] = nil
 
         let task = Task { [weak self, resuming] in
             guard let self = self else { return }
-
-            // Create the model directory off the main thread before any other
-            // work. `mkdir` on a slow or contended volume otherwise blocks the
-            // main thread on the synchronous download-button path.
-            do {
-                let directory = model.localDirectory
-                try await Task.detached(priority: .userInitiated) {
-                    try FileManager.default.createDirectory(
-                        at: directory,
-                        withIntermediateDirectories: true
-                    )
-                }.value
-            } catch {
-                await MainActor.run {
-                    let message = "Failed to create directory: \(error.localizedDescription)"
-                    self.downloadStates[model.id] = .failed(error: message)
-                    self.downloadAlert = Self.makeAlert(
+            if self.repairingModels.contains(model.id) {
+                do {
+                    self.repairMessages[model.id] = L("Waiting for the model to finish before repairing…")
+                    try await ModelRuntime.shared.withModelDeletionLease(
+                        modelID: model.id,
+                        modelName: model.name
+                    ) { [self] in
+                        let unloaded = await ModelRuntime.shared.unload(name: model.id)
+                        guard unloaded,
+                            await ModelRuntime.shared.residencyIdentity(named: model.id) == nil
+                        else { throw ModelDeletionError.unsafeUnload }
+                        await self.runOrchestration(model: model, token: token, resuming: resuming)
+                    }
+                } catch {
+                    self.finalizeOrchestration(
                         modelId: model.id,
-                        rawError: message,
-                        stage: "create-directory"
+                        token: token,
+                        finalState: .failed(error: error.localizedDescription),
+                        failureStage: "repair-unload"
                     )
-                    self.clearDownloadTracking(for: model.id)
+                }
+            } else {
+                await self.runOrchestration(model: model, token: token, resuming: resuming)
+            }
+        }
+        activeDownloadTasks[model.id] = task
+    }
+
+    private func runOrchestration(model: MLXModel, token: UUID, resuming: PausedSnapshot?) async {
+        guard downloadTokens[model.id] == token, !Task.isCancelled else { return }
+        let isRepair = repairingModels.contains(model.id)
+        defer { repairCheckingTokens.remove(token) }
+        if isRepair { repairMessages[model.id] = L("Checking model files…") }
+
+        // Create the model directory off the main thread before any other
+        // work. `mkdir` on a slow or contended volume otherwise blocks the
+        // main thread on the synchronous download-button path.
+        do {
+            let directory = model.localDirectory
+            try await Task.detached(priority: .userInitiated) {
+                try FileManager.default.createDirectory(
+                    at: directory,
+                    withIntermediateDirectories: true
+                )
+            }.value
+        } catch {
+            await MainActor.run {
+                let message = "Failed to create directory: \(error.localizedDescription)"
+                self.finalizeOrchestration(
+                    modelId: model.id,
+                    token: token,
+                    finalState: .failed(error: message),
+                    failureStage: "create-directory"
+                )
+            }
+            return
+        }
+
+        // Proxy route: signing needs the wallet identity, which onboarding
+        // normally creates only at completion. On a fresh install
+        // `OsaurusIdentity.setup()` is silent (no biometric prompt); the
+        // later `configureImplicitDefaults` gates on `exists()` and no-ops.
+        // If the identity still isn't available, disable the proxy up
+        // front so every file takes the anonymous fallback.
+        if await MainActor.run(body: { self.downloadRoutes[model.id] }) == .onboardingProxy {
+            // `exists()` is a synchronous keychain query (blocks on
+            // securityd's mutex) and `setup()` does key generation plus
+            // iCloud keychain writes — keep the whole probe off the main
+            // actor, which this orchestration Task otherwise inherits.
+            // The probe races a 10s timeout: a wedged securityd or slow
+            // attestation must degrade to the anonymous route, never
+            // stall the download itself.
+            let identityReady = await Self.firstResult(timeoutSeconds: 10, fallback: false) {
+                if OsaurusIdentity.exists() { return true }
+                _ = try? await OsaurusIdentity.setup()
+                return OsaurusIdentity.exists()
+            }
+            if !identityReady {
+                await MainActor.run { _ = self.proxyDisabledModels.insert(model.id) }
+            }
+        }
+
+        do {
+            let files = try await HuggingFaceService.shared.fetchDownloadFiles(
+                repoId: model.id,
+                patterns: Self.downloadFilePatterns,
+                excludedFiles: Self.downloadExcludedFiles,
+                revision: resuming?.revision
+            )
+            downloadRevisions[model.id] = files.first?.revision
+
+            // Inspect the same immutable revision as the weights, before transfer.
+            if let manifestFile = files.first(where: { $0.path == ModelManifest.filename }) {
+                guard manifestFile.size <= ModelManifest.maximumBytes else {
+                    throw ModelManifest.invalid("The file exceeds 64 KiB.")
+                }
+                let snapshot = try await HuggingFaceService.shared.fetchModelManifest(
+                    repoId: model.id,
+                    revision: manifestFile.revision
+                )
+                guard let manifest = snapshot.manifest else {
+                    throw ModelManifest.invalid("The pinned repository lists osaurus.json but it could not be fetched.")
+                }
+                if let failure = manifest.compatibilityFailure(hostVersion: ModelManifest.hostVersion) { throw failure }
+            }
+
+            let verifiesPublisherRevision = files.contains { $0.path == ModelManifest.filename }
+            let totalBytes = files.reduce(Int64(0)) { $0 + $1.size }
+            let directory = model.localDirectory
+            let hasObsoleteManifest =
+                isRepair && !verifiesPublisherRevision
+                && ModelManifest.read(at: directory) != .absent
+            // Hashing an installed multi-GB bundle must remain cancellable
+            // and must never run on MainActor.
+            if isRepair { repairCheckingTokens.insert(token) }
+            let service = self
+            let scan = Task.detached(priority: .utility) {
+                try Self.filesNeedingDownload(
+                    files,
+                    under: directory,
+                    verifyContents: isRepair || verifiesPublisherRevision
+                ) { path, index in
+                    guard isRepair else { return }
+                    Task { @MainActor in
+                        guard service.downloadTokens[model.id] == token,
+                            service.repairCheckingTokens.contains(token)
+                        else { return }
+                        service.repairMessages[model.id] = L("Checking \(path) (\(index)/\(files.count))…")
+                    }
+                }
+            }
+            let filesToDownload = try await withTaskCancellationHandler {
+                try await scan.value
+            } onCancel: {
+                scan.cancel()
+            }
+            repairCheckingTokens.remove(token)
+            try Task.checkCancellation()
+            guard self.downloadTokens[model.id] == token else { return }
+            let completedFileBytes = totalBytes - filesToDownload.reduce(Int64(0)) { $0 + $1.size }
+            if isRepair {
+                repairMessages[model.id] =
+                    filesToDownload.isEmpty
+                    ? L("All model files match Hugging Face.")
+                    : L("Restoring \(filesToDownload.count) model file(s)…")
+            }
+
+            // Preflight disk-space check. Runs on the filesystem that hosts
+            // `model.localDirectory` — which may be an external drive when
+            // the user has pointed `DirectoryPickerService` at one — so we
+            // can't assume boot-volume capacity. If the query itself fails
+            // we proceed with the download; a stale estimate is worse than
+            // none, and the ordinary write-path error handling still fires.
+            let bytesToDownload = totalBytes - completedFileBytes
+            if bytesToDownload > 0,
+                let freeBytes = Self.freeBytesOnVolume(containing: model.localDirectory),
+                let refusal = Self.storageRefusalMessage(
+                    neededBytes: bytesToDownload,
+                    freeBytes: freeBytes
+                )
+            {
+                await MainActor.run {
+                    self.finalizeOrchestration(
+                        modelId: model.id,
+                        token: token,
+                        finalState: .failed(error: refusal),
+                        failureStage: "preflight-in-task"
+                    )
                 }
                 return
             }
 
-            defer {
-                Task { @MainActor [weak self] in
-                    self?.activeDownloadTasks[model.id] = nil
-                }
+            await MainActor.run {
+                guard self.downloadTokens[model.id] == token else { return }
+                self.fileTransferBase[model.id] = completedFileBytes
+                self.fileTransferProgress[model.id] = [:]
+                self.fileTransferTotal[model.id] = totalBytes
+                let fraction = totalBytes > 0 ? Double(completedFileBytes) / Double(totalBytes) : 0
+                self.downloadStates[model.id] = .downloading(progress: fraction)
+                self.downloadMetrics[model.id] = DownloadMetrics(
+                    bytesReceived: completedFileBytes > 0 ? completedFileBytes : 0,
+                    totalBytes: totalBytes,
+                    bytesPerSecond: nil,
+                    etaSeconds: nil
+                )
             }
 
-            // Proxy route: signing needs the wallet identity, which onboarding
-            // normally creates only at completion. On a fresh install
-            // `OsaurusIdentity.setup()` is silent (no biometric prompt); the
-            // later `configureImplicitDefaults` gates on `exists()` and no-ops.
-            // If the identity still isn't available, disable the proxy up
-            // front so every file takes the anonymous fallback.
-            if await MainActor.run(body: { self.downloadRoutes[model.id] }) == .onboardingProxy {
-                // `exists()` is a synchronous keychain query (blocks on
-                // securityd's mutex) and `setup()` does key generation plus
-                // iCloud keychain writes — keep the whole probe off the main
-                // actor, which this orchestration Task otherwise inherits.
-                // The probe races a 10s timeout: a wedged securityd or slow
-                // attestation must degrade to the anonymous route, never
-                // stall the download itself.
-                let identityReady = await Self.firstResult(timeoutSeconds: 10, fallback: false) {
-                    if OsaurusIdentity.exists() { return true }
-                    _ = try? await OsaurusIdentity.setup()
-                    return OsaurusIdentity.exists()
-                }
-                if !identityReady {
-                    await MainActor.run { _ = self.proxyDisabledModels.insert(model.id) }
-                }
+            // A partial update must never advertise the new revision or load a
+            // mixture of old and new files. Keep a persistent marker on failure,
+            // pause or cancellation; Repair verifies all files before clearing it.
+            let pendingUpdate = directory.appendingPathComponent(ModelManifest.pendingUpdateFilename)
+            if !filesToDownload.isEmpty || hasObsoleteManifest {
+                try Data((files.first?.revision ?? "").utf8).write(to: pendingUpdate, options: .atomic)
             }
+            let transferFiles = filesToDownload.filter { $0.path != ModelManifest.filename }
 
-            do {
-                guard
-                    let files = await HuggingFaceService.shared.fetchMatchingFiles(
-                        repoId: model.id,
-                        patterns: Self.downloadFilePatterns,
-                        excludedFiles: Self.downloadExcludedFiles
-                    ), !files.isEmpty
-                else {
-                    await MainActor.run {
-                        self.finalizeOrchestration(
-                            modelId: model.id,
+            // Transfer up to three files at once. Per-connection
+            // throughput to the Hugging Face CDN is the bottleneck on
+            // most links, and the multi-shard repos are the ones users
+            // wait on. Completion order stops mattering — the manifest
+            // check below is authoritative.
+            let maxConcurrentFiles = 3
+            var pausedFiles: [(path: String, resumeData: Data?)] = []
+            var firstFailure: (path: String, error: Error)? = nil
+
+            await withTaskGroup(of: FileTransferOutcome.self) { group in
+                var nextIndex = 0
+                var stopScheduling = false
+
+                while nextIndex < min(maxConcurrentFiles, transferFiles.count) {
+                    let file = transferFiles[nextIndex]
+                    nextIndex += 1
+                    let resumeData = resuming?.resumeDataByFile[file.path]
+                    group.addTask {
+                        await self.transferFile(
+                            file,
+                            model: model,
                             token: token,
-                            finalState: .failed(
-                                error: "Could not retrieve file list from Hugging Face"
-                            ),
-                            failureStage: "fetch-manifest"
+                            resumeData: resumeData
                         )
                     }
-                    return
                 }
 
-                let totalBytes = files.reduce(Int64(0)) { $0 + $1.size }
-                var completedFileBytes: Int64 = 0
-
-                var filesToDownload: [HuggingFaceService.MatchedFile] = []
-                for file in files {
-                    guard
-                        let dest = HuggingFaceService.destinationURL(
-                            forRemotePath: file.path,
-                            under: model.localDirectory
-                        )
-                    else {
-                        continue
+                while let outcome = await group.next() {
+                    switch outcome {
+                    case .completed:
+                        break
+                    case .paused(let path, let resumeData):
+                        pausedFiles.append((path, resumeData))
+                        stopScheduling = true
+                    case .failed(let path, let error):
+                        stopScheduling = true
+                        if firstFailure == nil, !(error is CancellationError) {
+                            firstFailure = (path, error)
+                            // Abort the sister transfers promptly; they
+                            // surface as cancellations, which the
+                            // aggregation above ignores.
+                            await MainActor.run {
+                                guard self.downloadTokens[model.id] == token else { return }
+                                self.invalidateDownloaders(for: model.id)
+                            }
+                        }
                     }
-                    let attrs = try? FileManager.default.attributesOfItem(atPath: dest.path)
-                    let existingSize = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
-                    if existingSize == file.size {
-                        completedFileBytes += file.size
-                    } else {
-                        filesToDownload.append(file)
-                    }
-                }
-
-                // Preflight disk-space check. Runs on the filesystem that hosts
-                // `model.localDirectory` — which may be an external drive when
-                // the user has pointed `DirectoryPickerService` at one — so we
-                // can't assume boot-volume capacity. If the query itself fails
-                // we proceed with the download; a stale estimate is worse than
-                // none, and the ordinary write-path error handling still fires.
-                let bytesToDownload = totalBytes - completedFileBytes
-                if bytesToDownload > 0,
-                    let freeBytes = Self.freeBytesOnVolume(containing: model.localDirectory),
-                    let refusal = Self.storageRefusalMessage(
-                        neededBytes: bytesToDownload,
-                        freeBytes: freeBytes
-                    )
-                {
-                    await MainActor.run {
-                        self.finalizeOrchestration(
-                            modelId: model.id,
-                            token: token,
-                            finalState: .failed(error: refusal),
-                            failureStage: "preflight-in-task"
-                        )
-                    }
-                    return
-                }
-
-                await MainActor.run {
-                    guard self.downloadTokens[model.id] == token else { return }
-                    self.fileTransferBase[model.id] = completedFileBytes
-                    self.fileTransferProgress[model.id] = [:]
-                    self.fileTransferTotal[model.id] = totalBytes
-                    let fraction = totalBytes > 0 ? Double(completedFileBytes) / Double(totalBytes) : 0
-                    self.downloadStates[model.id] = .downloading(progress: fraction)
-                    self.downloadMetrics[model.id] = DownloadMetrics(
-                        bytesReceived: completedFileBytes > 0 ? completedFileBytes : 0,
-                        totalBytes: totalBytes,
-                        bytesPerSecond: nil,
-                        etaSeconds: nil
-                    )
-                }
-
-                // Transfer up to three files at once. Per-connection
-                // throughput to the Hugging Face CDN is the bottleneck on
-                // most links, and the multi-shard repos are the ones users
-                // wait on. Completion order stops mattering — the manifest
-                // check below is authoritative.
-                let maxConcurrentFiles = 3
-                var pausedFiles: [(path: String, resumeData: Data?)] = []
-                var firstFailure: (path: String, error: Error)? = nil
-
-                await withTaskGroup(of: FileTransferOutcome.self) { group in
-                    var nextIndex = 0
-                    var stopScheduling = false
-
-                    while nextIndex < min(maxConcurrentFiles, filesToDownload.count) {
-                        let file = filesToDownload[nextIndex]
+                    if !stopScheduling, nextIndex < transferFiles.count {
+                        let file = transferFiles[nextIndex]
                         nextIndex += 1
                         let resumeData = resuming?.resumeDataByFile[file.path]
                         group.addTask {
@@ -486,189 +626,209 @@ final class ModelDownloadService: ObservableObject {
                             )
                         }
                     }
+                }
+            }
 
-                    while let outcome = await group.next() {
-                        switch outcome {
-                        case .completed:
-                            break
-                        case .paused(let path, let resumeData):
-                            pausedFiles.append((path, resumeData))
-                            stopScheduling = true
-                        case .failed(let path, let error):
-                            stopScheduling = true
-                            if firstFailure == nil, !(error is CancellationError) {
-                                firstFailure = (path, error)
-                                // Abort the sister transfers promptly; they
-                                // surface as cancellations, which the
-                                // aggregation above ignores.
-                                await MainActor.run {
-                                    self.invalidateDownloaders(for: model.id)
-                                }
-                            }
-                        }
-                        if !stopScheduling, nextIndex < filesToDownload.count {
-                            let file = filesToDownload[nextIndex]
-                            nextIndex += 1
-                            let resumeData = resuming?.resumeDataByFile[file.path]
-                            group.addTask {
-                                await self.transferFile(
-                                    file,
-                                    model: model,
-                                    token: token,
-                                    resumeData: resumeData
-                                )
-                            }
-                        }
+            try Task.checkCancellation()
+
+            if !pausedFiles.isEmpty {
+                var resumeDataByFile: [String: Data] = [:]
+                for paused in pausedFiles {
+                    if let data = paused.resumeData {
+                        resumeDataByFile[paused.path] = data
                     }
                 }
-
-                try Task.checkCancellation()
-
-                if !pausedFiles.isEmpty {
-                    var resumeDataByFile: [String: Data] = [:]
-                    for paused in pausedFiles {
-                        if let data = paused.resumeData {
-                            resumeDataByFile[paused.path] = data
-                        }
-                    }
-                    await MainActor.run {
-                        self.commitPause(
-                            modelId: model.id,
-                            token: token,
-                            resumeDataByFile: resumeDataByFile
-                        )
-                    }
-                    return
-                }
-
-                if let firstFailure {
-                    await MainActor.run {
-                        self.finalizeOrchestration(
-                            modelId: model.id,
-                            token: token,
-                            finalState: .failed(
-                                error: firstFailure.error.localizedDescription
-                            ),
-                            failureStage: "file-transfer",
-                            failureFilePath: firstFailure.path
-                        )
-                    }
-                    return
-                }
-
-                // Manifest driven completion check. `model.isDownloaded` only
-                // looks for config + tokenizer + ≥1 shard on disc so a
-                // multi shard download with a silently skipped file would
-                // still pass that test. Verify every manifest entry is on
-                // disk at its expected size and report which are missing
-                // Detached: this orchestration Task inherits the service's
-                // main-actor isolation, and the check below stats every
-                // manifest entry (containment probes + size read per file) —
-                // dozens of disk touches that have stalled main on slow
-                // volumes when run inline.
-                let missing: [String] = await Task.detached(priority: .userInitiated) {
-                    let fm = FileManager.default
-                    return files.compactMap { file in
-                        guard
-                            let dest = HuggingFaceService.destinationURL(
-                                forRemotePath: file.path,
-                                under: model.localDirectory
-                            )
-                        else {
-                            return file.path
-                        }
-                        let attrs = try? fm.attributesOfItem(atPath: dest.path)
-                        let size = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
-                        return size == file.size ? nil : file.path
-                    }
-                }.value
-                let isComplete = missing.isEmpty
-                let finalState: DownloadState
-                if isComplete {
-                    finalState = .completed
-                } else if missing.count == 1 {
-                    finalState = .failed(
-                        error: "Download incomplete: \(missing[0]) is missing or has wrong size"
-                    )
-                } else {
-                    finalState = .failed(
-                        error:
-                            "Download incomplete: \(missing.count) of \(files.count) files are missing or have wrong size"
-                    )
-                }
-                // Also detached: the report reads config/tokenizer files out
-                // of the bundle it diagnoses.
-                let compatibilityReport =
-                    isComplete
-                    ? await Task.detached(priority: .userInitiated) {
-                        ModelCompatibilityDiagnostics.report(
-                            modelId: model.id,
-                            modelName: model.name,
-                            modelTypeHint: model.modelType,
-                            bundleURL: model.localDirectory,
-                            externalSource: model.externalSource
-                        )
-                    }.value
-                    : nil
                 await MainActor.run {
-                    let didFinalize = self.finalizeOrchestration(
+                    self.commitPause(
                         modelId: model.id,
                         token: token,
-                        finalState: finalState,
-                        failureStage: "completion-check",
-                        failureFilePath: missing.first
+                        resumeDataByFile: resumeDataByFile
                     )
-                    if didFinalize && isComplete {
-                        if let compatibilityReport {
-                            if compatibilityReport.preflight.blocksRuntimeLoad {
-                                self.downloadAlert = Self.makeAlert(
-                                    modelId: model.id,
-                                    rawError:
-                                        "Compatibility preflight: \(compatibilityReport.preflight.title). \(compatibilityReport.preflight.detail)",
-                                    stage: "compatibility-preflight"
-                                )
-                                ModelManager.invalidateLocalModelsCache()
-                                NotificationCenter.default.post(name: .localModelsChanged, object: nil)
-                                return
-                            }
-                        }
-                        NotificationService.shared.postModelReady(
-                            modelId: model.id,
-                            modelName: model.name
+                }
+                return
+            }
+
+            if let firstFailure {
+                await MainActor.run {
+                    self.finalizeOrchestration(
+                        modelId: model.id,
+                        token: token,
+                        finalState: .failed(
+                            error: firstFailure.error.localizedDescription
+                        ),
+                        failureStage: "file-transfer",
+                        failureFilePath: firstFailure.path
+                    )
+                }
+                return
+            }
+
+            // Commit the publisher manifest only after every other file succeeds.
+            if let manifestFile = filesToDownload.first(where: { $0.path == ModelManifest.filename }) {
+                switch await transferFile(
+                    manifestFile,
+                    model: model,
+                    token: token,
+                    resumeData: resuming?.resumeDataByFile[manifestFile.path]
+                ) {
+                case .completed: break
+                case .failed(_, let error): throw error
+                case .paused(let path, let data):
+                    commitPause(modelId: model.id, token: token, resumeDataByFile: data.map { [path: $0] } ?? [:])
+                    return
+                }
+            }
+            try Task.checkCancellation()
+
+            // Manifest driven completion check. `model.isDownloaded` only
+            // looks for config + tokenizer + ≥1 shard on disc so a
+            // multi shard download with a silently skipped file would
+            // still pass that test. Verify every manifest entry is on
+            // disk at its expected size and report which are missing
+            // Detached: this orchestration Task inherits the service's
+            // main-actor isolation, and the check below stats every
+            // manifest entry (containment probes + size read per file) —
+            // dozens of disk touches that have stalled main on slow
+            // volumes when run inline.
+            let missing: [String] = await Task.detached(priority: .userInitiated) {
+                let fm = FileManager.default
+                return files.compactMap { file in
+                    guard
+                        let dest = HuggingFaceService.destinationURL(
+                            forRemotePath: file.path,
+                            under: model.localDirectory
                         )
-                        // KPI: a curated-catalog model finished downloading.
-                        // The id is from the catalog, so it is safe to send.
-                        FeatureTelemetry.modelDownloaded(
-                            model: model.id,
-                            parameterCount: model.parameterCount,
-                            quantization: model.quantization,
-                            isVLM: model.isVLM
+                    else {
+                        return file.path
+                    }
+                    let attrs = try? fm.attributesOfItem(atPath: dest.path)
+                    let size = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
+                    return size == file.size ? nil : file.path
+                }
+            }.value
+            try Task.checkCancellation()
+            guard downloadTokens[model.id] == token else { return }
+            let isComplete = missing.isEmpty
+            let removedObsoleteManifest =
+                isComplete
+                ? try ModelManifest.removeObsoleteManifest(
+                    at: directory,
+                    advertised: verifiesPublisherRevision,
+                    explicitRepair: isRepair
+                )
+                : false
+            let finalState: DownloadState
+            if isComplete {
+                if FileManager.default.fileExists(atPath: pendingUpdate.path) {
+                    try FileManager.default.removeItem(at: pendingUpdate)
+                }
+                finalState = .completed
+            } else if missing.count == 1 {
+                finalState = .failed(
+                    error: "Download incomplete: \(missing[0]) is missing or has wrong size"
+                )
+            } else {
+                finalState = .failed(
+                    error:
+                        "Download incomplete: \(missing.count) of \(files.count) files are missing or have wrong size"
+                )
+            }
+            // Also detached: the check reads config/tokenizer files out of
+            // the bundle it diagnoses.
+            let compatibilityIssue: String? =
+                isComplete
+                ? await Task.detached(priority: .userInitiated) {
+                    Self.postDownloadCompatibilityIssue(for: model)
+                }.value
+                : nil
+            await MainActor.run {
+                let didFinalize = self.finalizeOrchestration(
+                    modelId: model.id,
+                    token: token,
+                    finalState: finalState,
+                    failureStage: "completion-check",
+                    failureFilePath: missing.first
+                )
+                if didFinalize && isComplete {
+                    if isRepair, removedObsoleteManifest {
+                        self.repairMessages[model.id] = L("Repair complete. Removed obsolete osaurus.json.")
+                    } else if isRepair {
+                        self.repairMessages[model.id] =
+                            filesToDownload.isEmpty
+                            ? L("All model files match Hugging Face. No repair was needed.")
+                            : L("Repair complete. Restored \(filesToDownload.count) file(s).")
+                    }
+                    if let compatibilityIssue {
+                        self.downloadAlert = Self.makeAlert(
+                            modelId: model.id,
+                            rawError: compatibilityIssue,
+                            stage: "compatibility-preflight"
                         )
                         ModelManager.invalidateLocalModelsCache()
                         NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+                        return
                     }
-                }
-            } catch is CancellationError {
-                await MainActor.run {
-                    self.finalizeOrchestration(
+                    NotificationService.shared.postModelReady(
                         modelId: model.id,
-                        token: token,
-                        finalState: .notStarted
+                        modelName: model.name
                     )
-                }
-            } catch {
-                await MainActor.run {
-                    self.finalizeOrchestration(
-                        modelId: model.id,
-                        token: token,
-                        finalState: .failed(error: error.localizedDescription),
-                        failureStage: "orchestration"
+                    // KPI: a curated-catalog model finished downloading.
+                    // The id is from the catalog, so it is safe to send.
+                    FeatureTelemetry.modelDownloaded(
+                        model: model.id,
+                        parameterCount: model.parameterCount,
+                        quantization: model.quantization,
+                        isVLM: model.isVLM
                     )
+                    ModelManager.invalidateLocalModelsCache()
+                    NotificationCenter.default.post(name: .localModelsChanged, object: nil)
                 }
             }
+        } catch is CancellationError {
+            await MainActor.run {
+                self.finalizeOrchestration(
+                    modelId: model.id,
+                    token: token,
+                    finalState: .notStarted
+                )
+            }
+        } catch {
+            await MainActor.run {
+                self.finalizeOrchestration(
+                    modelId: model.id,
+                    token: token,
+                    finalState: .failed(error: error.localizedDescription),
+                    failureStage: "orchestration"
+                )
+            }
         }
+    }
 
-        activeDownloadTasks[model.id] = task
+    nonisolated static func filesNeedingDownload(
+        _ files: [HuggingFaceService.MatchedFile],
+        under directory: URL,
+        verifyContents: Bool,
+        onChecking: @Sendable (String, Int) -> Void = { _, _ in }
+    ) throws -> [HuggingFaceService.MatchedFile] {
+        var missing: [HuggingFaceService.MatchedFile] = []
+        for (index, file) in files.enumerated() {
+            try Task.checkCancellation()
+            onChecking(file.path, index + 1)
+            guard let destination = HuggingFaceService.destinationURL(forRemotePath: file.path, under: directory)
+            else { throw CocoaError(.fileWriteInvalidFileName) }
+            guard FileManager.default.fileExists(atPath: destination.path) else {
+                missing.append(file)
+                continue
+            }
+            if try !ModelFileIntegrity.matches(
+                destination,
+                size: file.size,
+                digest: verifyContents ? file.digest : nil
+            ) {
+                missing.append(file)
+            }
+        }
+        return missing
     }
 
     /// Downloads one manifest file, retrying transient failures. Runs as a
@@ -680,12 +840,15 @@ final class ModelDownloadService: ObservableObject {
         token: UUID,
         resumeData: Data?
     ) async -> FileTransferOutcome {
+        guard downloadTokens[model.id] == token, !Task.isCancelled else {
+            return .failed(path: file.path, error: CancellationError())
+        }
         guard
             let destination = HuggingFaceService.destinationURL(
                 forRemotePath: file.path,
                 under: model.localDirectory
             ),
-            let directURL = Self.resolveURL(repoId: model.id, path: file.path)
+            let directURL = Self.resolveURL(repoId: model.id, path: file.path, revision: file.revision ?? "main")
         else {
             // Unresolvable path: skip; the manifest completion check reports it.
             return .completed
@@ -694,7 +857,11 @@ final class ModelDownloadService: ObservableObject {
         let downloader = DirectDownloader()
         activeDownloaders[model.id, default: [:]][file.path] = downloader
         defer {
-            activeDownloaders[model.id]?[file.path] = nil
+            // A cancelled run can finish unwinding after a retry has started.
+            // Its cleanup must not remove the new transfer's cancellation handle.
+            if downloadTokens[model.id] == token {
+                activeDownloaders[model.id]?[file.path] = nil
+            }
             downloader.invalidate()
         }
 
@@ -729,16 +896,20 @@ final class ModelDownloadService: ObservableObject {
                 // step reads the master key, and a keychain wedged behind a
                 // pending ACL dialog must degrade to the anonymous URL, not
                 // freeze the transfer.
-                let revision = proxyPinnedCommits[model.id] ?? "main"
+                let revision = file.revision ?? proxyPinnedCommits[model.id] ?? "main"
                 let repoId = model.id
                 let filePath = file.path
-                if let resolved = await Self.firstResult(timeoutSeconds: 15, fallback: nil, operation: {
-                    await OnboardingModelsProxy.shared.resolve(
-                        repoId: repoId,
-                        revision: revision,
-                        path: filePath
-                    )
-                }) {
+                if let resolved = await Self.firstResult(
+                    timeoutSeconds: 15,
+                    fallback: nil,
+                    operation: {
+                        await OnboardingModelsProxy.shared.resolve(
+                            repoId: repoId,
+                            revision: revision,
+                            path: filePath
+                        )
+                    }
+                ) {
                     downloadURL = resolved.url
                     if proxyPinnedCommits[model.id] == nil, let commit = resolved.commit {
                         proxyPinnedCommits[model.id] = commit
@@ -752,6 +923,7 @@ final class ModelDownloadService: ObservableObject {
                     from: downloadURL,
                     to: destination,
                     expectedSize: file.size,
+                    expectedDigest: file.digest,
                     resumeData: resumeDataForAttempt,
                     onProgress: onProgress
                 )
@@ -871,11 +1043,15 @@ final class ModelDownloadService: ObservableObject {
         )
         progressSamples[modelId] = []
         lastKnownSpeed[modelId] = nil
+        lastPublishedProgress[modelId] = nil
         fileTransferProgress[modelId] = nil
         fileTransferBase[modelId] = nil
         fileTransferTotal[modelId] = nil
         pauseRequestedModels.remove(modelId)
-        pausedDownloads[modelId] = PausedSnapshot(resumeDataByFile: resumeDataByFile)
+        pausedDownloads[modelId] = PausedSnapshot(
+            resumeDataByFile: resumeDataByFile,
+            revision: downloadRevisions[modelId]
+        )
         invalidateDownloaders(for: modelId)
         activeDownloadTasks[modelId] = nil
     }
@@ -908,6 +1084,7 @@ final class ModelDownloadService: ObservableObject {
         downloadTokens[modelId] = nil
         progressSamples[modelId] = nil
         lastKnownSpeed[modelId] = nil
+        lastPublishedProgress[modelId] = nil
         fileTransferProgress[modelId] = nil
         fileTransferBase[modelId] = nil
         fileTransferTotal[modelId] = nil
@@ -920,15 +1097,19 @@ final class ModelDownloadService: ObservableObject {
                 etaSeconds: nil
             )
         }
-        pausedDownloads[modelId] = PausedSnapshot(resumeDataByFile: [:])
+        pausedDownloads[modelId] = PausedSnapshot(resumeDataByFile: [:], revision: downloadRevisions[modelId])
         downloadStates[modelId] = .paused(progress: progress)
     }
 
     func cancel(_ modelId: String) {
+        downloadRevisions[modelId] = nil
         releaseOrchestrationResources(for: modelId)
         pausedDownloads[modelId] = nil
         clearDownloadTracking(for: modelId)
         downloadStates[modelId] = .notStarted
+        if repairingModels.remove(modelId) != nil {
+            repairMessages[modelId] = L("Repair cancelled. Completed files were kept.")
+        }
     }
 
     func delete(_ model: MLXModel) async {
@@ -1026,7 +1207,8 @@ final class ModelDownloadService: ObservableObject {
         // revision-less entries) so re-opening the detail modal doesn't
         // re-hit the network. On a miss, fetch the tree-sum and write it
         // back so the value persists across launches.
-        if let cached = ModelSizeCache.bytes(forId: model.id) {
+        if let cached = ModelSizeCache.bytes(forId: model.id),
+            ModelSizeCache.bytes(forId: ModelSSDResidency.weightFilesCacheKey(model.id)) != nil {
             return cached
         }
         let fetched = await HuggingFaceService.shared.estimateTotalSize(
@@ -1070,27 +1252,37 @@ final class ModelDownloadService: ObservableObject {
         activeDownloadTasks[modelId] != nil
     }
 
+    var totalDownloadedSizeBytes: Int64 { downloadedInventorySize.allocatedBytes }
     var totalDownloadedSize: Int64 { totalDownloadedSizeBytes }
+    var totalDownloadedModelCount: Int { downloadedInventorySize.modelCount }
 
     var totalDownloadedSizeString: String {
         ByteCountFormatter.string(fromByteCount: totalDownloadedSizeBytes, countStyle: .file)
     }
 
-    /// Recompute the on-disk size of all downloaded models off the main thread,
-    /// then publish it. The walk (`discoverLocalModels` plus a recursive size
-    /// sum per model) is far too expensive to run synchronously in a SwiftUI
-    /// body, which is where the header reads `totalDownloadedSizeString`.
-    func refreshTotalDownloadedSize() {
+    /// Recompute the on-disk size of the installed inventory off the main
+    /// thread, then publish it. `inventoryCandidates` is
+    /// `ModelManager.deduplicatedModels()` captured on the main actor; the
+    /// installed subset is resolved here with `ModelManager.installedModels(among:)`,
+    /// the same function behind the header count, so "N downloaded • size"
+    /// describes one set. The walk (an `isDownloaded` probe plus a recursive
+    /// size sum per model) is far too expensive to run synchronously in a
+    /// SwiftUI body, which is where the header reads `totalDownloadedSizeString`.
+    func refreshTotalDownloadedSize(inventoryCandidates: [MLXModel]) {
         Task { @MainActor [weak self] in
-            let bytes = await Task.detached(priority: .utility) { () -> Int64 in
-                ModelManager.discoverLocalModels()
-                    .filter { $0.isDownloaded }
-                    .reduce(Int64(0)) { partial, model in
-                        partial + (ModelDownloadService.directoryAllocatedSize(at: model.localDirectory) ?? 0)
-                    }
+            let snapshot = await Task.detached(priority: .utility) {
+                Self.measureDownloadedInventory(inventoryCandidates)
             }.value
-            self?.totalDownloadedSizeBytes = bytes
+            self?.downloadedInventorySize = snapshot
         }
+    }
+
+    nonisolated static func measureDownloadedInventory(_ candidates: [MLXModel]) -> DownloadedInventorySize {
+        let installed = ModelManager.installedModels(among: candidates)
+        let bytes = installed.reduce(Int64(0)) { partial, model in
+            partial + (directoryAllocatedSize(at: model.localDirectory) ?? 0)
+        }
+        return DownloadedInventorySize(modelCount: installed.count, allocatedBytes: bytes)
     }
 
     // MARK: - State Management
@@ -1129,6 +1321,7 @@ final class ModelDownloadService: ObservableObject {
         downloadMetrics[modelId] = nil
         progressSamples[modelId] = nil
         lastKnownSpeed[modelId] = nil
+        lastPublishedProgress[modelId] = nil
         fileTransferProgress[modelId] = nil
         fileTransferBase[modelId] = nil
         fileTransferTotal[modelId] = nil
@@ -1161,17 +1354,26 @@ final class ModelDownloadService: ObservableObject {
         failureFilePath: String? = nil
     ) -> Bool {
         guard downloadTokens[modelId] == token else { return false }
+        activeDownloadTasks[modelId] = nil
         downloadStates[modelId] = finalState
         clearDownloadTracking(for: modelId)
         pausedDownloads[modelId] = nil
         invalidateDownloaders(for: modelId)
         if case .failed(let error) = finalState {
+            if repairingModels.contains(modelId) {
+                repairMessages[modelId] = L("Repair failed: \(error)")
+            }
             downloadAlert = Self.makeAlert(
                 modelId: modelId,
                 rawError: error,
                 stage: failureStage,
                 filePath: failureFilePath
             )
+        }
+        if case .paused = finalState {
+            // Resume retains the repair intent and re-verifies existing files.
+        } else {
+            repairingModels.remove(modelId)
         }
         return true
     }
@@ -1246,12 +1448,13 @@ final class ModelDownloadService: ObservableObject {
         }
     }
 
-    nonisolated static func resolveURL(repoId: String, path: String) -> URL? {
+    nonisolated static func resolveURL(repoId: String, path: String, revision: String = "main") -> URL? {
         guard let safePath = HuggingFaceService.normalizedRemoteFilePath(path) else { return nil }
+        guard !revision.isEmpty, !revision.contains("/"), revision != ".", revision != ".." else { return nil }
         var comps = URLComponents()
         comps.scheme = "https"
         comps.host = "huggingface.co"
-        comps.path = "/\(repoId)/resolve/main/\(safePath)"
+        comps.path = "/\(repoId)/resolve/\(revision)/\(safePath)"
         return comps.url
     }
 
@@ -1318,7 +1521,6 @@ final class ModelDownloadService: ObservableObject {
         let fraction =
             totalBytes > 0
             ? min(1.0, Double(completedBytes) / Double(totalBytes)) : 0
-        downloadStates[modelId] = .downloading(progress: fraction)
 
         let now = Date().timeIntervalSince1970
         var samples = progressSamples[modelId] ?? []
@@ -1347,12 +1549,44 @@ final class ModelDownloadService: ObservableObject {
             if remaining > 0 { eta = remaining / speed }
         }
 
+        // Speed samples above are always recorded; only the UI-facing
+        // `@Published` writes are coalesced.
+        let last = lastPublishedProgress[modelId]
+        guard
+            Self.shouldPublishProgress(
+                now: now,
+                fraction: fraction,
+                lastTime: last?.time,
+                lastFraction: last?.fraction
+            )
+        else { return }
+        lastPublishedProgress[modelId] = (time: now, fraction: fraction)
+
+        let newState = DownloadState.downloading(progress: fraction)
+        if downloadStates[modelId] != newState {
+            downloadStates[modelId] = newState
+        }
         downloadMetrics[modelId] = DownloadMetrics(
             bytesReceived: completedBytes,
             totalBytes: totalBytes,
             bytesPerSecond: speed,
             etaSeconds: eta
         )
+    }
+
+    /// Whether a progress update should be published to the UI. Publishes the
+    /// first update, completion, any update after `progressPublishInterval`,
+    /// or a jump of at least `progressPublishMinDelta`.
+    nonisolated static func shouldPublishProgress(
+        now: TimeInterval,
+        fraction: Double,
+        lastTime: TimeInterval?,
+        lastFraction: Double?
+    ) -> Bool {
+        guard let lastTime, let lastFraction else { return true }
+        if fraction >= 1.0 && lastFraction < 1.0 { return true }
+        if now - lastTime >= progressPublishInterval { return true }
+        return abs(fraction - lastFraction) >= progressPublishMinDelta
     }
 
     // MARK: - Background Top-Up
@@ -1428,6 +1662,9 @@ final class ModelDownloadService: ObservableObject {
             let exists = fm.fileExists(atPath: local.path)
 
             if intent == .automatic {
+                // Never attach the latest publisher revision to unverified old
+                // weights. Only a complete explicit download/repair may stamp it.
+                if file.path == ModelManifest.filename { return false }
                 // Two things an automatic pass must never do, because both
                 // undo deliberate work:
                 //
@@ -1445,11 +1682,7 @@ final class ModelDownloadService: ObservableObject {
                 return !exists
             }
 
-            guard exists,
-                let attrs = try? fm.attributesOfItem(atPath: local.path),
-                let localSize = (attrs[.size] as? NSNumber)?.int64Value
-            else { return true }
-            return localSize != file.size
+            return (try? ModelFileIntegrity.matches(local, size: file.size, digest: file.digest)) != true
         }
     }
 
@@ -1545,7 +1778,7 @@ final class ModelDownloadService: ObservableObject {
         var total: Int64 = 0
         guard
             let enumerator = fileManager.enumerator(
-                at: url,
+                at: url.resolvingSymlinksInPath(),
                 includingPropertiesForKeys: [
                     .totalFileAllocatedSizeKey, .fileAllocatedSizeKey, .fileSizeKey, .isRegularFileKey,
                 ],
@@ -1555,7 +1788,7 @@ final class ModelDownloadService: ObservableObject {
         else { return nil }
         for case let fileURL as URL in enumerator {
             do {
-                let rv = try fileURL.resourceValues(forKeys: [
+                let rv = try fileURL.resolvingSymlinksInPath().resourceValues(forKeys: [
                     .isRegularFileKey, .totalFileAllocatedSizeKey, .fileAllocatedSizeKey, .fileSizeKey,
                 ])
                 guard rv.isRegularFile == true else { continue }
@@ -1625,6 +1858,7 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
     private var currentDownloadTask: URLSessionDownloadTask?
     private var currentDestination: URL?
     private var currentExpectedSize: Int64?
+    private var currentExpectedDigest: ModelFileDigest?
     private var onProgress: (@Sendable (Int64, Int64) -> Void)?
     private var lastProgressTime: CFAbsoluteTime = 0
     private var lastBytesWritten: Int64 = 0
@@ -1652,6 +1886,7 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
         from url: URL,
         to destination: URL,
         expectedSize: Int64,
+        expectedDigest: ModelFileDigest? = nil,
         resumeData: Data? = nil,
         onProgress: @escaping @Sendable (Int64, Int64) -> Void
     ) async throws {
@@ -1676,6 +1911,25 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
             let metadata = try? await ChunkedFileDownloader.probe(url: url),
             metadata.isChunkable
         {
+            guard metadata.size == expectedSize else {
+                throw URLError(
+                    .cannotDecodeContentData,
+                    userInfo: [
+                        NSLocalizedDescriptionKey: "Size mismatch between the repository manifest and download"
+                    ]
+                )
+            }
+            if case .sha256(let expected) = expectedDigest, let actual = metadata.sha256,
+                expected.lowercased() != actual.lowercased()
+            {
+                throw URLError(
+                    .cannotDecodeContentData,
+                    userInfo: [
+                        NSLocalizedDescriptionKey:
+                            "Checksum mismatch: the repository changed during download. Retry to refresh its file list."
+                    ]
+                )
+            }
             let downloader = ChunkedFileDownloader()
             enum Gate { case proceed, paused, invalidated }
             let gate = lock.withLock { () -> Gate in
@@ -1696,7 +1950,15 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
             try await downloader.download(
                 from: url,
                 to: destination,
-                metadata: metadata,
+                metadata: HuggingFaceFileMetadata(
+                    commitSHA: metadata.commitSHA,
+                    size: metadata.size,
+                    sha256: {
+                        if case .sha256(let expected) = expectedDigest { return expected }
+                        return metadata.sha256
+                    }(),
+                    acceptsRanges: metadata.acceptsRanges
+                ),
                 onProgress: onProgress
             )
             return
@@ -1711,6 +1973,7 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
             self.currentContinuation = continuation
             self.currentDestination = destination
             self.currentExpectedSize = expectedSize
+            self.currentExpectedDigest = expectedDigest
             self.onProgress = onProgress
             self.lastProgressTime = 0
             self.lastBytesWritten = 0
@@ -1874,6 +2137,7 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
         let continuation = currentContinuation
         let destination = currentDestination
         let expectedSize = currentExpectedSize
+        let expectedDigest = currentExpectedDigest
         currentContinuation = nil
         currentDownloadTask = nil
         currentDestination = nil
@@ -1898,24 +2162,26 @@ final class DirectDownloader: NSObject, URLSessionDownloadDelegate, @unchecked S
 
         do {
             let fm = FileManager.default
-            try? fm.removeItem(at: destination)
-            try fm.moveItem(at: location, to: destination)
+            // URLSession's temporary directory may be on another volume.
+            // Stage beside the destination, validate, then atomically replace.
+            let staged = destination.deletingLastPathComponent()
+                .appendingPathComponent(".\(destination.lastPathComponent).\(UUID().uuidString).download")
+            defer { try? fm.removeItem(at: staged) }
+            try fm.moveItem(at: location, to: staged)
             if let expectedSize, expectedSize > 0 {
-                let attrs = try fm.attributesOfItem(atPath: destination.path)
-                let actualSize = (attrs[.size] as? NSNumber)?.int64Value ?? 0
-                if actualSize != expectedSize {
-                    try? fm.removeItem(at: destination)
-                    continuation.resume(
-                        throwing: URLError(
-                            .cannotDecodeContentData,
-                            userInfo: [
-                                NSLocalizedDescriptionKey:
-                                    "Size mismatch: expected \(expectedSize), got \(actualSize)"
-                            ]
-                        )
-                    )
-                    return
+                try ModelFileIntegrity.validate(staged, size: expectedSize, digest: expectedDigest) {
+                    try self.lock.withLock {
+                        guard !self.isInvalidated else { throw CancellationError() }
+                        guard !self.pauseRequested else {
+                            throw PauseInfo(resumeData: nil, bytesDownloaded: self.lastBytesWritten)
+                        }
+                    }
                 }
+            }
+            try lock.withLock {
+                guard !isInvalidated else { throw CancellationError() }
+                guard !pauseRequested else { throw PauseInfo(resumeData: nil, bytesDownloaded: 0) }
+                try ModelFileIntegrity.commit(staged: staged, to: destination)
             }
             continuation.resume()
         } catch {

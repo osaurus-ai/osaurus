@@ -1,0 +1,31 @@
+{
+  "id": "computer_use_loop.return-submit-verified",
+  "domain": "computer_use_loop",
+  "label": "CU loop • Return on a field is a verifiable submit",
+  "query": "Search for 'weather today' and submit with Return.",
+  "notes": "Deterministic (scripted-model) twin of press-key-submit. Pins the scene's `onReturn` binding and the done gate together: type lands in the field (verified change), Return on the focused field fills the results line (a second verified change), so the following done is evidence-backed and the run ends as done — not challenged as unverified. If Return stopped producing an observable effect, the done would be downgraded and this case would fail.",
+  "fixtures": {},
+  "expect": {
+    "computerUseLoop": {
+      "app": "Browser",
+      "maxSteps": 5,
+      "elements": [
+        { "id": "search", "role": "textfield", "label": "Search", "value": "", "placeholder": "Search the web", "editable": true,
+          "onReturn": { "setValues": [{ "id": "results", "value": "Results for: weather today" }] } },
+        { "id": "results", "role": "statictext", "label": "Results", "value": "" }
+      ],
+      "expectOutcome": ["done"],
+      "successValues": [
+        { "id": "search", "contains": "weather today" },
+        { "id": "results", "contains": "Results for" }
+      ],
+      "expectVerbsInOrder": ["type", "press_key"],
+      "minVerifyChanged": 2,
+      "scriptedActions": [
+        "{\"verb\":\"type\",\"target\":{\"mark\":1},\"text\":\"weather today\",\"note\":\"fill the search box\"}",
+        "{\"verb\":\"press_key\",\"key\":\"return\",\"note\":\"submit\"}",
+        "{\"verb\":\"done\",\"reason\":\"results are showing\"}"
+      ]
+    }
+  }
+}

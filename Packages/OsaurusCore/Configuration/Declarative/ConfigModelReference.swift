@@ -61,9 +61,7 @@ enum ConfigModelReference {
     /// working while a provider is temporarily offline.
     @MainActor
     static func liveCatalog() -> Catalog {
-        let locals = ModelManager.shared.availableModels
-            .filter { $0.isDownloaded }
-            .map { $0.id }
+        let locals = ModelManager.shared.installedModels().map { $0.id }
         let manager = RemoteProviderManager.shared
         let providers = manager.configuration.providers.map { provider in
             ProviderModels(

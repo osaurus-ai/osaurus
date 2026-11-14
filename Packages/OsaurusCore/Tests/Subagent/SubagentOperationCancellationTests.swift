@@ -151,45 +151,47 @@ struct SubagentOperationCancellationTests {
     @Test("spawned registry dispatch rejects a non-abortable tool before execution")
     @MainActor
     func spawnedRegistryRejectsUnsupportedToolBeforeExecution() async throws {
-        let probe = RegistryToolProbe()
-        let tool = UnsupportedRegistryTool(probe: probe)
-        ToolRegistry.shared.register(tool)
-        defer { ToolRegistry.shared.unregister(names: [tool.name]) }
+        try await DynamicToolProbeFixture.run { fixture in
+            let probe = RegistryToolProbe()
+            let tool = UnsupportedRegistryTool(probe: probe)
+            try fixture.register(tool)
 
-        let result = try await ToolRegistry.shared.execute(
-            name: tool.name,
-            argumentsJSON: "{}",
-            permissionGateResolved: true,
-            ownsExecutionUntilTermination: true
-        )
-
-        #expect(ToolEnvelope.isError(result))
-        #expect(ToolEnvelope.failureMessage(result).contains("does not expose cooperative"))
-        #expect(!(await probe.started))
-    }
-
-    @Test("spawned registry dispatch cancellation drains a cooperative tool")
-    @MainActor
-    func spawnedRegistryCancellationDrainsCooperativeTool() async {
-        let probe = RegistryToolProbe()
-        let tool = CooperativeRegistryTool(probe: probe)
-        ToolRegistry.shared.register(tool)
-        defer { ToolRegistry.shared.unregister(names: [tool.name]) }
-
-        let operation = OwnedSubagentOperation {
-            try await ToolRegistry.shared.execute(
+            let result = try await ToolRegistry.shared.execute(
                 name: tool.name,
                 argumentsJSON: "{}",
                 permissionGateResolved: true,
                 ownsExecutionUntilTermination: true
             )
+
+            #expect(ToolEnvelope.isError(result))
+            #expect(ToolEnvelope.failureMessage(result).contains("does not expose cooperative"))
+            #expect(!(await probe.started))
         }
+    }
 
-        await waitUntil { await probe.started }
-        await operation.abortAndWait()
+    @Test("spawned registry dispatch cancellation drains a cooperative tool")
+    @MainActor
+    func spawnedRegistryCancellationDrainsCooperativeTool() async throws {
+        try await DynamicToolProbeFixture.run { fixture in
+            let probe = RegistryToolProbe()
+            let tool = CooperativeRegistryTool(probe: probe)
+            try fixture.register(tool)
 
-        #expect(await probe.sawCancellation)
-        #expect(await probe.finished)
+            let operation = OwnedSubagentOperation {
+                try await ToolRegistry.shared.execute(
+                    name: tool.name,
+                    argumentsJSON: "{}",
+                    permissionGateResolved: true,
+                    ownsExecutionUntilTermination: true
+                )
+            }
+
+            await waitUntil { await probe.started }
+            await operation.abortAndWait()
+
+            #expect(await probe.sawCancellation)
+            #expect(await probe.finished)
+        }
     }
 
     @Test("spawned schemas omit tools without audited cancellation ownership")

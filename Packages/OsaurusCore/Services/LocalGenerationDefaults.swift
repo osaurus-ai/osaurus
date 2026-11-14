@@ -47,6 +47,7 @@
 
 import Foundation
 import Darwin
+import CoreFoundation
 
 enum LocalGenerationDefaults {
 
@@ -64,48 +65,77 @@ enum LocalGenerationDefaults {
         /// `presence_penalty: 1.5` for non-thinking operation.
         var presencePenalty: Float?
         var frequencyPenalty: Float?
+        /// Model-declared token exclusions. Nil inherits; an explicit empty list clears an overlay.
+        var suppressTokens: [Int]?
         var doSample: Bool?
+
+        /// Optional bundle-owned overlay for thinking turns. Keep the complete
+        /// sampling object so selecting a mode cannot drop one of its fields.
+        var thinkingSamplingData: Data?
+        var defaultThinkingEnabled: Bool?
+
+        func resolvingThinking(_ enabled: Bool?) -> Defaults {
+            guard enabled == true, let data = thinkingSamplingData,
+                let sampling = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { return self }
+            return LocalGenerationDefaults.merge(
+                primary: LocalGenerationDefaults.extractSamplingFields(from: sampling),
+                fallback: self
+            )
+        }
 
         static let empty = Defaults()
     }
 
-    private static nonisolated let lock = NSLock()
-    private static nonisolated(unsafe) var cache: [String: Defaults] = [:]
+    /// A lookup may read disk while a repair, directory change or unload invalidates
+    /// metadata. An old read must neither repopulate the cache nor serve stale defaults.
+    final class Cache: @unchecked Sendable {
+        private let lock = NSLock()
+        private var values: [String: Defaults] = [:]
+        private var generation: UInt64 = 0
 
-    /// Resolve and cache the sampling defaults for `modelId`. The id may be
-    /// either the short picker name or the full `ORG/REPO` identifier; both
-    /// are supported via `ModelManager.findInstalledModel`.
-    static func defaults(forModelId modelId: String) -> Defaults {
-        let key = modelId.lowercased()
-        lock.lock()
-        if let hit = cache[key] {
+        func resolve(key: String, load: () -> Defaults, shouldCache: (Defaults) -> Bool) -> Defaults {
+            while true {
+                lock.lock()
+                if let hit = values[key] {
+                    lock.unlock()
+                    return hit
+                }
+                let startedGeneration = generation
+                lock.unlock()
+                let value = load()
+                let cacheable = shouldCache(value)
+                lock.lock()
+                guard generation == startedGeneration else {
+                    lock.unlock()
+                    continue
+                }
+                if cacheable { values[key] = value }
+                lock.unlock()
+                return value
+            }
+        }
+
+        func invalidate() {
+            lock.lock()
+            generation &+= 1
+            values.removeAll()
             lock.unlock()
-            return hit
         }
-        lock.unlock()
-
-        let resolved = load(modelId: modelId)
-
-        // A main-thread lookup during the launch scan can miss purely
-        // because the local-models cache is still cold (see
-        // `localDirectory(forModelId:)`). Don't memoize that provisional
-        // miss — the next lookup after the scan lands gets the real answer.
-        if resolved == .empty, !ModelManager.isLocalModelsCacheWarm {
-            return resolved
-        }
-
-        lock.lock()
-        cache[key] = resolved
-        lock.unlock()
-        return resolved
     }
 
-    /// Invalidate the cache. Call when models are added/removed so the next
-    /// lookup re-reads the file from disk.
+    private static nonisolated let cache = Cache()
+
+    /// Resolve model-owned defaults. Provisional cold-discovery misses are never cached.
+    static func defaults(forModelId modelId: String) -> Defaults {
+        cache.resolve(key: modelId.lowercased(), load: { load(modelId: modelId) }) { resolved in
+            resolved != .empty || ModelManager.isLocalModelsCacheWarm
+        }
+    }
+
+    /// Call when models or metadata change so subsequent requests re-read disk.
     static func invalidate() {
-        lock.lock()
-        cache.removeAll()
-        lock.unlock()
+        cache.invalidate()
     }
 
     /// Repair the known Laguna XS 2.1 sampling-metadata packaging mistake
@@ -580,12 +610,22 @@ enum LocalGenerationDefaults {
     /// sampling overlay.
     static func parseJangConfig(data: Data) -> Defaults {
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let chat = root["chat"] as? [String: Any],
-            let sampling = chat["sampling_defaults"] as? [String: Any]
+            let chat = root["chat"] as? [String: Any]
         else {
             return .empty
         }
-        return extractSamplingFields(from: sampling)
+        var defaults = extractSamplingFields(from: chat["sampling_defaults"] as? [String: Any] ?? [:])
+        if let thinking = chat["sampling_thinking"] as? [String: Any] {
+            defaults.thinkingSamplingData = try? JSONSerialization.data(withJSONObject: thinking)
+            let reasoning = chat["reasoning"] as? [String: Any]
+            let splitThinking = chat["thinking"] as? [String: Any]
+            let templateDefaults = chat["template_kwargs_defaults"] as? [String: Any]
+            defaults.defaultThinkingEnabled =
+                templateDefaults?["enable_thinking"] as? Bool
+                ?? reasoning?["default_enabled"] as? Bool
+                ?? splitThinking?["default"] as? Bool
+        }
+        return defaults
     }
 
     /// Merge two `Defaults` values field-by-field, preferring `primary` for
@@ -603,13 +643,19 @@ enum LocalGenerationDefaults {
         if out.repetitionPenalty == nil { out.repetitionPenalty = fallback.repetitionPenalty }
         if out.presencePenalty == nil { out.presencePenalty = fallback.presencePenalty }
         if out.frequencyPenalty == nil { out.frequencyPenalty = fallback.frequencyPenalty }
+        if out.suppressTokens == nil { out.suppressTokens = fallback.suppressTokens }
         if out.doSample == nil { out.doSample = fallback.doSample }
+        if out.thinkingSamplingData == nil { out.thinkingSamplingData = fallback.thinkingSamplingData }
+        if out.defaultThinkingEnabled == nil { out.defaultThinkingEnabled = fallback.defaultThinkingEnabled }
         return out
     }
 
     private static func extractSamplingFields(from obj: [String: Any]) -> Defaults {
         var out = Defaults()
-        if let maxTokens = readInt(obj["max_new_tokens"]) { out.maxTokens = maxTokens }
+        // Prefer the canonical valid cap, then the equivalent publisher alias.
+        // Neither max_length nor context length is an output-token limit.
+        out.maxTokens = readPositiveInteger(obj["max_new_tokens"])
+            ?? readPositiveInteger(obj["max_tokens"])
         if let t = readFloat(obj["temperature"]) { out.temperature = t }
         if let p = readFloat(obj["top_p"]) { out.topP = p }
         if let k = readInt(obj["top_k"]) { out.topK = k }
@@ -617,6 +663,14 @@ enum LocalGenerationDefaults {
         if let rp = readFloat(obj["repetition_penalty"]) { out.repetitionPenalty = rp }
         if let pp = readFloat(obj["presence_penalty"]) { out.presencePenalty = pp }
         if let fp = readFloat(obj["frequency_penalty"]) { out.frequencyPenalty = fp }
+        // Use the engine's integer-array decoding contract: do not coerce booleans,
+        // fractional values, or strings into token IDs, and preserve explicit [].
+        if let tokens = obj["suppress_tokens"] as? [Any],
+            let data = try? JSONSerialization.data(withJSONObject: tokens),
+            let tokenIDs = try? JSONDecoder().decode([Int].self, from: data)
+        {
+            out.suppressTokens = tokenIDs
+        }
         if let doSample = readBool(obj["do_sample"]) { out.doSample = doSample }
         return out
     }
@@ -628,6 +682,14 @@ enum LocalGenerationDefaults {
     private static func readFloat(_ any: Any?) -> Float? {
         if let n = any as? NSNumber { return n.floatValue }
         return nil
+    }
+
+    private static func readPositiveInteger(_ any: Any?) -> Int? {
+        guard let number = any as? NSNumber,
+            CFGetTypeID(number) != CFBooleanGetTypeID(),
+            number.intValue > 0, number.decimalValue == Decimal(number.intValue)
+        else { return nil }
+        return number.intValue
     }
 
     private static func readInt(_ any: Any?) -> Int? {

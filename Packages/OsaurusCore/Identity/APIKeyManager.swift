@@ -28,12 +28,21 @@ public final class APIKeyManager: @unchecked Sendable {
     /// - Parameters:
     ///   - label: Human-readable label for the key.
     ///   - expiration: When the key expires.
-    ///   - agentIndex: If set, sign with the derived agent key and scope to that agent.
-    ///                 If nil, sign with the master key for all-agent access.
+    ///   - agentKeyPath: If set, sign with the derived agent key at that path
+    ///                 (v1 or device-scoped v2, per the agent's persisted
+    ///                 derivation) and scope to that agent. If nil, sign with
+    ///                 the master key for all-agent access.
+    ///   - overrideExpiresAt: Exact expiry that beats `expiration`'s relative
+    ///                 date when set. Used by the Workspaces handshake, where the
+    ///                 key MUST die exactly when the membership attestation it
+    ///                 was minted from does (~10 min) — the in-token `exp` is
+    ///                 what the validator enforces, so no separate revocation
+    ///                 sweep is needed.
     public func generate(
         label: String,
         expiration: AccessKeyExpiration,
-        agentIndex: UInt32? = nil
+        agentKeyPath: AgentKeyPath? = nil,
+        overrideExpiresAt: Date? = nil
     ) throws -> (fullKey: String, info: AccessKeyInfo) {
         ensureLoadedFromKeychain()
 
@@ -47,8 +56,8 @@ public final class APIKeyManager: @unchecked Sendable {
 
         let signerAddress: OsaurusID
         let audienceAddress: OsaurusID
-        if let idx = agentIndex {
-            signerAddress = try AgentKey.deriveAddress(masterKey: masterKeyData, index: idx)
+        if let path = agentKeyPath {
+            signerAddress = try AgentKey.deriveAddress(masterKey: masterKeyData, path: path)
             audienceAddress = signerAddress
         } else {
             signerAddress = masterAddress
@@ -59,7 +68,8 @@ public final class APIKeyManager: @unchecked Sendable {
         let cnt = CounterStore.shared.next()
         let now = Date()
         let iat = Int(now.timeIntervalSince1970)
-        let expTimestamp: Int? = expiration.expirationDate(from: now).map { Int($0.timeIntervalSince1970) }
+        let resolvedExpiresAt = overrideExpiresAt ?? expiration.expirationDate(from: now)
+        let expTimestamp: Int? = resolvedExpiresAt.map { Int($0.timeIntervalSince1970) }
 
         let payload = AccessKeyPayload(
             aud: audienceAddress,
@@ -76,8 +86,8 @@ public final class APIKeyManager: @unchecked Sendable {
         let payloadData = try encoder.encode(payload)
 
         let signature: Data
-        if let idx = agentIndex {
-            signature = try AgentKey.sign(payload: payloadData, masterKey: masterKeyData, index: idx)
+        if let path = agentKeyPath {
+            signature = try AgentKey.sign(payload: payloadData, masterKey: masterKeyData, path: path)
         } else {
             signature = try signAccessPayload(payloadData, privateKey: masterKeyData)
         }
@@ -94,7 +104,7 @@ public final class APIKeyManager: @unchecked Sendable {
             aud: audienceAddress,
             createdAt: now,
             expiration: expiration,
-            expiresAt: expiration.expirationDate(from: now)
+            expiresAt: resolvedExpiresAt
         )
 
         queue.sync(flags: .barrier) {
@@ -115,13 +125,15 @@ public final class APIKeyManager: @unchecked Sendable {
     public func revoke(id: UUID) {
         ensureLoadedFromKeychain()
 
-        queue.sync(flags: .barrier) {
-            guard let index = keys.firstIndex(where: { $0.id == id }) else { return }
+        let nonce: String? = queue.sync(flags: .barrier) {
+            guard let index = keys.firstIndex(where: { $0.id == id }) else { return nil }
             let key = keys[index]
             RevocationStore.shared.revokeKey(address: key.iss, nonce: key.nonce)
             keys[index] = key.withRevoked()
             Self.saveToKeychain(keys)
+            return key.nonce
         }
+        if let nonce { InvitePeerIdentityStore.remove(keyNonce: nonce) }
         APIKeyValidatorEpoch.shared.bump()
     }
 
@@ -129,15 +141,19 @@ public final class APIKeyManager: @unchecked Sendable {
     public func revokeAll(forAddress address: OsaurusID) {
         ensureLoadedFromKeychain()
 
-        queue.sync(flags: .barrier) {
+        let nonces: [String] = queue.sync(flags: .barrier) {
             let currentCounter = CounterStore.shared.current
             RevocationStore.shared.revokeAllBefore(address: address, counter: currentCounter)
+            var revoked: [String] = []
             keys = keys.map { key in
                 guard key.iss.lowercased() == address.lowercased(), !key.revoked else { return key }
+                revoked.append(key.nonce)
                 return key.withRevoked()
             }
             Self.saveToKeychain(keys)
+            return revoked
         }
+        InvitePeerIdentityStore.remove(keyNonces: nonces)
         APIKeyValidatorEpoch.shared.bump()
     }
 
@@ -146,13 +162,15 @@ public final class APIKeyManager: @unchecked Sendable {
     public func delete(id: UUID) {
         ensureLoadedFromKeychain()
 
-        queue.sync(flags: .barrier) {
-            guard let index = keys.firstIndex(where: { $0.id == id }) else { return }
+        let nonce: String? = queue.sync(flags: .barrier) {
+            guard let index = keys.firstIndex(where: { $0.id == id }) else { return nil }
             let key = keys[index]
             RevocationStore.shared.revokeKey(address: key.iss, nonce: key.nonce)
             keys.remove(at: index)
             Self.saveToKeychain(keys)
+            return key.nonce
         }
+        if let nonce { InvitePeerIdentityStore.remove(keyNonce: nonce) }
         APIKeyValidatorEpoch.shared.bump()
     }
 
@@ -204,10 +222,13 @@ public final class APIKeyManager: @unchecked Sendable {
     // MARK: - Delete All
 
     public func deleteAll() {
-        queue.sync(flags: .barrier) {
+        let nonces: [String] = queue.sync(flags: .barrier) {
+            let all = keys.map(\.nonce)
             keys.removeAll()
             Self.saveToKeychain(keys)
+            return all
         }
+        InvitePeerIdentityStore.remove(keyNonces: nonces)
         APIKeyValidatorEpoch.shared.bump()
     }
 

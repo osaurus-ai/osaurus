@@ -7,12 +7,14 @@
 
 import Foundation
 
-enum AgentChannelKind: String, Codable, CaseIterable, Sendable {
+public enum AgentChannelKind: String, Codable, CaseIterable, Sendable {
     case discord
     case slack
     case telegram
     case imessage
     case whatsapp
+    case email
+    case n8n
     case customHTTP = "custom_http"
 }
 
@@ -384,6 +386,10 @@ struct AgentChannelSecretReference: Codable, Equatable, Sendable {
     var name: String
     var keychainId: String
 
+    /// The id the value is saved under: the keychain id, or the name when
+    /// the reference has none.
+    var storageName: String { keychainId.isEmpty ? name : keychainId }
+
     var normalized: AgentChannelSecretReference {
         AgentChannelSecretReference(
             name: name.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -403,6 +409,8 @@ struct AgentChannelCustomHTTPAction: Codable, Equatable, Sendable {
     var idempotency: AgentChannelCustomHTTPIdempotency?
     var timeoutSeconds: Double?
     var maxResponseBytes: Int?
+    /// Additive: HMAC header over the rendered body (see `AgentChannelCustomHTTPBodySignature`).
+    var bodySignature: AgentChannelCustomHTTPBodySignature?
 
     init(
         method: String = "GET",
@@ -414,7 +422,8 @@ struct AgentChannelCustomHTTPAction: Codable, Equatable, Sendable {
         responseMapping: AgentChannelCustomHTTPResponseMapping = AgentChannelCustomHTTPResponseMapping(),
         idempotency: AgentChannelCustomHTTPIdempotency? = nil,
         timeoutSeconds: Double? = nil,
-        maxResponseBytes: Int? = nil
+        maxResponseBytes: Int? = nil,
+        bodySignature: AgentChannelCustomHTTPBodySignature? = nil
     ) {
         self.method = method.uppercased()
         self.path = path
@@ -426,6 +435,7 @@ struct AgentChannelCustomHTTPAction: Codable, Equatable, Sendable {
         self.idempotency = idempotency?.normalized
         self.timeoutSeconds = timeoutSeconds.map(Self.clampTimeout)
         self.maxResponseBytes = maxResponseBytes.map(Self.clampResponseBytes)
+        self.bodySignature = bodySignature?.normalized
     }
 
     init(from decoder: Decoder) throws {
@@ -447,6 +457,9 @@ struct AgentChannelCustomHTTPAction: Codable, Equatable, Sendable {
         timeoutSeconds = try container.decodeIfPresent(Double.self, forKey: .timeoutSeconds).map(Self.clampTimeout)
         maxResponseBytes = try container.decodeIfPresent(Int.self, forKey: .maxResponseBytes)
             .map(Self.clampResponseBytes)
+        bodySignature =
+            try container.decodeIfPresent(AgentChannelCustomHTTPBodySignature.self, forKey: .bodySignature)?
+            .normalized
     }
 
     var normalized: AgentChannelCustomHTTPAction {
@@ -460,7 +473,8 @@ struct AgentChannelCustomHTTPAction: Codable, Equatable, Sendable {
             responseMapping: responseMapping,
             idempotency: idempotency,
             timeoutSeconds: timeoutSeconds,
-            maxResponseBytes: maxResponseBytes
+            maxResponseBytes: maxResponseBytes,
+            bodySignature: bodySignature
         )
     }
 
@@ -582,6 +596,7 @@ struct AgentChannelConnection: Codable, Equatable, Identifiable, Sendable {
     static let nativeTelegramConnectionId = "telegram"
     static let nativeIMessageConnectionId = "imessage"
     static let nativeWhatsAppConnectionId = "whatsapp"
+    static let nativeEmailConnectionId = "email"
 
     var id: String
     var name: String
@@ -596,6 +611,8 @@ struct AgentChannelConnection: Codable, Equatable, Identifiable, Sendable {
     var secrets: [AgentChannelSecretReference]
     var customHTTP: AgentChannelCustomHTTPConfiguration?
     var inboundAuthorization: AgentChannelInboundAuthorizationPolicy
+    /// Present only for `kind == .n8n`.
+    var n8n: AgentChannelN8nConfiguration?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -611,6 +628,7 @@ struct AgentChannelConnection: Codable, Equatable, Identifiable, Sendable {
         case secrets
         case customHTTP
         case inboundAuthorization
+        case n8n
     }
 
     init(
@@ -626,7 +644,8 @@ struct AgentChannelConnection: Codable, Equatable, Identifiable, Sendable {
         defaultReadLimit: Int = 50,
         secrets: [AgentChannelSecretReference] = [],
         customHTTP: AgentChannelCustomHTTPConfiguration? = nil,
-        inboundAuthorization: AgentChannelInboundAuthorizationPolicy = AgentChannelInboundAuthorizationPolicy()
+        inboundAuthorization: AgentChannelInboundAuthorizationPolicy = AgentChannelInboundAuthorizationPolicy(),
+        n8n: AgentChannelN8nConfiguration? = nil
     ) {
         self.id = Self.normalizedId(id)
         self.name = name.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -641,6 +660,7 @@ struct AgentChannelConnection: Codable, Equatable, Identifiable, Sendable {
         self.secrets = secrets.map(\.normalized)
         self.customHTTP = customHTTP
         self.inboundAuthorization = inboundAuthorization.normalized
+        self.n8n = n8n?.normalized
     }
 
     init(from decoder: Decoder) throws {
@@ -667,7 +687,8 @@ struct AgentChannelConnection: Codable, Equatable, Identifiable, Sendable {
             inboundAuthorization: try container.decodeIfPresent(
                 AgentChannelInboundAuthorizationPolicy.self,
                 forKey: .inboundAuthorization
-            ) ?? AgentChannelInboundAuthorizationPolicy()
+            ) ?? AgentChannelInboundAuthorizationPolicy(),
+            n8n: try container.decodeIfPresent(AgentChannelN8nConfiguration.self, forKey: .n8n)
         )
     }
 
@@ -685,7 +706,8 @@ struct AgentChannelConnection: Codable, Equatable, Identifiable, Sendable {
             defaultReadLimit: defaultReadLimit,
             secrets: secrets,
             customHTTP: customHTTP?.normalized,
-            inboundAuthorization: inboundAuthorization
+            inboundAuthorization: inboundAuthorization,
+            n8n: n8n
         )
     }
 
@@ -745,7 +767,7 @@ enum AgentChannelBindingRunSource: String, Codable, CaseIterable, Sendable {
         case .schedule: self = .schedule
         case .watcher: self = .watcher
         case .selfSchedule: self = .selfSchedule
-        case .plugin, .http, .channel, .imported, .delegation: return nil
+        case .plugin, .http, .webhook, .email, .automation, .channel, .imported, .delegation, .workspace: return nil
         }
     }
 }
@@ -1071,7 +1093,8 @@ enum AgentChannelConfigurationStore {
         OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(configuration.normalized).write(to: url, options: [.atomic])
+        let data = try encoder.encode(configuration.normalized)
+        try LegacyInboundDispatchCarryOver.connectionsFile(data, replacing: url).write(to: url, options: [.atomic])
         // Deliver on main: subscribers (ChatSession's budget-signal pipeline)
         // attach MainActor-isolated closures that Combine invokes synchronously
         // on the posting thread, and runtime isolation checks SIGTRAP the
@@ -1094,8 +1117,8 @@ enum AgentChannelConfigurationStore {
 
     static func configurationFileURL() -> URL {
         if let overrideDirectory {
-            return overrideDirectory.appendingPathComponent(fileName)
+            return overrideDirectory.appendingPathComponent(fileName, isDirectory: false)
         }
-        return OsaurusPaths.config().appendingPathComponent(fileName)
+        return OsaurusPaths.config().appendingPathComponent(fileName, isDirectory: false)
     }
 }

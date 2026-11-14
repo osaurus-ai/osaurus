@@ -175,6 +175,8 @@ enum ServerRuntimeSettingsDraftReconciler {
 struct ServerSettingsTabContent: View {
     @EnvironmentObject var server: ServerController
     @ObservedObject private var themeManager = ThemeManager.shared
+    @Environment(\.settingsLandingPending) private var pendingLandingAnchor
+    @State private var renderedLandingAnchors: Set<String> = []
 
     /// Local working copy — saved to disk only on "Save Changes" so
     /// typing in a text field doesn't restart the NIO server every
@@ -200,6 +202,7 @@ struct ServerSettingsTabContent: View {
     @State private var successMessage: String?
     @State private var activeSection: ServerSettingsSection = .connection
 
+    @StateObject private var decimalEdits = OptionalDoubleFieldCommitter()
     @ObservedObject private var managementState = ManagementStateManager.shared
     /// Section that just received a settings-search landing, briefly glowing.
     @State private var landedSection: ServerSettingsSection?
@@ -242,7 +245,7 @@ struct ServerSettingsTabContent: View {
     }
 
     private var hasUnsavedChanges: Bool {
-        draft != server.runtimeSettings
+        decimalEdits.hasPendingChanges || draft != server.runtimeSettings
             || draftMetadataFallbackTokens != savedMetadataFallbackTokens
             || draftContextLengthCap != savedContextLengthCap
             || draftLegacy.modelEvictionPolicy != server.configuration.modelEvictionPolicy
@@ -287,8 +290,8 @@ struct ServerSettingsTabContent: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            VStack(spacing: 0) {
-                HStack(spacing: 0) {
+            VStack(spacing: theme.space.s0) {
+                HStack(spacing: theme.space.s0) {
                     ServerSettingsSidebarNav(selection: $activeSection)
                         .frame(width: 220)
 
@@ -298,7 +301,8 @@ struct ServerSettingsTabContent: View {
 
                 ServerSettingsActionBar(
                     hasUnsavedChanges: hasUnsavedChanges,
-                    hasBlockingIssues: hasBlockingIssues,
+                    hasBlockingIssues: decimalEdits.blocksSaveAttempt(
+                        hasBlockingIssues: hasBlockingIssues),
                     requiresRestart: requiresRestart,
                     requiresModelReload: requiresModelReload,
                     saving: saving,
@@ -310,11 +314,12 @@ struct ServerSettingsTabContent: View {
             if let message = successMessage {
                 ThemedToastView(message, type: .success)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .padding(.bottom, 70)
+                    .padding(.bottom, theme.space.s64)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
+        .background(theme.surface.canvas)
+        .environment(\.optionalDoubleFieldCommitter, decimalEdits)
         .onAppear {
             // Defer a beat so the section scroll runs after first layout.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
@@ -356,7 +361,7 @@ struct ServerSettingsTabContent: View {
     // MARK: - Content pane
 
     private var contentPane: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             validationBanner
             sectionScroll
         }
@@ -373,83 +378,107 @@ struct ServerSettingsTabContent: View {
         }
     }
 
+    private var controlLandingTarget: String? {
+        pendingLandingAnchor.flatMap { renderedLandingAnchors.contains($0) ? $0 : nil }
+    }
+
     private var sectionScroll: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 24) {
-                    ConnectionSection(draft: $draft)
-                        .id(ServerSettingsSection.connection)
-                        .settingsSearchHighlight(landedSection == .connection)
-                    GlobalProxySection(draft: $draftLegacy)
-                        .id(ServerSettingsSection.globalProxy)
-                        .settingsSearchHighlight(landedSection == .globalProxy)
-                    AuthenticationSection(draft: $draft)
-                        .id(ServerSettingsSection.authentication)
-                        .settingsSearchHighlight(landedSection == .authentication)
-                    GenerationDefaultsSection(draft: $draft)
-                        .id(ServerSettingsSection.sampling)
-                        .settingsSearchHighlight(landedSection == .sampling)
-                    ConcurrencySection(draft: $draft)
-                        .id(ServerSettingsSection.concurrency)
-                        .settingsSearchHighlight(landedSection == .concurrency)
-                    CacheSection(
-                        draft: $draft,
-                        metadataFallbackTokens: $draftMetadataFallbackTokens,
-                        contextLengthCap: $draftContextLengthCap,
-                        savedSettings: server.runtimeSettings,
-                        savedMetadataFallbackTokens: savedMetadataFallbackTokens,
-                        savedContextLengthCap: savedContextLengthCap
-                    )
-                    .id(ServerSettingsSection.cache)
-                    .settingsSearchHighlight(landedSection == .cache)
-                    MemorySafetySection(draft: $draft)
-                        .id(ServerSettingsSection.memorySafety)
-                        .settingsSearchHighlight(landedSection == .memorySafety)
-                    DecodePerformanceSection(draft: $draft)
-                        .id(ServerSettingsSection.decodePerformance)
-                        .settingsSearchHighlight(landedSection == .decodePerformance)
-                    MTPSection(draft: $draft)
-                        .id(ServerSettingsSection.speculative)
-                        .settingsSearchHighlight(landedSection == .speculative)
-                    LiveActivitySection()
-                        .id(ServerSettingsSection.liveActivity)
-                        .settingsSearchHighlight(landedSection == .liveActivity)
-                    MultimodalSection(draft: $draft)
-                        .id(ServerSettingsSection.multimodal)
-                        .settingsSearchHighlight(landedSection == .multimodal)
-                    ToolsTemplatesSection(draft: $draft)
-                        .id(ServerSettingsSection.tools)
-                        .settingsSearchHighlight(landedSection == .tools)
-                    ModelResidencySection(draft: $draftLegacy)
-                        .id(ServerSettingsSection.modelMemory)
-                        .settingsSearchHighlight(landedSection == .modelMemory)
-                    PowerSection(draft: $draft)
-                        .id(ServerSettingsSection.power)
-                        .settingsSearchHighlight(landedSection == .power)
-                    AdvancedHTTPSection(draft: $draftLegacy)
-                        .id(ServerSettingsSection.requestLimits)
-                        .settingsSearchHighlight(landedSection == .requestLimits)
+                SettingsPageContent {
+                    settingsSections
                 }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 24)
-                .frame(maxWidth: .infinity)
             }
             // Gives `scrollTo(_:anchor: .top)` a breathing-room buffer so
             // anchored sections don't kiss the top edge of the scroll.
             .safeAreaInset(edge: .top, spacing: 0) {
                 Color.clear.frame(height: 12)
             }
+            .onPreferenceChange(SettingsLandingAnchorsKey.self) { anchors in
+                renderedLandingAnchors = anchors
+            }
             .onChange(of: activeSection) { _, new in
-                withAnimation(.smooth(duration: 0.45)) {
-                    proxy.scrollTo(new, anchor: .top)
+                withAnimation(theme.motion.slow) {
+                    if let controlLandingTarget {
+                        proxy.scrollTo(controlLandingTarget, anchor: .center)
+                    } else {
+                        proxy.scrollTo(new, anchor: .top)
+                    }
+                }
+            }
+            .task(id: controlLandingTarget) {
+                guard let target = controlLandingTarget else { return }
+                // A search may create this pane before its controls lay out.
+                // Cancellation prevents an earlier result stealing the scroll.
+                try? await Task.sleep(for: .milliseconds(100))
+                guard !Task.isCancelled else { return }
+                withAnimation(theme.motion.slow) {
+                    proxy.scrollTo(target, anchor: .center)
                 }
             }
         }
     }
 
+    @ViewBuilder
+    private var settingsSections: some View {
+        ConnectionSection(draft: $draft)
+            .id(ServerSettingsSection.connection)
+            .settingsSearchHighlight(landedSection == .connection)
+        GlobalProxySection(draft: $draftLegacy)
+            .id(ServerSettingsSection.globalProxy)
+            .settingsSearchHighlight(landedSection == .globalProxy)
+        AuthenticationSection(draft: $draft)
+            .id(ServerSettingsSection.authentication)
+            .settingsSearchHighlight(landedSection == .authentication)
+        GenerationDefaultsSection(draft: $draft)
+            .id(ServerSettingsSection.sampling)
+            .settingsSearchHighlight(landedSection == .sampling)
+        ConcurrencySection(draft: $draft)
+            .id(ServerSettingsSection.concurrency)
+            .settingsSearchHighlight(landedSection == .concurrency)
+        CacheSection(
+            draft: $draft,
+            metadataFallbackTokens: $draftMetadataFallbackTokens,
+            contextLengthCap: $draftContextLengthCap,
+            savedSettings: server.runtimeSettings,
+            savedMetadataFallbackTokens: savedMetadataFallbackTokens,
+            savedContextLengthCap: savedContextLengthCap
+        )
+        .id(ServerSettingsSection.cache)
+        .settingsSearchHighlight(landedSection == .cache)
+        MemorySafetySection(draft: $draft)
+            .id(ServerSettingsSection.memorySafety)
+            .settingsSearchHighlight(landedSection == .memorySafety)
+        DecodePerformanceSection(draft: $draft)
+            .id(ServerSettingsSection.decodePerformance)
+            .settingsSearchHighlight(landedSection == .decodePerformance)
+        MTPSection(draft: $draft)
+            .id(ServerSettingsSection.speculative)
+            .settingsSearchHighlight(landedSection == .speculative)
+        LiveActivitySection()
+            .id(ServerSettingsSection.liveActivity)
+            .settingsSearchHighlight(landedSection == .liveActivity)
+        MultimodalSection(draft: $draft)
+            .id(ServerSettingsSection.multimodal)
+            .settingsSearchHighlight(landedSection == .multimodal)
+        ToolsTemplatesSection(draft: $draft)
+            .id(ServerSettingsSection.tools)
+            .settingsSearchHighlight(landedSection == .tools)
+        ModelResidencySection(draft: $draftLegacy)
+            .id(ServerSettingsSection.modelMemory)
+            .settingsSearchHighlight(landedSection == .modelMemory)
+        PowerSection(draft: $draft)
+            .id(ServerSettingsSection.power)
+            .settingsSearchHighlight(landedSection == .power)
+        AdvancedHTTPSection(draft: $draftLegacy)
+            .id(ServerSettingsSection.requestLimits)
+            .settingsSearchHighlight(landedSection == .requestLimits)
+    }
+
     // MARK: - Actions
 
     private func resetToDefaults() {
+        decimalEdits.discard()
         draft = ServerRuntimeSettingsStore.resetDefaults(
             serverConfiguration: .default
         )
@@ -467,6 +496,8 @@ struct ServerSettingsTabContent: View {
     }
 
     private func save() async {
+        decimalEdits.commit()
+        guard !hasBlockingIssues else { return }
         // A same-section external edit must be resolved explicitly. Sending
         // this stale draft would overwrite a newer API/store value.
         guard runtimeConflictSections.isEmpty else { return }
@@ -517,11 +548,11 @@ struct ServerSettingsTabContent: View {
     }
 
     private func showSuccess(_ message: String) {
-        withAnimation(theme.springAnimation()) {
+        withAnimation(theme.motion.springAnimation) {
             successMessage = message
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-            withAnimation(theme.animationQuick()) {
+            withAnimation(theme.motion.quick) {
                 successMessage = nil
             }
         }

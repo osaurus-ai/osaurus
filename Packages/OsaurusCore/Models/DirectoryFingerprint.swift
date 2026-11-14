@@ -15,7 +15,7 @@ import Foundation
 
 /// A snapshot of a directory's file metadata, hashed into a Merkle tree.
 /// Comparing two fingerprints is a single string comparison (the root hash).
-public struct DirectoryFingerprint: Sendable {
+public struct DirectoryFingerprint: Codable, Sendable {
     /// Individual file entries with their metadata hashes
     public let entries: [FileEntry]
 
@@ -23,7 +23,7 @@ public struct DirectoryFingerprint: Sendable {
     public let hash: String
 
     /// A single file's metadata hash
-    public struct FileEntry: Comparable, Sendable {
+    public struct FileEntry: Codable, Comparable, Sendable {
         /// Path relative to the fingerprinted root
         public let relativePath: String
         /// Hash of the file's metadata (size + mtime)
@@ -45,11 +45,14 @@ public struct DirectoryFingerprint: Sendable {
     public static func capture(_ root: URL, excludedSubpaths: Set<URL> = []) throws -> DirectoryFingerprint {
         let fm = FileManager.default
         let keys: [URLResourceKey] = [.contentModificationDateKey, .fileSizeKey, .isRegularFileKey]
-        let rootPath = root.path
+        // The enumerator yields symlink-resolved URLs (`/tmp/x` lists
+        // `/private/tmp/x/…`), so prefixes compare against canonical paths.
+        let rootPath = canonicalPath(root.path)
+        let excludedPaths = excludedSubpaths.map { canonicalPath($0.path) }
 
         guard
             let enumerator = fm.enumerator(
-                at: root,
+                at: URL(fileURLWithPath: rootPath, isDirectory: true),
                 includingPropertiesForKeys: keys,
                 options: [.skipsHiddenFiles]
             )
@@ -61,7 +64,7 @@ public struct DirectoryFingerprint: Sendable {
 
         for case let url as URL in enumerator {
             // Skip excluded subpaths (other watched folders)
-            if excludedSubpaths.contains(where: { url.path.hasPrefix($0.path) }) {
+            if excludedPaths.contains(where: { url.path.hasPrefix($0) }) {
                 enumerator.skipDescendants()
                 continue
             }
@@ -101,6 +104,14 @@ public struct DirectoryFingerprint: Sendable {
         let rootHash = rootHasher.finalize().hexPrefix(16)
 
         return DirectoryFingerprint(entries: entries, hash: rootHash)
+    }
+
+    /// `realpath`, because `resolvingSymlinksInPath` maps `/private/tmp`
+    /// back to `/tmp`.
+    private static func canonicalPath(_ path: String) -> String {
+        guard let resolved = realpath(path, nil) else { return path }
+        defer { free(resolved) }
+        return String(cString: resolved)
     }
 
     // MARK: - Comparison

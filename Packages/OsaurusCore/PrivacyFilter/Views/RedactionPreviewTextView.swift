@@ -100,11 +100,11 @@ struct RedactionPreviewTextView: NSViewRepresentable {
         textView.textContainer?.widthTracksTextView = true
 
         textView.selectedTextAttributes = [
-            .backgroundColor: NSColor(theme.selectionColor)
+            .backgroundColor: NSColor(theme.selection.background)
         ]
-        textView.insertionPointColor = NSColor(theme.cursorColor)
-        textView.accentColor = NSColor(theme.accentColor)
-        textView.secondaryBackgroundColor = NSColor(theme.secondaryBackground)
+        textView.insertionPointColor = NSColor(theme.cursor)
+        textView.accentColor = NSColor(theme.text.link)
+        textView.secondaryBackgroundColor = NSColor(theme.surface.subtle)
 
         scrollView.documentView = textView
 
@@ -119,9 +119,9 @@ struct RedactionPreviewTextView: NSViewRepresentable {
         // Reapply selection/theme colors so a live theme change in
         // Settings is picked up without reconstructing the view.
         textView.selectedTextAttributes = [
-            .backgroundColor: NSColor(theme.selectionColor)
+            .backgroundColor: NSColor(theme.selection.background)
         ]
-        textView.accentColor = NSColor(theme.accentColor)
+        textView.accentColor = NSColor(theme.text.link)
 
         let fingerprint = makeFingerprint()
         let textRebuilt: Bool
@@ -142,10 +142,23 @@ struct RedactionPreviewTextView: NSViewRepresentable {
             textRebuilt || context.coordinator.lastHighlightFingerprint != highlightFingerprint
         let applied: [AppliedRedactionRange]
         if highlightChanged {
+            // `apply` only adds attributes. When the highlight set shrinks
+            // on unchanged text, strip the old runs first or their
+            // underlines outlive the redactions they marked.
+            if !textRebuilt {
+                Self.clearHighlightAttributes(in: storage, bodyColor: NSColor(theme.text.primary))
+            }
+            // Solid, not the chat bubble's dotted underline. A patterned
+            // underline is drawn as a dashed line stroke, and when Skip All
+            // removes every placeholder in one update Core Animation's async
+            // renderer replays a dashed run with nothing left to stroke: a
+            // zero-instance Metal draw that aborts under Xcode's Metal API
+            // Validation. Solid underlines are filled rects, never strokes.
             applied = RedactionHighlighter.apply(
                 on: storage,
                 highlights: highlights,
-                accentColor: NSColor(theme.accentColor),
+                accentColor: NSColor(theme.action.primary.default.background),
+                underlineStyle: .single,
                 a11yLabelBuilder: { Self.accessibilityLabel(for: $0) }
             )
             context.coordinator.lastHighlightFingerprint = highlightFingerprint
@@ -176,28 +189,35 @@ struct RedactionPreviewTextView: NSViewRepresentable {
         }
     }
 
-    /// Build the body attributed string. Plain text, body font,
-    /// theme primaryText color. Line spacing matches the chat
-    /// bubble paragraph spacing so the preview reads as a quote of
-    /// the message the user is about to send.
+    /// Remove every attribute `RedactionHighlighter` paints and restore
+    /// the body foreground color it overrode.
+    private static func clearHighlightAttributes(in storage: NSTextStorage, bodyColor: NSColor) {
+        let full = NSRange(location: 0, length: storage.length)
+        guard full.length > 0 else { return }
+        storage.beginEditing()
+        storage.enumerateAttribute(.redactionPlaceholder, in: full, options: []) { value, range, _ in
+            guard value != nil else { return }
+            storage.removeAttribute(.underlineStyle, range: range)
+            storage.removeAttribute(.underlineColor, range: range)
+            storage.removeAttribute(.toolTip, range: range)
+            storage.removeAttribute(.redactionDirection, range: range)
+            storage.removeAttribute(.redactionPlaceholder, range: range)
+            storage.addAttribute(.foregroundColor, value: bodyColor, range: range)
+        }
+        storage.endEditing()
+    }
+
+    /// Build the body attributed string in the chat body text style so the
+    /// preview reads as a quote of the message the user is about to send.
     private static func buildAttributedString(
         scrubbedText: String,
         theme: any ThemeProtocol
     ) -> NSAttributedString {
         let body = NSMutableAttributedString(string: scrubbedText)
-        let fontSize = CGFloat(theme.bodySize)
-        let font = NSFont.systemFont(ofSize: fontSize, weight: .regular)
-        let paragraph = NSMutableParagraphStyle()
-        // ~1.4 line height — same value the chat bubble uses for
-        // paragraph blocks so the preview looks like a quote of the
-        // outgoing message.
-        paragraph.lineSpacing = 4
-        paragraph.paragraphSpacing = 6
-        let attributes: [NSAttributedString.Key: Any] = [
-            .font: font,
-            .foregroundColor: NSColor(theme.primaryText),
-            .paragraphStyle: paragraph,
-        ]
+        var attributes = theme.textAttributes(.body, color: NSColor(theme.text.primary))
+        let paragraph = theme.paragraphStyle(.body)
+        paragraph.paragraphSpacing = theme.space.s6
+        attributes[.paragraphStyle] = paragraph
         body.addAttributes(attributes, range: NSRange(location: 0, length: body.length))
         return body
     }
@@ -209,16 +229,20 @@ struct RedactionPreviewTextView: NSViewRepresentable {
         return String(format: format, highlight.placeholderToken)
     }
 
-    /// (text, theme-mode) fingerprint. Theme mode is folded in so a
-    /// dark/light switch counts as a change and re-rebuilds the
-    /// attributed string with the new foreground/background colors.
+    /// (text, theme) fingerprint. Any theme change that affects rendering
+    /// rebuilds the attributed string with the new colors and type.
     /// Body text fingerprint INTENTIONALLY excludes `highlights`
     /// because they're applied as a separate pass on the same
     /// storage; folding them in here would rebuild the attributed
     /// string (and drop the user's selection) every time the
     /// redaction map ticked.
     private func makeFingerprint() -> String {
-        return "\(scrubbedText.count)|\(theme.isDark ? 1 : 0)|\(theme.bodySize)"
+        // Full-text hash, not the length: a same-length change (e.g. a
+        // placeholder swapped back to an original of equal length) must
+        // still rebuild, or the old text and its highlights stay on screen.
+        var hasher = Hasher()
+        hasher.combine(scrubbedText)
+        return "\(hasher.finalize())|\(theme.renderFingerprint)"
     }
 
     /// (scrubbedText, highlights, accent) fingerprint used to gate
@@ -239,10 +263,7 @@ struct RedactionPreviewTextView: NSViewRepresentable {
                 hasher.combine(h.direction.rawValue)
             }
         }
-        // Accent description is `(red, green, blue, alpha)`-ish via
-        // NSColor's debug description — stable enough to detect a
-        // user-driven theme accent change.
-        hasher.combine(NSColor(theme.accentColor).description)
+        hasher.combine(theme.renderFingerprint)
         return String(hasher.finalize())
     }
 }

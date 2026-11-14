@@ -53,6 +53,15 @@ import Testing
         #expect(VLMDetection.isVLM(modelType: "NemotronH_Nano_Omni_Reasoning_V3"))
     }
 
+    @Test func isVLMDeepseekV41_modelTypeAndInstalledBundle() throws {
+        #expect(LocalVisionEvidence.deepseekV41VisionRuntimeAvailable)
+        #expect(VLMDetection.isVLM(modelType: "deepseek_v41"))
+        #expect(!VLMDetection.isVLM(modelType: "deepseek_v4"))
+        let root = try VisionBundleFixture.makeDeepseekV41()
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(VLMDetection.isVLM(at: root))
+    }
+
     @Test func isVLMModelType_rejectsUnknownArchitecture() {
         #expect(!VLMDetection.isVLM(modelType: "totally_made_up_arch_xyz"))
     }
@@ -67,12 +76,8 @@ import Testing
     /// `gemma4`) are disambiguated by `vision_config` presence in
     /// `config.json`. This test pins the truthy path.
     @Test func isVLMAtDirectory_trueWhenVisionConfigPresent() throws {
-        let tmp = try makeTempDir()
+        let tmp = try VisionBundleFixture.make(type: "qwen2_5_vl")
         defer { try? FileManager.default.removeItem(at: tmp) }
-        try writeConfig(
-            at: tmp,
-            json: #"{"model_type": "qwen2_5_vl", "vision_config": {"hidden_size": 1280}}"#
-        )
         #expect(VLMDetection.isVLM(at: tmp))
     }
 
@@ -91,7 +96,7 @@ import Testing
     /// picker detector must make the same sidecar decision as vMLX's
     /// VLMModelFactory or an installed Omni bundle is displayed/routed as a
     /// text model even though the runtime loads NemotronHOmni.
-    @Test func isVLMAtDirectory_trueForNemotronOmniSidecar() throws {
+    @Test func isVLMAtDirectory_sidecarAloneCannotProveVision() throws {
         let tmp = try makeTempDir()
         defer { try? FileManager.default.removeItem(at: tmp) }
         try writeConfig(
@@ -105,7 +110,7 @@ import Testing
                 encoding: .utf8
             )
 
-        #expect(VLMDetection.isVLM(at: tmp))
+        #expect(!VLMDetection.isVLM(at: tmp))
     }
 
     @Test func isVLMAtDirectory_falseWhenConfigMissing() {

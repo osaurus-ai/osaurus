@@ -3,16 +3,21 @@
   "domain": "computer_use_loop",
   "label": "CU loop • type a query and submit with Return",
   "query": "Search for 'weather today' and submit the search by pressing Return.",
-  "notes": "Model-driven. Exercises type followed by press_key. The scripted world has no key bindings (press_key is a legible no-op), so the contract is the typed value landing in the field AND the type→press_key verb order — i.e. the model fills the field then submits with a key rather than hunting for a button.",
+  "notes": "Model-driven. Exercises type followed by press_key. Return on the focused search field is the scene's one key binding (`onReturn`): it fills the results line, so the submit has an observable effect the verify step can confirm and the model can honestly declare done — a Return that changed nothing is reported as unverified and must not be called success. The contract is the typed value landing in the field, the type→press_key verb order (fill, then submit with a key rather than hunting for a button), and the results appearing.",
   "fixtures": {},
   "expect": {
     "computerUseLoop": {
       "app": "Browser",
       "maxSteps": 8,
       "elements": [
-        { "id": "search", "role": "textfield", "label": "Search", "value": "", "placeholder": "Search the web", "editable": true }
+        { "id": "search", "role": "textfield", "label": "Search", "value": "", "placeholder": "Search the web", "editable": true,
+          "onReturn": { "setValues": [{ "id": "results", "value": "Results for: weather today" }] } },
+        { "id": "results", "role": "statictext", "label": "Results", "value": "" }
       ],
-      "successValues": [{ "id": "search", "contains": "weather today" }],
+      "successValues": [
+        { "id": "search", "contains": "weather today" },
+        { "id": "results", "contains": "Results for" }
+      ],
       "expectVerbsInOrder": ["type", "press_key"],
       "maxInvalidActions": 2
     }

@@ -1,0 +1,27 @@
+{
+  "id": "orchestrator.delegate-from-empty-pool",
+  "domain": "orchestrator",
+  "label": "orchestrator • empty spawn pool: the Configurator creates the agent; nothing is improvised",
+  "query": "I have no agents yet. Create a custom agent named \"Summarizer\" (one-sentence summaries only), then use it right away to summarize this in one sentence: \"Osaurus runs local models on Apple silicon and exposes an OpenAI-compatible API so existing clients work unchanged.\" Reply with the Summarizer's sentence.",
+  "notes": "Step 1 contract: with an empty pool `spawn_agent` is not in the schema and rule 3 is \"Never spawn a subagent\", so the Orchestrator hands the agent creation to the Configurator and reports what came back. It must not write the summary itself and pass it off as the Summarizer's.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "configurator_handoff"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load",
+        "clarify",
+        "osaurus_config"
+      ],
+      "rubric": [
+        "The reply says the Summarizer agent was created, or that creating it is waiting on the user's approval.",
+        "The reply does NOT present a summary as coming from the Summarizer unless it says the Summarizer actually ran.",
+        "The reply does NOT offer an option menu."
+      ],
+      "maxIterations": 10
+    }
+  }
+}

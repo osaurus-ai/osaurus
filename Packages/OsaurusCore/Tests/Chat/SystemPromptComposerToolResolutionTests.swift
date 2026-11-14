@@ -23,6 +23,15 @@ struct SystemPromptComposerToolResolutionTests {
 
     // MARK: - Helpers
 
+    /// These schema tests supply explicit request-local model availability;
+    /// they never install or load a model to exercise metadata composition.
+    private func runnableTargets(_ agents: [Agent]) -> SpawnTargetAvailabilitySnapshot {
+        SpawnTargetAvailabilitySnapshot(agentTargets: agents.map { agent in
+            .init(descriptor: .init(id: agent.id, name: agent.name, description: agent.description,
+                modelId: agent.defaultModel, isLocal: true, providerName: nil), state: .runnable)
+        })
+    }
+
     private func withSandboxAgent(
         autonomous: Bool,
         backgroundProcesses: Bool = false,
@@ -116,6 +125,7 @@ struct SystemPromptComposerToolResolutionTests {
     /// keeps it off the Default-agent allowlist path so the only thing
     /// under test is the per-capability gate.
     private func makeSnapshot(
+        agentId: UUID = UUID(),
         toolMode: ToolSelectionMode = .auto,
         manualToolNames: [String]? = nil,
         autonomousConfig: AutonomousExecConfig? = nil,
@@ -126,10 +136,15 @@ struct SystemPromptComposerToolResolutionTests {
         spawnDelegationEnabled: Bool = false,
         imageEnabled: Bool = false,
         spawnableAgentIDs: [UUID] = [],
-        spawnableModelNames: [String] = []
+        calculatorEnabled: Bool = false,
+        redactionToolsEnabled: Bool = false,
+        taskChecklistEnabled: Bool = true,
+        clarifyEnabled: Bool = true,
+        artifactsEnabled: Bool = true,
+        workingFolderReadOnly: Bool = false
     ) -> AgentConfigSnapshot {
         AgentConfigSnapshot(
-            agentId: UUID(),
+            agentId: agentId,
             toolsDisabled: false,
             memoryDisabled: true,
             autonomousConfig: autonomousConfig,
@@ -145,7 +160,13 @@ struct SystemPromptComposerToolResolutionTests {
             spawnDelegationEnabled: spawnDelegationEnabled,
             imageEnabled: imageEnabled,
             spawnableAgentIDs: spawnableAgentIDs,
-            spawnableModelNames: spawnableModelNames
+            spawnableAgentNames: [],
+            calculatorEnabled: calculatorEnabled,
+            redactionToolsEnabled: redactionToolsEnabled,
+            taskChecklistEnabled: taskChecklistEnabled,
+            clarifyEnabled: clarifyEnabled,
+            artifactsEnabled: artifactsEnabled,
+            workingFolderReadOnly: workingFolderReadOnly
         )
     }
 
@@ -206,47 +227,19 @@ struct SystemPromptComposerToolResolutionTests {
         return Set(props.keys)
     }
 
-    /// Exact ids published in the request-local `spawn_model.model` enum.
-    private func spawnModelEnum(_ tools: [Tool]) -> [String] {
-        guard let spawn = tools.first(where: { $0.function.name == "spawn_model" }),
+    /// Exact values published in the request-local `spawn_agent.agent` enum
+    /// (agent UUIDs, then workspace addresses, then display names).
+    private func spawnAgentEnum(_ tools: [Tool]) -> [String] {
+        guard let spawn = tools.first(where: { $0.function.name == "spawn_agent" }),
             case .object(let root)? = spawn.function.parameters,
             case .object(let properties)? = root["properties"],
-            case .object(let model)? = properties["model"],
-            case .array(let values)? = model["enum"]
+            case .object(let agent)? = properties["agent"],
+            case .array(let values)? = agent["enum"]
         else { return [] }
         return values.compactMap {
             if case .string(let value) = $0 { return value }
             return nil
         }
-    }
-
-    /// Exact union of agent names and model ids published in
-    /// `spawn_batch.jobs.items.properties.target.enum`.
-    private func spawnBatchTargetEnum(_ tools: [Tool]) -> [String] {
-        guard let spawn = tools.first(where: { $0.function.name == "spawn_batch" }),
-            case .object(let root)? = spawn.function.parameters,
-            case .object(let properties)? = root["properties"],
-            case .object(let jobs)? = properties["jobs"],
-            case .object(let items)? = jobs["items"],
-            case .object(let jobProperties)? = items["properties"],
-            case .object(let target)? = jobProperties["target"],
-            case .array(let values)? = target["enum"]
-        else { return [] }
-        return values.compactMap {
-            if case .string(let value) = $0 { return value }
-            return nil
-        }
-    }
-
-    /// Request-local batch cap published in `spawn_batch.jobs.maxItems`.
-    private func spawnBatchMaxItems(_ tools: [Tool]) -> Int? {
-        guard let spawn = tools.first(where: { $0.function.name == "spawn_batch" }),
-            case .object(let root)? = spawn.function.parameters,
-            case .object(let properties)? = root["properties"],
-            case .object(let jobs)? = properties["jobs"],
-            case .number(let value)? = jobs["maxItems"]
-        else { return nil }
-        return Int(value)
     }
 
     // MARK: - Auto mode
@@ -287,6 +280,278 @@ struct SystemPromptComposerToolResolutionTests {
             pluginQuery.map { $0.canonicalHashPayload() }
                 == unrelatedQuery.map { $0.canonicalHashPayload() }
         )
+    }
+
+    @Test("Revocation or unregister during permission resolution cannot execute", arguments: [false, true])
+    func revocationWhilePermissionGateSuspends(unregister: Bool) async {
+        await withSandboxAgent(autonomous: false) { agentId in
+            await DynamicCatalogTestLock.shared.run {
+                let name = "permission_revoke_" + UUID().uuidString
+                let fixture = RevokingPermissionFixture(name: name) {
+                    await Task.yield()
+                    await MainActor.run {
+                        if unregister {
+                            ToolRegistry.shared.unregister(names: [name])
+                        } else {
+                            AgentManager.shared.updateEnabledToolNames([], for: agentId)
+                        }
+                    }
+                    return .auto
+                }
+                let registry = ToolRegistry.shared
+                registry.registerPluginTool(fixture)
+                registry.setEnabled(true, for: name)
+                defer { registry.unregister(names: [name]) }
+                AgentManager.shared.updateEnabledToolNames([name], for: agentId)
+                let scope = ToolExecutionScope(exposed: registry.specs(forTools: [name]))
+                await ChatExecutionContext.$currentAgentId.withValue(agentId) {
+                    await ChatExecutionContext.$toolExecutionScope.withValue(scope) {
+                        do {
+                            let result = try await registry.execute(name: name, argumentsJSON: "{}")
+                            #expect(result != RevocableToolFixture.executed)
+                            #expect(result.contains("not available"))
+                        } catch {
+                            Issue.record("Unexpected permission probe error: \(error)")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test("Unknown sandbox tools retain the retryable initialization response")
+    func unknownSandboxToolRetainsInitializationEnvelope() async throws {
+        let name = "sandbox_not_registered_" + UUID().uuidString
+        let result = try await ToolRegistry.shared.execute(name: name, argumentsJSON: "{}")
+        #expect(result.contains("still initializing"))
+        #expect(result.contains("unavailable"))
+    }
+
+    @Test("A loaded dynamic tool is removed and refused after its grant is revoked")
+    func loadedToolRevocationAppliesToComposeAndDispatch() async {
+        await withSandboxAgent(autonomous: false) { agentId in
+            await DynamicCatalogTestLock.shared.run {
+                let fixture = RevocableToolFixture(name: "revocation_probe_" + UUID().uuidString)
+                let registry = ToolRegistry.shared
+                registry.registerPluginTool(fixture)
+                registry.setEnabled(true, for: fixture.name)
+                defer { registry.unregister(names: [fixture.name]) }
+                AgentManager.shared.updateEnabledToolNames([fixture.name], for: agentId)
+                let first = SystemPromptComposer.resolveTools(
+                    agentId: agentId,
+                    executionMode: .none,
+                    additionalToolNames: [fixture.name]
+                )
+                #expect(first.contains { $0.function.name == fixture.name })
+                #expect(
+                    TextSubagentKind.agentChildToolSpecs(agentId: agentId)
+                        .contains { $0.function.name == fixture.name }
+                )
+                let staleScope = ToolExecutionScope(exposed: first)
+                AgentManager.shared.updateEnabledToolNames([], for: agentId)
+                let second = SystemPromptComposer.resolveTools(
+                    agentId: agentId,
+                    executionMode: .none,
+                    additionalToolNames: [fixture.name],
+                    frozenToolSpecs: first
+                )
+                #expect(!second.contains { $0.function.name == fixture.name })
+                #expect(
+                    !TextSubagentKind.agentChildToolSpecs(agentId: agentId)
+                        .contains { $0.function.name == fixture.name }
+                )
+                await ChatExecutionContext.$currentAgentId.withValue(agentId) {
+                    await ChatExecutionContext.$toolExecutionScope.withValue(staleScope) {
+                        do {
+                            let result = try await registry.execute(
+                                name: fixture.name,
+                                argumentsJSON: "{}",
+                                permissionGateResolved: true
+                            )
+                            #expect(result != RevocableToolFixture.executed)
+                            #expect(result.contains("not available"))
+                        } catch {
+                            Issue.record("Unexpected dispatch error: \(error)")
+                        }
+                    }
+                }
+                // Restoring the agent grant does not override a global disable.
+                AgentManager.shared.updateEnabledToolNames([fixture.name], for: agentId)
+                registry.setEnabled(false, for: fixture.name)
+                let disabled = SystemPromptComposer.resolveTools(
+                    agentId: agentId,
+                    executionMode: .none,
+                    additionalToolNames: [fixture.name]
+                )
+                #expect(!disabled.contains { $0.function.name == fixture.name })
+                #expect(
+                    !TextSubagentKind.agentChildToolSpecs(agentId: agentId)
+                        .contains { $0.function.name == fixture.name }
+                )
+                registry.setEnabled(true, for: fixture.name)
+                let restored = SystemPromptComposer.resolveTools(
+                    agentId: agentId,
+                    executionMode: .none,
+                    additionalToolNames: [fixture.name]
+                )
+                #expect(restored.contains { $0.function.name == fixture.name })
+            }
+        }
+    }
+
+    @Test("An inaccessible plugin metadata update does not invalidate this agent's prefix")
+    func unrelatedDynamicCatalogChangePreservesIdentity() async {
+        await withSandboxAgent(autonomous: false) { agentId in
+            await DynamicCatalogTestLock.shared.run {
+                let a = CatalogIdentityFixture(name: "catalog_a_" + UUID().uuidString, description: "A")
+                let b = CatalogIdentityFixture(name: "catalog_b_" + UUID().uuidString, description: "B v1")
+                let registry = ToolRegistry.shared
+                registry.registerPluginTool(a)
+                registry.registerPluginTool(b)
+                registry.setEnabled(true, for: a.name)
+                registry.setEnabled(true, for: b.name)
+                defer { registry.unregister(names: [a.name, b.name]) }
+                AgentManager.shared.updateEnabledToolNames([a.name], for: agentId)
+                let first = registry.toolGrantSnapshot(agentId: agentId)
+                #expect(first.schemas[b.name] == nil)
+                registry.registerPluginTool(CatalogIdentityFixture(name: b.name, description: "B v2"))
+                #expect(registry.toolGrantSnapshot(agentId: agentId) == first)
+                AgentManager.shared.updateEnabledToolNames([a.name, b.name], for: agentId)
+                let granted = registry.toolGrantSnapshot(agentId: agentId)
+                #expect(granted != first)
+                #expect(granted.schemas[b.name] != nil)
+                registry.registerPluginTool(CatalogIdentityFixture(name: b.name, description: "B v3"))
+                #expect(registry.toolGrantSnapshot(agentId: agentId) != granted)
+            }
+        }
+    }
+
+    @Test("Disabling web or all tools refuses a stale native dynamic scope")
+    func nativeFeatureRevocationRefusesStaleScope() async {
+        await withSandboxAgent(autonomous: false) { agentId in
+            await DynamicCatalogTestLock.shared.run {
+                let registry = ToolRegistry.shared
+                guard var agent = AgentManager.shared.agent(for: agentId) else {
+                    Issue.record("Missing fixture agent")
+                    return
+                }
+                agent.settings.webSearchEnabled = true
+                AgentManager.shared.update(agent)
+                let scope = ToolExecutionScope(exposed: registry.specs(forTools: ["search_and_extract"]))
+                #expect(registry.isDynamicToolGranted("search_and_extract", agentId: agentId))
+                agent.settings.webSearchEnabled = false
+                AgentManager.shared.update(agent)
+                #expect(!registry.isDynamicToolGranted("search_and_extract", agentId: agentId))
+                await ChatExecutionContext.$currentAgentId.withValue(agentId) {
+                    await ChatExecutionContext.$toolExecutionScope.withValue(scope) {
+                        do {
+                            // Malformed args guarantee this never performs network
+                            // work even if a regression bypasses the grant check.
+                            let result = try await registry.execute(name: "search_and_extract", argumentsJSON: "{")
+                            #expect(result.contains("not available"))
+                        } catch { Issue.record("Unexpected native gate error: \(error)") }
+                    }
+                }
+                // An explicit pick remains a separate grant; all-tools OFF wins.
+                AgentManager.shared.updateEnabledToolNames(["search_and_extract"], for: agentId)
+                #expect(registry.isDynamicToolGranted("search_and_extract", agentId: agentId))
+                guard var latest = AgentManager.shared.agent(for: agentId) else { return }
+                latest.toolsEnabled = false
+                AgentManager.shared.update(latest)
+                #expect(!registry.isDynamicToolGranted("search_and_extract", agentId: agentId))
+            }
+        }
+    }
+
+    @Test("Charts and web edits refresh frozen baseline names in both directions")
+    func capabilityTogglesRefreshFrozenBaseline() async {
+        await withSandboxAgent(autonomous: false) { agentId in
+            await DynamicCatalogTestLock.shared.run {
+                let store = SessionToolStateStore()
+                let registry = ToolRegistry.shared
+                for enabled in [false, true, false] {
+                    guard var agent = AgentManager.shared.agent(for: agentId) else {
+                        Issue.record("Missing fixture agent")
+                        return
+                    }
+                    agent.settings.renderChartEnabled = enabled
+                    agent.settings.webSearchEnabled = enabled
+                    AgentManager.shared.update(agent)
+                    await store.reconcileToolGrants("caps", current: registry.toolGrantSnapshot(agentId: agentId))
+                    let state = await store.get("caps")
+                    let context = await SystemPromptComposer.composeChatContext(
+                        agentId: agentId,
+                        executionMode: .none,
+                        model: "gpt-5",
+                        frozenAlwaysLoadedNames: state?.initialAlwaysLoadedNames,
+                        frozenToolSpecs: state?.initialToolSpecs,
+                        frozenManifest: state?.frozenManifest
+                    )
+                    let names = Set(context.tools.map(\.function.name))
+                    #expect(names.contains("render_chart") == enabled)
+                    #expect(names.contains("web_search") == enabled)
+                    #expect(names.contains("search_and_extract") == enabled)
+                    await store.setInitial(
+                        "caps",
+                        alwaysLoadedNames: context.alwaysLoadedNames,
+                        toolSpecs: context.initialToolSpecs,
+                        manifest: context.enabledManifest
+                    )
+                }
+                let caps = AgentManager.shared.effectiveCapabilities(for: agentId)
+                var unrelated = caps
+                unrelated.memoryEnabled.toggle()
+                unrelated.screenContextEnabled.toggle()
+                #expect(caps.toolExposureIdentity == unrelated.toolExposureIdentity)
+            }
+        }
+    }
+
+    @Test("Grant edits refresh the next message manifest without changing an unchanged prefix")
+    func nextMessageManifestReflectsEditedGrants() async {
+        await withSandboxAgent(autonomous: false) { agentId in
+            await DynamicCatalogTestLock.shared.run {
+                let a = capabilityManifestFixtureTool()
+                let b = capabilityManifestFixtureTool()
+                let registry = ToolRegistry.shared
+                registry.registerPluginTool(a)
+                registry.registerPluginTool(b)
+                registry.setEnabled(true, for: a.name)
+                registry.setEnabled(true, for: b.name)
+                defer { registry.unregister(names: [a.name, b.name]) }
+                let store = SessionToolStateStore()
+                AgentManager.shared.updateEnabledToolNames([a.name], for: agentId)
+                await store.reconcileToolGrants("manifest", current: registry.toolGrantSnapshot(agentId: agentId))
+                let first = await SystemPromptComposer.composeChatContext(
+                    agentId: agentId,
+                    executionMode: .none,
+                    model: "gpt-5"
+                )
+                #expect(first.enabledManifest?.contains("tool/\(a.name)") == true)
+                await store.setInitial(
+                    "manifest",
+                    alwaysLoadedNames: [],
+                    toolSpecs: first.initialToolSpecs,
+                    manifest: first.enabledManifest
+                )
+                await store.reconcileToolGrants("manifest", current: registry.toolGrantSnapshot(agentId: agentId))
+                #expect(await store.get("manifest")?.frozenManifest == first.enabledManifest)
+                // Addition and revocation in one save: the next message must
+                // publish B, not the stale A-only manifest.
+                AgentManager.shared.updateEnabledToolNames([b.name], for: agentId)
+                await store.reconcileToolGrants("manifest", current: registry.toolGrantSnapshot(agentId: agentId))
+                let state = await store.get("manifest")
+                let second = await SystemPromptComposer.composeChatContext(
+                    agentId: agentId,
+                    executionMode: .none,
+                    model: "gpt-5",
+                    frozenToolSpecs: state?.initialToolSpecs,
+                    frozenManifest: state?.frozenManifest
+                )
+                #expect(second.enabledManifest?.contains("tool/\(b.name)") == true)
+                #expect(second.enabledManifest?.contains("tool/\(a.name)") != true)
+            }
+        }
     }
 
     @Test("custom plain chat publishes an enabled-tool manifest for the unified gateway")
@@ -522,7 +787,7 @@ struct SystemPromptComposerToolResolutionTests {
         // Regression guard for the warmup/send divergence: warmup and the
         // context popover used to compose WITHOUT the session source bound,
         // so a channel-bound agent's warmup built a prompt with no publish
-        // tool and no Channel Destinations section while the send built both.
+        // tool and no Where It Can Post section while the send built both.
         // The warmed prefill diverged mid-schema and re-prefilled every send.
         // Warmup and the popover now bind the session's source before
         // composing; this test pins that all source-bound composes agree,
@@ -621,6 +886,129 @@ struct SystemPromptComposerToolResolutionTests {
         }
     }
 
+    /// The folder prompt tells the model to review and undo with these; the
+    /// real request must carry them, not just the five-tool core. Redaction
+    /// is a per-agent opt-in.
+    @Test
+    func hostFolderSchemaCarriesHistoryAndCopyTools_redactionOnlyWhenEnabled() {
+        withRegisteredFolderTools { folder in
+            let lean = Set(
+                SystemPromptComposer.resolveTools(
+                    snapshot: makeSnapshot(),
+                    executionMode: .hostFolder(folder),
+                    query: "Undo the last change to report.docx"
+                ).map(\.function.name)
+            )
+            for name in ["file_undo", "file_operation_history", "file_copy"] {
+                #expect(lean.contains(name), "missing \(name)")
+            }
+            #expect(lean.isDisjoint(with: ToolRegistry.redactionToolNames))
+
+            let optedIn = Set(
+                SystemPromptComposer.resolveTools(
+                    snapshot: makeSnapshot(redactionToolsEnabled: true),
+                    executionMode: .hostFolder(folder),
+                    query: "Undo the last change to report.docx"
+                ).map(\.function.name)
+            )
+            #expect(optedIn.isSuperset(of: ToolRegistry.redactionToolNames))
+        }
+    }
+
+    /// A read-only working folder keeps the read tools and loses every
+    /// write, in auto and manual mode, even when the write is ticked or
+    /// loaded this session.
+    @Test
+    func readOnlyFolder_stripsEveryWriteTool_withNoBypass() {
+        withRegisteredFolderTools { folder in
+            let writes = ToolRegistry.readOnlyFolderBlockedToolNames
+            for mode in [ToolSelectionMode.auto, .manual] {
+                let names = Set(
+                    SystemPromptComposer.resolveTools(
+                        snapshot: makeSnapshot(
+                            toolMode: mode, manualToolNames: Array(writes), redactionToolsEnabled: true,
+                            workingFolderReadOnly: true),
+                        executionMode: .hostFolder(folder),
+                        additionalToolNames: LoadedTools(writes)
+                    ).map(\.function.name))
+                #expect(names.isDisjoint(with: writes), "\(mode): \(names.intersection(writes))")
+                #expect(names.isDisjoint(with: ToolRegistry.hostFolderHistoryToolNames), "\(mode)")
+                #expect(names.isSuperset(of: ["file_read", "file_search"]), "\(mode)")
+            }
+            let writable = Set(
+                SystemPromptComposer.resolveTools(
+                    snapshot: makeSnapshot(redactionToolsEnabled: true), executionMode: .hostFolder(folder)
+                ).map(\.function.name))
+            #expect(writable.isSuperset(of: ["file_write", "file_edit", "shell_run", "redact_file"]))
+            #expect(writable.isSuperset(of: ToolRegistry.hostFolderHistoryToolNames))
+        }
+    }
+
+    @Test("A read-only working folder refuses a write at execute, folder bound")
+    func readOnlyFolder_refusesAWriteAtExecute() async {
+        await SandboxTestLock.runWithStoragePaths {
+            var agent = Agent(name: "ReadOnlyProbe-\(UUID().uuidString.prefix(6))")
+            agent.settings.workingFolderReadOnly = true
+            AgentManager.shared.add(agent)
+            FolderToolManager.shared.ensureFolderToolsRegistered()
+            let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("ro-\(UUID().uuidString)")
+            try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let result = await ChatExecutionContext.$currentAgentId.withValue(agent.id) {
+                await ChatExecutionContext.$currentFolderRoot.withValue(root) {
+                    (try? await ToolRegistry.shared.execute(
+                        name: "file_write", argumentsJSON: #"{"path":"a.txt","content":"x"}"#)) ?? ""
+                }
+            }
+            #expect(result.contains("read only"), "\(result)")
+            #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("a.txt").path))
+            FolderToolManager.shared._unregisterAllForTesting()
+            _ = await AgentManager.shared.delete(id: agent.id)
+        }
+    }
+
+    @Test
+    func calculatorIsOptInForCustomAgents() {
+        withRegisteredFolderTools { folder in
+            @MainActor func names(_ snapshot: AgentConfigSnapshot) -> Set<String> {
+                Set(
+                    SystemPromptComposer.resolveTools(
+                        snapshot: snapshot,
+                        executionMode: .hostFolder(folder),
+                        query: "Total the April statement"
+                    ).map(\.function.name)
+                )
+            }
+            #expect(!names(makeSnapshot()).contains(CalculatorTool.toolName))
+            #expect(names(makeSnapshot(calculatorEnabled: true)).contains(CalculatorTool.toolName))
+        }
+    }
+
+    @Test
+    func agentLoopToolsCanBeSwitchedOffPerAgent() {
+        withRegisteredFolderTools { folder in
+            @MainActor func names(_ snapshot: AgentConfigSnapshot) -> Set<String> {
+                Set(
+                    SystemPromptComposer.resolveTools(
+                        snapshot: snapshot,
+                        executionMode: .hostFolder(folder),
+                        query: "Refactor the parser in three steps"
+                    ).map(\.function.name)
+                )
+            }
+            let defaults = names(makeSnapshot())
+            #expect(defaults.isSuperset(of: ["todo", "complete", "clarify", "share_artifact"]))
+            let off = names(
+                makeSnapshot(taskChecklistEnabled: false, clarifyEnabled: false, artifactsEnabled: false)
+            )
+            #expect(off.isDisjoint(with: ["todo", "complete", "clarify", "share_artifact"]))
+            // A manual pick still keeps a switched-off tool.
+            let manual = names(
+                makeSnapshot(toolMode: .manual, manualToolNames: ["todo"], taskChecklistEnabled: false)
+            )
+            #expect(manual.contains("todo"))
+        }
+    }
+
     @Test
     func workspacePreservesEnabledCapabilitiesWithoutQueryHints() {
         withRegisteredFolderTools { folder in
@@ -644,24 +1032,28 @@ struct SystemPromptComposerToolResolutionTests {
     }
 
     @Test
-    func sandboxPreservesEnabledCapabilitiesWithoutQueryHints() {
-        withRegisteredSandboxBuiltins {
-            let tools = SystemPromptComposer.resolveTools(
-                snapshot: makeSnapshot(
-                    renderChartEnabled: true,
-                    webSearchEnabled: true,
-                    browserUseEnabled: true
-                ),
-                executionMode: .sandbox(hostRead: nil),
-                query: "Update the project documentation"
-            )
-            let names = Set(tools.map(\.function.name))
-            #expect(names.isSuperset(of: ToolRegistry.coreWorkspaceToolNames))
-            #expect(names.contains("capabilities"))
-            #expect(names.contains("render_chart"))
-            #expect(names.contains("web_search"))
-            #expect(names.contains("search_and_extract"))
-            #expect(names.contains(BrowserUseTool.toolName))
+    func sandboxPreservesEnabledCapabilitiesWithoutQueryHints() async {
+        // Registers and unregisters the shared sandbox tools, so it must hold SandboxTestLock like every
+        // other sandbox-registry test (unlocked, it wiped BuiltinSandboxToolsTests' tools mid-call).
+        await SandboxTestLock.shared.run { @MainActor in
+            withRegisteredSandboxBuiltins {
+                let tools = SystemPromptComposer.resolveTools(
+                    snapshot: makeSnapshot(
+                        renderChartEnabled: true,
+                        webSearchEnabled: true,
+                        browserUseEnabled: true
+                    ),
+                    executionMode: .sandbox(hostRead: nil),
+                    query: "Update the project documentation"
+                )
+                let names = Set(tools.map(\.function.name))
+                #expect(names.isSuperset(of: ToolRegistry.coreWorkspaceToolNames))
+                #expect(names.contains("capabilities"))
+                #expect(names.contains("render_chart"))
+                #expect(names.contains("web_search"))
+                #expect(names.contains("search_and_extract"))
+                #expect(names.contains(BrowserUseTool.toolName))
+            }
         }
     }
 
@@ -1224,110 +1616,116 @@ struct SystemPromptComposerToolResolutionTests {
     }
 
     @Test("sandbox control-plane schema follows agent feature gates")
-    func sandboxControlPlaneVisibilityMatrix() {
-        FolderToolManager.shared.ensureFolderToolsRegistered()
-        defer { FolderToolManager.shared._unregisterAllForTesting() }
+    func sandboxControlPlaneVisibilityMatrix() async {
+        // Rewrites the shared sandbox tool registration: hold SandboxTestLock (see sandboxPreservesEnabled…).
+        await SandboxTestLock.shared.run { @MainActor in
+            FolderToolManager.shared.ensureFolderToolsRegistered()
+            defer { FolderToolManager.shared._unregisterAllForTesting() }
 
-        for autonomousEnabled in [false, true] {
-            for pluginCreate in [false, true] {
-                for backgroundEnabled in [false, true] {
-                    let config = AutonomousExecConfig(
-                        enabled: autonomousEnabled,
-                        pluginCreate: pluginCreate,
-                        backgroundProcessEnabled: backgroundEnabled
-                    )
-                    BuiltinSandboxTools.register(
-                        agentId: "control-plane-matrix",
-                        agentName: "control-plane-matrix",
-                        config: config
-                    )
+            for autonomousEnabled in [false, true] {
+                for pluginCreate in [false, true] {
+                    for backgroundEnabled in [false, true] {
+                        let config = AutonomousExecConfig(
+                            enabled: autonomousEnabled,
+                            pluginCreate: pluginCreate,
+                            backgroundProcessEnabled: backgroundEnabled
+                        )
+                        BuiltinSandboxTools.register(
+                            agentId: "control-plane-matrix",
+                            agentName: "control-plane-matrix",
+                            config: config
+                        )
 
-                    let snapshot = makeSnapshot(autonomousConfig: config)
-                    let sandboxNames = Set(
-                        SystemPromptComposer.resolveTools(
-                            snapshot: snapshot,
-                            executionMode: .sandbox
-                        ).map(\.function.name)
-                    )
+                        let snapshot = makeSnapshot(autonomousConfig: config)
+                        let sandboxNames = Set(
+                            SystemPromptComposer.resolveTools(
+                                snapshot: snapshot,
+                                executionMode: .sandbox
+                            ).map(\.function.name)
+                        )
 
-                    #expect(
-                        sandboxNames.isDisjoint(
-                            with: ToolRegistry.sandboxBackendAdapterToolNames
-                        )
-                    )
-                    #expect(sandboxNames.isSuperset(of: ToolRegistry.coreWorkspaceToolNames))
-                    #expect(sandboxNames.contains("capabilities"))
-                    #expect(sandboxNames.contains("share_artifact"))
-                    if autonomousEnabled {
-                        #expect(sandboxNames.contains("sandbox_install"))
-                        #expect(sandboxNames.contains("sandbox_secret_check"))
-                        #expect(sandboxNames.contains("sandbox_secret_set"))
-                        #expect(
-                            sandboxNames.contains("sandbox_plugin_register")
-                                == pluginCreate
-                        )
-                        #expect(
-                            sandboxNames.contains("sandbox_process")
-                                == backgroundEnabled
-                        )
-                    } else {
                         #expect(
                             sandboxNames.isDisjoint(
+                                with: ToolRegistry.sandboxBackendAdapterToolNames
+                            )
+                        )
+                        #expect(sandboxNames.isSuperset(of: ToolRegistry.coreWorkspaceToolNames))
+                        #expect(sandboxNames.contains("capabilities"))
+                        #expect(sandboxNames.contains("share_artifact"))
+                        if autonomousEnabled {
+                            #expect(sandboxNames.contains("sandbox_install"))
+                            #expect(sandboxNames.contains("sandbox_secret_check"))
+                            #expect(sandboxNames.contains("sandbox_secret_set"))
+                            #expect(
+                                sandboxNames.contains("sandbox_plugin_register")
+                                    == pluginCreate
+                            )
+                            #expect(
+                                sandboxNames.contains("sandbox_process")
+                                    == backgroundEnabled
+                            )
+                        } else {
+                            #expect(
+                                sandboxNames.isDisjoint(
+                                    with: ToolRegistry.sandboxControlPlaneToolNames
+                                )
+                            )
+                        }
+
+                        let nonSandboxNames = Set(
+                            SystemPromptComposer.resolveTools(
+                                snapshot: snapshot,
+                                executionMode: .none
+                            ).map(\.function.name)
+                        )
+                        #expect(
+                            nonSandboxNames.isDisjoint(
                                 with: ToolRegistry.sandboxControlPlaneToolNames
                             )
                         )
+
+                        ToolRegistry.shared.unregisterAllSandboxTools()
                     }
-
-                    let nonSandboxNames = Set(
-                        SystemPromptComposer.resolveTools(
-                            snapshot: snapshot,
-                            executionMode: .none
-                        ).map(\.function.name)
-                    )
-                    #expect(
-                        nonSandboxNames.isDisjoint(
-                            with: ToolRegistry.sandboxControlPlaneToolNames
-                        )
-                    )
-
-                    ToolRegistry.shared.unregisterAllSandboxTools()
                 }
             }
         }
     }
 
     @Test("disabled sandbox controls cannot be restored by a loaded-tool name")
-    func sandboxControlPlaneLoadedNameBypassFailsClosed() {
-        let config = AutonomousExecConfig(
-            enabled: true,
-            pluginCreate: false,
-            backgroundProcessEnabled: false
-        )
-        BuiltinSandboxTools.register(
-            agentId: "control-plane-bypass",
-            agentName: "control-plane-bypass",
-            config: AutonomousExecConfig(
+    func sandboxControlPlaneLoadedNameBypassFailsClosed() async {
+        // Rewrites the shared sandbox tool registration: hold SandboxTestLock (see sandboxPreservesEnabled…).
+        await SandboxTestLock.shared.run { @MainActor in
+            let config = AutonomousExecConfig(
                 enabled: true,
-                pluginCreate: true,
-                backgroundProcessEnabled: true
+                pluginCreate: false,
+                backgroundProcessEnabled: false
             )
-        )
-        defer { ToolRegistry.shared.unregisterAllSandboxTools() }
+            BuiltinSandboxTools.register(
+                agentId: "control-plane-bypass",
+                agentName: "control-plane-bypass",
+                config: AutonomousExecConfig(
+                    enabled: true,
+                    pluginCreate: true,
+                    backgroundProcessEnabled: true
+                )
+            )
+            defer { ToolRegistry.shared.unregisterAllSandboxTools() }
 
-        let names = Set(
-            SystemPromptComposer.resolveTools(
-                snapshot: makeSnapshot(autonomousConfig: config),
-                executionMode: .sandbox,
-                additionalToolNames: [
-                    "sandbox_exec",
-                    "sandbox_plugin_register",
-                    "sandbox_process",
-                ]
-            ).map(\.function.name)
-        )
-        #expect(!names.contains("sandbox_exec"))
-        #expect(!names.contains("sandbox_plugin_register"))
-        #expect(!names.contains("sandbox_process"))
+            let names = Set(
+                SystemPromptComposer.resolveTools(
+                    snapshot: makeSnapshot(autonomousConfig: config),
+                    executionMode: .sandbox,
+                    additionalToolNames: [
+                        "sandbox_exec",
+                        "sandbox_plugin_register",
+                        "sandbox_process",
+                    ]
+                ).map(\.function.name)
+            )
+            #expect(!names.contains("sandbox_exec"))
+            #expect(!names.contains("sandbox_plugin_register"))
+            #expect(!names.contains("sandbox_process"))
+        }
     }
 
     @Test
@@ -1423,7 +1821,7 @@ struct SystemPromptComposerToolResolutionTests {
                 #expect(
                     propertyNames("file_read") == [
                         "path", "max_depth", "sheet_name", "start_line", "end_line",
-                        "tail_lines", "max_chars", "max_rows", "max_columns",
+                        "tail_lines", "max_chars", "max_rows", "max_columns", "mode", "paths", "pages",
                     ]
                 )
                 let readDescription = byName["file_read"]?.function.description ?? ""
@@ -1431,15 +1829,17 @@ struct SystemPromptComposerToolResolutionTests {
                 #expect(readDescription.contains("do not unzip"))
                 #expect(
                     propertyNames("file_search") == [
-                        "pattern", "path", "target", "file_pattern", "max_results",
+                        "pattern", "path", "target", "file_pattern", "max_results", "offset",
                     ]
                 )
                 #expect(
-                    propertyNames("file_write") == ["path", "content", "mode", "dry_run"]
+                    propertyNames("file_write") == ["path", "content", "source_path", "mode", "dry_run"]
                 )
+                // Batch (`edits`) and `replace_all` forms must stay reachable
+                // from the compact schema.
                 #expect(
                     propertyNames("file_edit") == [
-                        "path", "old_string", "new_string", "dry_run",
+                        "path", "old_string", "new_string", "edits", "replace_all", "dry_run", "operations",
                     ]
                 )
                 #expect(propertyNames("shell_run") == ["command", "timeout"])
@@ -1448,7 +1848,12 @@ struct SystemPromptComposerToolResolutionTests {
     }
 
     @Test
-    func compactVMSchemaIsHonestAboutRawDocumentReads() async {
+    func compactVMSchemaAdvertisesDocumentAndImageReads() async {
+        // `/workspace` is a VirtioFS share of the container workspace, so
+        // documents and images in the VM are served by the same host
+        // extractors as a trusted folder (`WorkspaceShareRoute`). The VM
+        // schema must advertise that instead of steering to shell
+        // extraction.
         await withSandboxAgent(autonomous: true) { agentId in
             withRegisteredSandboxBuiltins {
                 let tools = SystemPromptComposer.resolveTools(
@@ -1458,8 +1863,57 @@ struct SystemPromptComposerToolResolutionTests {
                 let readDescription =
                     tools.first { $0.function.name == "file_read" }?.function.description ?? ""
                 #expect(readDescription.contains("VM"))
-                #expect(readDescription.contains("shell/code extraction"))
-                #expect(!readDescription.contains("do not unzip"))
+                #expect(readDescription.contains("PDF"))
+                #expect(readDescription.contains("images"))
+                #expect(readDescription.contains("do not unzip"))
+                #expect(!readDescription.contains("shell/code extraction"))
+                #expect(!readDescription.lowercased().contains("raw text only"))
+
+                let writeDescription =
+                    tools.first { $0.function.name == "file_write" }?.function.description ?? ""
+                #expect(writeDescription.contains(".xlsx"))
+                #expect(writeDescription.contains(".docx"))
+                #expect(writeDescription.contains("`.pptx` from Markdown"))
+
+                var editProps: [String: JSONValue] = [:]
+                if case .object(let schema)? = tools.first(where: { $0.function.name == "file_edit" })?
+                    .function.parameters,
+                    case .object(let properties)? = schema["properties"]
+                {
+                    editProps = properties
+                }
+                #expect(editProps["edits"] != nil)
+                #expect(editProps["replace_all"] != nil)
+                // `/workspace` documents are edited in place through the share, so the VM route
+                // advertises `operations` and must not steer models into regenerating them.
+                #expect(editProps["operations"] != nil)
+                let editDescription = tools.first { $0.function.name == "file_edit" }?.function.description ?? ""
+                #expect(editDescription.contains("`operations`"))
+                #expect(!editDescription.contains("regenerate with file_write"))
+                #expect(writeDescription.contains("formula"))
+            }
+        }
+    }
+
+    @Test
+    func folderMode_compactSchemaAdvertisesInPlaceDocumentEdits() async {
+        await withSandboxAgent(autonomous: false) { agentId in
+            withRegisteredFolderTools { folder in
+                let tools = SystemPromptComposer.resolveTools(
+                    agentId: agentId,
+                    executionMode: .hostFolder(folder)
+                )
+                func properties(_ name: String) -> [String: JSONValue] {
+                    guard case .object(let schema)? = tools.first(where: { $0.function.name == name })?.function.parameters,
+                        case .object(let props)? = schema["properties"]
+                    else { return [:] }
+                    return props
+                }
+                #expect(properties("file_edit")["operations"] != nil)
+                #expect(properties("file_read")["mode"] != nil)
+                let editDescription = tools.first { $0.function.name == "file_edit" }?.function.description ?? ""
+                #expect(editDescription.contains("`operations`"))
+                #expect(!editDescription.contains("regenerate with file_write"))
             }
         }
     }
@@ -1482,9 +1936,13 @@ struct SystemPromptComposerToolResolutionTests {
                 }
                 // `file_tree` no longer exists as a separate tool.
                 #expect(byName["file_tree"] == nil)
-                // `file_copy` is combined-mode-only: plain folder mode has
-                // no sandbox to bridge to (`shell_run` `cp` covers copies).
-                #expect(byName["file_copy"] == nil)
+                // `file_copy` is the tracked, undoable byte copy in folder
+                // mode (host→host); its description must not frame it as a
+                // sandbox bridge when no sandbox is attached.
+                let copy = byName["file_copy"]
+                #expect(copy != nil)
+                let copyDescription = copy?.function.description ?? ""
+                #expect(copyDescription.contains("/workspace/") == false)
             }
         }
     }
@@ -1536,16 +1994,16 @@ struct SystemPromptComposerToolResolutionTests {
     }
 
     @Test
-    func defaultAgentKeepsTodoAndCurrentTimeTogether() {
+    func defaultAgentGetsOnlyTheRoutingSurface() {
         let tools = SystemPromptComposer.resolveTools(
             snapshot: makeSnapshotForDefaultAgent(),
             executionMode: .none
         )
         let names = Set(tools.map { $0.function.name })
-        #expect(names.contains("todo"))
-        #expect(names.contains("complete"))
+        #expect(names.isSubset(of: ToolRegistry.orchestratorAllowedToolNames))
         #expect(names.contains("clarify"))
-        #expect(names.contains("get_current_time"))
+        #expect(!names.contains("todo"))
+        #expect(!names.contains("get_current_time"))
     }
 
     @Test
@@ -1727,17 +2185,19 @@ struct SystemPromptComposerToolResolutionTests {
     /// config stays stable while we read the delegation-gated schema.
     private func withSubagentSandbox(_ body: @MainActor @Sendable () async -> Void) async {
         let lease = await acquireSubagentStoreSandbox("composer-delegation")
-        let previousRuntimeDirectory = ServerRuntimeSettingsStore.overrideDirectory
-        ServerRuntimeSettingsStore.overrideDirectory = lease.sandbox
-        ServerRuntimeSettingsStore.invalidateSnapshot()
-        defer {
-            ServerRuntimeSettingsStore.overrideDirectory = previousRuntimeDirectory
+        defer { lease.release() }
+        await ServerConfigStoreTestLock.shared.run {
+            let previousRuntimeDirectory = ServerRuntimeSettingsStore.overrideDirectory
+            ServerRuntimeSettingsStore.overrideDirectory = lease.sandbox
             ServerRuntimeSettingsStore.invalidateSnapshot()
-            lease.release()
+            defer {
+                ServerRuntimeSettingsStore.overrideDirectory = previousRuntimeDirectory
+                ServerRuntimeSettingsStore.invalidateSnapshot()
+            }
+            saveServerBatchLimit(3)
+            SubagentConfigurationStore.save(SubagentConfiguration())
+            await body()
         }
-        saveServerBatchLimit(3)
-        SubagentConfigurationStore.save(SubagentConfiguration())
-        await body()
     }
 
     private func saveServerBatchLimit(_ value: Int) {
@@ -1825,47 +2285,30 @@ struct SystemPromptComposerToolResolutionTests {
     }
 
     /// A custom agent surfaces `spawn_agent` only with its own toggle AND a
-    /// non-empty per-agent AGENT list, and `spawn_model` only with a non-empty
-    /// MODEL list. `spawn_batch` appears when either pool is usable; `image`
-    /// stays hidden when its own toggle is off.
+    /// non-empty per-agent agent list; `image` stays hidden when its own
+    /// toggle is off. There is no other delegation tool.
     @Test
     func autoMode_customAgentSurfacesSpawnOnlyWithToggleAndTargets() async {
         await withSubagentSandbox {
             let helperID = UUID(uuidString: "40000000-0000-4000-8000-000000000001")!
-            // Agent pool only → spawn_agent, not spawn_model.
-            let withAgents = Set(
-                SystemPromptComposer.resolveTools(
-                    snapshot: makeSnapshot(
-                        spawnDelegationEnabled: true,
-                        spawnableAgentIDs: [helperID]
-                    ),
-                    executionMode: .none
-                ).map { $0.function.name }
-            )
-            #expect(withAgents.contains("spawn_agent"))
-            #expect(!withAgents.contains("spawn_model"))
-            #expect(withAgents.contains("spawn_batch"))
-            #expect(!withAgents.contains("image"))
-
-            // Model pool only → spawn_model, not spawn_agent.
-            let remoteModelIds = [
-                "openai-chatgpt/gpt-5.6-sol",
-                "anthropic/claude-opus-4-8",
-            ]
-            let modelTools = SystemPromptComposer.resolveTools(
+            let helper = Agent(id: helperID, name: "Description fixture", description: "Handles independent test tasks.")
+            AgentManager.shared.add(helper)
+            let tools = SystemPromptComposer.resolveTools(
                 snapshot: makeSnapshot(
                     spawnDelegationEnabled: true,
-                    spawnableModelNames: remoteModelIds
+                    spawnableAgentIDs: [helperID]
                 ),
-                executionMode: .none
+                executionMode: .none,
+                spawnTargets: runnableTargets([helper])
             )
-            let withModels = Set(modelTools.map { $0.function.name })
-            #expect(withModels.contains("spawn_model"))
-            #expect(!withModels.contains("spawn_agent"))
-            #expect(withModels.contains("spawn_batch"))
-            #expect(spawnModelEnum(modelTools) == remoteModelIds)
+            let withAgents = Set(tools.map { $0.function.name })
+            #expect(withAgents.contains("spawn_agent"))
+            #expect(!withAgents.contains("spawn_model"))
+            #expect(!withAgents.contains("spawn_batch"))
+            #expect(!withAgents.contains("image"))
+            #expect(spawnAgentEnum(tools) == [helperID.uuidString, helper.name])
 
-            // Toggle on but BOTH lists empty → nothing to spawn → both hidden.
+            // Toggle on but the list is empty → nothing to spawn → hidden.
             let noTargets = Set(
                 SystemPromptComposer.resolveTools(
                     snapshot: makeSnapshot(
@@ -1876,68 +2319,44 @@ struct SystemPromptComposerToolResolutionTests {
                 ).map { $0.function.name }
             )
             #expect(!noTargets.contains("spawn_agent"))
-            #expect(!noTargets.contains("spawn_model"))
-            #expect(!noTargets.contains("spawn_batch"))
-        }
-    }
-
-    @Test("UUID-backed remote spawn targets stay distinct in single and batch schemas")
-    func canonicalRemoteTargetsStayDistinctInSchemas() async {
-        await withSubagentSandbox {
-            let first = SpawnRemoteModelIdentity.make(
-                providerId: UUID(uuidString: "C9412118-D6C8-4BC0-90D9-5C686C5A54C8")!,
-                modelId: "vendor/shared-model"
-            )!
-            let second = SpawnRemoteModelIdentity.make(
-                providerId: UUID(uuidString: "E25C477F-E30D-4D8F-9D91-3400F16401D8")!,
-                modelId: "vendor/shared-model"
-            )
-            #expect(second != nil)
-            guard let second else { return }
-            let tools = SystemPromptComposer.resolveTools(
-                snapshot: makeSnapshot(
-                    spawnDelegationEnabled: true,
-                    spawnableModelNames: [first, second]
-                ),
-                executionMode: .none
-            )
-
-            #expect(spawnModelEnum(tools) == [first, second])
-            #expect(spawnBatchTargetEnum(tools) == [first, second])
+            _ = await AgentManager.shared.delete(id: helperID)
         }
     }
 
     @Test("frozen delegation schema stays byte-stable while launcher settings are unchanged")
     func frozenDelegationSchemaIsStableForUnchangedSettings() async {
         await withSubagentSandbox {
-            let researcherID = Agent.builtInAgents.first!.id
+            let manager = AgentManager.shared
+            let worker = Agent(
+                name: "Frozen delegation target",
+                description: "Handles a stable delegated task.",
+                defaultModel: "local/frozen-agent-model",
+                autonomousExec: AutonomousExecConfig(enabled: false)
+            )
+            manager.add(worker)
             let config = SubagentConfiguration(
-                spawnableAgentIDs: [researcherID],
-                budgets: SubagentBudgets(maxParallelSpawns: 4),
-                spawnableModelNames: [
-                    "anthropic/claude-opus-4-8",
-                    "local/ornith-9b",
-                ]
+                spawnableAgentIDs: [worker.id],
+                budgets: SubagentBudgets(maxParallelSpawns: 4)
             )
             saveServerBatchLimit(4)
             SubagentConfigurationStore.save(config)
 
-            let snapshot = makeSnapshotForDefaultAgent()
+            let snapshot = makeSnapshot(spawnDelegationEnabled: true, spawnableAgentIDs: [worker.id])
             let first = SystemPromptComposer.resolveTools(
                 snapshot: snapshot,
-                executionMode: .none
+                executionMode: .none,
+                spawnTargets: runnableTargets([worker])
             )
             let frozenFollowup = SystemPromptComposer.resolveTools(
                 snapshot: snapshot,
                 executionMode: .none,
                 frozenAlwaysLoadedNames: Set(first.map(\.function.name)),
-                frozenToolSpecs: first
+                frozenToolSpecs: first,
+                spawnTargets: runnableTargets([worker])
             )
 
-            #expect(spawnModelEnum(first) == spawnModelEnum(frozenFollowup))
-            #expect(spawnBatchTargetEnum(first) == spawnBatchTargetEnum(frozenFollowup))
-            #expect(spawnBatchMaxItems(first) == 4)
-            #expect(spawnBatchMaxItems(frozenFollowup) == 4)
+            #expect(spawnAgentEnum(first) == [worker.id.uuidString, "Frozen delegation target"])
+            #expect(spawnAgentEnum(first) == spawnAgentEnum(frozenFollowup))
             #expect(
                 PromptPrefixHasher.hash(systemContent: "prefix", tools: first)
                     == PromptPrefixHasher.hash(
@@ -1945,6 +2364,76 @@ struct SystemPromptComposerToolResolutionTests {
                         tools: frozenFollowup
                     )
             )
+            _ = await manager.delete(id: worker.id)
+        }
+    }
+
+    @Test("repairing the first runnable target adds delegation to a frozen conversation")
+    func repairedTargetJoinsFrozenConversation() async {
+        await withSubagentSandbox {
+            let manager = AgentManager.shared
+            var worker = Agent(
+                name: "Legacy routing worker", description: "",
+                defaultModel: "local/repair-worker-model",
+                autonomousExec: AutonomousExecConfig(enabled: false)
+            )
+            manager.add(worker)
+            let snapshot = makeSnapshot(spawnDelegationEnabled: true, spawnableAgentIDs: [worker.id])
+            let first = SystemPromptComposer.resolveTools(
+                snapshot: snapshot, executionMode: .none, spawnTargets: runnableTargets([])
+            )
+            #expect(!first.contains { $0.function.name == "spawn_agent" })
+            worker.description = "Checks arithmetic when a separate numerical review is requested."
+            manager.update(worker)
+            let repaired = SystemPromptComposer.resolveTools(
+                snapshot: snapshot, executionMode: .none,
+                frozenAlwaysLoadedNames: Set(first.map(\.function.name)),
+                frozenToolSpecs: first, spawnTargets: runnableTargets([worker])
+            )
+            #expect(spawnAgentEnum(repaired).contains(worker.id.uuidString))
+            #expect(repaired.first { $0.function.name == "spawn_agent" }?
+                .function.description?.contains(worker.description) == true)
+            let unavailableAgain = SystemPromptComposer.resolveTools(
+                snapshot: snapshot, executionMode: .none,
+                frozenAlwaysLoadedNames: Set(repaired.map(\.function.name)),
+                frozenToolSpecs: repaired, spawnTargets: runnableTargets([])
+            )
+            #expect(!unavailableAgain.contains { $0.function.name == "spawn_agent" })
+            _ = await manager.delete(id: worker.id)
+        }
+    }
+
+    @Test("description edits refresh frozen routing metadata without changing target identity")
+    func descriptionEditRefreshesFrozenRoutingMetadata() async {
+        await withSubagentSandbox {
+            let manager = AgentManager.shared
+            var worker = Agent(
+                name: "Stable identity worker",
+                description: "Reviews provided source code.",
+                defaultModel: "local/description-edit-model",
+                autonomousExec: AutonomousExecConfig(enabled: false)
+            )
+            manager.add(worker)
+            let snapshot = makeSnapshot(spawnDelegationEnabled: true, spawnableAgentIDs: [worker.id])
+            let first = SystemPromptComposer.resolveTools(
+                snapshot: snapshot, executionMode: .none, spawnTargets: runnableTargets([worker])
+            )
+            worker.description = "Checks documentation against supplied sources."
+            manager.update(worker)
+            let refreshed = SystemPromptComposer.resolveTools(
+                snapshot: snapshot, executionMode: .none,
+                frozenAlwaysLoadedNames: Set(first.map(\.function.name)),
+                frozenToolSpecs: first, spawnTargets: runnableTargets([worker])
+            )
+            let description = refreshed.first { $0.function.name == "spawn_agent" }?.function.description ?? ""
+            #expect(spawnAgentEnum(refreshed) == spawnAgentEnum(first))
+            #expect(description.contains(worker.description))
+            #expect(!description.contains("Reviews provided source code."))
+            #expect(
+                PromptPrefixHasher.hash(systemContent: "prefix", tools: first)
+                    != PromptPrefixHasher.hash(systemContent: "prefix", tools: refreshed)
+            )
+            _ = await manager.delete(id: worker.id)
         }
     }
 
@@ -1954,11 +2443,13 @@ struct SystemPromptComposerToolResolutionTests {
             let manager = AgentManager.shared
             let oldAgent = Agent(
                 name: "Stale delegation target",
+                description: "Handles the previously allowed task.",
                 defaultModel: "local/old-agent-model",
                 autonomousExec: AutonomousExecConfig(enabled: false)
             )
             let newAgent = Agent(
                 name: "Fresh delegation target",
+                description: "Handles the newly allowed task.",
                 defaultModel: "local/new-agent-model",
                 autonomousExec: AutonomousExecConfig(enabled: false)
             )
@@ -1966,66 +2457,40 @@ struct SystemPromptComposerToolResolutionTests {
             manager.add(newAgent)
             let original = SubagentConfiguration(
                 spawnableAgentIDs: [oldAgent.id],
-                budgets: SubagentBudgets(maxParallelSpawns: 2),
-                spawnableModelNames: ["local/old-model"]
+                budgets: SubagentBudgets(maxParallelSpawns: 2)
             )
             saveServerBatchLimit(2)
             SubagentConfigurationStore.save(original)
 
-            let snapshot = makeSnapshotForDefaultAgent()
+            let launcherId = UUID()
             let frozen = SystemPromptComposer.resolveTools(
-                snapshot: snapshot,
-                executionMode: .none
+                snapshot: makeSnapshot(
+                    agentId: launcherId, spawnDelegationEnabled: true, spawnableAgentIDs: [oldAgent.id]),
+                executionMode: .none,
+                spawnTargets: runnableTargets([oldAgent])
             )
-            #expect(spawnModelEnum(frozen) == ["local/old-model"])
-            // The batch target enum unions agent UUIDs, agent display names
-            // (issue #2408), and model ids, then sorts. Uppercase UUID/name
-            // sort ahead of the lowercase model id.
-            #expect(
-                spawnBatchTargetEnum(frozen)
-                    == [
-                        oldAgent.id.uuidString,
-                        "Stale delegation target",
-                        "local/old-model",
-                    ]
-            )
-            #expect(spawnBatchMaxItems(frozen) == 2)
+            // The enum carries agent UUIDs then display names (issue #2408).
+            #expect(spawnAgentEnum(frozen) == [oldAgent.id.uuidString, "Stale delegation target"])
 
             let updated = SubagentConfiguration(
                 spawnableAgentIDs: [newAgent.id],
-                budgets: SubagentBudgets(maxParallelSpawns: 6),
-                spawnableModelNames: [
-                    "anthropic/claude-opus-4-8",
-                    "local/new-model",
-                ]
+                budgets: SubagentBudgets(maxParallelSpawns: 6, maxRemoteParallelSpawns: 3)
             )
             saveServerBatchLimit(6)
             SubagentConfigurationStore.save(updated)
 
             let refreshed = SystemPromptComposer.resolveTools(
-                snapshot: snapshot,
+                snapshot: makeSnapshot(
+                    agentId: launcherId, spawnDelegationEnabled: true, spawnableAgentIDs: [newAgent.id]),
                 executionMode: .none,
                 frozenAlwaysLoadedNames: Set(frozen.map(\.function.name)),
-                frozenToolSpecs: frozen
+                frozenToolSpecs: frozen,
+                spawnTargets: runnableTargets([newAgent])
             )
 
-            #expect(
-                spawnModelEnum(refreshed)
-                    == ["anthropic/claude-opus-4-8", "local/new-model"]
-            )
-            #expect(
-                spawnBatchTargetEnum(refreshed)
-                    == [
-                        newAgent.id.uuidString,
-                        "Fresh delegation target",
-                        "anthropic/claude-opus-4-8",
-                        "local/new-model",
-                    ]
-            )
-            #expect(spawnBatchMaxItems(refreshed) == 6)
-            #expect(!spawnBatchTargetEnum(refreshed).contains(oldAgent.id.uuidString))
-            #expect(!spawnBatchTargetEnum(refreshed).contains("local/old-model"))
-            #expect(!spawnBatchTargetEnum(refreshed).contains("Stale delegation target"))
+            #expect(spawnAgentEnum(refreshed) == [newAgent.id.uuidString, "Fresh delegation target"])
+            #expect(!spawnAgentEnum(refreshed).contains(oldAgent.id.uuidString))
+            #expect(!spawnAgentEnum(refreshed).contains("Stale delegation target"))
             #expect(
                 PromptPrefixHasher.hash(systemContent: "prefix", tools: refreshed)
                     != PromptPrefixHasher.hash(systemContent: "prefix", tools: frozen)
@@ -2046,32 +2511,20 @@ struct SystemPromptComposerToolResolutionTests {
                     budgets: SubagentBudgets(maxParallelSpawns: 7)
                 )
             )
-            #expect(
-                SubagentConfigurationStore.snapshot().budgets
-                    .maxParallelSpawns == 7
-            )
 
-            // Hand-built snapshots intentionally omit spawnConfiguration,
-            // exercising the source-compatible fallback used by older tests
-            // and legacy callers rather than production capture(...).
-            let tools = SystemPromptComposer.resolveTools(
-                snapshot: makeSnapshot(
-                    spawnDelegationEnabled: true,
-                    spawnableAgentIDs: [researcherID]
-                ),
-                executionMode: .none
-            )
-            let resolvedLimit = spawnBatchMaxItems(tools)
+            // Server concurrency (2) wins over the stale Spawn mirror (7) for
+            // the local lane; the remote lane keeps its own default ceiling.
+            let limits = SpawnFanOutPolicy.effectiveFanOutLimits(
+                scope: SubagentScope(sessionId: "s", toolCallId: "t", agentId: Agent.defaultId))
+            #expect(limits.local == 2)
+            #expect(limits.remote == SubagentBudgets.defaultMaxRemoteParallelSpawns)
             let guidance = SystemPromptTemplates.spawnGuidance(
                 agents: [],
-                models: [],
-                availableToolNames: [SubagentCapabilityRegistry.spawnBatchToolName],
-                maxParallel: resolvedLimit ?? -1
+                maxParallel: limits.local,
+                maxRemoteParallel: limits.remote
             )
-
-            #expect(resolvedLimit == 2)
-            #expect(guidance.contains("at most 2 jobs in one batch"))
-            #expect(!guidance.contains("at most 7 jobs in one batch"))
+            #expect(guidance.contains("up to 2 local"))
+            #expect(!guidance.contains("up to 7 local"))
         }
     }
 
@@ -2084,7 +2537,7 @@ struct SystemPromptComposerToolResolutionTests {
         let lease = await acquireSubagentStoreSandbox("composer-no-optin")
         defer { lease.release() }
         SubagentConfigurationStore.save(
-            SubagentConfiguration(spawnableAgentIDs: [UUID()], imageDelegationEnabled: true)
+            SubagentConfiguration(spawnableAgentIDs: [UUID()])
         )
         let names = Set(
             SystemPromptComposer.resolveTools(
@@ -2153,4 +2606,40 @@ struct SystemPromptComposerToolResolutionTests {
         #expect(!namesWithoutWeb.contains("web_search"))
         #expect(!namesWithoutWeb.contains("search_and_extract"))
     }
+}
+
+private struct RevocableToolFixture: OsaurusTool {
+    static let executed = "revocation-fixture-executed"
+    let name: String
+    let description = "Harmless grant revocation probe"
+    let parameters: JSONValue? = .object([
+        "type": .string("object"), "properties": .object([:]),
+    ])
+    var canExposeToSpawnedOperation: Bool { true }
+    func spawnedOperationCancellationSupport(argumentsJSON: String) -> SpawnedOperationCancellationSupport {
+        .cooperative
+    }
+    func execute(argumentsJSON: String) async throws -> String { Self.executed }
+}
+
+private struct RevokingPermissionFixture: OsaurusTool, PermissionedTool, ContextualPermissionedTool {
+    let name: String
+    let resolve: @Sendable () async -> ToolPermissionPolicy
+    let description = "Harmless asynchronous permission revocation probe"
+    let requirements: [String] = []
+    let defaultPermissionPolicy: ToolPermissionPolicy = .auto
+    let parameters: JSONValue? = .object([
+        "type": .string("object"), "properties": .object([:]),
+    ])
+    func resolveContextualPermissionPolicy(argumentsJSON: String) async -> ToolPermissionPolicy {
+        await resolve()
+    }
+    func execute(argumentsJSON: String) async throws -> String { RevocableToolFixture.executed }
+}
+
+private struct CatalogIdentityFixture: OsaurusTool {
+    let name: String
+    let description: String
+    let parameters: JSONValue? = nil
+    func execute(argumentsJSON: String) async throws -> String { "catalog-fixture" }
 }

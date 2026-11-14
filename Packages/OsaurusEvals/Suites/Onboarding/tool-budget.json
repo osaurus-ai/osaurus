@@ -1,0 +1,12 @@
+{
+  "id": "onboarding.tool-budget",
+  "domain": "onboarding",
+  "label": "onboarding • each teammate's real wrapper schema stays within budget",
+  "query": "tool_budget",
+  "fixtures": {},
+  "expect": {
+    "onboarding": {
+      "check": "tool_budget"
+    }
+  }
+}

@@ -11,32 +11,70 @@
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
 	<key>SUFeedURL</key>
-	<string>https://osaurus-ai.github.io/osaurus/appcast.xml</string>
+	<string>https://osaurus-ai.github.io/osaurus/appcast-next.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>HBRBQ8QQOhmvMKnSxQxqb3upTjyirdx0xkHSSRqn7aI=</string>
 	<key>NSAppleEventsUsageDescription</key>
-	<string>Osaurus uses automation to control other applications on your behalf — including agents that write and run AppleScript to automate tasks on this Mac, and plugins that use automation.</string>
+	<string>Osaurus uses automation to control other apps on your behalf — the built-in Notes, Mail, Messages, and Music tools you enable per agent, agents that write and run AppleScript, and plugins that use automation.</string>
 	<key>NSCalendarsUsageDescription</key>
-	<string>Osaurus plugins may access your calendar to read and create events.</string>
+	<string>Osaurus reads, creates, and updates Calendar events only for agents you have given Calendar access to.</string>
 	<key>NSCalendarsFullAccessUsageDescription</key>
-	<string>Osaurus plugins may access your calendar to read and create events.</string>
+	<string>Osaurus reads, creates, and updates Calendar events only for agents you have given Calendar access to.</string>
 	<key>NSContactsUsageDescription</key>
-	<string>Osaurus plugins may access your contacts to search and read contact information.</string>
+	<string>Osaurus looks up, creates, and updates contacts only for agents you have given Contacts access to.</string>
 	<key>NSRemindersUsageDescription</key>
-	<string>Osaurus plugins may access your reminders to read and create tasks.</string>
+	<string>Osaurus reads, creates, and completes reminders only for agents you have given Reminders access to.</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Osaurus reads, creates, and completes reminders only for agents you have given Reminders access to.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Osaurus plugins may access your location to provide location-based services.</string>
+	<string>Osaurus uses your location for nearby places and directions only for agents you have given Maps &amp; Location access to.</string>
 	<key>NSLocationUsageDescription</key>
-	<string>Osaurus plugins may access your location to provide location-based services.</string>
+	<string>Osaurus uses your location for nearby places and directions only for agents you have given Maps &amp; Location access to.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Osaurus uses the microphone for on-device voice transcription with FluidAudio.</string>
 	<key>NSScreenCaptureUsageDescription</key>
 	<string>Osaurus can capture screenshots and system audio only when you grant Screen Recording access.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Osaurus uses the local network to discover and connect to agents running on other devices.</string>
+	<string>Osaurus uses the local network to sync your chats with your other devices and to connect to agents running on them.</string>
 	<key>NSBonjourServices</key>
 	<array>
-		<string>_osaurus._tcp</string>
+		<string>_osaurus-mobile._tcp</string>
+		<string>_osaurus-sync._udp</string>
+	</array>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Osaurus Template</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>ai.osaurus.template</string>
+			</array>
+		</dict>
+	</array>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>ai.osaurus.template</string>
+			<key>UTTypeDescription</key>
+			<string>Osaurus Template</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.json</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>osaurustemplate</string>
+				</array>
+			</dict>
+		</dict>
 	</array>
 	<key>CFBundleURLTypes</key>
 	<array>

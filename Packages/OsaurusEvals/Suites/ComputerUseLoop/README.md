@@ -39,7 +39,7 @@ asserts each scripted case passes.
 | `read-and-report` | pure read: surface a value in the `done` summary, no mutation |
 | `impossible-give-up` | recognize an unreachable goal and `give_up` cleanly |
 | `scroll-to-find` | scroll a below-the-fold control (`revealOnScroll`) into view, then click it (`expectVerbsInOrder: [scroll, click]`) |
-| `press-key-submit` | type a query then submit with `press_key` (`expectVerbsInOrder: [type, press_key]`) |
+| `press-key-submit` | type a query then submit with `press_key`; Return on the focused field fills the results line (`onReturn`) so the submit is a verifiable change (`expectVerbsInOrder: [type, press_key]`) |
 | `replace-note` | overwrite a pre-filled editable field exactly (`set_value` / `clear`) |
 | `find-among-duplicates` | locate one uniquely-labeled control in a large list with duplicate labels (`find`) |
 
@@ -52,6 +52,26 @@ asserts each scripted case passes.
 | `async-wait-load` | an async reveal (`revealAfterCaptures`) requires a `wait` before the control appears |
 | `drag-reorder` | the `drag` verb resolves both `target` (start) and `to` (destination) and issues one coordinate drag |
 | `web-form-proof-lab` | local static form fixture: fill fields, accept terms, confirm consequential submit, verify state, and keep evidence redacted |
+| `done-without-verify-rejected` | a click the driver accepted but nothing observably changed; two `done`s → one challenge, then `gaveUp` ("could not be verified"), never success (`requireVerifiedChangeForDone`, `minUnverifiedActs`) |
+| `unverified-act-reported` | the verify step reports a posted-but-unobserved input as unverified (feed "No visible change (input unverified)"), not "Action succeeded" |
+| `open-not-ready-fails` | `open` whose readiness poll exhausted (`openNotReady`) + empty capture is reported "not ready", not "Opened" |
+| `confirm-pause-extends-deadline` | a 1.2s user delay on the confirm card inside a 1s wall clock still ends `done` — confirm time is credited back (`wallClockSeconds`, `confirmDelaySeconds`) |
+| `confirm-unavailable-fails-fast` | no surface can render the confirm card (`confirmUnavailable`) → gated action does not run, run ends `gaveUp` with the reason |
+| `return-submit-verified` | type → Return on the focused field applies the element's `onReturn` effect (two verified changes), so the following `done` is evidence-backed and the run ends `done` |
+
+Scene knobs added for these: `openNotReady`, `wallClockSeconds`,
+`confirmDelaySeconds`, `confirmUnavailable`, `requireVerifiedChangeForDone`,
+element `onReturn` (effect of Return while that field is focused);
+scoring fields: `minUnverifiedActs`, `minVerifyChanged`, `feedTitleContains`.
+
+This suite is part of `make evals-deterministic` (floors: `ComputerUseLoop: 1.0`).
+That lane sets `OSAURUS_EVALS_SCRIPTED_ONLY=1`, so the live-model cases above
+SKIP (excluded from the pass rate) and only the scripted rows are scored — no
+model is loaded.
+
+A failed row's notes include a `trace:` line — every feed event as
+`kind:title` in order (perceive/propose/act/verify/outcome) — so a live-model
+failure can be attributed from the report without a re-run.
 
 ## Adding a case
 

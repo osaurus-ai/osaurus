@@ -1,0 +1,742 @@
+//
+//  WorkspaceRosterStore.swift
+//  osaurus
+//
+//  App-wide, chat-facing view of every workspace the user belongs to and the
+//  shared agents on each roster, with presence. `WorkspacesService` owns the
+//  Settings surface (one selected workspace, members, invites, billing);
+//  this store owns the cross-workspace roster the chat sidebar renders, so
+//  a teammate's agent can be picked and chatted with — or seen offline —
+//  without ever opening Settings.
+//
+//  The roster (membership, shares, and its relay-derived `online` flag) is
+//  fed by the `/workspaces/sync` stream (`WorkspaceSyncService`) whenever it
+//  is verified. Signed `GET /workspaces` list fetches happen only when the
+//  stream is not verified: the one-per-launch membership probe, the
+//  service's backing-off fallback, and app activation (throttled to once
+//  per 15 minutes). The relay itself is the live presence source: every Mode 2 request that
+//  goes through `*.agent.osaurus.ai` answers `502 agent_offline` when the
+//  host has no tunnel, and reaches the host otherwise. Those verdicts
+//  (`OsaurusRelayPresenceSignal`) flip presence here immediately — offline
+//  on a relay failure, online on any response from the host — so the
+//  composer locks/unlocks without waiting on the tick.
+//
+
+import AppKit
+import Combine
+import Foundation
+
+@MainActor
+final class WorkspaceRosterStore: ObservableObject {
+    static let shared = WorkspaceRosterStore()
+
+    /// One sidebar section per workspace, in the router's order.
+    struct WorkspaceRoster: Identifiable, Equatable {
+        let workspace: OsaurusRouterWorkspaceSummary
+        /// Shared agents on the roster (including the user's own).
+        var agents: [OsaurusRouterWorkspaceAgent]
+        var id: String { workspace.id }
+    }
+
+    enum Presence: Equatable {
+        case online
+        case offline(lastSeen: Date?)
+        /// The relay couldn't be reached for this agent (`online == nil`),
+        /// or the roster hasn't loaded yet.
+        case unknown
+
+        var isOnline: Bool { self == .online }
+        var isOffline: Bool {
+            if case .offline = self { return true }
+            return false
+        }
+    }
+
+    @Published private(set) var rosters: [WorkspaceRoster] = []
+    /// True while the FIRST roster load is in flight (nothing to show yet).
+    /// Later polls refresh in place and don't flip this, so a loaded sidebar
+    /// never flickers back to a spinner.
+    @Published private(set) var isLoading = false
+    /// Why the last refresh couldn't reach the router, or nil. Set only when
+    /// the workspace list itself fails; a single roster fetch failing keeps
+    /// that workspace's previous agents (see `refresh`). Cleared on success.
+    @Published private(set) var lastError: String?
+    /// Last successful full refresh; nil until the first roster lands. Not
+    /// published: a poll that changes nothing must not re-render observers.
+    private(set) var lastRefreshedAt: Date?
+
+    /// Addresses (lowercased) forced offline by a failed connect/send until
+    /// the next poll that reports them online.
+    @Published private(set) var forcedOffline: [String: Date] = [:]
+    /// Address (lowercased) → last roster display name; survives unshare.
+    private var verifiedAt: [String: Date] = [:]
+    @Published private(set) var hostReachableAt: [String: Date] = [:]
+    /// How long a `verified` / `snapshot` frame from `/workspaces/sync` keeps
+    /// a roster trusted. The router's steady-state tick is 15 s ± 20 % (up to
+    /// 18 s between frames; see osaurus-router `workspaces/sync.ts`), so the
+    /// lease must survive two consecutive late ticks: 40 s. This is also the
+    /// stream lease in `WorkspaceSyncService` — the two must agree, or the
+    /// client tears down a healthy stream and reconnects in a loop.
+    nonisolated static let verificationLifetime: TimeInterval = 40
+    private var lastKnownNames: [String: String] = [:]
+
+    /// Minimum spacing between activation-driven refreshes. Activation only
+    /// refreshes at all while the sync stream is NOT verified (older router,
+    /// offline); a verified stream already carries membership and presence.
+    nonisolated static let activationRefreshInterval: TimeInterval = 15 * 60
+    /// The relay's Redis agent-claim TTL (`AGENT_TTL_SECONDS`): how long the
+    /// router can keep reporting a dead tunnel as online. A force-offline
+    /// mark outlives router "online" polls for at least this long.
+    nonisolated static let relayClaimTTL: TimeInterval = 20
+
+    var client: OsaurusRouterAPIClient = .shared
+    /// Injectable clock for tests.
+    var now: () -> Date = { Date() }
+
+    private var lastRefreshStarted: Date?
+    private var stateGeneration = UUID()
+    private var refreshInFlight = false
+    private var refreshPending = false
+    private var observerCount = 0
+    /// Whether the sync stream currently carries a verified snapshot, in
+    /// which case an activation refresh has nothing to add. Injectable so
+    /// tests can exercise both branches without a stream.
+    var isSyncVerified: () -> Bool = { WorkspaceSyncService.shared.isVerified }
+    /// Eventually-consistent identity gate for `refresh`. Injectable so the
+    /// request contract can be tested without a keychain.
+    var hasIdentity: () -> Bool = { MasterKey.existsCached() }
+    /// A fresh wallet signs nothing but its credit claim until that settles,
+    /// so the roster waits instead of failing. Injectable for tests.
+    var awaitsFirstCredit: () -> Bool = { RouterCreditAcquisitionCoordinator.shared.blocksGeneralSignedRequests }
+    /// Whether a poll-path refresh removes pairings the roster no longer
+    /// lists. Tests over stubbed rosters turn it off so they never touch
+    /// the shared pairing store.
+    var prunesPairingsOnRefresh = true
+    private var activationObserver: NSObjectProtocol?
+    private var remoteAgentsCancellable: AnyCancellable?
+    private var routerEnabledCancellable: AnyCancellable?
+    private var creditResolvedObserver: NSObjectProtocol?
+
+    init(client: OsaurusRouterAPIClient = .shared, observeAppActivation: Bool = true) {
+        self.client = client
+        if observeAppActivation {
+            activationObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.didBecomeActiveNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    await self?.refresh(reason: .activation)
+                }
+            }
+            // Turning Osaurus Router on/off in Settings should show or clear
+            // the team sections right away, not on the next tick.
+            routerEnabledCancellable = RemoteProviderManager.shared.$isOsaurusRouterEnabled
+                .dropFirst()
+                .removeDuplicates()
+                .sink { [weak self] _ in
+                    Task { @MainActor [weak self] in
+                        await self?.refresh(reason: .manual)
+                    }
+                }
+            creditResolvedObserver = NotificationCenter.default.addObserver(
+                forName: .routerCreditAcquisitionResolved,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    await self?.refresh(reason: .manual)
+                }
+            }
+        }
+    }
+
+    // MARK: - Derived state
+
+    /// True when there is anything for the chat sidebar to show.
+    var hasWorkspaces: Bool { !rosters.isEmpty }
+
+    /// Every shared agent across all workspaces, de-duplicated by address
+    /// (an agent shared into two workspaces appears once, under the first).
+    var allAgents: [OsaurusRouterWorkspaceAgent] {
+        var seen = Set<String>()
+        var out: [OsaurusRouterWorkspaceAgent] = []
+        for roster in rosters {
+            for agent in roster.agents where seen.insert(agent.agentAddress.lowercased()).inserted {
+                out.append(agent)
+            }
+        }
+        return out
+    }
+
+    func agent(forAddress address: String) -> OsaurusRouterWorkspaceAgent? {
+        let lowered = address.lowercased()
+        for roster in rosters {
+            if let hit = roster.agents.first(where: { $0.agentAddress.lowercased() == lowered }) {
+                return hit
+            }
+        }
+        return nil
+    }
+
+    /// The roster entry for an agent within ONE workspace — the same agent
+    /// can be shared into several under different display names.
+    func agent(forAddress address: String, workspaceId: String) -> OsaurusRouterWorkspaceAgent? {
+        let lowered = address.lowercased()
+        return rosters.first { $0.workspace.id == workspaceId }?
+            .agents.first { $0.agentAddress.lowercased() == lowered }
+    }
+
+    /// The workspace an agent (by address) is shared into; the first match
+    /// when it's shared into several.
+    func workspace(forAgentAddress address: String) -> OsaurusRouterWorkspaceSummary? {
+        let lowered = address.lowercased()
+        return rosters.first { roster in
+            roster.agents.contains { $0.agentAddress.lowercased() == lowered }
+        }?.workspace
+    }
+
+    /// Workspaces one of the user's own agents (by address) is shared into.
+    func workspacesSharing(agentAddress address: String) -> [OsaurusRouterWorkspaceSummary] {
+        let lowered = address.lowercased()
+        return rosters.filter { roster in
+            roster.agents.contains { $0.agentAddress.lowercased() == lowered }
+        }.map(\.workspace)
+    }
+
+    /// Presence for a shared agent, folding in the local force-offline
+    /// override from a failed connect/send.
+    func presence(forAddress address: String, workspaceId: String? = nil) -> Presence {
+        let lowered = address.lowercased()
+        let scope = workspaceId ?? workspace(forAgentAddress: lowered)?.id
+        guard let scope, let verified = verifiedAt[scope],
+            now().timeIntervalSince(verified) < Self.verificationLifetime,
+            let agent = agent(forAddress: lowered, workspaceId: scope) else { return .unknown }
+        if forcedOffline[lowered] != nil {
+            return .offline(lastSeen: Self.parseLastSeen(agent.lastSeen))
+        }
+        // Our own relay evidence stays valid for as long as the roster is
+        // verified: the next roster verdict (`online` true/false) replaces
+        // it in `dropHostReachable`, and a relay failure replaces it via
+        // `noteHostUnreachable`. No separate lifetime, or an idle chat with
+        // a router that reports no presence would re-lock after 40 s.
+        if hostReachableAt[lowered] != nil {
+            return .online
+        }
+        return Self.presence(for: agent)
+    }
+
+    /// True only when the workspace's roster is inside its verification
+    /// lease and does not list the agent: an authoritative "unshared".
+    /// An unverified or never-loaded roster proves nothing either way.
+    func verifiedRosterOmits(_ ref: WorkspaceAgentRef) -> Bool {
+        guard let verified = verifiedAt[ref.workspaceId],
+            now().timeIntervalSince(verified) < Self.verificationLifetime,
+            rosters.contains(where: { $0.id == ref.workspaceId })
+        else { return false }
+        return agent(forAddress: ref.agentAddress, workspaceId: ref.workspaceId) == nil
+    }
+
+    /// Whether `address` is HOSTED ON THIS MAC, by matching a local agent's
+    /// identity address. This is a hosting check, not an ownership check:
+    /// an agent the same identity shared from another device is not "own"
+    /// here and is reached through the relay like a teammate's. Callers use
+    /// it to decide "run locally instead" and to hide local agents from the
+    /// remote-target pickers.
+    nonisolated static func isHostedHere(address: String, localAgents: [Agent]) -> Bool {
+        let lowered = address.lowercased()
+        return localAgents.contains { $0.agentAddress?.lowercased() == lowered }
+    }
+
+    func isHostedHere(address: String) -> Bool {
+        Self.isHostedHere(address: address, localAgents: AgentManager.shared.agents)
+    }
+
+    // MARK: - Pure presence mapping
+
+    nonisolated static func presence(for agent: OsaurusRouterWorkspaceAgent) -> Presence {
+        switch agent.online {
+        case .some(true): return .online
+        case .some(false): return .offline(lastSeen: parseLastSeen(agent.lastSeen))
+        case .none: return .unknown
+        }
+    }
+
+    nonisolated static func parseLastSeen(_ raw: String?) -> Date? {
+        guard let raw, !raw.isEmpty else { return nil }
+        let withFractional = ISO8601DateFormatter()
+        withFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = withFractional.date(from: raw) { return date }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: raw)
+    }
+
+    // MARK: - Force-offline override
+
+    /// Mark an agent offline right now because its host didn't answer.
+    /// Cleared by the next poll that reports it online.
+    func noteHostUnreachable(agentAddress: String) {
+        hostReachableAt.removeValue(forKey: agentAddress.lowercased())
+        forcedOffline[agentAddress.lowercased()] = now()
+    }
+
+    /// Clear a force-offline mark (e.g. a successful send).
+    func noteHostReachable(agentAddress: String) {
+        forcedOffline.removeValue(forKey: agentAddress.lowercased())
+        hostReachableAt[agentAddress.lowercased()] = now()
+    }
+
+    /// Whether a connect/send error means the sharer's Osaurus is not
+    /// reachable through the relay (as opposed to an auth/roster verdict).
+    nonisolated static func indicatesHostUnreachable(_ error: Error) -> Bool {
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .timedOut, .cannotConnectToHost, .cannotFindHost, .networkConnectionLost,
+                .notConnectedToInternet, .dnsLookupFailed, .secureConnectionFailed:
+                return true
+            default:
+                return false
+            }
+        }
+        let text = error.localizedDescription.lowercased()
+        return text.contains("502") || text.contains("503") || text.contains("504")
+            || text.contains("bad gateway") || text.contains("agent offline")
+            || text.contains("not connected") || text.contains("tunnel")
+            || text.contains("unreachable") || text.contains("timed out")
+    }
+
+    // MARK: - Refresh
+
+    enum RefreshReason { case launch, activation, poll, manual }
+
+    /// Reload every workspace roster. `.activation` is skipped entirely
+    /// while the sync stream is verified and throttled otherwise. Any other
+    /// reason that arrives while a refresh is in flight runs once more after
+    /// it: the in-flight fetch may predate the share or unshare that asked.
+    func refresh(reason: RefreshReason = .manual) async {
+        guard OsaurusRouter.isEnabled, hasIdentity() else {
+            if !rosters.isEmpty { rosters = [] }
+            if lastError != nil { lastError = nil }
+            return
+        }
+        guard !awaitsFirstCredit() else { return }
+        guard !refreshInFlight else {
+            if reason != .activation { refreshPending = true }
+            return
+        }
+        if reason == .activation {
+            if isSyncVerified() { return }
+            if let last = lastRefreshStarted,
+                now().timeIntervalSince(last) < Self.activationRefreshInterval
+            {
+                return
+            }
+        }
+        refreshInFlight = true
+        if rosters.isEmpty, lastRefreshedAt == nil { isLoading = true }
+        defer {
+            refreshInFlight = false
+            isLoading = false
+        }
+        repeat {
+            refreshPending = false
+            await performRefresh()
+        } while refreshPending && OsaurusRouter.isEnabled && hasIdentity()
+    }
+
+    private func performRefresh() async {
+        let generation = stateGeneration
+        lastRefreshStarted = now()
+
+        let workspaces: [OsaurusRouterWorkspaceSummary]
+        do {
+            workspaces = try await client.listWorkspaces()
+        } catch {
+            // Keep whatever we had; the sidebar shows the error with Retry
+            // instead of pretending the user has no workspaces.
+            verifiedAt.removeAll()
+            objectWillChange.send()
+            lastError = Self.refreshFailureMessage(for: error)
+            return
+        }
+        // One authoritative list serves every consumer: the Settings tab's
+        // `WorkspacesService` takes it from here instead of fetching its own
+        // copy on the same trigger.
+        Self.workspaceListReconciler?(workspaces)
+        let previous = rosters
+        var verified = Set<String>()
+        let next = await Self.buildRosters(workspaces: workspaces, previous: previous) { [client] id in
+            let agents = try await client.workspaceAgents(id: id)
+            verified.insert(id)
+            return agents
+        }
+        guard generation == stateGeneration else { return }
+        if lastError != nil { lastError = nil }
+        apply(rosters: next, verifiedWorkspaceIds: verified)
+        if prunesPairingsOnRefresh { removeStalePairings(loadedWorkspaceIds: verified) }
+
+        // Keep the pairing side in step: any teammate agent not yet paired
+        // gets the background handshake, so a row that just appeared is
+        // chat-ready by the time the user clicks it.
+        for roster in next {
+            await WorkspaceAgentConnectService.shared.autoConnect(
+                workspaceId: roster.workspace.id, agents: roster.agents
+            )
+        }
+    }
+
+    /// Fetch every workspace's agent list. A transient per-workspace fetch
+    /// failure must not read as "no shared agents yet": the workspace keeps
+    /// its last known list (empty only if we never had one). Static with an
+    /// injected fetch so the rule is unit-testable without the Router gate.
+    static func buildRosters(
+        workspaces: [OsaurusRouterWorkspaceSummary],
+        previous: [WorkspaceRoster],
+        fetch: (String) async throws -> [OsaurusRouterWorkspaceAgent]
+    ) async -> [WorkspaceRoster] {
+        var next: [WorkspaceRoster] = []
+        for workspace in workspaces {
+            let kept = previous.first { $0.id == workspace.id }?.agents
+            let agents: [OsaurusRouterWorkspaceAgent]
+            if let fetched = try? await fetch(workspace.id) {
+                agents = fetched
+            } else {
+                agents = kept ?? []
+            }
+            next.append(WorkspaceRoster(workspace: workspace, agents: agents))
+        }
+        return next
+    }
+
+    /// Short, user-facing reason a roster refresh failed.
+    nonisolated static func refreshFailureMessage(for error: Error) -> String {
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .notConnectedToInternet, .networkConnectionLost, .timedOut,
+                .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed:
+                return L("Couldn't reach Osaurus Router. Check your connection.")
+            default: break
+            }
+        }
+        if case OsaurusRouterAPIError.server(_, let message, _) = error, !message.isEmpty {
+            return message
+        }
+        return L("Couldn't load your workspaces.")
+    }
+
+    /// Install a freshly fetched roster set, clearing force-offline marks for
+    /// agents the router now reports online.
+    func apply(rosters next: [WorkspaceRoster], verifiedWorkspaceIds: Set<String>? = nil) {
+        stateGeneration = UUID()
+        dropHostReachable(supersededBy: next)
+        let previousWorkspaceIds = Set(rosters.map { $0.id.lowercased() })
+        let verified = verifiedWorkspaceIds ?? Set(next.map(\.id))
+        verifiedAt = Dictionary(uniqueKeysWithValues: verified.map { ($0, now()) })
+        objectWillChange.send()
+        let current = now()
+        let connectService = WorkspaceAgentConnectService.shared
+        var listed = Set<String>()
+        for roster in next {
+            for agent in roster.agents {
+                let address = agent.agentAddress.lowercased()
+                listed.insert(address)
+                // Offline is the truer state than a stale handshake failure.
+                if agent.online == false { connectService.clearFailure(for: address, workspaceId: roster.id) }
+                // The router's `online` is derived from the relay's Redis
+                // claim (TTL `relayClaimTTL`), so it can report a just-dead
+                // host as online for up to that long. A relay verdict we saw
+                // ourselves (502 agent_offline) is fresher; keep it until
+                // the router's view can have caught up, or until a request
+                // through the relay actually succeeds (`noteHostReachable`).
+                if agent.online == true, let markedAt = forcedOffline[address],
+                    (current.timeIntervalSince(markedAt) >= Self.relayClaimTTL
+                        || self.agent(forAddress: address, workspaceId: roster.id)?.online == false)
+                {
+                    forcedOffline.removeValue(forKey: address)
+                }
+                if let name = agent.displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
+                    !name.isEmpty
+                {
+                    lastKnownNames[agent.agentAddress.lowercased()] = name
+                }
+            }
+        }
+        // Failures for agents no longer on any roster (unshared, or the user
+        // left) describe something that can't be retried; drop them.
+        connectService.pruneFailures(keeping: listed)
+        if next != rosters { rosters = next }
+        lastRefreshedAt = now()
+        reconcileSpawnPool(verified: verified, previousWorkspaceIds: previousWorkspaceIds)
+        reconcileDefaultPoolBilling(verified: verified)
+        // Every roster apply is authoritative about membership: it is what
+        // starts the sync stream for a first workspace and stops it once
+        // the last one is gone.
+        WorkspaceSyncService.shared.noteMembership(hasWorkspaces: !next.isEmpty)
+    }
+
+    // MARK: - Stale pairings
+
+    /// Paired teammate agents an authoritative roster shows are gone: the
+    /// pairing's workspace left the list (left / deleted), or a workspace
+    /// whose agents were just fetched no longer lists the agent (unshared).
+    /// A workspace whose agent fetch failed is not in `loadedWorkspaceIds`
+    /// and keeps its pairings. Pairings with no workspace (direct pairing,
+    /// guest links) are never touched.
+    nonisolated static func stalePairingIds(
+        remoteAgents: [RemoteAgent],
+        rosters: [WorkspaceRoster],
+        loadedWorkspaceIds: Set<String>
+    ) -> [UUID] {
+        remoteAgents.compactMap { remote in
+            guard let workspaceId = remote.workspaceId else { return nil }
+            guard let roster = rosters.first(where: { $0.workspace.id == workspaceId }) else { return remote.id }
+            guard loadedWorkspaceIds.contains(workspaceId) else { return nil }
+            let listed = roster.agents.contains {
+                $0.agentAddress.lowercased() == remote.agentAddress.lowercased()
+            }
+            return listed ? nil : remote.id
+        }
+    }
+
+    /// Drop the pairings `stalePairingIds` names, so a left or unshared
+    /// agent stops being reachable from chat as soon as the roster says so
+    /// rather than when the host's attestation lapses.
+    func removeStalePairings(loadedWorkspaceIds: Set<String>) {
+        let manager = RemoteAgentManager.shared
+        for id in Self.stalePairingIds(
+            remoteAgents: manager.remoteAgents, rosters: rosters, loadedWorkspaceIds: loadedWorkspaceIds)
+        {
+            _ = manager.remove(id: id)
+        }
+    }
+
+    // MARK: - Workspace list hand-off
+
+    /// Receives every authoritative workspace list this store fetches, so
+    /// the Settings surface (`WorkspacesService`) never issues a second
+    /// `GET /workspaces` for the same trigger. Production installs
+    /// `WorkspacesService.applyWorkspaceList` through
+    /// `installWorkspaceListSync()` at launch; tests leave it nil.
+    typealias WorkspaceListReconciler = @MainActor (_ workspaces: [OsaurusRouterWorkspaceSummary]) -> Void
+
+    static var workspaceListReconciler: WorkspaceListReconciler?
+
+    /// Wire fetched lists to the Settings surface. Idempotent.
+    static func installWorkspaceListSync() {
+        workspaceListReconciler = { workspaces in
+            WorkspacesService.shared.applyWorkspaceList(workspaces)
+        }
+    }
+
+    // MARK: - Default pool billing for own shared agents
+
+    /// Receives, after every roster apply, the rosters whose membership was
+    /// just VERIFIED (the whole list on a full refresh, one workspace on a
+    /// targeted `update`). Production installs
+    /// `WorkspacesService.applyDefaultBilling` through
+    /// `installDefaultPoolBilling()` at launch so an own agent that appears
+    /// on a roster bills that workspace's pool by default (respecting the
+    /// per-agent opt-out written by the "Bill the workspace pool" switch).
+    /// Tests leave it nil: roster fixtures never touch UserDefaults.
+    typealias DefaultPoolBillingReconciler = @MainActor (_ verifiedRosters: [WorkspaceRoster]) -> Void
+
+    static var defaultPoolBillingReconciler: DefaultPoolBillingReconciler?
+
+    /// Wire verified rosters to the per-agent pool-billing default. Idempotent.
+    static func installDefaultPoolBilling() {
+        defaultPoolBillingReconciler = { rosters in
+            let localAgents = AgentManager.shared.agents.compactMap { agent -> (id: UUID, address: String)? in
+                guard let address = agent.agentAddress, !address.isEmpty else { return nil }
+                return (id: agent.id, address: address)
+            }
+            guard !localAgents.isEmpty else { return }
+            WorkspacesService.shared.applyDefaultBilling(
+                localAgents: localAgents,
+                rosters: rosters.map { roster in
+                    (
+                        workspaceId: roster.id,
+                        addresses: Set(roster.agents.map { $0.agentAddress.lowercased() })
+                    )
+                }
+            )
+        }
+    }
+
+    private func reconcileDefaultPoolBilling(verified: Set<String>) {
+        guard let reconciler = Self.defaultPoolBillingReconciler else { return }
+        // Only rosters the router just confirmed: a workspace whose fetch
+        // failed keeps its previous agents and must not seed a binding.
+        let verifiedRosters = rosters.filter { verified.contains($0.id) }
+        guard !verifiedRosters.isEmpty else { return }
+        reconciler(verifiedRosters)
+    }
+
+    // MARK: - Orchestrator spawn-pool auto-join
+
+    /// Receives, after every roster apply, the teammates' shared agents
+    /// (every roster entry not hosted here) and the workspaces whose
+    /// membership is now KNOWN: the ones just verified plus any workspace
+    /// that vanished from the list (left / deleted). Production installs
+    /// `SubagentConfigurationStore.reconcileWorkspaceAgents` through
+    /// `installSpawnPoolAutoJoin()` at launch so shared agents join the
+    /// Orchestrator's pool (respecting removal tombstones and the
+    /// per-workspace auto-join switch) and unshared ones are pruned. Tests
+    /// leave it nil: roster fixtures never touch the delegation store.
+    typealias SpawnPoolReconciler = @Sendable (
+        _ rosterRefs: [WorkspaceAgentRef],
+        _ loadedWorkspaceIds: Set<String>
+    ) -> Void
+
+    static var spawnPoolReconciler: SpawnPoolReconciler?
+
+    /// Wire the roster to the Orchestrator's delegation pool. Idempotent.
+    static func installSpawnPoolAutoJoin() {
+        spawnPoolReconciler = { refs, loaded in
+            SubagentConfigurationStore.reconcileWorkspaceAgents(
+                rosterRefs: refs,
+                loadedWorkspaceIds: loaded
+            )
+        }
+    }
+
+    /// The shared agents the Orchestrator may delegate to: every roster
+    /// entry across the loaded workspaces that is not one of this
+    /// instance's own agents, once per (workspace, address).
+    func sharedAgentRefs() -> [WorkspaceAgentRef] {
+        var out: [WorkspaceAgentRef] = []
+        var seen = Set<WorkspaceAgentRef>()
+        for roster in rosters {
+            for agent in roster.agents where !isHostedHere(address: agent.agentAddress) {
+                let ref = WorkspaceAgentRef(workspaceId: roster.id, agentAddress: agent.agentAddress)
+                if seen.insert(ref).inserted { out.append(ref) }
+            }
+        }
+        return out
+    }
+
+    /// Re-run the join/prune step against the rosters already loaded (after
+    /// the per-workspace auto-join switch changes). Every loaded workspace
+    /// counts as known.
+    func reconcileSpawnPoolNow() {
+        reconcileSpawnPool(verified: Set(rosters.map(\.id)), previousWorkspaceIds: [])
+    }
+
+    private func reconcileSpawnPool(verified: Set<String>, previousWorkspaceIds: Set<String>) {
+        guard let reconciler = Self.spawnPoolReconciler else { return }
+        // A workspace that was on the list and no longer is has been left or
+        // deleted: its refs are stale even though nothing "loaded" for it.
+        let currentIds = Set(rosters.map { $0.id.lowercased() })
+        var loaded = Set(verified.map { $0.lowercased() })
+        loaded.formUnion(previousWorkspaceIds.subtracting(currentIds))
+        reconciler(sharedAgentRefs(), loaded)
+    }
+
+    /// A `verified` heartbeat from `/workspaces/sync`: the server re-confirmed
+    /// the snapshot we already hold. The lease bookkeeping updates silently;
+    /// observers are only notified when something they can see changed — a
+    /// workspace flipping from unverified (expired / never verified) back to
+    /// verified, or host-reachable evidence being superseded. The router
+    /// heartbeats every few seconds, and an unconditional publish here made
+    /// every roster observer re-render on each one.
+    func renewVerification() {
+        // The server has just verified its current snapshot; it supersedes
+        // a successful response observed before this frame.
+        // Dropping evidence reassigns the `@Published` map, which publishes
+        // on its own; only the (unpublished) lease flip needs an explicit send.
+        let droppedEvidence = dropHostReachable(supersededBy: rosters)
+        let current = now()
+        let previouslyVerified = Set(
+            verifiedAt.filter { current.timeIntervalSince($0.value) < Self.verificationLifetime }.map(\.key)
+        )
+        let nowVerified = Set(rosters.map(\.id))
+        if !droppedEvidence, previouslyVerified != nowVerified {
+            objectWillChange.send()
+        }
+        verifiedAt = Dictionary(uniqueKeysWithValues: rosters.map { ($0.id, current) })
+    }
+
+    /// Forget our own "the host answered" evidence only where the router's
+    /// roster carries a verdict of its own (`online` true/false). A row with
+    /// `online == nil` means the router has no presence for that agent; if
+    /// it also wiped our evidence, presence would read `.unknown` forever
+    /// and the composer would stay locked on "Checking access…" even though
+    /// the relay handshake just succeeded. Returns whether anything was
+    /// dropped; the `@Published` map is only reassigned in that case so a
+    /// no-op heartbeat doesn't re-render observers.
+    @discardableResult
+    private func dropHostReachable(supersededBy rosters: [WorkspaceRoster]) -> Bool {
+        guard !hostReachableAt.isEmpty else { return false }
+        let decided = Set(
+            rosters.flatMap(\.agents)
+                .filter { $0.online != nil }
+                .map { $0.agentAddress.lowercased() }
+        )
+        let remaining = hostReachableAt.filter { !decided.contains($0.key) }
+        guard remaining.count != hostReachableAt.count else { return false }
+        hostReachableAt = remaining
+        return true
+    }
+
+    func expireVerification() {
+        let fresh = verifiedAt.filter { now().timeIntervalSince($0.value) < Self.verificationLifetime }
+        if fresh.count != verifiedAt.count {
+            verifiedAt = fresh
+            objectWillChange.send()
+        }
+    }
+
+    func invalidateVerification() {
+        verifiedAt.removeAll()
+        objectWillChange.send()
+    }
+
+    /// Display name last seen on any roster for an address, so a tab whose
+    /// agent was since unshared can still be named in notices and history.
+    func lastKnownName(forAddress address: String) -> String? {
+        lastKnownNames[address.lowercased()]
+    }
+
+    /// Replace one workspace's agent list from a fetch another surface just
+    /// made (Settings ▸ Workspaces share / unshare / detail load), so the
+    /// chat sidebar reflects the change immediately instead of on the next
+    /// poll. Unknown workspace ids are ignored — `refresh` picks those up.
+    func update(workspaceId: String, agents: [OsaurusRouterWorkspaceAgent]) {
+        guard let index = rosters.firstIndex(where: { $0.id == workspaceId }) else { return }
+        let previousVerification = verifiedAt
+        var next = rosters
+        next[index].agents = agents
+        apply(rosters: next, verifiedWorkspaceIds: [workspaceId])
+        for (id, time) in previousVerification where id != workspaceId { verifiedAt[id] = time }
+    }
+
+    /// Back to the never-loaded state (rosters empty, no `lastRefreshedAt`,
+    /// no force-offline marks). Tests only.
+    func resetForTesting() {
+        rosters = []
+        verifiedAt = [:]
+        hostReachableAt = [:]
+        forcedOffline = [:]
+        lastKnownNames = [:]
+        lastRefreshedAt = nil
+        lastRefreshStarted = nil
+        lastError = nil
+        isLoading = false
+    }
+
+    // MARK: - Observers
+
+    /// Chat windows (and the roster pickers in Schedules, Watchers, spawn
+    /// configuration) hold this lease for their lifetime. It asks the sync
+    /// service for the stream, which only runs for accounts with known
+    /// membership; the lease count is kept for diagnostics and so the
+    /// stream request survives the launch bootstrap.
+    func beginObserving() {
+        observerCount += 1
+        WorkspaceSyncService.shared.start()
+    }
+
+    func endObserving() {
+        observerCount = max(0, observerCount - 1)
+    }
+}

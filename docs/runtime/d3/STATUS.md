@@ -1,0 +1,13 @@
+# D3 application integration: scope and qualification
+
+The live qualification record is [Osaurus PR #3182](https://github.com/osaurus-ai/osaurus/pull/3182), with [engine PR #645](https://github.com/osaurus-ai/vmlx-swift/pull/645). Proof comments identify the actual source, engine pin, built app and raw runtime/resource receipts. Private raw evidence and the evolving handoff are in `~/vmlx-private-evidence/d3-swift-20261023/LEDGER.md`. Source inspection and diagnostic executables do not substitute for the built app.
+
+The implementation detects explicit decision metadata, marks installed bundles D3 and excludes them from chat/agent/worker selection. `/v1/systemone` runs typed questions through request-owned decision weights; `/v1/systemone/models` lists exposed decision bundles. See [API.md](API.md) for the supported schema and explicit extensions that are not implemented.
+
+Requests use existing compatibility/version and shard checks, model deletion protection, resolved memory settings, auxiliary-work ownership/admission and an exclusive GPU gate. A standalone API caller has no authority to evict an unrelated resident chat/API model; existing admission may refuse until that work is released. The decision request installs the existing bounded active-work allocator policy after the temporary load cap is restored. Explicit user/resident maxima and admitted headroom remain hard ceilings; profile load defaults do not force a 128 MiB working pool. The prior pool is restored before releasing the GPU gate. The GPU gate remains owned through cancellation/error cleanup, weight release, synchronization and allocator drain. No conversational KV checkpoint, SSD prefix cache, sampler or speculative decoder applies to D3.
+
+Before promotion, proof must include the real UI classification/picker exclusion, app-owned typed API requests with media and errors, repeated requests and cancellation, peak/settled process physical footprint plus MLX active/pool bytes, and required CI. Input throughput describes a decision forward; output tokens are zero by design. Resource and speed results from diagnostic executables are reported separately.
+
+All six engine pin/contract sites move together. Preserve the pinned engine commit's reachability by merging the engine PR before this application PR. No release tag is part of this work.
+
+Published bundle metadata currently says minimum 0.25.26, but that installer predates this decision implementation. Stable capability must be tied to the first packaged build containing these changes, not inferred from the manifest floor. This task does not change the published bundles.

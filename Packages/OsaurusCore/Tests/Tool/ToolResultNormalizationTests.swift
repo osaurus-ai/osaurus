@@ -79,10 +79,10 @@ struct ToolResultNormalizationTests {
 
     // MARK: - MCP error taxonomy
 
-    @Test func mcpTimeoutMapsToTimeoutKind() {
+    @Test func mcpTimeoutMapsToNonRetryableTimeoutKind() {
         let envelope = ToolEnvelope.fromError(MCPProviderError.timeout, tool: "mcp_tool")
         #expect(EnvelopeAssertions.failureKind(envelope) == "timeout")
-        #expect(EnvelopeAssertions.failureRetryable(envelope) == true)
+        #expect(EnvelopeAssertions.failureRetryable(envelope) == false)
     }
 
     @Test func mcpNotConnectedMapsToUnavailable() {

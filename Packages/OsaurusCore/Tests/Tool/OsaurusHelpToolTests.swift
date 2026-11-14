@@ -37,19 +37,74 @@ struct OsaurusGuideTests {
     }
 
     @Test
+    func settingsTopic_namesServerCacheContextCap() throws {
+        let body = try #require(OsaurusGuide.topic(id: "settings")?.body)
+        #expect(body.contains("Context Window Cap"))
+        #expect(body.contains("Server → Server Settings → Cache"))
+        #expect(!body.contains("Server → Settings → Cache"))
+        #expect(!body.contains("Chat behavior: core model for background jobs, context length"))
+        #expect(!body.contains("Warm Models on Load"))
+    }
+
+    @Test
+    func localModelsTopic_doesNotPointAtRetiredWarmModels() throws {
+        let body = try #require(OsaurusGuide.topic(id: "local-models")?.body)
+        #expect(!body.contains("Warm Models on Load"))
+    }
+
+    @Test
+    func topics_quoteTheSettingsShortcutAndCurrentSidebarNames() {
+        let corpus = OsaurusGuide.topics.map(\.body).joined(separator: "\n")
+        #expect(corpus.contains("⌘,"), "guide should tell the user Settings… is ⌘,")
+        #expect(!corpus.contains("⌘⇧M"))
+        #expect(!corpus.contains("Cmd+Shift+M"))
+        #expect(!corpus.contains("Cloud Models"))
+        #expect(!corpus.contains("Tools → Available"))
+        #expect(!corpus.contains("Generation defaults"))
+    }
+
+    @Test
+    func providersOverview_usesTheSidebarTitleAndKeepsTheOldAlias() throws {
+        let entry = try #require(SettingsSearchIndex.entries.first { $0.id == "providers.overview" })
+        #expect(entry.title == "Providers")
+        #expect(SettingsSearchIndex.search("cloud models").contains { $0.id == "providers.overview" })
+    }
+
+    @Test
     func topics_coverTheCoreFeatureAreas() {
         let ids = Set(OsaurusGuide.topics.map { $0.id })
         // The prompt and onboarding rely on these existing. Adding topics is
         // free; renaming/removing one of these must be a deliberate review.
         for required in [
             "getting-started", "local-models", "cloud-providers", "agents",
-            "chat", "skills", "plugins", "mcp", "schedules", "memory",
-            "server-api", "settings", "voice", "themes", "channels",
-            "automation", "privacy-storage", "troubleshooting",
-            "commands", "images", "watchers", "agent-db", "knowledge",
-            "identity",
+            "chat", "skills", "plugins", "mcp", "automations", "memory",
+            "server-api", "settings", "voice", "channels",
+            "computer-use", "privacy-storage", "troubleshooting",
+            "commands", "images", "agent-db", "knowledge",
+            "identity", "orchestrator", "config", "workspaces",
         ] {
             #expect(ids.contains(required), "guide topic `\(required)` missing")
+        }
+    }
+
+    @Test
+    func retiredTopicIds_resolveToAutomations() {
+        for retired in [
+            "events", "schedules", "watchers", "guide-events",
+            "event", "schedule", "watcher", "history", "automation-history",
+            "automation", "trigger", "triggers",
+        ] {
+            #expect(OsaurusGuide.topic(id: retired)?.id == "automations", "`\(retired)` should resolve to automations")
+        }
+        for alias in ["computer-use", "computer", "browser-use", "sandbox"] {
+            #expect(OsaurusGuide.topic(id: alias)?.id == "computer-use", "`\(alias)` should resolve to computer-use")
+        }
+    }
+
+    @Test
+    func retiredThemesTopic_resolvesToSettings() {
+        for retired in ["themes", "theme", "guide-themes", "appearance"] {
+            #expect(OsaurusGuide.topic(id: retired)?.id == "settings", "`\(retired)` should resolve to settings")
         }
     }
 
@@ -69,6 +124,15 @@ struct OsaurusGuideTests {
         #expect(OsaurusGuide.topic(id: "getting-started.md") != nil)
         #expect(OsaurusGuide.topic(id: " getting-started ") != nil)
         #expect(OsaurusGuide.topic(id: "no-such-topic") == nil)
+    }
+
+    @Test
+    func theHowOsaurusHelpsTopicUsesUserTerms() {
+        let topic = OsaurusGuide.topic(id: "how-osaurus-helps")
+        #expect(topic != nil)
+        for word in ["Configurator", "orchestrat", "subagent", "routing"] {
+            #expect(topic?.body.localizedCaseInsensitiveContains(word) == false, "user terms: no \(word)")
+        }
     }
 
     @Test
@@ -111,7 +175,7 @@ struct OsaurusHelpToolTests {
     @Test
     func topics_returnsIndexWithSummaries() async throws {
         let tool = OsaurusHelpTool()
-        let envelope = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+        let envelope = try await ChatExecutionContext.$currentAgentId.withValue(Agent.configuratorId) {
             try await tool.execute(argumentsJSON: #"{"action": "topics"}"#)
         }
         let dict = try parse(envelope)
@@ -131,7 +195,7 @@ struct OsaurusHelpToolTests {
     @Test
     func read_returnsOneTopicBody() async throws {
         let tool = OsaurusHelpTool()
-        let envelope = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+        let envelope = try await ChatExecutionContext.$currentAgentId.withValue(Agent.configuratorId) {
             try await tool.execute(argumentsJSON: #"{"action": "read", "topic": "getting-started"}"#)
         }
         let dict = try parse(envelope)
@@ -145,7 +209,7 @@ struct OsaurusHelpToolTests {
     @Test
     func read_unknownTopicFailsTypedAndNamesKnownTopics() async throws {
         let tool = OsaurusHelpTool()
-        let envelope = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+        let envelope = try await ChatExecutionContext.$currentAgentId.withValue(Agent.configuratorId) {
             try await tool.execute(argumentsJSON: #"{"action": "read", "topic": "flux-capacitor"}"#)
         }
         let dict = try parse(envelope)
@@ -160,12 +224,42 @@ struct OsaurusHelpToolTests {
     @Test
     func read_missingTopicArgumentFailsTyped() async throws {
         let tool = OsaurusHelpTool()
-        let envelope = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+        let envelope = try await ChatExecutionContext.$currentAgentId.withValue(Agent.configuratorId) {
             try await tool.execute(argumentsJSON: #"{"action": "read"}"#)
         }
         let dict = try parse(envelope)
         #expect(dict["ok"] as? Bool == false)
         #expect(dict["field"] as? String == "topic")
+    }
+
+    @Test
+    func find_returnsContextWindowCapBreadcrumb() async throws {
+        let tool = OsaurusHelpTool()
+        let envelope = try await ChatExecutionContext.$currentAgentId.withValue(Agent.configuratorId) {
+            try await tool.execute(
+                argumentsJSON: #"{"action": "find", "query": "context window"}"#)
+        }
+        let dict = try parse(envelope)
+        #expect(dict["ok"] as? Bool == true)
+        let result = try #require(dict["result"] as? [String: Any])
+        let matches = try #require(result["matches"] as? [[String: Any]])
+        #expect(matches.contains { $0["id"] as? String == "settings.chat.contextLength" })
+        let cap = try #require(matches.first { $0["id"] as? String == "settings.chat.contextLength" })
+        let path = try #require(cap["path"] as? String)
+        #expect(path.contains("Server"))
+        #expect(path.contains("Context Window Cap"))
+        #expect(cap["settings_ui_only"] as? Bool == true)
+    }
+
+    @Test
+    func find_missingQueryFailsTyped() async throws {
+        let tool = OsaurusHelpTool()
+        let envelope = try await ChatExecutionContext.$currentAgentId.withValue(Agent.configuratorId) {
+            try await tool.execute(argumentsJSON: #"{"action": "find"}"#)
+        }
+        let dict = try parse(envelope)
+        #expect(dict["ok"] as? Bool == false)
+        #expect(dict["field"] as? String == "query")
     }
 
     @Test
@@ -184,5 +278,41 @@ struct OsaurusHelpToolTests {
         let noContextDict = try parse(noContext)
         #expect(noContextDict["ok"] as? Bool == false)
         #expect(noContextDict["kind"] as? String == "unavailable")
+    }
+}
+
+// MARK: - `find` relaxed lookup
+
+/// Raptor 0.6.1 live row (Orchestrator, "Where is the setting to turn off
+/// memory?"): `osaurus_help find "turn off memory"` returned no matches
+/// because the catalog matcher wants every token inside one title/keyword,
+/// so the model fell back to `topics` → `read`. The tool now retries with
+/// intent/state words stripped and reports the query that matched.
+struct OsaurusHelpFindRelaxedTests {
+
+    @Test
+    func naturalToggleAsk_fallsBackToTheCatalogRow() {
+        let strict = SettingsSearchIndex.search("turn off memory")
+        #expect(strict.isEmpty, "strict matcher unexpectedly matched; relaxed pass is untested")
+        let lookup = OsaurusHelpTool.findSettings("turn off memory")
+        #expect(lookup.relaxedQuery == "memory")
+        #expect(lookup.entries.contains { $0.id == "memory.settings.enabled" })
+        #expect(lookup.entries.contains { $0.id == "memory.settings" })
+    }
+
+    @Test
+    func strictHitIsReturnedUnchangedAndNotMarkedRelaxed() {
+        let lookup = OsaurusHelpTool.findSettings("disable memory")
+        #expect(lookup.relaxedQuery == nil)
+        #expect(lookup.entries.contains { $0.id == "memory.settings.enabled" })
+    }
+
+    @Test
+    func onlyIntentWords_orNoRelaxedHit_stayEmptyWithoutInventingAMatch() {
+        #expect(OsaurusHelpTool.findSettings("turn off the").entries.isEmpty)
+        #expect(OsaurusHelpTool.findSettings("turn off the").relaxedQuery == nil)
+        let nonsense = OsaurusHelpTool.findSettings("turn off flux capacitor")
+        #expect(nonsense.entries.isEmpty)
+        #expect(nonsense.relaxedQuery == nil)
     }
 }

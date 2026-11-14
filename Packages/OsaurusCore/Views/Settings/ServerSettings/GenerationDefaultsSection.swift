@@ -12,6 +12,7 @@
 import SwiftUI
 
 struct GenerationDefaultsSection: View {
+    @Environment(\.theme) private var theme
     @Binding var draft: VMLXServerRuntimeSettings
 
     var body: some View {
@@ -67,9 +68,8 @@ struct GenerationDefaultsSection: View {
                 value: $draft.generation.maxTokens
             )
 
-            SettingsDivider()
 
-            SettingsSubsection(label: "Diffusion Models") {
+            SettingsFieldRow(label: "Diffusion Models") {
                 OptionalIntField(
                     label: "Denoising Steps per Canvas",
                     placeholder: "Blank = model default (48)",
@@ -81,10 +81,9 @@ struct GenerationDefaultsSection: View {
                 )
             }
 
-            SettingsDivider()
 
-            SettingsSubsection(label: "Streaming") {
-                VStack(alignment: .leading, spacing: 8) {
+            SettingsFieldRow(label: "Streaming") {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
                     ServerSettingsPlannedBanner(
                         blurb:
                             "Validated today; the streaming coalescer bridge ships in a follow-up."

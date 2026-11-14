@@ -25,6 +25,42 @@
     @Suite(.serialized)
     struct IMessageRPCClientProcessTests {
 
+        @Test func delayedOldTerminationCannotRetireReplacement() async throws {
+            try await withScriptedHelper { client in
+                let received = NotificationCollector()
+                await client.setNotificationHandler { method, _ in received.append(method) }
+                _ = try await helperPid(client)
+                let oldGeneration = try #require(await client.processGeneration)
+                await client.shutdown()
+                let replacementPid = try await helperPid(client)
+                let replacementGeneration = try #require(await client.processGeneration)
+                #expect(replacementGeneration != oldGeneration)
+                #expect(received.methods.filter { $0 == IMessageRPCNotification.helperTerminated }.count == 1)
+                // Deliver the old child's callback after a new real helper
+                // has answered. This ordering is legal across the actor hop.
+                await client.handleTermination(generation: oldGeneration)
+                let stillRunningPid = try await helperPid(client)
+                #expect(stillRunningPid == replacementPid)
+                #expect(await client.processGeneration == replacementGeneration)
+                #expect(received.methods.filter { $0 == IMessageRPCNotification.helperTerminated }.count == 1)
+                await client.shutdown()
+            }
+        }
+
+        @Test func delayedOldOutputCannotContaminateReplacement() async throws {
+            try await withScriptedHelper { client in
+                _ = try await helperPid(client)
+                let oldGeneration = try #require(await client.processGeneration)
+                await client.shutdown()
+                let replacementPid = try await helperPid(client)
+                // An unfinished old frame must not be prepended to the new
+                // helper's next response or turn it into a malformed frame.
+                await client.ingest(Data("{\"old_partial\":".utf8), generation: oldGeneration)
+                #expect(try await helperPid(client) == replacementPid)
+                await client.shutdown()
+            }
+        }
+
         @Test func timeoutKillsWedgedHelperSoNextCallGetsFreshProcess() async throws {
             try await withScriptedHelper { client in
                 let firstPid = try await helperPid(client)
@@ -42,6 +78,28 @@
                 let secondPid = try await helperPid(client)
                 #expect(secondPid != firstPid)
                 await client.shutdown()
+            }
+        }
+
+        @Test func consecutiveTimeoutsAllowImmediateReplacementRequests() async throws {
+            try await withScriptedHelper { client in
+                let received = NotificationCollector()
+                await client.setNotificationHandler { method, _ in received.append(method) }
+                for iteration in 1 ... 3 {
+                    let oldPid = try await helperPid(client)
+                    await #expect(throws: IMessageRPCError.timeout(method: "hang")) {
+                        _ = try await client.call(method: "hang", params: [:], timeout: 1)
+                    }
+                    // No wait-for-exit barrier before the request: callers may
+                    // retry as soon as the timeout continuation resumes.
+                    let newPid = try await helperPid(client)
+                    #expect(newPid != oldPid)
+                    try await waitForProcessExit(pid: oldPid)
+                    #expect(
+                        received.methods.filter { $0 == IMessageRPCNotification.helperTerminated }.count == iteration
+                    )
+                    #expect(try await helperPid(client) == newPid)
+                }
             }
         }
 
@@ -116,7 +174,8 @@
                 let script = directory.appendingPathComponent("imsg")
                 try Data(Self.helperScript.utf8).write(to: script)
                 try FileManager.default.setAttributes(
-                    [.posixPermissions: 0o755], ofItemAtPath: script.path
+                    [.posixPermissions: 0o755],
+                    ofItemAtPath: script.path
                 )
                 setenv(IMessageRuntimeAssets.executableOverrideEnvKey, script.path, 1)
                 defer {
@@ -130,7 +189,14 @@
                     Issue.record("OSAURUS_IMSG_PATH override was not honored in this build")
                     return
                 }
-                try await body(IMessageProcessRPCClient())
+                let client = IMessageProcessRPCClient()
+                do {
+                    try await body(client)
+                } catch {
+                    await client.shutdown()
+                    throw error
+                }
+                await client.shutdown()
             }
         }
 

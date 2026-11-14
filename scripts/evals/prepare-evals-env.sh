@@ -5,22 +5,21 @@ set -euo pipefail
 # (local MLX models + capability_search) on a clean checkout, without the
 # manual one-off setup that used to be required.
 #
-# Idempotent asset prep — NOT an orchestrator. It does the two things the
-# SwiftPM eval CLI cannot do for itself:
+# Idempotent asset prep — NOT an orchestrator. It does the one thing the
+# SwiftPM eval CLI cannot do for itself: colocate MLX's `default.metallib`
+# next to the `osaurus-evals` binary. SwiftPM CLI builds (unlike
+# `make app`) don't bundle the Cmlx Metal shader library, so a local MLX
+# model load otherwise fails with "Failed to load the default metallib".
 #
-#   1. Colocate MLX's `default.metallib` next to the `osaurus-evals`
-#      binary. SwiftPM CLI builds (unlike `make app`) don't bundle the
-#      Cmlx Metal shader library, so a local MLX model load otherwise
-#      fails with "Failed to load the default metallib".
-#   2. Ensure the `minishlab/potion-base-4M` embedder is in the Hugging
-#      Face cache so the capability_search semantic index isn't empty.
+# The capability_search embedder (`minishlab/potion-base-4M`) ships in
+# OsaurusCore's resource bundle, so it needs no download here.
 #
 # Safe to run repeatedly; skips work that is already done.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 EVALS_PKG="${REPO_ROOT}/Packages/OsaurusEvals"
-EMBED_MODEL="minishlab/potion-base-4M"
+BUNDLED_EMBEDDER="${REPO_ROOT}/Packages/OsaurusCore/EmbeddingModels/potion-base-4M"
 EVALS_BUILD_CONFIGURATION="${EVALS_BUILD_CONFIGURATION:-debug}"
 
 shopt -s nullglob
@@ -109,39 +108,13 @@ else
   fi
 fi
 
-# ── 3. Ensure the capability_search embedder ─────────────────────────────
-embedder_present() {
-  local snap base="${HOME}/.cache/huggingface/hub/models--minishlab--potion-base-4M/snapshots"
-  if [[ -d "${base}" ]]; then
-    for snap in "${base}"/*; do
-      if [[ -f "${snap}/config.json" && -f "${snap}/model.safetensors" && -f "${snap}/tokenizer.json" ]]; then
-        return 0
-      fi
-    done
-  fi
-  local d
-  for d in "${HOME}/models/minishlab--potion-base-4M" "${HOME}/models/potion-base-4M" "${OSAURUS_EMBEDDING_MODEL_DIR:-}"; do
-    [[ -n "${d}" ]] || continue
-    if [[ -f "${d}/config.json" && -f "${d}/model.safetensors" && -f "${d}/tokenizer.json" ]]; then
-      return 0
-    fi
-  done
-  return 1
-}
-
-if embedder_present; then
-  log "Embedder ${EMBED_MODEL} already present."
+# ── 3. Check the bundled capability_search embedder ──────────────────────
+if [[ -n "${OSAURUS_EMBEDDING_MODEL_DIR:-}" ]]; then
+  log "Embedder override: OSAURUS_EMBEDDING_MODEL_DIR=${OSAURUS_EMBEDDING_MODEL_DIR}"
+elif [[ -f "${BUNDLED_EMBEDDER}/config.json" && -f "${BUNDLED_EMBEDDER}/model.safetensors" && -f "${BUNDLED_EMBEDDER}/tokenizer.json" ]]; then
+  log "Embedder potion-base-4M ships with OsaurusCore."
 else
-  log "Embedder ${EMBED_MODEL} missing; downloading into the Hugging Face cache…"
-  if command -v hf >/dev/null 2>&1; then
-    hf download "${EMBED_MODEL}"
-  elif command -v uvx >/dev/null 2>&1; then
-    uvx --from "huggingface_hub[cli]" hf download "${EMBED_MODEL}"
-  else
-    warn "neither 'hf' nor 'uvx' found; cannot download ${EMBED_MODEL}."
-    warn "capability_search will run with an EMPTY semantic index."
-    warn "install it manually or set OSAURUS_EMBEDDING_MODEL_DIR to a local copy."
-  fi
+  warn "bundled embedder missing at ${BUNDLED_EMBEDDER#"${REPO_ROOT}/"}; capability_search will run with an EMPTY semantic index."
 fi
 
 # Note: the capability_claims browser cases used to require the

@@ -31,14 +31,18 @@ import Foundation
 
 public final class LogFileTailer: @unchecked Sendable {
     public let path: String
+    /// When set, the log lives in guest-writable storage: it is opened only
+    /// as a regular file inside this directory, never through a symlink.
+    private let confinementRoot: URL?
     private let lock = NSLock()
     private var handle: FileHandle?
     private var started = false
     private var lastReadOffset: UInt64 = 0
     private let subject = PassthroughSubject<Data, Never>()
 
-    public init(path: String) {
+    public init(path: String, confinedTo root: URL? = nil) {
         self.path = path
+        self.confinementRoot = root
     }
 
     public var publisher: AnyPublisher<Data, Never> {
@@ -58,13 +62,25 @@ public final class LogFileTailer: @unchecked Sendable {
         // Ensure the file exists so opening doesn't bail. Background-job
         // spawn writes to the file via `nohup ... > $log 2>&1`, but on a
         // very young job we may race the first write.
-        let fm = FileManager.default
-        if !fm.fileExists(atPath: path) {
-            fm.createFile(atPath: path, contents: nil)
-        }
-
-        guard let fh = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else {
-            return
+        let fh: FileHandle
+        if let confinementRoot {
+            guard
+                let fd = SandboxAgentPathScope.openContained(
+                    URL(fileURLWithPath: path),
+                    within: confinementRoot,
+                    flags: O_RDONLY | O_CREAT
+                )
+            else { return }
+            fh = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
+        } else {
+            let fm = FileManager.default
+            if !fm.fileExists(atPath: path) {
+                fm.createFile(atPath: path, contents: nil)
+            }
+            guard let opened = try? FileHandle(forReadingFrom: URL(fileURLWithPath: path)) else {
+                return
+            }
+            fh = opened
         }
         handle = fh
 
@@ -113,6 +129,10 @@ public final class LogFileTailer: @unchecked Sendable {
     /// row that mounts mid-stream sees the whole tail before subscribing
     /// to live updates.
     public func snapshot() -> Data {
+        if let confinementRoot {
+            return SandboxAgentPathScope.readContained(URL(fileURLWithPath: path), within: confinementRoot)
+                ?? Data()
+        }
         guard FileManager.default.fileExists(atPath: path) else { return Data() }
         return (try? Data(contentsOf: URL(fileURLWithPath: path))) ?? Data()
     }

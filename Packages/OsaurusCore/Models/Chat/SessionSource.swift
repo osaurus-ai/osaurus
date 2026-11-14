@@ -19,15 +19,23 @@ public enum SessionSource: String, Codable, CaseIterable, Sendable {
     case http
     /// Verified inbound message from an Agent Channel provider.
     case channel
-    /// Recurring scheduled task created via `ScheduleManager`.
+    /// Legacy: schedule-started sessions. New ones persist as `.automation`;
+    /// still bound at runtime via `runtimeSource(automationKind:)`.
     case schedule
-    /// File-system watcher trigger (`WatcherManager`).
+    /// Legacy: folder-started sessions (see `schedule`).
     case watcher
+    /// Legacy: webhook-started sessions (see `schedule`).
+    case webhook
+    /// Legacy: email-started sessions (see `schedule`).
+    case email
+    /// Any automation-started session. The trigger kind is persisted beside
+    /// it (`ChatSessionData.automationKind`).
+    case automation
     /// Self-scheduled wake-up (spec §4.2 / §9). The agent itself
-    /// asked to be woken by calling `schedule_next_run`; the
-    /// `NextRunScheduler` is what dispatched this turn. Distinct
-    /// from `.schedule` (user-authored recurring schedules) so the
-    /// audit trail can tell them apart.
+    /// asked to be woken by calling `schedule_next_run`; its owned
+    /// schedule automation (`SelfScheduleAutomations`) dispatched this
+    /// turn. Distinct from automation-started sessions so the audit
+    /// trail can tell them apart.
     case selfSchedule = "self_schedule"
     /// Conversation imported from another assistant's export
     /// (ChatGPT, Claude, generic JSON). Continues as a normal chat;
@@ -38,12 +46,30 @@ public enum SessionSource: String, Codable, CaseIterable, Sendable {
     /// under the TARGET agent's own settings and persists in its chat
     /// history. One fresh session per delegation call.
     case delegation
+    /// A shared agent run served by THIS instance for a workspace teammate
+    /// (`/agents/{id}/run` authenticated with a workspace-minted key). The
+    /// conversation is the teammate's; the host keeps a local, read-only
+    /// copy under the shared agent tagged with the caller.
+    case workspace
+}
+
+// MARK: - Runtime provenance
+
+extension SessionSource {
+    /// The source a run binds as `ChatExecutionContext.currentSessionSource`.
+    /// Automation sessions persist as `.automation` plus the trigger kind;
+    /// tool and publish gates keep seeing the trigger-specific source
+    /// (`.schedule`, `.watcher`, …) they always keyed on.
+    public func runtimeSource(automationKind: EventSourceKind?) -> SessionSource {
+        guard self == .automation, let automationKind else { return self }
+        return automationKind.sessionSource
+    }
 }
 
 // MARK: - UI Helpers
 
 /// Shared formatting used by the sidebar source badge, the toast header
-/// subtitle, and the notch expanded subtitle. Keeping these in one place
+/// subtitle, and the Activity row subtitle. Keeping these in one place
 /// guarantees the audit dimension reads identically across every surface.
 extension SessionSource {
 
@@ -71,13 +97,32 @@ extension SessionSource {
             return "scheduled"
         case .watcher:
             return "watcher"
+        case .webhook:
+            return "via webhook"
+        case .email:
+            return "via email"
+        case .automation:
+            return "via automation"
         case .selfSchedule:
             return "self-scheduled"
         case .imported:
             return "imported"
         case .delegation:
             return "delegated"
+        case .workspace:
+            return "via workspace"
         }
+    }
+
+    /// Origin clause for a row served for a remote caller that names them:
+    /// "for Alice · Workspace" for a workspace teammate, "for Alice · Shared"
+    /// for an invite-link peer (no workspace). Falls back to the plain
+    /// origin label.
+    public func originLabel(workspace: WorkspaceSessionContext?) -> String? {
+        if self == .workspace, let workspace, let caller = workspace.callerLabel {
+            return workspace.isDirectShare ? "for \(caller) · Shared" : "for \(caller) · Workspace"
+        }
+        return originLabel()
     }
 
     /// SF Symbol used by the sidebar source badge.
@@ -89,9 +134,13 @@ extension SessionSource {
         case .channel: return "bubble.left.and.bubble.right.fill"
         case .schedule: return "clock.fill"
         case .watcher: return "eye.fill"
+        case .webhook: return "link"
+        case .email: return "envelope.fill"
+        case .automation: return "bolt.fill"
         case .selfSchedule: return "alarm.fill"
         case .imported: return "square.and.arrow.down.fill"
         case .delegation: return "arrow.triangle.branch"
+        case .workspace: return "rectangle.3.group.fill"
         }
     }
 
@@ -104,9 +153,13 @@ extension SessionSource {
         case .channel: return "Channel"
         case .schedule: return "Schedule"
         case .watcher: return "Watcher"
+        case .webhook: return "Webhook"
+        case .email: return "Email"
+        case .automation: return "Automation"
         case .selfSchedule: return "Self-scheduled"
         case .imported: return "Imported"
-        case .delegation: return "Delegated"
+        case .delegation: return "Orchestrator"
+        case .workspace: return "Workspace"
         }
     }
 }
@@ -116,7 +169,7 @@ extension SessionSource {
 /// Resolves a user-facing label for a plugin id. Falls back to the raw id
 /// (or the suffix of `sandbox:<user>` pseudo-ids used by the bridge).
 ///
-/// Lives next to `SessionSource` so the toast / notch / sidebar can share
+/// Lives next to `SessionSource` so the toast / Activity section / sidebar can share
 /// one canonical implementation instead of three near-identical copies.
 @MainActor
 public enum PluginDisplayNameResolver {
@@ -157,12 +210,20 @@ extension SessionSource {
         // reclaim the helper's model afterwards — chat-owned residency is
         // exactly the class that restore may evict; a `.scheduled` owner
         // would be protected and block the parent's reload.
-        case .chat, .imported, .delegation: return .chatUI
-        case .http: return .httpAPI
+        // Headless evaluations preserve this ownership class for handoff,
+        // while carrying their own configured idle policy through children.
+        case .chat, .imported, .delegation:
+            return ChatExecutionContext.resolvedInferenceSource(.chatUI)
+        // A teammate's run arrives over the same authenticated HTTP surface
+        // as any API caller and carries no chat-window residency intent.
+        case .http, .workspace: return .httpAPI
         case .plugin: return .plugin
         case .channel: return .channel
         case .schedule: return .schedule
         case .watcher: return .watcher
+        case .webhook: return .webhook
+        case .email: return .email
+        case .automation: return .automation
         case .selfSchedule: return .selfSchedule
         }
     }

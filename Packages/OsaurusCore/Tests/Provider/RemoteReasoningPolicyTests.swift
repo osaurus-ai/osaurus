@@ -128,6 +128,31 @@ struct RemoteReasoningPolicyTests {
         #expect(controls.thinking == ThinkingConfig(type: "disabled"))
     }
 
+    /// DeepSeek renamed V4.1-Flash to the versionless `deepseek-flash`
+    /// (2026-09-10). It keeps the DSV4 thinking contract, so the Off rail
+    /// must still translate to `thinking.disabled` instead of silently
+    /// re-enabling the model's default thinking.
+    @Test func controls_deepSeekFlashVersionlessId_disablesThinking() {
+        #expect(ModelFamilyNames.isDSV4Family("deepseek-flash"))
+        #expect(ModelFamilyNames.isDSV4Family("deepseek/deepseek-flash"))
+        #expect(ModelFamilyNames.isDSV4Family("DeepSeek-V4.1-Flash"))
+        #expect(!ModelFamilyNames.isDSV4Family("deepseek-chat"))
+        #expect(!ModelFamilyNames.isDSV4Family("deepseek-v3"))
+        #expect(
+            ModelProfileRegistry.profile(for: "deepseek-flash")?.displayName
+                == DSV4ReasoningProfile.displayName
+        )
+
+        let policy = RemoteReasoningPolicy.resolve(
+            providerType: .openaiLegacy,
+            host: "api.deepseek.com",
+            model: "deepseek-flash"
+        )
+        let controls = policy.controls(effort: "instruct")
+        #expect(controls.effort == nil)
+        #expect(controls.thinking == ThinkingConfig(type: "disabled"))
+    }
+
     @Test func controls_deepSeekMax_forwardsEffort() {
         let policy = RemoteReasoningPolicy.resolve(
             providerType: .openaiLegacy,
@@ -187,6 +212,36 @@ struct RemoteReasoningPolicyTests {
         )
         #expect(policy.sanitizedToolChoice(.required, thinking: nil) == .auto)
         #expect(policy.sanitizedToolChoice(Self.namedChoice, thinking: nil) == .auto)
+    }
+
+    @Test func sanitizedToolChoice_claudeRejectingForcedToolUse_downgrades() {
+        // #3051: these models 400 on tool_choice any/tool from every host.
+        let cases: [(RemoteProviderType, String, String)] = [
+            (.openaiLegacy, "openrouter.ai", "anthropic/claude-sonnet-5.5"),
+            (.openaiLegacy, "openrouter.ai", "anthropic/claude-opus-5.5"),
+            (.anthropic, "api.anthropic.com", "claude-sonnet-5-5"),
+            (.anthropic, "api.anthropic.com", "claude-fable-5-1"),
+            (.anthropic, "api.anthropic.com", "claude-mythos-5-1"),
+        ]
+        for (type, host, model) in cases {
+            let policy = RemoteReasoningPolicy.resolve(providerType: type, host: host, model: model)
+            #expect(policy.sanitizedToolChoice(.required, thinking: nil) == .auto)
+            #expect(policy.sanitizedToolChoice(Self.namedChoice, thinking: nil) == .auto)
+            #expect(policy.sanitizedToolChoice(.auto, thinking: nil) == .auto)
+            #expect(policy.sanitizedToolChoice(ToolChoiceOption.none, thinking: nil) == ToolChoiceOption.none)
+        }
+    }
+
+    @Test func sanitizedToolChoice_olderClaude_preservesForcedChoices() {
+        for model in ["anthropic/claude-haiku-5.5", "claude-sonnet-4-6", "claude-opus-4-8"] {
+            let policy = RemoteReasoningPolicy.resolve(
+                providerType: .anthropic,
+                host: "api.anthropic.com",
+                model: model
+            )
+            #expect(policy.sanitizedToolChoice(.required, thinking: nil) == .required)
+            #expect(policy.sanitizedToolChoice(Self.namedChoice, thinking: nil) == Self.namedChoice)
+        }
     }
 
     @Test func sanitizedToolChoice_nonDeepSeekHosts_passThrough() {

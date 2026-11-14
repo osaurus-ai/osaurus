@@ -30,8 +30,8 @@ import Foundation
 
 // MARK: - Public transcript
 
-/// One ordered child row returned by production `spawn_batch`.
-public struct SubagentBatchJobTranscript: Sendable, Codable {
+/// One ordered child row of a scripted `spawn_agent` wave (several calls issued together).
+public struct SubagentWaveJobTranscript: Sendable, Codable {
     public let id: String
     public let targetType: String
     public let target: String
@@ -104,24 +104,24 @@ public struct SubagentJobTranscript: Sendable, Codable {
     /// Post-run cache counters (`prefix_hits` / `disk_l2_hits` / …) captured
     /// for local runs — the resume prefix-hit / L2 mitigation signal.
     public let postRunCache: [String: Int]?
-    /// Parallel-batch lane only: peak concurrent `run()` bodies observed.
+    /// Parallel-wave lane only: peak concurrent `run()` bodies observed.
     public let maxConcurrent: Int?
-    /// Parallel-batch lane only: how many of the batch's runs completed
+    /// Parallel-wave lane only: how many of the wave's runs completed
     /// (success envelopes).
     public let runsCompleted: Int?
-    /// Parallel-batch lane only: how many child runs reached a terminal
+    /// Parallel-wave lane only: how many child runs reached a terminal
     /// envelope, including failures. This distinguishes sibling settlement
     /// from aggregate success.
     public let runsSettled: Int?
-    /// Parallel-batch lane only: terminal envelope kinds in input order.
-    /// Used by deterministic heterogeneous-batch evals to prove one failed
+    /// Parallel-wave lane only: terminal envelope kinds in input order.
+    /// Used by deterministic heterogeneous-wave evals to prove one failed
     /// child does not discard successful siblings.
     public let runEnvelopeKinds: [String]?
-    /// Production spawn_batch aggregate status (`succeeded` /
+    /// Scripted wave aggregate status (`succeeded` /
     /// `partial_failure` / `all_failed` / `all_cancelled`).
-    public let batchAggregateStatus: String?
-    /// Production spawn_batch child rows in caller order.
-    public let batchJobs: [SubagentBatchJobTranscript]?
+    public let waveAggregateStatus: String?
+    /// Scripted wave child rows in call order.
+    public let waveJobs: [SubagentWaveJobTranscript]?
     /// Residency lane only: whether the local orchestrator was verified
     /// GPU-resident again AFTER the run (before the lane's cleanup) — the
     /// "restore verified resident" proof. `nil` when the case had no local
@@ -152,8 +152,8 @@ public struct SubagentJobTranscript: Sendable, Codable {
         runsCompleted: Int? = nil,
         runsSettled: Int? = nil,
         runEnvelopeKinds: [String]? = nil,
-        batchAggregateStatus: String? = nil,
-        batchJobs: [SubagentBatchJobTranscript]? = nil,
+        waveAggregateStatus: String? = nil,
+        waveJobs: [SubagentWaveJobTranscript]? = nil,
         restoredResident: Bool? = nil
     ) {
         self.tool = tool
@@ -179,8 +179,8 @@ public struct SubagentJobTranscript: Sendable, Codable {
         self.runsCompleted = runsCompleted
         self.runsSettled = runsSettled
         self.runEnvelopeKinds = runEnvelopeKinds
-        self.batchAggregateStatus = batchAggregateStatus
-        self.batchJobs = batchJobs
+        self.waveAggregateStatus = waveAggregateStatus
+        self.waveJobs = waveJobs
         self.restoredResident = restoredResident
     }
 }
@@ -256,7 +256,7 @@ public struct ScriptedSubagentSpec: Sendable {
     /// admission class is `.remote` — the parallel fan-out lane.
     public var remote: Bool
     /// Hold `run()` open for this long (polling the interrupt token every
-    /// ~20 ms), so an external interrupt or a sibling batch run can land
+    /// ~20 ms), so an external interrupt or a sibling wave run can land
     /// mid-run. An interrupt observed during the wait throws the honest
     /// user-stop error (mirrors `TextSubagentKind`'s cancel mapping).
     public var runDelayMs: Int
@@ -264,11 +264,11 @@ public struct ScriptedSubagentSpec: Sendable {
     /// the transcript/scoring plumbing for the live spawn fields is testable
     /// deterministically (this is the model-free TEST kind, not production).
     public var includeUsageAccounting: Bool
-    /// Parallel-batch rendezvous: hold `run()` open until this many sibling
+    /// Parallel-wave rendezvous: hold `run()` open until this many sibling
     /// runs have ENTERED the shared overlap probe (bounded wait), so a
     /// fan-out lane observes true overlap deterministically instead of
     /// depending on sleep timing. `0` = off. Only meaningful with a probe;
-    /// never set it for a serialized (exclusive) batch — the later runs can't
+    /// never set it for a serialized (exclusive) wave — the later runs can't
     /// enter until the earlier ones exit, so the wait would just time out.
     public var rendezvousArrivals: Int
 
@@ -305,23 +305,21 @@ public struct ScriptedSubagentSpec: Sendable {
     }
 }
 
-/// One deterministic child submitted to the production `SpawnBatchTool`.
-public struct ScriptedSpawnBatchJobSpec: Sendable {
+/// One deterministic child of a scripted `spawn_agent` wave (several calls
+/// in one model message).
+public struct ScriptedSpawnWaveJobSpec: Sendable {
     public let id: String
-    public let targetType: String
     public let target: String
     public let input: String
     public let subagent: ScriptedSubagentSpec
 
     public init(
         id: String,
-        targetType: String = "model",
         target: String,
         input: String,
         subagent: ScriptedSubagentSpec
     ) {
         self.id = id
-        self.targetType = targetType
         self.target = target
         self.input = input
         self.subagent = subagent
@@ -331,6 +329,35 @@ public struct ScriptedSpawnBatchJobSpec: Sendable {
 // MARK: - Facade
 
 public enum SubagentJobEvaluator {
+
+    /// Eval fixture for the actual global delegation controls. Apply only in an
+    /// isolated, serialized eval process; save and restore use the same store as UI.
+    public struct DelegationSettings: Sendable, Codable, Equatable {
+        public let ramSafety: Bool
+        public let handoff: Bool
+        public let coexistence: Bool
+
+        public init(ramSafety: Bool, handoff: Bool, coexistence: Bool) {
+            self.ramSafety = ramSafety
+            self.handoff = handoff
+            self.coexistence = coexistence
+        }
+    }
+
+    public static func withDelegationSettings<T: Sendable>(
+        _ settings: DelegationSettings,
+        isolation: isolated (any Actor)? = #isolation,
+        operation: () async -> T
+    ) async -> T {
+        let previous = SubagentConfigurationStore.snapshot()
+        var updated = previous
+        updated.ramSafetyPreflightEnabled = settings.ramSafety
+        updated.localTextDelegationEnabled = settings.handoff
+        updated.subagentCoexistenceEnabled = settings.coexistence
+        SubagentConfigurationStore.save(updated)
+        defer { SubagentConfigurationStore.save(previous) }
+        return await operation()
+    }
 
     /// Run the model-free scripted lane: build a `ScriptedSubagentKind` from
     /// `spec`, drive it through the real `SubagentSession` host, and read back
@@ -371,138 +398,198 @@ public enum SubagentJobEvaluator {
         )
     }
 
-    /// Run `count` copies of the scripted spec through production
-    /// `SpawnBatchTool`. Every child receives a caller-stable unique id while
+    /// Run `count` copies of the scripted spec as ONE wave of sibling
+    /// `spawn_agent` calls (the production shape: several calls in one model
+    /// message). Every child receives a caller-stable unique id while
     /// retaining the same model identity, so this overload exercises the
-    /// same-model batching contract rather than being rejected as duplicate
-    /// input.
-    public static func runScriptedParallelBatch(
+    /// same-model fan-out contract.
+    public static func runScriptedParallelWave(
         _ spec: ScriptedSubagentSpec,
         count: Int
     ) async -> SubagentJobTranscript {
         let runs = max(2, count)
         let jobs = (0 ..< runs).map { index in
-            ScriptedSpawnBatchJobSpec(
+            ScriptedSpawnWaveJobSpec(
                 id: "\(spec.kindId)-\(index + 1)",
                 target: spec.modelName,
-                input: "scripted batch job \(index + 1)",
+                input: "scripted wave job \(index + 1)",
                 subagent: spec
             )
         }
-        return await runScriptedSpawnBatch(jobs)
+        return await runScriptedSpawnWave(jobs)
     }
 
-    /// Run a heterogeneous scripted batch through the same host/admission
+    /// Run a heterogeneous scripted wave through the same host/admission
     /// path as the uniform overload. The ordered specs let deterministic
     /// evals model mixed local/remote fan-out and one-child failure while
     /// retaining every sibling's terminal envelope.
-    public static func runScriptedParallelBatch(
+    public static func runScriptedParallelWave(
         _ specs: [ScriptedSubagentSpec]
     ) async -> SubagentJobTranscript {
         let jobs = specs.enumerated().map { index, spec in
-            ScriptedSpawnBatchJobSpec(
+            ScriptedSpawnWaveJobSpec(
                 id: spec.kindId.isEmpty ? "scripted-\(index + 1)" : spec.kindId,
                 target: spec.modelName,
-                input: "scripted batch job \(index + 1)",
+                input: "scripted wave job \(index + 1)",
                 subagent: spec
             )
         }
-        return await runScriptedSpawnBatch(jobs)
+        return await runScriptedSpawnWave(jobs)
     }
 
-    /// Execute a deterministic batch through the production SpawnBatchTool.
-    /// The tool's parser, prepare-all barrier, grouping/scheduler, sibling
-    /// settlement, and ordered aggregation are real production code. The
-    /// child kind, permission verdict, local-capacity facts, and admission
-    /// plan are deterministic eval inputs, so this lane does NOT prove live
-    /// model residency, BatchEngine overlap, RAM refusal, cache reuse, bundle
-    /// defaults, provider authentication, or reasoning behavior.
-    public static func runScriptedSpawnBatch(
-        _ jobs: [ScriptedSpawnBatchJobSpec],
+    /// Execute a deterministic wave: N sibling `SubagentSession.run` calls
+    /// bound to one `SpawnWaveContext`, exactly as `AgentToolLoop
+    /// .runBatchInParallel` runs N `spawn_agent` calls from one model
+    /// message. The wave gate (one approval, fan-out limits), per-child
+    /// admission, sibling settlement, and the host lifecycle are real
+    /// production code; the child kind, permission verdict, and fan-out
+    /// limits are deterministic eval inputs, so this lane does NOT prove live
+    /// model residency, BatchEngine overlap, RAM refusal, cache reuse,
+    /// bundle defaults, provider authentication, or reasoning behavior.
+    ///
+    /// Results are aggregated into one envelope (`results` rows in call
+    /// order, `aggregate_status`) so transcripts keep the per-child view.
+    public static func runScriptedSpawnWave(
+        _ jobs: [ScriptedSpawnWaveJobSpec],
         interruptAfterMs: Int? = nil
     ) async -> SubagentJobTranscript {
         guard !jobs.isEmpty else {
             return await runScripted(ScriptedSubagentSpec())
         }
         let probe = SubagentOverlapProbe()
-        let specsByID = Dictionary(
-            jobs.map { ($0.id, $0.subagent) },
-            uniquingKeysWith: { first, _ in first }
-        )
-        let maxParallel = max(1, jobs.count)
+        let waveRoot = freshToolCallId()
+        let callIds = jobs.map { "\(waveRoot)-\($0.id)" }
+        let context = SpawnWaveContext(expectedCallIds: callIds)
         let localCount = jobs.filter { !$0.subagent.remote }.count
-        let admissionPlan = SpawnBatchTool.makeLocalAdmissionPlan(
-            localJobCount: localCount,
-            remoteJobCount: jobs.count - localCount,
-            maxParallel: maxParallel,
-            engineParallelLimit: maxParallel,
-            continuousBatchingEnabled: true,
-            residencyPlan: nil,
-            memoryFacts: nil,
-            failClosedWhenEstimateUnknown: false
+        let limits = SpawnFanOutLimits(
+            local: max(1, localCount),
+            remote: max(1, jobs.count - localCount)
         )
-        let overrides = SpawnBatchTool.EvaluationOverrides(
-            kindForJob: { job in
-                let spec =
-                    specsByID[job.id]
-                    ?? ScriptedSubagentSpec(kindId: job.id)
-                return ScriptedSubagentKind(
-                    spec: spec,
-                    overlapProbe: probe
-                )
-            },
-            maxParallel: maxParallel,
-            localParallelism: maxParallel,
-            localAdmissionPlan: admissionPlan
-        )
-        let arguments = jsonString([
-            "jobs": jobs.map {
-                [
-                    "id": $0.id,
-                    "target_type": $0.targetType,
-                    "target": $0.target,
-                    "input": $0.input,
-                ]
-            }
-        ])
-        let toolCallId = freshToolCallId()
         let started = Date()
         let requiredRunArrivals =
             jobs.map(\.subagent.rendezvousArrivals).max() ?? 0
-        let stopper = scheduleBatchInterrupt(
+        let stopper = scheduleWaveInterrupt(
             afterMs: interruptAfterMs,
-            toolCallId: toolCallId,
+            toolCallIds: callIds,
             probe: probe,
             requiredRunArrivals: requiredRunArrivals
         )
-        let envelope = await withEvalScope(toolCallId: toolCallId) {
-            await SpawnPermissionGate.$policyOverrideForTests.withValue(
-                .alwaysAllow
-            ) {
-                await SpawnBatchTool.$evaluationOverrides.withValue(overrides) {
-                    do {
-                        return try await SpawnBatchTool().execute(
-                            argumentsJSON: arguments
-                        )
-                    } catch {
-                        return ToolEnvelope.failure(
-                            kind: .executionError,
-                            message: error.localizedDescription,
-                            tool: SubagentCapabilityRegistry.spawnBatchToolName,
-                            retryable: false
-                        )
+        await SpawnWaveGate.shared.open(context)
+        let envelopes: [String] = await ChatExecutionContext.$currentSessionId.withValue(
+            "subagent-eval-\(UUID().uuidString)"
+        ) {
+            await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+                await ChatExecutionContext.$autoApproveToolPrompts.withValue(true) {
+                    await SpawnPermissionGate.$policyOverrideForTests.withValue(.alwaysAllow) {
+                        await SpawnFanOutPolicy.$limitsOverrideForTests.withValue(limits) {
+                            await ChatExecutionContext.$spawnWave.withValue(context) {
+                                await withTaskGroup(of: (Int, String).self) { group in
+                                    for (index, job) in jobs.enumerated() {
+                                        group.addTask {
+                                            let kind = ScriptedSubagentKind(
+                                                spec: job.subagent,
+                                                overlapProbe: probe
+                                            )
+                                            let envelope = await ChatExecutionContext
+                                                .$currentToolCallId.withValue(callIds[index]) {
+                                                    defer { SpawnWaveGate.settleCurrentCall() }
+                                                    return await SubagentSession.run(
+                                                        kind,
+                                                        tool: SubagentCapabilityRegistry.spawnAgentToolName
+                                                    )
+                                                }
+                                            return (index, envelope)
+                                        }
+                                    }
+                                    var ordered = Array(repeating: "", count: jobs.count)
+                                    for await (index, envelope) in group {
+                                        ordered[index] = envelope
+                                    }
+                                    return ordered
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
+        await SpawnWaveGate.shared.close(waveId: context.waveId)
         stopper?.cancel()
+        let aggregate = waveEnvelope(jobs: jobs, envelopes: envelopes)
         return transcript(
-            fromEnvelope: envelope,
-            tool: SubagentCapabilityRegistry.spawnBatchToolName,
+            fromEnvelope: aggregate,
+            tool: SubagentCapabilityRegistry.spawnAgentToolName,
             kindId: SubagentCapabilityRegistry.spawn.id,
-            toolCallId: toolCallId,
+            toolCallId: callIds[0],
             latencyMs: Date().timeIntervalSince(started) * 1000,
             maxConcurrent: probe.maxConcurrent
+        )
+    }
+
+    /// One aggregate envelope over the wave's per-call envelopes (call order),
+    /// mirroring the shape the old explicit job list produced so transcripts
+    /// and scoring keep a per-child view.
+    static func waveEnvelope(jobs: [ScriptedSpawnWaveJobSpec], envelopes: [String]) -> String {
+        var rows: [[String: Any]] = []
+        var succeeded = 0
+        var failed = 0
+        var cancelled = 0
+        for (job, envelope) in zip(jobs, envelopes) {
+            let parsed =
+                (envelope.data(using: .utf8)).flatMap {
+                    try? JSONSerialization.jsonObject(with: $0) as? [String: Any]
+                } ?? ["ok": false, "kind": "execution_error", "message": envelope]
+            if ToolEnvelope.isSuccess(envelope) {
+                succeeded += 1
+            } else {
+                failed += 1
+                if failureKind(envelope) == ToolEnvelope.Kind.userDenied.rawValue {
+                    cancelled += 1
+                }
+            }
+            rows.append([
+                "id": job.id,
+                "target_type": "agent",
+                "target": job.target,
+                "envelope": parsed,
+            ])
+        }
+        let status: String
+        if failed == 0 {
+            status = "succeeded"
+        } else if succeeded == 0, cancelled == failed {
+            status = "all_cancelled"
+        } else if succeeded == 0 {
+            status = "all_failed"
+        } else {
+            status = "partial_failure"
+        }
+        let payload: [String: Any] = [
+            "kind": "spawn_wave_result",
+            "jobs": jobs.count,
+            "succeeded": succeeded,
+            "failed": failed,
+            "aggregate_status": status,
+            "summary": "\(succeeded)/\(jobs.count) wave jobs succeeded.",
+            "results": rows,
+        ]
+        let tool = SubagentCapabilityRegistry.spawnAgentToolName
+        guard failed > 0, succeeded == 0 else {
+            return ToolEnvelope.success(tool: tool, result: payload)
+        }
+        let kinds = Set(envelopes.compactMap { failureKind($0) })
+        let kind: ToolEnvelope.Kind
+        if kinds.count == 1, let raw = kinds.first, let exact = ToolEnvelope.Kind(rawValue: raw) {
+            kind = exact
+        } else {
+            kind = .executionError
+        }
+        return ToolEnvelope.failure(
+            kind: kind,
+            message: "\(failed) wave jobs failed.",
+            tool: tool,
+            retryable: false,
+            metadata: ["result": payload]
         )
     }
 
@@ -542,42 +629,13 @@ public enum SubagentJobEvaluator {
         )
     }
 
-    /// Run the live spawn-model lane through the host + `TextSubagentKind` (the
-    /// same path `spawn_model` drives) — a bare model id with NO agent/system
-    /// prompt. `model` is both the pool-gated target AND the run model (the eval
-    /// seam forces it with residency passthrough, so the lane is a real
-    /// cross-model column without depending on GPU residency). The caller seeds
-    /// the model into the spawnable pool for happy-path cases; negative guards
-    /// (unseeded id) surface a `rejected` envelope so the runner skips vs. fails.
-    public static func runSpawnModel(
-        model: String,
-        input: String,
-        interruptAfterMs: Int? = nil
-    ) async -> SubagentJobTranscript {
-        let toolCallId = freshToolCallId()
-        let kind = TextSubagentKind(model: model, input: input, modelOverride: model)
-        let started = Date()
-        let stopper = scheduleInterrupt(afterMs: interruptAfterMs, toolCallId: toolCallId)
-        let envelope = await withEvalScope(toolCallId: toolCallId) {
-            await SubagentSession.run(kind, tool: "spawn_model")
-        }
-        stopper?.cancel()
-        let latency = Date().timeIntervalSince(started) * 1000
-        return transcript(
-            fromEnvelope: envelope,
-            tool: "spawn_model",
-            kindId: "spawn",
-            toolCallId: toolCallId,
-            latencyMs: latency
-        )
-    }
-
-    /// Run the live RESIDENCY-DIRECTION lane: drive the PRODUCTION `spawn_model`
+    /// Run the live RESIDENCY-DIRECTION lane: drive the PRODUCTION `spawn_agent`
     /// resolution (`modelOverride: nil`, so the eval passthrough seam is NOT
-    /// used) with an independently chosen `orchestrator` (the resident chat
-    /// model) and `target`, so the real `SubagentResidency.resolve` decision and
-    /// `ResidencyHandoff` middleware run end-to-end. This is the only lane that
-    /// proves the actual unload/reload, so it covers all four directions:
+    /// used) against a temporary agent pinned to `target`, with an
+    /// independently chosen `orchestrator` (the resident chat model), so the
+    /// real `SubagentResidency.resolve` decision and `ResidencyHandoff`
+    /// middleware run end-to-end. Residency behavior is target-independent, so
+    /// this covers all four directions:
     ///
     ///   - orchestrator LOCAL + resident, target a DIFFERENT local + handoff ON
     ///     → unload chat model → run target → unload target → reload (the
@@ -590,17 +648,13 @@ public enum SubagentJobEvaluator {
     /// `ModelRuntime` residency is process-global, so this CLEAN-SLATES the
     /// resident set before and after, making each direction order-independent.
     /// It returns an `unavailable` envelope (so the runner SKIPS rather than
-    /// fails) when the host can't satisfy the case: a local orchestrator that
-    /// must be made resident isn't installed, or the target can neither run
-    /// locally (not installed) nor route remotely (no connected provider /
-    /// missing key). Peak RAM is sampled by the EVAL RUNNER around this call
-    /// (`ResourceSampler` lives in the eval kit, not OsaurusCore).
+    /// fails) when the host can't satisfy the case. Peak RAM is sampled by the
+    /// EVAL RUNNER around this call.
     ///
     /// `ensureResident` should be `true` for a local orchestrator and `false`
-    /// for a remote one (a remote orchestrator has no resident local chat model
-    /// to evict). `handoffEnabled` toggles the "Local Orchestrator Handoff"
-    /// switch for the run only; the prior config is restored after.
-    public static func runSpawnModelResidency(
+    /// for a remote one. `handoffEnabled` toggles the "Swap local models for
+    /// subagents" switch for the run only; the prior config is restored after.
+    public static func runSpawnResidency(
         orchestrator: String,
         target: String,
         handoffEnabled: Bool,
@@ -609,6 +663,7 @@ public enum SubagentJobEvaluator {
     ) async -> SubagentJobTranscript {
         let toolCallId = freshToolCallId()
         let started = Date()
+        let tool = SubagentCapabilityRegistry.spawnAgentToolName
 
         // Classify by installation: a model the host has on disk is "local"
         // (its run evicts/loads the GPU); anything else is remote and must be
@@ -620,9 +675,6 @@ public enum SubagentJobEvaluator {
             ? false
             : await MainActor.run { RemoteProviderManager.shared.findService(forModel: target) != nil }
 
-        // Availability SKIP (surface `unavailable`, which the runner skips on):
-        // can't make a non-installed local orchestrator resident, and can't run
-        // a target that is neither installed locally nor routable remotely.
         let missingLocalOrchestrator = ensureResident && !orchestratorLocal
         let targetUnrunnable = !targetLocal && !targetRoutableRemote
         if missingLocalOrchestrator || targetUnrunnable {
@@ -633,26 +685,21 @@ public enum SubagentJobEvaluator {
             let env = ToolEnvelope.failure(
                 kind: .unavailable,
                 message: "residency lane unavailable: \(why)",
-                tool: "spawn_model"
+                tool: tool
             )
             return transcript(
                 fromEnvelope: env,
-                tool: "spawn_model",
+                tool: tool,
                 kindId: "spawn",
                 toolCallId: toolCallId,
                 latencyMs: Date().timeIntervalSince(started) * 1000
             )
         }
 
-        // Snapshot config so a developer's real settings are untouched. Only the
-        // two core-model strings are captured (the struct stays on the main
-        // actor); the whole delegation config is `Sendable` and captured whole.
+        // Snapshot config so a developer's real settings are untouched.
         let priorChat: (provider: String?, name: String?) = await MainActor.run {
             let c = ChatConfigurationStore.load()
             return (c.coreModelProvider, c.coreModelName)
-        }
-        let priorConfig: SubagentConfiguration = await MainActor.run {
-            SubagentConfigurationStore.snapshot()
         }
 
         // Clean slate: free any resident local model so the residency decision
@@ -672,47 +719,29 @@ public enum SubagentJobEvaluator {
             ChatConfigurationStore.save(c)
         }
 
-        // Make a local orchestrator actually resident so a DIFFERENT local
-        // target triggers the real unload/reload; a remote orchestrator stays
-        // non-resident (nothing local to evict).
         if ensureResident && orchestratorLocal {
             try? await ModelRuntime.shared.preload(name: orchestrator)
         }
 
-        // Seed the target into the global spawnable MODEL pool and set the
-        // handoff toggle to the case's value (ON ⇒ the unload/reload sequence
-        // runs; OFF ⇒ the spawn runs with no sequencing — never refused).
-        await MainActor.run {
-            var updated = priorConfig
-            if !priorConfig.isModelSpawnable(target) {
-                updated.spawnableModelNames = priorConfig.spawnableModelNames + [target]
+        // A temporary agent pinned to `target` stands in for the model target;
+        // the handoff toggle takes the case's value (ON ⇒ the unload/reload
+        // sequence runs; OFF ⇒ the spawn runs with no sequencing).
+        let (envelope, latency): (String, Double) = await withSpawnableAgent(
+            name: "Eval residency worker",
+            model: target,
+            handoffEnabled: handoffEnabled
+        ) { agentID in
+            // PRODUCTION path: `modelOverride: nil` ⇒ live residency decision.
+            let kind = TextSubagentKind(agentID: agentID, input: input, modelOverride: nil)
+            let envelope = await withEvalScope(toolCallId: toolCallId) {
+                await SubagentSession.run(kind, tool: tool)
             }
-            updated.localTextDelegationEnabled = handoffEnabled
-            SubagentConfigurationStore.save(updated)
+            return (envelope, Date().timeIntervalSince(started) * 1000)
         }
 
-        // PRODUCTION path: `modelOverride: nil` ⇒ `requestedModel: target` ⇒
-        // live `SubagentResidency.resolve` (NOT the eval passthrough seam).
-        let kind = TextSubagentKind(model: target, input: input, modelOverride: nil)
-        let envelope = await withEvalScope(toolCallId: toolCallId) {
-            await SubagentSession.run(kind, tool: "spawn_model")
-        }
-        let latency = Date().timeIntervalSince(started) * 1000
-
-        // The success payload carries `handoff` (`residencyPlan.shouldUnload`) —
-        // the real "did the model swap happen" signal — so surface it as
-        // `handoffWrapped`. The handoff-OFF direction now succeeds with
-        // `handoff == false` (no sequencing) and the case asserts that.
         let payload = (ToolEnvelope.resultPayload(envelope) as? [String: Any]) ?? [:]
         let handoffFlag = payload["handoff"] as? Bool
 
-        // Restore-verified-resident: after a successful run with a LOCAL
-        // orchestrator, the orchestrator must be back in the live resident set
-        // (the restore leg actually reloaded it — or, for in-place directions,
-        // never dropped it). Checked BEFORE the clean-slate below tears it down.
-        // The runtime caches models under the canonical installed short name
-        // (lowercased repo folder), not the case file's `owner/Repo` string,
-        // so canonicalize before comparing.
         var restoredResident: Bool?
         if ensureResident && orchestratorLocal && ToolEnvelope.isSuccess(envelope) {
             let canonical = ModelManager.findInstalledModel(named: orchestrator)?.name ?? orchestrator
@@ -722,10 +751,7 @@ public enum SubagentJobEvaluator {
             }
         }
 
-        // Restore config + core model, then drop the (reloaded) orchestrator so
-        // the next case starts from a clean resident set.
         await MainActor.run {
-            SubagentConfigurationStore.save(priorConfig)
             var c = ChatConfigurationStore.load()
             c.coreModelProvider = priorChat.provider
             c.coreModelName = priorChat.name
@@ -735,7 +761,7 @@ public enum SubagentJobEvaluator {
 
         return transcript(
             fromEnvelope: envelope,
-            tool: "spawn_model",
+            tool: tool,
             kindId: "spawn",
             toolCallId: toolCallId,
             latencyMs: latency,
@@ -889,6 +915,8 @@ public enum SubagentJobEvaluator {
     /// `SubagentConfigurationStore` is nonisolated.
     public static func withSpawnableAgent<T: Sendable>(
         name: String,
+        model: String? = nil,
+        handoffEnabled: Bool = true,
         _ body: @Sendable (UUID) async -> T
     ) async -> T {
         let state: (
@@ -904,10 +932,10 @@ public enum SubagentJobEvaluator {
                     $0.name.caseInsensitiveCompare(name) == .orderedSame
                 }
                 let targetID: UUID
-                if matches.count == 1 {
+                if matches.count == 1, model == nil {
                     targetID = matches[0].id
                 } else {
-                    let agent = Agent(
+                    var agent = Agent(
                         id: UUID(),
                         name: name,
                         description: "Seeded by OsaurusEvals for the spawn lane; safe to delete.",
@@ -915,6 +943,7 @@ public enum SubagentJobEvaluator {
                             "You are a concise subagent. Answer the task directly and follow any "
                             + "formatting instructions exactly. Do not add preamble or commentary."
                     )
+                    if let model, !model.isEmpty { agent.defaultModel = model }
                     AgentStore.save(agent)
                     createdAgentId = agent.id
                     targetID = agent.id
@@ -926,11 +955,10 @@ public enum SubagentJobEvaluator {
                             priorConfig.spawnableAgentIDs + [targetID]
                         )
                 }
-                // Enable the local handoff switch so a LOCAL run model can
-                // spawn the local agent (the chat model unloads to make
-                // room). Default is on; this only flips a host that disabled
-                // it, and is restored afterward.
-                updated.localTextDelegationEnabled = true
+                // The local handoff switch: ON lets a LOCAL run model spawn a
+                // local agent (the chat model unloads to make room); the
+                // residency lane sets it per case. Restored afterward.
+                updated.localTextDelegationEnabled = handoffEnabled
                 let configChanged = updated != priorConfig
                 if configChanged { SubagentConfigurationStore.save(updated) }
                 if createdAgentId != nil { AgentManager.shared.refresh() }
@@ -942,46 +970,6 @@ public enum SubagentJobEvaluator {
                 AgentStore.delete(id: id)
                 AgentManager.shared.refresh()
             }
-            if state.configChanged {
-                SubagentConfigurationStore.save(state.priorConfig)
-            }
-        }
-        return result
-    }
-
-    /// Seed a spawnable MODEL `id` for the duration of `body`, then restore — the
-    /// `spawn_model` analogue of `withSpawnableAgent`. Adds `id` to the Default
-    /// agent's GLOBAL spawnable model pool (`SubagentConfiguration
-    /// .spawnableModelNames`, which the Default/main-chat scope the eval uses
-    /// consults) and forces `localTextDelegationEnabled` ON so a LOCAL target can
-    /// hand off (unload/reload) instead of being denied. No `Agent` is created —
-    /// model spawns carry no agent. The whole `SubagentConfiguration` is
-    /// snapshotted and restored, leaving a developer's real config untouched.
-    /// `SubagentConfigurationStore` is nonisolated, but this hops to the main
-    /// actor to match `withSpawnableAgent`'s ordering against `AgentManager`.
-    ///
-    /// `toolAccess` (when non-nil) also sets the Default agent's global
-    /// `spawnToolAccess` for the run — the tool-capable spawn lane (the child
-    /// sees the curated read-only toolset instead of running text-only).
-    public static func withSpawnableModel<T: Sendable>(
-        id: String,
-        toolAccess: SpawnToolAccess? = nil,
-        _ body: @Sendable () async -> T
-    ) async -> T {
-        let state: (priorConfig: SubagentConfiguration, configChanged: Bool) = await MainActor.run {
-            let priorConfig = SubagentConfigurationStore.snapshot()
-            var updated = priorConfig
-            if !priorConfig.isModelSpawnable(id) {
-                updated.spawnableModelNames = priorConfig.spawnableModelNames + [id]
-            }
-            updated.localTextDelegationEnabled = true
-            if let toolAccess { updated.spawnToolAccess = toolAccess }
-            let configChanged = updated != priorConfig
-            if configChanged { SubagentConfigurationStore.save(updated) }
-            return (priorConfig, configChanged)
-        }
-        let result = await body()
-        await MainActor.run {
             if state.configChanged {
                 SubagentConfigurationStore.save(state.priorConfig)
             }
@@ -1007,43 +995,35 @@ public enum SubagentJobEvaluator {
         }
     }
 
-    /// Batch interrupt fixture with an optional run-entry barrier. A fixed
+    /// Wave interrupt fixture with an optional run-entry barrier. A fixed
     /// delay from tool start is not a valid "mid-run" proof: under full-suite
     /// contention it can land during target validation or approval. Scripted
     /// jobs that request a rendezvous therefore start the delay only after the
     /// expected child runs have entered. There is deliberately no wall-clock
     /// fallback: firing before run entry changes the contract under test from
-    /// mid-run child settlement to pre-execution cancellation. If execution
-    /// returns before entry, the caller cancels this waiter; if execution
-    /// itself hangs before entry, the eval's outer time limit reports that
-    /// distinct regression.
-    private static func scheduleBatchInterrupt(
+    /// mid-run child settlement to pre-execution cancellation. Every sibling
+    /// call id is interrupted (the user's Stop cancels the whole wave).
+    private static func scheduleWaveInterrupt(
         afterMs: Int?,
-        toolCallId: String,
+        toolCallIds: [String],
         probe: SubagentOverlapProbe,
         requiredRunArrivals: Int
     ) -> Task<Void, Never>? {
         guard let afterMs, afterMs > 0 else { return nil }
-        guard requiredRunArrivals > 0 else {
-            return scheduleInterrupt(
-                afterMs: afterMs,
-                toolCallId: toolCallId
-            )
-        }
         return Task {
-            while !Task.isCancelled,
-                probe.arrivals < requiredRunArrivals
-            {
-                try? await Task.sleep(nanoseconds: 5_000_000)
-            }
-            guard !Task.isCancelled else { return }
-            try? await Task.sleep(
-                nanoseconds: UInt64(afterMs) * 1_000_000
-            )
-            while !Task.isCancelled {
-                if SubagentInterruptCenter.shared.interrupt(toolCallId) {
-                    return
+            if requiredRunArrivals > 0 {
+                while !Task.isCancelled, probe.arrivals < requiredRunArrivals {
+                    try? await Task.sleep(nanoseconds: 5_000_000)
                 }
+                guard !Task.isCancelled else { return }
+            }
+            try? await Task.sleep(nanoseconds: UInt64(afterMs) * 1_000_000)
+            var pending = Set(toolCallIds)
+            while !Task.isCancelled, !pending.isEmpty {
+                for id in pending where SubagentInterruptCenter.shared.interrupt(id) {
+                    pending.remove(id)
+                }
+                if pending.isEmpty { return }
                 try? await Task.sleep(nanoseconds: 50_000_000)
             }
         }
@@ -1085,7 +1065,7 @@ public enum SubagentJobEvaluator {
         restoredResident: Bool? = nil
     ) -> SubagentJobTranscript {
         let succeeded = ToolEnvelope.isSuccess(envelope)
-        // Failed aggregate operations (for example, a user-stopped batch)
+        // Failed aggregate operations (for example, a user-stopped wave)
         // intentionally retain their settled per-child rows under `result`.
         // Preserve those rows without changing the root success/failure
         // classification so cancellation evals can prove every child reached
@@ -1118,7 +1098,7 @@ public enum SubagentJobEvaluator {
         let residency = payload["residency"] as? [String: Any]
         let residencyPhases = numberMap(residency?["phases"])
         let postRunCache = intMap(residency?["post_run_cache"])
-        let batchJobs = batchJobTranscripts(payload["results"])
+        let waveJobs = waveJobTranscripts(payload["results"])
 
         return SubagentJobTranscript(
             tool: tool,
@@ -1141,18 +1121,18 @@ public enum SubagentJobEvaluator {
             residencyPhases: residencyPhases,
             postRunCache: postRunCache,
             maxConcurrent: maxConcurrent,
-            runsCompleted: batchJobs?.filter(\.succeeded).count,
-            runsSettled: batchJobs?.count,
-            runEnvelopeKinds: batchJobs?.map(\.envelopeKind),
-            batchAggregateStatus: payload["aggregate_status"] as? String,
-            batchJobs: batchJobs,
+            runsCompleted: waveJobs?.filter(\.succeeded).count,
+            runsSettled: waveJobs?.count,
+            runEnvelopeKinds: waveJobs?.map(\.envelopeKind),
+            waveAggregateStatus: payload["aggregate_status"] as? String,
+            waveJobs: waveJobs,
             restoredResident: restoredResident
         )
     }
 
-    private static func batchJobTranscripts(
+    private static func waveJobTranscripts(
         _ value: Any?
-    ) -> [SubagentBatchJobTranscript]? {
+    ) -> [SubagentWaveJobTranscript]? {
         guard let rows = value as? [[String: Any]] else { return nil }
         return rows.map { row in
             let envelope = row["envelope"] as? [String: Any] ?? [:]
@@ -1170,7 +1150,7 @@ public enum SubagentJobEvaluator {
                     partial[entry.key] = string
                 }
             }
-            return SubagentBatchJobTranscript(
+            return SubagentWaveJobTranscript(
                 id: row["id"] as? String ?? "",
                 targetType: row["target_type"] as? String ?? "",
                 target: row["target"] as? String ?? "",
@@ -1240,7 +1220,7 @@ final class ScriptedSubagentKind: SubagentKind, @unchecked Sendable {
     private let spec: ScriptedSubagentSpec
     private let recordingHandoff = RecordingSubagentHandoff()
     private let nestedBox = NestedResultBox()
-    /// Optional shared overlap probe for the parallel-batch lane (enter/exit
+    /// Optional shared overlap probe for the parallel-wave lane (enter/exit
     /// around `run`, so peak concurrency across sibling runs is observable).
     private let overlapProbe: SubagentOverlapProbe?
 
@@ -1272,8 +1252,8 @@ final class ScriptedSubagentKind: SubagentKind, @unchecked Sendable {
     }
 
     /// A handoff-opted scripted kind models the local residency swap, so it
-    /// admits as `.localExclusive` (a parallel batch of two serializes —
-    /// the batch-race lane). Otherwise the protocol default applies (local
+    /// admits as `.localExclusive` (a parallel wave of two serializes —
+    /// the wave-race lane). Otherwise the protocol default applies (local
     /// in-place / remote fan-out from `spec.remote`).
     func admissionClass(_ resolved: ResolvedModel) -> SubagentAdmissionClass {
         if needsHandoff { return .localExclusive }
@@ -1282,7 +1262,28 @@ final class ScriptedSubagentKind: SubagentKind, @unchecked Sendable {
 
     func permission(_ scope: SubagentScope, _ resolved: ResolvedModel) async -> SubagentDecision {
         switch spec.decision {
-        case .allow: return .allow
+        case .allow:
+            // Inside a scripted wave, take the real shared gate so the lane
+            // proves one approval + fan-out limits across siblings.
+            guard let wave = ChatExecutionContext.spawnWave,
+                wave.expectedCallIds.contains(scope.toolCallId)
+            else { return .allow }
+            let toolName = SubagentCapabilityRegistry.spawnAgentToolName
+            let policy = await SpawnPermissionGate.effectivePolicy(for: scope)
+            return await SpawnPermissionGate.authorize(
+                scope: scope,
+                policy: policy,
+                toolName: toolName,
+                description: "scripted wave member",
+                argumentsJSON: "{}",
+                waveMember: SpawnWaveGate.Member(
+                    callId: scope.toolCallId,
+                    toolName: toolName,
+                    scope: scope,
+                    argumentsJSON: "{}",
+                    isLocal: resolved.isLocal
+                )
+            )
         case .deny: return .denied("scripted policy denial")
         case .userDeny: return .userDenied("scripted user refusal")
         }
@@ -1324,7 +1325,7 @@ final class ScriptedSubagentKind: SubagentKind, @unchecked Sendable {
         // Hold the run open, polling the interrupt token — the deterministic
         // interrupt-mid-run lane (feed stop button → InterruptCenter → token
         // → honest user-stop error), plus the overlap window for the
-        // parallel-batch lane. Mirrors `TextSubagentKind`'s cancel mapping.
+        // parallel-wave lane. Mirrors `TextSubagentKind`'s cancel mapping.
         if spec.runDelayMs > 0 {
             let deadline = Date().addingTimeInterval(Double(spec.runDelayMs) / 1000)
             while Date() < deadline {
@@ -1367,7 +1368,7 @@ final class ScriptedSubagentKind: SubagentKind, @unchecked Sendable {
     }
 }
 
-/// Shared enter/exit concurrency probe for the parallel-batch lane: sibling
+/// Shared enter/exit concurrency probe for the parallel-wave lane: sibling
 /// scripted runs report peak overlap of their `run()` bodies, which is the
 /// substantive "did the admission gate serialize / fan out" observation.
 public final class SubagentOverlapProbe: @unchecked Sendable {

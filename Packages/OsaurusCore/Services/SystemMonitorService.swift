@@ -66,9 +66,11 @@ class SystemMonitorService: ObservableObject {
             let sampler = self.sampler
             Task.detached(priority: .utility) {
                 let snapshot = sampler.sample()
+                let memoryObservation = SwapPressureMonitor.shared.currentState()
                 await MainActor.run { [weak self] in
                     guard let self else { return }
                     self.publish(snapshot)
+                    FeatureTelemetry.observeModelMemory(memoryObservation)
                     self.isSampling = false
                 }
             }
@@ -228,7 +230,7 @@ private final class ResourceSampler: @unchecked Sendable {
         )
 
         let vmResult = withUnsafeMutablePointer(to: &vmInfo) {
-            $0.withMemoryRebound(to: integer_t.self, capacity: 1) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(vmCount)) {
                 host_statistics64(hostPort, HOST_VM_INFO64, $0, &vmCount)
             }
         }
@@ -236,20 +238,26 @@ private final class ResourceSampler: @unchecked Sendable {
         guard vmResult == KERN_SUCCESS else { return (0.0, 0.0, 0.0) }
 
         var rawPage: vm_size_t = 0
-        host_page_size(hostPort, &rawPage)
+        guard host_page_size(hostPort, &rawPage) == KERN_SUCCESS, rawPage > 0 else {
+            return (0.0, 0.0, 0.0)
+        }
         let pageSize = rawPage
         let totalMemory = Double(ProcessInfo.processInfo.physicalMemory)
-        // "Available" mirrors the RAM feasibility gate in `ModelRuntime`
-        // (free + inactive + speculative + purgeable), so the percentage
-        // shown next to the tight-fit banner is the complement of the same
-        // number the gate compares against. Counting speculative/purgeable
-        // (largely file cache) as used overstated pressure versus Activity
-        // Monitor, which treats cached files as available.
-        let availableMemory =
-            (Double(vmInfo.free_count)
-                + Double(vmInfo.inactive_count)
-                + Double(vmInfo.speculative_count)
-                + Double(vmInfo.purgeable_count)) * Double(pageSize)
+        // Use the same reclaimable-capacity definition as normal loads and
+        // delegation admission. Free/inactive queues do not describe ownership:
+        // ACTIVE file-backed pages can be reclaimed, while INACTIVE anonymous
+        // pages still consume RAM. Adding purgeable pages to inactive pages can
+        // also count the same capacity twice. Keep the host gauge separate from
+        // appMemoryMB: GPU-resident mapped weights can raise system wired memory
+        // without appearing in the process's phys_footprint ledger.
+        let availableMemory = Double(ChatResidencyHandoff.reclaimableMemoryBytes(
+            physicalBytes: Int64(ProcessInfo.processInfo.physicalMemory),
+            pageSize: Int64(pageSize),
+            freePages: Int64(vmInfo.free_count),
+            fileBackedPages: Int64(vmInfo.external_page_count),
+            purgeablePages: Int64(vmInfo.purgeable_count),
+            speculativePages: Int64(vmInfo.speculative_count)
+        ))
 
         let usedMemory = max(0.0, totalMemory - availableMemory)
         let percentage = (usedMemory / totalMemory) * 100.0

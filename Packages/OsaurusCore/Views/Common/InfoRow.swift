@@ -25,14 +25,14 @@ struct InfoRow: View {
     var body: some View {
         HStack {
             Text(LocalizedStringKey(label), bundle: .module)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.rowTitle)
+                .foregroundColor(theme.text.secondary)
 
             Spacer()
 
             Text(value)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(theme.primaryText)
+                .font(SettingsFont.rowTitle)
+                .foregroundColor(theme.text.primary)
                 .multilineTextAlignment(.trailing)
         }
     }

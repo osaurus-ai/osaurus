@@ -242,8 +242,10 @@
                     "ghcr.io/apple/containerization/vminit@sha256:"
                 )
             )
-            #expect(SandboxRuntimeAssets.runtimeFormatVersion.contains("0.41"))
+            #expect(SandboxRuntimeAssets.runtimeFormatVersion.contains("0.54"))
             #expect(SandboxRuntimeAssets.runtimeFormatVersion.contains("kata-3.32"))
+            // The rootfs key is frozen across SDK bumps.
+            #expect(SandboxRuntimeAssets.rootfsFormatVersion == "cz-0.41/vminit-oci-2-kata-3.32")
         }
 
         @Test
@@ -260,46 +262,57 @@
             #expect(!config.capabilities.bounding.contains(.sysAdmin))
         }
 
-        /// The image digest currently pinned by the binary. Read via the
-        /// stamp helper itself: a config carrying both current values
-        /// must validate...
+        /// The SDK's default VM is 4 vCPU / 1 GiB regardless of the
+        /// container's cgroup limits, so the configured size must reach the
+        /// VM with headroom for the guest kernel and vminitd.
         @Test
-        func matchingDigestAndRuntimeFormat_isWarm() {
-            var config = SandboxConfiguration.default
-            config.lastBootedImageDigest = SandboxManager.pinnedContainerImageForTesting
-            config.lastRuntimeFormatVersion = SandboxRuntimeAssets.runtimeFormatVersion
-            #expect(SandboxManager.warmBootStampValid(config: config))
+        func vmResources_followTheConfiguredSizeWithGuestHeadroom() {
+            let vm = SandboxManager.vmResources(cpus: 2, memoryGB: 6)
+            #expect(vm.cpus == 3)
+            #expect(vm.memoryInBytes == 6 * 1024 * 1024 * 1024 + 128 * 1024 * 1024)
         }
 
-        /// ...while a stale image digest (app update rotated the pin)
-        /// must force the cold path...
+        /// Pod environments are warm when their stamp matches the template
+        /// key, which binds the pinned image digest to the rootfs format.
         @Test
-        func staleImageDigest_forcesCold() {
-            var config = SandboxConfiguration.default
-            config.lastBootedImageDigest = "ghcr.io/osaurus-ai/sandbox@sha256:" + String(repeating: "0", count: 64)
-            config.lastRuntimeFormatVersion = SandboxRuntimeAssets.runtimeFormatVersion
-            #expect(!SandboxManager.warmBootStampValid(config: config))
+        func rootfsTemplateKey_bindsPinnedImageAndRootfsFormat() {
+            #expect(
+                SandboxManager.rootfsTemplateKey
+                    == SandboxRootfsTemplateStore.templateKey(
+                        imageReference: SandboxManager.pinnedContainerImageForTesting,
+                        runtimeFormatVersion: SandboxRuntimeAssets.rootfsFormatVersion
+                    )
+            )
         }
 
-        /// ...and a runtime-format change (SDK/initfs upgrade) must force
-        /// the cold path even when the image digest still matches, so an
-        /// incompatible cached rootfs never enters a doomed warm boot.
+        /// An SDK bump changes only the runtime format (the initfs key), so
+        /// the template and every agent environment stay warm.
         @Test
-        func staleRuntimeFormat_forcesCold() {
-            var config = SandboxConfiguration.default
-            config.lastBootedImageDigest = SandboxManager.pinnedContainerImageForTesting
-            config.lastRuntimeFormatVersion = "cz-0.31/raw-initfs"
-            #expect(!SandboxManager.warmBootStampValid(config: config))
+        func sdkBumpAloneKeepsTheRootfsWarm() {
+            #expect(SandboxRuntimeAssets.rootfsFormatVersion != SandboxRuntimeAssets.runtimeFormatVersion)
+            #expect(
+                SandboxManager.rootfsTemplateKey
+                    != SandboxRootfsTemplateStore.templateKey(
+                        imageReference: SandboxManager.pinnedContainerImageForTesting,
+                        runtimeFormatVersion: SandboxRuntimeAssets.runtimeFormatVersion
+                    )
+            )
         }
 
-        /// Installs that pre-date the runtime stamp (nil) are treated as
-        /// cold exactly once after upgrade.
+        /// A rotated image digest or a rootfs-format change yields a new
+        /// key, so stale environments re-clone instead of booting.
         @Test
-        func missingRuntimeFormat_forcesCold() {
-            var config = SandboxConfiguration.default
-            config.lastBootedImageDigest = SandboxManager.pinnedContainerImageForTesting
-            config.lastRuntimeFormatVersion = nil
-            #expect(!SandboxManager.warmBootStampValid(config: config))
+        func staleImageDigestOrRootfsFormat_changesTheKey() {
+            let staleImage = SandboxRootfsTemplateStore.templateKey(
+                imageReference: "ghcr.io/osaurus-ai/sandbox@sha256:" + String(repeating: "0", count: 64),
+                runtimeFormatVersion: SandboxRuntimeAssets.rootfsFormatVersion
+            )
+            let staleFormat = SandboxRootfsTemplateStore.templateKey(
+                imageReference: SandboxManager.pinnedContainerImageForTesting,
+                runtimeFormatVersion: "ext4-unpack-0"
+            )
+            #expect(staleImage != SandboxManager.rootfsTemplateKey)
+            #expect(staleFormat != SandboxManager.rootfsTemplateKey)
         }
     }
 

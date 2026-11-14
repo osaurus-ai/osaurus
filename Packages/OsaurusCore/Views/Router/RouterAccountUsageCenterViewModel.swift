@@ -84,6 +84,16 @@ final class RouterAccountUsageCenterViewModel: ObservableObject {
         rebuildSnapshot()
     }
 
+    /// A billed turn settled while the center is open (`usageRevision`
+    /// moved): refetch only the usage rows and the ledger they correlate
+    /// with, not the whole account.
+    func refreshUsageAfterBilledTurn() async {
+        guard providerManager.isOsaurusRouterEnabled else { return }
+        await accountService.refreshUsage(reset: true)
+        await reloadLedger()
+        rebuildSnapshot()
+    }
+
     func runSignedRequestDiagnostics() async {
         guard providerManager.isOsaurusRouterEnabled else {
             message = L("Osaurus Router is off.")

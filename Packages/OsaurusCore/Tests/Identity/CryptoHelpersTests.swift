@@ -116,6 +116,28 @@ struct CryptoHelpersTests {
         }
     }
 
+    /// A 65-byte signature whose recovery byte is outside the EIP-191 27...30
+    /// (or raw 0...3) range must be rejected with a thrown error. Before this
+    /// guard, libsecp256k1's illegal-argument callback aborted the process,
+    /// which any unauthenticated handshake caller could trigger.
+    @Test func recoverAddress_invalidRecoveryByte_throwsInsteadOfAborting() throws {
+        let payload = Data("test".utf8)
+        var signature = try signPayload(payload, privateKey: TestKeys.alicePrivateKey)
+        for badV: UInt8 in [0x00 + 4, 26, 31, 0x7f, 0xff] {
+            signature[signature.index(before: signature.endIndex)] = badV
+            #expect(throws: OsaurusIdentityError.self, "v=\(badV)") {
+                _ = try recoverAddress(payload: payload, signature: signature, domainPrefix: "Osaurus Signed Access")
+            }
+        }
+
+        // Raw 0/1 form (some signers emit it) still recovers the right signer.
+        var raw = try signPayload(payload, privateKey: TestKeys.alicePrivateKey)
+        let last = raw.index(before: raw.endIndex)
+        raw[last] = raw[last] - 27
+        let recovered = try recoverAddress(payload: payload, signature: raw, domainPrefix: "Osaurus Signed Message")
+        #expect(recovered.lowercased() == TestKeys.aliceAddress.lowercased())
+    }
+
     @Test func signPayload_differentPayloads_differentSignatures() throws {
         let privateKey = TestKeys.alicePrivateKey
         let sig1 = try signPayload(Data("payload A".utf8), privateKey: privateKey)

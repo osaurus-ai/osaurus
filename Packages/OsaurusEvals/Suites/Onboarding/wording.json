@@ -1,0 +1,12 @@
+{
+  "id": "onboarding.wording",
+  "domain": "onboarding",
+  "label": "onboarding • no tool or role names in the walkthrough text",
+  "query": "wording",
+  "fixtures": {},
+  "expect": {
+    "onboarding": {
+      "check": "wording"
+    }
+  }
+}

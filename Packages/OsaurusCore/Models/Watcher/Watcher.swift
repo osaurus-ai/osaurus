@@ -96,8 +96,17 @@ public struct Watcher: Codable, Identifiable, Sendable, Equatable {
     public var name: String
     /// Instructions to send to the AI when changes are detected
     public var instructions: String
-    /// The agent to dispatch to (nil = default agent)
-    public var agentId: UUID?
+    /// Who runs the watcher: an agent hosted here or a teammate's shared
+    /// workspace agent. nil = no agent (refused at dispatch time).
+    public var target: AgentDispatchTarget?
+    /// The local agent, for readers that only understand local agents.
+    /// nil for workspace targets; setting it replaces `target` with `.local`.
+    public var agentId: UUID? {
+        get { target?.localId }
+        set { target = newValue.map(AgentDispatchTarget.local) }
+    }
+    /// The shared workspace agent this watcher runs, or nil for local.
+    public var workspaceTarget: WorkspaceAgentRef? { target?.workspaceRef }
     /// Extra parameters for future extensibility
     public var parameters: [String: String]
     /// The directory to monitor (display path)
@@ -121,11 +130,14 @@ public struct Watcher: Codable, Identifiable, Sendable, Equatable {
     /// When the watcher was last modified
     public var updatedAt: Date
 
+    /// `agentId` and `target` are two spellings of the same field; `target`
+    /// wins when both are given.
     public init(
         id: UUID = UUID(),
         name: String,
         instructions: String,
         agentId: UUID? = nil,
+        target: AgentDispatchTarget? = nil,
         parameters: [String: String] = [:],
         watchPath: String? = nil,
         watchBookmark: Data? = nil,
@@ -141,7 +153,7 @@ public struct Watcher: Codable, Identifiable, Sendable, Equatable {
         self.id = id
         self.name = name
         self.instructions = instructions
-        self.agentId = agentId
+        self.target = target ?? agentId.map(AgentDispatchTarget.local)
         self.parameters = parameters
         self.watchPath = watchPath
         self.watchBookmark = watchBookmark
@@ -159,6 +171,7 @@ public struct Watcher: Codable, Identifiable, Sendable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case id, name, instructions, agentId, parameters
+        case target
         case personaId  // legacy key for migration
         case watchPath, watchBookmark
         case isEnabled, recursive
@@ -173,9 +186,13 @@ public struct Watcher: Codable, Identifiable, Sendable, Equatable {
         id = try container.decode(UUID.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
         instructions = try container.decode(String.self, forKey: .instructions)
-        agentId =
-            try container.decodeIfPresent(UUID.self, forKey: .agentId)
-            ?? container.decodeIfPresent(UUID.self, forKey: .personaId)
+        // `target` (new) → `agentId` → `personaId` (oldest); every stored
+        // watcher written before workspace targets decodes as `.local`.
+        target = try container.decodeAgentTarget(
+            targetKey: .target,
+            legacyAgentIdKey: .agentId,
+            legacyPersonaIdKey: .personaId
+        )
         parameters = try container.decodeIfPresent([String: String].self, forKey: .parameters) ?? [:]
         watchPath = try container.decodeIfPresent(String.self, forKey: .watchPath)
         watchBookmark = try container.decodeIfPresent(Data.self, forKey: .watchBookmark)
@@ -203,7 +220,9 @@ public struct Watcher: Codable, Identifiable, Sendable, Equatable {
         try container.encode(id, forKey: .id)
         try container.encode(name, forKey: .name)
         try container.encode(instructions, forKey: .instructions)
-        try container.encodeIfPresent(agentId, forKey: .agentId)
+        // Writes `target` AND (for local) the legacy `agentId` so older
+        // builds keep reading the UUID they expect.
+        try container.encodeAgentTarget(target, targetKey: .target, legacyAgentIdKey: .agentId)
         try container.encode(parameters, forKey: .parameters)
         try container.encodeIfPresent(watchPath, forKey: .watchPath)
         try container.encodeIfPresent(watchBookmark, forKey: .watchBookmark)

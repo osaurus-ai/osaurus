@@ -13,6 +13,7 @@ enum DatabaseExport {
         case csv
         case json
         case jsonl
+        case xlsx
 
         static func detect(path: String, explicit: String?) -> Format? {
             if let explicit {
@@ -21,6 +22,7 @@ enum DatabaseExport {
                 case "csv": return .csv
                 case "json": return .json
                 case "jsonl", "ndjson": return .jsonl
+                case "xlsx": return .xlsx
                 default: return nil
                 }
             }
@@ -29,10 +31,15 @@ enum DatabaseExport {
             case "csv": return .csv
             case "json": return .json
             case "jsonl", "ndjson": return .jsonl
+            case "xlsx": return .xlsx
             default: return nil
             }
         }
     }
+
+    /// Row cap for an `.xlsx` export: the workbook is assembled in memory
+    /// (one sheet, header + rows) before the package is written.
+    static let maxXLSXRows = FileWriteDocumentRouting.maxRowsPerSheet
 
     struct Result: Sendable {
         var rowsExported: Int
@@ -48,7 +55,7 @@ enum DatabaseExport {
         var errorDescription: String? {
             switch self {
             case .unsupportedFormat(let f):
-                return "Unsupported export format `\(f)`. Use csv, json, or jsonl."
+                return "Unsupported export format `\(f)`. Use csv, json, jsonl, or xlsx."
             case .writeFailed(let m):
                 return m
             }
@@ -82,6 +89,83 @@ enum DatabaseExport {
             )
         case .jsonl:
             return try streamJSONL(url: url, maxBytes: maxBytes, rowSource: rowSource)
+        case .xlsx:
+            return try writeXLSX(
+                url: url,
+                maxBytes: maxBytes,
+                headerColumns: headerColumns,
+                rowSource: rowSource
+            )
+        }
+    }
+
+    /// `.xlsx` export: rows are collected (bounded by `maxXLSXRows` and an
+    /// estimated `maxBytes` of cell text) into one typed sheet and written
+    /// as a real workbook package via `XLSXEmitter`, readable by
+    /// `file_read`'s workbook preview and re-importable by `db_import`.
+    private static func writeXLSX(
+        url: URL,
+        maxBytes: Int,
+        headerColumns: [String],
+        rowSource: (_ emit: (_ columns: [String], _ row: [AgentSQLValue]) throws -> Bool) throws -> Void
+    ) throws -> Result {
+        var columns = headerColumns
+        var rows: [[Any]] = []
+        var estimatedBytes = 0
+        var truncated = false
+
+        try rowSource { cols, row in
+            if columns.isEmpty { columns = cols }
+            // Header + this row must fit the sheet row cap.
+            if rows.count + 1 >= maxXLSXRows {
+                truncated = true
+                return false
+            }
+            let cells: [Any] = row.map { sqlValueToCell($0) }
+            let rowBytes = cells.reduce(0) { $0 + String(describing: $1).utf8.count + 1 }
+            if estimatedBytes + rowBytes > maxBytes {
+                truncated = true
+                return false
+            }
+            estimatedBytes += rowBytes
+            rows.append(cells)
+            return true
+        }
+
+        let sheetName = url.deletingPathExtension().lastPathComponent
+        let allRows: [[Any]] = [columns.map { $0 as Any }] + rows
+        let workbook: Workbook
+        do {
+            workbook = try FileWriteDocumentRouting.workbook(
+                sheets: [(sheetName.isEmpty ? "Export" : sheetName, allRows)])
+        } catch {
+            throw ExportError.writeFailed("Could not build the workbook: \(error.localizedDescription)")
+        }
+        let data: Data
+        do {
+            data = try XLSXEmitter.packageBytes(for: workbook)
+            try data.write(to: url, options: .atomic)
+        } catch {
+            throw ExportError.writeFailed("Could not write the .xlsx package: \(error.localizedDescription)")
+        }
+        return Result(
+            rowsExported: rows.count,
+            bytesWritten: data.count,
+            truncated: truncated,
+            columns: columns
+        )
+    }
+
+    /// Typed cell for a workbook: numbers and booleans keep their type,
+    /// text stays text, NULL becomes an empty cell, blobs are base64.
+    private static func sqlValueToCell(_ value: AgentSQLValue) -> Any {
+        switch value {
+        case .null: return ""
+        case .integer(let n): return n
+        case .double(let d): return d
+        case .text(let s): return s
+        case .bool(let b): return b
+        case .blob(let data): return data.base64EncodedString()
         }
     }
 

@@ -21,6 +21,29 @@ private func liveHFDownloadEnabled() -> Bool {
 @Suite(.serialized)
 struct ChunkedFileDownloaderTests {
 
+    // A paused lane can be observed by a worker immediately before its next
+    // fetch. This used to ask an invalidated URLSession to create a task, which
+    // raises an Objective-C exception instead of a catchable Swift error.
+    @Test(.timeLimit(.minutes(1))) func invalidatedLaneRejectsFetchBeforeCreatingTask() async throws {
+        let lane = TransferLane()
+        lane.invalidate()
+        lane.invalidate()
+        for _ in 0 ..< 2 {
+            do {
+                try await lane.fetch(
+                    url: URL(string: "http://127.0.0.1:1/cancelled-lane")!,
+                    range: "bytes=0-0", handle: .nullDevice, expected: 1,
+                    onBytes: { _ in Issue.record("Invalidated lane transferred data") }
+                )
+                Issue.record("Invalidated lane unexpectedly completed")
+            } catch is CancellationError {
+                // The same terminal result must hold for every later fetch.
+            } catch {
+                Issue.record("Expected cancellation, received \(error)")
+            }
+        }
+    }
+
     // MARK: - Commit pinning
 
     @Test func pinsResolveMainToCommitSHA() {

@@ -328,9 +328,7 @@ final class PluginManager {
                 // Superseded plugins never reach this point — the scan stage
                 // filters them out (see `excludeSupersededPlugins`), so every
                 // loaded plugin registers its full tool and skill surface.
-                for tool in loaded.tools {
-                    ToolRegistry.shared.registerPluginTool(tool)
-                }
+                ToolRegistry.shared.registerPluginTools(loaded.tools)
                 for skill in loaded.skills {
                     await SkillManager.shared.registerPluginSkill(skill)
                 }
@@ -351,6 +349,7 @@ final class PluginManager {
         if loadedNew || removedSomething || !failedPlugins.isEmpty {
             NotificationCenter.default.post(name: .toolsListChanged, object: nil)
         }
+        if loadedNew { CredentialMigration.scheduleRun() }
 
         observeTunnelStatus()
         // Every model-facing tool/skill registry mutation is complete here.
@@ -399,7 +398,44 @@ final class PluginManager {
     /// any context.
     nonisolated static let supersededPluginIds: Set<String> = [
         "osaurus.search", "osaurus.browser",
+        // Apple app plugins → built-in `AppleApps/` tool families, toggled per
+        // custom agent under Abilities → Tools (one picker group per app).
+        "osaurus.calendar", "osaurus.reminders", "osaurus.contacts", "osaurus.notes",
+        "osaurus.mail", "osaurus.messages", "osaurus.maps", "osaurus.music",
     ]
+
+    /// Apple app plugin ids specifically (subset of `supersededPluginIds`),
+    /// derived from `AppleApp.supersededPluginId` so the two lists cannot drift.
+    nonisolated static var supersededAppleAppPluginIds: Set<String> {
+        Set(AppleApp.allCases.compactMap(\.supersededPluginId))
+    }
+
+    /// Superseded Apple app plugins whose install folder is still present
+    /// under `Tools/` (superseded plugins are skipped at load but their
+    /// folders stay until the user removes them). This is the ground truth
+    /// the `manualToolNames` migration keys off: a legacy name like `play`
+    /// or `send_message` is only rewritten when the plugin that shipped it
+    /// was actually installed. Synchronous file I/O — call off the main
+    /// actor. `root` is a test seam.
+    nonisolated static func installedSupersededAppleAppPluginIds(
+        toolsRoot root: URL? = nil
+    ) -> Set<String> {
+        let root = root ?? ToolsPaths.toolsRootDirectory()
+        let fm = FileManager.default
+        var installed: Set<String> = []
+        for pluginId in supersededAppleAppPluginIds {
+            let dir = root.appendingPathComponent(pluginId, isDirectory: true)
+            var isDir: ObjCBool = false
+            guard fm.fileExists(atPath: dir.path, isDirectory: &isDir), isDir.boolValue else { continue }
+            // A plugin folder with at least one version directory (or the
+            // `current` symlink) counts; an empty leftover folder does not.
+            let entries = (try? fm.contentsOfDirectory(atPath: dir.path)) ?? []
+            if entries.contains(where: { $0 == "current" || SemanticVersion.parse($0) != nil }) {
+                installed.insert(pluginId)
+            }
+        }
+        return installed
+    }
 
     /// Drops superseded plugins from a scan result BEFORE any dlopen. Also
     /// removes their verification failures (e.g. a missing consent marker)
@@ -432,7 +468,9 @@ final class PluginManager {
         switch pluginId {
         case "osaurus.search": return .search
         case "osaurus.browser": return .browser
-        default: return nil
+        default:
+            // Apple app plugins live on as per-agent groups in the Tools picker.
+            return supersededAppleAppPluginIds.contains(pluginId) ? .agents : nil
         }
     }
 
@@ -572,18 +610,15 @@ final class PluginManager {
         else { return }
 
         let allFieldKeys = Set(configSpec.sections.flatMap { $0.fields.map { $0.key } })
-        // Shared resolution policy (exact agent overlaid on default-agent
-        // globals) so initial delivery matches tool payload injection —
-        // a key saved once on the Plugins tab reaches every agent's
-        // `on_config_changed`, not just the Default agent's.
-        var values = ToolSecretsKeychain.resolvedSecretsWithDefaults(
-            pluginId: pluginId, agentId: agentId)
+        // Same resolution as tool payload injection: declared secrets come
+        // from the Keys store (the agent's value, else the one for all
+        // agents), config from the plugin's own store.
+        var values = loaded.plugin.resolvedSecrets(agentId: agentId)
 
         for section in configSpec.sections {
             for field in section.fields {
                 if values[field.key] == nil, field.type != .readonly, field.type != .status,
-                    let val = ToolSecretsKeychain.resolvedSecret(
-                        id: field.key, for: pluginId, agentId: agentId)
+                    let val = PluginCredentials.configValue(pluginId: pluginId, key: field.key, agentId: agentId)
                 {
                     values[field.key] = val
                 }
@@ -591,8 +626,7 @@ final class PluginManager {
                     values[field.key] = def.stringValue
                 }
                 if let connKey = field.connected_when, values[connKey] == nil,
-                    let val = ToolSecretsKeychain.resolvedSecret(
-                        id: connKey, for: pluginId, agentId: agentId)
+                    let val = PluginCredentials.configValue(pluginId: pluginId, key: connKey, agentId: agentId)
                 {
                     values[connKey] = val
                 }
@@ -1079,8 +1113,23 @@ final class PluginManager {
     // MARK: - Load-time validation (pure helpers)
 
     /// Returns a message when the plugin's ABI table is missing any of the
-    /// five required function pointers. Every plugin — v1 or v2+ — must
+    /// five required function pointers, or when any populated slot does not
+    /// point at code in a loaded image. Every plugin — v1 or v2+ — must
     /// provide the full required prefix; optional v2 callbacks stay optional.
+    ///
+    /// The second check is what stops a struct-layout mismatch from
+    /// crashing the host. Sentry APPLE-MACOS-337: a plugin's table passed
+    /// the nil checks, `init` and `get_manifest` ran, and the host then
+    /// called `free_string` on the 997-byte manifest it had just copied —
+    /// with `free_string == 0x1` (next launch `0x2`). The register dump has
+    /// `pc == x28 == 0x1`, i.e. a `blr` through a slot that held a small
+    /// integer, not a function. A field that is really an int or a bool in
+    /// the plugin's own struct lands in a function-pointer slot of ours when
+    /// the two layouts disagree; it is non-nil, so the nil checks cannot see
+    /// it. `dladdr` can: a C function pointer handed to us by a dylib we
+    /// just `dlopen`ed must live inside *some* loaded image (the plugin, a
+    /// system library such as `free`, or a dependency it links). Anything
+    /// else is not callable and is rejected here, before the first call.
     nonisolated static func abiTableValidationFailure(_ api: osr_plugin_api) -> String? {
         var missing: [String] = []
         if api.free_string == nil { missing.append("free_string") }
@@ -1088,8 +1137,41 @@ final class PluginManager {
         if api.destroy == nil { missing.append("destroy") }
         if api.get_manifest == nil { missing.append("get_manifest") }
         if api.invoke == nil { missing.append("invoke") }
-        guard !missing.isEmpty else { return nil }
-        return "Plugin ABI table is missing required function(s): \(missing.joined(separator: ", "))"
+        if !missing.isEmpty {
+            return "Plugin ABI table is missing required function(s): \(missing.joined(separator: ", "))"
+        }
+
+        var invalid: [String] = []
+        func check<F>(_ fn: F?, _ name: String) {
+            guard let fn else { return }
+            let raw = unsafeBitCast(fn, to: UnsafeRawPointer.self)
+            if !isCodePointerInLoadedImage(raw) {
+                invalid.append("\(name)=0x\(String(UInt(bitPattern: raw), radix: 16))")
+            }
+        }
+        check(api.free_string, "free_string")
+        check(api.`init`, "init")
+        check(api.destroy, "destroy")
+        check(api.get_manifest, "get_manifest")
+        check(api.invoke, "invoke")
+        check(api.handle_route, "handle_route")
+        check(api.on_config_changed, "on_config_changed")
+        check(api.on_task_event, "on_task_event")
+        guard !invalid.isEmpty else { return nil }
+        return
+            "Plugin ABI table slot(s) do not point at code in any loaded image: "
+            + invalid.joined(separator: ", ")
+            + ". The plugin's osr_plugin_api layout does not match osaurus_plugin.h; rebuild it against the current header."
+    }
+
+    /// True when `pointer` falls inside a Mach-O image currently mapped in
+    /// this process. `dladdr` returns non-zero exactly in that case; it does
+    /// not require a symbol to cover the address, so stripped plugin code
+    /// still passes while `0x1`, stack garbage, or a freed heap address do
+    /// not.
+    nonisolated static func isCodePointerInLoadedImage(_ pointer: UnsafeRawPointer) -> Bool {
+        var info = Dl_info()
+        return dladdr(pointer, &info) != 0
     }
 
     /// Returns a message when the manifest's `plugin_id` does not match the

@@ -88,7 +88,7 @@ public struct RecipeSignals: Sendable, Equatable {
 
 public enum AppRecipes {
     /// All shipped recipes. Universal ones first so callers can rely on order.
-    public static let all: [AppRecipe] = [dialog, textEdit, safari, chromium]
+    public static let all: [AppRecipe] = [dialog, textEdit, finder, safari, chromium]
 
     /// Recipes that apply to `app` (universal + name-matched).
     public static func matching(app: String?) -> [AppRecipe] {
@@ -179,6 +179,41 @@ public enum AppRecipes {
                     "Do not save, close, format, create a file, or repeat the edit unless the goal explicitly requests it.",
                 ]
             )
+        ]
+    )
+
+    /// Finder refinement. Two traps showed up in real runs: navigating to a
+    /// folder by clicking sidebars/icons (unreliable with several Finder
+    /// windows open, since background input can land in another window), and
+    /// pressing Return to "open" a selected item, which in Finder starts a
+    /// RENAME and nearly overwrote a user folder name.
+    static let finder = AppRecipe(
+        id: "finder",
+        displayName: "Finder",
+        matchers: ["finder"],
+        consequentialSignals: [
+            "move to trash", "empty trash", "delete immediately", "replace", "eject",
+        ],
+        // Two flows, not three: `guidanceText` renders at most three and the
+        // universal dialog flow always takes the first slot.
+        flows: [
+            RecipeFlow(
+                name: "Go to a folder or open an item",
+                steps: [
+                    "Use open with the folder path as app (e.g. ~/Desktop/Project); it opens a new front Finder window there. Do not navigate by clicking sidebar items or desktop icons, especially with several Finder windows open.",
+                    "Verify the window title is the folder name before acting.",
+                    "To open a selected item use cmd+down or double_click. Never press return to open: in Finder return RENAMES the selected item. If a rename field appears by mistake, press escape first.",
+                ]
+            ),
+            RecipeFlow(
+                name: "Create a folder and move files into it",
+                steps: [
+                    "In the front window for the target folder, press cmd+shift+n.",
+                    "Type the folder name, then press return (only here does return commit a name).",
+                    "Move files without dragging (drags often miss) and in the same window: select the file, press cmd+c, select the destination folder and press cmd+down to enter it, press cmd+option+v to move the file there, then press cmd+up to return.",
+                    "Verify each moved file left the source listing before the next one.",
+                ]
+            ),
         ]
     )
 

@@ -91,7 +91,15 @@ public struct SharedArtifact: Identifiable, Codable, Sendable, Equatable {
         case "md", "markdown": return "text/markdown"
         case "txt": return "text/plain"
         case "csv": return "text/csv"
+        case "tsv": return "text/tab-separated-values"
         case "pdf": return "application/pdf"
+        case "docx": return "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        case "xlsx": return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        case "pptx": return "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+        case "doc": return "application/msword"
+        case "xls": return "application/vnd.ms-excel"
+        case "ppt": return "application/vnd.ms-powerpoint"
+        case "rtf": return "application/rtf"
         case "zip": return "application/zip"
         case "tar": return "application/x-tar"
         case "gz": return "application/gzip"
@@ -136,11 +144,48 @@ public struct SharedArtifact: Identifiable, Codable, Sendable, Equatable {
     /// Whether this artifact is a PDF document.
     public var isPDF: Bool { mimeType == "application/pdf" }
 
+    /// Office document family (OOXML or legacy binary).
+    public enum OfficeDocumentKind: Sendable {
+        case wordProcessing
+        case spreadsheet
+        case presentation
+
+        /// Human-readable category label.
+        public var label: String {
+            switch self {
+            case .wordProcessing: return "Word Document"
+            case .spreadsheet: return "Spreadsheet"
+            case .presentation: return "Presentation"
+            }
+        }
+    }
+
+    /// Office document family, or nil for anything else.
+    public var officeDocumentKind: OfficeDocumentKind? {
+        switch mimeType {
+        case "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/msword", "application/rtf":
+            return .wordProcessing
+        case "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.ms-excel":
+            return .spreadsheet
+        case "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "application/vnd.ms-powerpoint":
+            return .presentation
+        default:
+            return nil
+        }
+    }
+
+    /// Whether this artifact is an Office document (Word/Excel/PowerPoint).
+    public var isOfficeDocument: Bool { officeDocumentKind != nil }
+
     /// Human-readable content category label.
     public var categoryLabel: String {
         if isDirectory { return "Directory" }
         if isImage { return "Image" }
         if isPDF { return "PDF" }
+        if let office = officeDocumentKind { return office.label }
         if isAudio { return "Audio" }
         if isVideo { return "Video" }
         if isHTML { return "Web Page" }
@@ -207,6 +252,18 @@ extension SharedArtifact {
         /// Source file existed but `FileManager.copyItem` threw — disk
         /// full, permission denied, etc.
         case copyFailed(source: String, reason: String)
+    }
+
+    /// The marker block a `share_artifact` result carries: the success envelope's `text`, or
+    /// the whole string for a legacy raw-marker result. `nil` for anything else (the tool's
+    /// own failure envelopes), which callers must pass through unchanged.
+    static func shareArtifactMarkerText(fromToolResult toolResult: String) -> String? {
+        if let payload = ToolEnvelope.successPayload(toolResult) as? [String: Any],
+            let text = payload["text"] as? String
+        {
+            return text
+        }
+        return toolResult.contains(startMarker) ? toolResult : nil
     }
 
     /// Extracts marker-delimited metadata and content lines from a tool result string.
@@ -731,11 +788,12 @@ extension SharedArtifact {
             if relativePath.hasPrefix(containerHome + "/") {
                 relativePath = String(relativePath.dropFirst(containerHome.count + 1))
             } else if relativePath.hasPrefix("/workspace/") {
-                let stripped = String(relativePath.dropFirst("/workspace/".count))
-                if let resolved = resolveContainedPath(stripped, within: OsaurusPaths.containerWorkspace()) {
-                    return .candidate(resolved, attempted: [resolved.path])
-                }
-                return .rejected
+                // Only the agent's own home and `/workspace/shared` are in
+                // scope; another agent's home is never shareable.
+                guard let (root, relative) = SandboxAgentPathScope(agentName: agent).split(sandboxPath: relativePath),
+                    let resolved = resolveContainedPath(relative.isEmpty ? "." : relative, within: root)
+                else { return .rejected }
+                return .candidate(resolved, attempted: [resolved.path])
             }
             if relativePath.hasPrefix("./") {
                 relativePath = String(relativePath.dropFirst(2))
@@ -832,7 +890,7 @@ extension SharedArtifact {
     /// Resolves an artifact destination under `contextDir`, refusing anything
     /// that would escape the context directory via `..`, symlinks, or an
     /// absolute path smuggled in through the filename.
-    private static func resolveDestinationPath(filename: String, contextDir: URL) -> URL? {
+    static func resolveDestinationPath(filename: String, contextDir: URL) -> URL? {
         let contextRoot = canonicalizedURL(contextDir)
         let destination = contextRoot.appendingPathComponent(filename).standardizedFileURL
         guard isContained(destination, in: contextRoot) else { return nil }
@@ -857,7 +915,7 @@ extension SharedArtifact {
         return resolved
     }
 
-    private static func sanitizeArtifactFilename(_ rawFilename: String) -> String {
+    static func sanitizeArtifactFilename(_ rawFilename: String) -> String {
         extractPathComponent(rawFilename) ?? "artifact"
     }
 
@@ -873,11 +931,11 @@ extension SharedArtifact {
         return cleaned
     }
 
-    private static func canonicalizedURL(_ url: URL) -> URL {
+    static func canonicalizedURL(_ url: URL) -> URL {
         url.resolvingSymlinksInPath().standardizedFileURL
     }
 
-    private static func isContained(_ candidate: URL, in root: URL) -> Bool {
+    static func isContained(_ candidate: URL, in root: URL) -> Bool {
         let candidatePath = candidate.path
         let rootPath = root.path
         return candidatePath == rootPath || candidatePath.hasPrefix(rootPath + "/")

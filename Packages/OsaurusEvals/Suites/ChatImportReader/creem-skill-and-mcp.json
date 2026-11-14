@@ -1,0 +1,23 @@
+{
+  "id": "chat_import_reader.creem-skill-and-mcp",
+  "domain": "chat_import_reader",
+  "label": "chat import reader • Creem-style page with a skill, an npx MCP server, and a key",
+  "query": "Install Creem for my agent",
+  "notes": "One page carries both a skill section and an MCP server command with an API key. The server must keep the exact npx args and list CREEM_API_KEY as a name only; the sample key value must never reach a row. Signing up is a manual step.",
+  "fixtures": {},
+  "expect": {
+    "chatImport": {
+      "documents": [
+        {
+          "origin": "https://docs.creem.io/ai/agents",
+          "text": "# Creem for AI agents\n\nFirst create a Creem account and copy your API key from the dashboard.\n\n## MCP server\n\nAdd the Creem MCP server to your agent:\n\n```\nnpx -y @creem/mcp-server\n```\n\nSet the environment variable `CREEM_API_KEY` (for example `CREEM_API_KEY=creem_live_51Habc123exampleKEY`).\n\n## Creem billing skill\n\nYou help the user manage Creem billing. When they ask about a customer, look up their subscriptions first. Never issue refunds without explicit confirmation."
+        }
+      ],
+      "items": [
+        { "kind": "mcp_server", "name": "creem" },
+        { "kind": "skill", "name": "creem" }
+      ],
+      "forbidden": ["creem_live_51Habc123exampleKEY"]
+    }
+  }
+}

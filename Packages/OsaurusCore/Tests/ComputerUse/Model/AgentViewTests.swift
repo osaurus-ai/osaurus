@@ -223,4 +223,35 @@ final class AgentViewTests: XCTestCase {
         XCTAssertFalse(next.renderForModel().contains("* ["))
         XCTAssertFalse(next.renderForModel().contains("new-secret"))
     }
+
+    // MARK: - Value clipping
+
+    /// A terminal is one textarea whose value is the whole scrollback. The
+    /// model must see the latest output (the tail), not the login banner.
+    func testLongTextareaRendersTailSoCommandOutputIsVisible() {
+        let banner = "Last login: Thu Sep 17 12:07:13 on ttys003\nrcn@Mac ~ % "
+        let filler = String(repeating: "older output line\n", count: 200)
+        let output = "ls -la ~/Desktop/PII-Test\nbudget.xlsx\nsetup.dmg\nrcn@Mac ~ % "
+        let view = AgentView.build(
+            from: snapshot([el("t", "textarea", "shell", value: banner + filler + output)]),
+            previous: nil
+        )
+        let render = view.renderForModel()
+        XCTAssertTrue(render.contains("budget.xlsx"), "latest command output must reach the model")
+        XCTAssertTrue(render.contains("earlier characters not shown"))
+        XCTAssertFalse(render.contains("Last login"), "the head is the part that gets dropped")
+    }
+
+    func testShortTextareaRendersWholeValue() {
+        let value = String(repeating: "a", count: AgentView.contentValueChars)
+        XCTAssertEqual(AgentView.renderedValue(value, role: "textarea"), value)
+    }
+
+    func testOtherRolesKeepShortHeadClip() {
+        let value = String(repeating: "b", count: 100)
+        XCTAssertEqual(
+            AgentView.renderedValue(value, role: "textfield"),
+            String(repeating: "b", count: AgentView.fieldValueChars) + "…"
+        )
+    }
 }

@@ -1,3 +1,4 @@
+import Combine
 import Containerization
 import Foundation
 import Testing
@@ -16,6 +17,15 @@ private func successPayload(_ raw: String) throws -> [String: Any] {
 private func failurePayload(_ raw: String) throws -> [String: Any] {
     let data = try #require(raw.data(using: .utf8))
     return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+}
+
+/// The whole envelope (success or failure) as a dictionary — for
+/// top-level fields like `warnings`.
+private func parseEnvelope(_ raw: String) -> [String: Any] {
+    guard let data = raw.data(using: .utf8),
+        let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+    else { return [:] }
+    return dict
 }
 
 @Suite(.serialized)
@@ -147,92 +157,100 @@ struct BuiltinSandboxToolsTests {
 
     @Test @MainActor
     func sandboxInstall_networkDisabledFailsBeforeExec() async throws {
-        let agent = Agent(
-            name: "Network Disabled \(UUID().uuidString.prefix(6))",
-            autonomousExec: AutonomousExecConfig(
-                enabled: true,
-                pluginCreate: true,
-                sandboxNetworkEnabled: false
-            )
-        )
-        AgentStore.save(agent)
-        AgentManager.shared.refresh()
-        defer {
-            _ = AgentStore.delete(id: agent.id)
-            AgentManager.shared.refresh()
-        }
-
-        let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
-        let output = try await withRegisteredSandboxTools(runner: runner) {
-            try await ChatExecutionContext.$currentAgentId.withValue(agent.id) {
-                try await ToolRegistry.shared.execute(
-                    name: "sandbox_install",
-                    argumentsJSON: #"{"manager":"pip","packages":["flask"]}"#
+        // AgentStore/AgentManager read OsaurusPaths.overrideRoot; hold the storage lock (outside the sandbox
+        // lock) so a storage-path suite can't flip the root between save and lookup (SandboxTestLock.swift).
+        try await StoragePathsTestLock.shared.run { @MainActor in
+            let agent = Agent(
+                name: "Network Disabled \(UUID().uuidString.prefix(6))",
+                autonomousExec: AutonomousExecConfig(
+                    enabled: true,
+                    pluginCreate: true,
+                    sandboxNetworkEnabled: false
                 )
+            )
+            AgentStore.save(agent)
+            AgentManager.shared.refresh()
+            defer {
+                _ = AgentStore.delete(id: agent.id)
+                AgentManager.shared.refresh()
             }
-        }
 
-        let payload = try failurePayload(output)
-        #expect(payload["kind"] as? String == "rejected")
-        #expect((payload["message"] as? String ?? "").contains("network access is disabled"))
-        #expect(payload["manager"] as? String == "pip")
-        #expect(payload["requested"] as? [String] == ["flask"])
-        #expect(payload["retried"] as? Bool == false)
-        #expect(payload["failure_class"] as? String == "network_disabled")
-        #expect(await runner.calls.isEmpty)
+            let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+            let output = try await withRegisteredSandboxTools(runner: runner) {
+                try await ChatExecutionContext.$currentAgentId.withValue(agent.id) {
+                    try await ToolRegistry.shared.execute(
+                        name: "sandbox_install",
+                        argumentsJSON: #"{"manager":"pip","packages":["flask"]}"#
+                    )
+                }
+            }
+
+            let payload = try failurePayload(output)
+            #expect(payload["kind"] as? String == "rejected")
+            #expect((payload["message"] as? String ?? "").contains("network access is disabled"))
+            #expect(payload["manager"] as? String == "pip")
+            #expect(payload["requested"] as? [String] == ["flask"])
+            #expect(payload["retried"] as? Bool == false)
+            #expect(payload["failure_class"] as? String == "network_disabled")
+            #expect(await runner.calls.isEmpty)
+        }
     }
 
     @Test @MainActor
     func successfulInstallFlowsFromImmediateResultIntoNextTurnDynamicState() async throws {
-        let id = UUID()
-        let agentName = SandboxAgentProvisioner.linuxName(for: id.uuidString)
-        let runner = MockSandboxToolCommandRunner(
-            rootResults: [.init(stdout: "", stderr: "", exitCode: 0)],
-            agentResults: [.init(stdout: "installed", stderr: "", exitCode: 0)]
-        )
-        defer {
-            SandboxPackageManifest.shared.clear(agentId: id.uuidString)
-            _ = AgentStore.delete(id: id)
-            AgentManager.shared.refresh()
-        }
-
-        let (output, nextTurn) = try await withRegisteredSandboxTools(
-            runner: runner,
-            agentId: id.uuidString,
-            agentName: agentName
-        ) {
-            let output = try await ToolRegistry.shared.execute(
-                name: "sandbox_install",
-                argumentsJSON: #"{"manager":"pip","packages":["flask"]}"#
+        // AgentStore/AgentManager read OsaurusPaths.overrideRoot; hold the storage lock (outside the sandbox
+        // lock) so a storage-path suite can't flip the root between save and lookup (SandboxTestLock.swift).
+        try await StoragePathsTestLock.shared.run { @MainActor in
+            let id = UUID()
+            let agentName = SandboxAgentProvisioner.linuxName(for: id.uuidString)
+            let runner = MockSandboxToolCommandRunner(
+                rootResults: [.init(stdout: "", stderr: "", exitCode: 0)],
+                agentResults: [.init(stdout: "installed", stderr: "", exitCode: 0)]
             )
-            AgentStore.save(
-                Agent(
-                    id: id,
-                    name: "Install Context",
-                    autonomousExec: AutonomousExecConfig(enabled: true)
-                )
-            )
-            AgentManager.shared.refresh()
-            let nextTurn = await SystemPromptComposer.composeChatContext(
-                agentId: id,
-                executionMode: .sandbox(hostRead: nil),
-                model: "gpt-5",
-                query: "use the dependency"
-            )
-            return (output, nextTurn)
-        }
-
-        let immediate = try successPayload(output)
-        #expect(immediate["installed"] as? [String] == ["flask"])
-        #expect(immediate["exit_code"] as? Int == 0)
-        #expect((immediate["summary"] as? String ?? "").contains("flask"))
-        #expect(nextTurn.prompt.contains("Python (pip): flask"))
-        #expect(!nextTurn.staticPrefix.contains("Python (pip): flask"))
-        #expect(
-            nextTurn.manifest.sections.contains {
-                $0.id == "sandboxState" && $0.cacheability == .dynamic
+            defer {
+                SandboxPackageManifest.shared.clear(agentId: id.uuidString)
+                _ = AgentStore.delete(id: id)
+                AgentManager.shared.refresh()
             }
-        )
+
+            let (output, nextTurn) = try await withRegisteredSandboxTools(
+                runner: runner,
+                agentId: id.uuidString,
+                agentName: agentName
+            ) {
+                let output = try await ToolRegistry.shared.execute(
+                    name: "sandbox_install",
+                    argumentsJSON: #"{"manager":"pip","packages":["flask"]}"#
+                )
+                AgentStore.save(
+                    Agent(
+                        id: id,
+                        name: "Install Context",
+                        autonomousExec: AutonomousExecConfig(enabled: true)
+                    )
+                )
+                AgentManager.shared.refresh()
+                let nextTurn = await SystemPromptComposer.composeChatContext(
+                    agentId: id,
+                    executionMode: .sandbox(hostRead: nil),
+                    model: "gpt-5",
+                    query: "use the dependency"
+                )
+                return (output, nextTurn)
+            }
+
+            let immediate = try successPayload(output)
+            #expect(immediate["installed"] as? [String] == ["flask"])
+            #expect(immediate["exit_code"] as? Int == 0)
+            #expect((immediate["summary"] as? String ?? "").contains("flask"))
+            #expect(nextTurn.prompt.contains("Python (pip): flask"))
+            #expect(!nextTurn.staticPrefix.contains("Python (pip): flask"))
+            #expect(
+                nextTurn.manifest.sections.contains {
+                    $0.id == "sandboxState" && $0.cacheability == .dynamic
+                }
+            )
+        }
     }
 
     @Test @MainActor
@@ -568,6 +586,8 @@ struct BuiltinSandboxToolsTests {
             Issue.record("expected apk install via execAsRoot")
             return
         }
+        // apk runs in the calling agent's own container, not a shared one.
+        #expect(await runner.rootTargets == [.agent("test-agent")])
         // Refresh the index first so a stale apk db can't poison `add`.
         #expect(command.contains("apk update --quiet"))
         #expect(command.contains("apk add --no-cache"))
@@ -607,8 +627,239 @@ struct BuiltinSandboxToolsTests {
         // the rightmost non-zero exit (mirroring the foreground path) and
         // the wrapper leads its own process group so `kill -- -<pid>` can
         // take down the whole job tree.
-        #expect(command.contains("nohup setsid bash -c 'set -o pipefail; python3 server.py'"))
+        #expect(command.contains("nohup setsid bash -c 'set -o pipefail; {\npython3 server.py\n} 2>&1 | "))
+        #expect(command.contains("head -c \(SandboxExecTool.backgroundLogCapBytes)"))
         #expect(command.contains("echo $!"))
+        #expect(calls.count == 2, "the launch and its owned liveness probe must both finish in this fixture")
+        guard case .agent(let pollAgent, let pollCommand) = try #require(calls.last) else {
+            Issue.record("Expected the fixture's background liveness probe")
+            return
+        }
+        #expect(pollAgent == "test-agent")
+        #expect(pollCommand.contains("kill -0 12345"))
+        #expect(pollCommand.contains("/proc/12345/status"))
+    }
+
+    /// A completed test fixture must not leave a background liveness poll
+    /// using whichever shell runner the next fixture installs. Keep the
+    /// document's no-shell-write assertion intact and exercise the actual
+    /// production poll and host document writer together.
+    @Test(arguments: ["success", "throw", "cancelled"]) @MainActor
+    func backgroundFixtureDoesNotPollTheNextDocumentRunner(completion: String) async throws {
+        try await StoragePathsTestLock.shared.run {
+            let previousRoot = OsaurusPaths.overrideRoot
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("sandbox-background-fixture-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            OsaurusPaths.overrideRoot = root
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                try? FileManager.default.removeItem(at: root)
+            }
+            DocumentAdaptersBootstrap.registerBuiltIns()
+
+            let callId = "fixture-background-\(UUID().uuidString)"
+            let pid = "543210"
+            let backgroundAgent = "fixture-background-agent"
+            let documentAgent = "fixture-document-agent"
+            let unrelatedId = "unrelated-fixture-\(UUID().uuidString)"
+            await LiveExecRegistry.shared.register(
+                .init(
+                    toolCallId: unrelatedId,
+                    pid: "unrelated",
+                    command: "unrelated fixture",
+                    startedAt: Date(),
+                    outputPublisher: Empty<Data, Never>().eraseToAnyPublisher(),
+                    statusPublisher: Empty<LiveExecRegistry.LiveExecStatus, Never>().eraseToAnyPublisher(),
+                    currentStatus: { .running },
+                    seed: { Data() },
+                    terminate: { _ in Issue.record("Fixture cleanup must not terminate an unrelated entry") }
+                )
+            )
+            let backgroundRunner = MockSandboxToolCommandRunner(
+                rootResults: [],
+                agentResults: [],
+                execResults: [.init(stdout: "\(pid)\n", stderr: "", exitCode: 0)]
+            )
+            // Cancel only this owned child in the cancellation row; the
+            // surrounding test and following document fixture stay alive.
+            let fixture = Task { @MainActor in
+                try await ChatExecutionContext.$currentToolCallId.withValue(callId) {
+                    try await withRegisteredSandboxTools(
+                        runner: backgroundRunner,
+                        backgroundEnabled: true,
+                        agentName: backgroundAgent
+                    ) {
+                        let output = try await ToolRegistry.shared.execute(
+                            name: "sandbox_exec",
+                            argumentsJSON: #"{"command":"python3 server.py","background":true}"#
+                        )
+                        #expect(try successPayload(output)["pid"] as? String == pid)
+                        if completion == "cancelled" {
+                            withUnsafeCurrentTask { $0?.cancel() }
+                            throw CancellationError()
+                        }
+                        if completion == "throw" { throw SandboxFixtureBodyError.expected }
+                    }
+                }
+            }
+            do {
+                try await fixture.value
+                #expect(completion == "success")
+            } catch is CancellationError {
+                #expect(completion == "cancelled")
+            } catch SandboxFixtureBodyError.expected {
+                #expect(completion == "throw")
+            }
+            let leftover = await LiveExecRegistry.shared.handle(toolCallId: callId)
+            #expect(leftover == nil, "the background fixture must drain its own live entry before resetting its runner")
+            let backgroundCalls = await backgroundRunner.calls
+            let polledByOwningRunner = backgroundCalls.contains { call in
+                if case .agent(let agent, let command) = call {
+                    return agent == backgroundAgent && command.contains("kill -0 \(pid)")
+                }
+                return false
+            }
+            #expect(polledByOwningRunner, "the real liveness poll must finish through the fixture that started it")
+            let unrelated = await LiveExecRegistry.shared.handle(toolCallId: unrelatedId)
+            #expect(unrelated?.currentStatus() == .running, "fixture cleanup must preserve unrelated registry entries")
+
+            let documentRunner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+            try await withRegisteredSandboxTools(runner: documentRunner, agentName: documentAgent) {
+                let writtenOutput = try await ToolRegistry.shared.execute(
+                    name: "sandbox_write_file",
+                    argumentsJSON: ##"{"path":"report.docx","content":"# Report\n\nQuarterly total: 42."}"##
+                )
+                #expect(try successPayload(writtenOutput)["kind"] as? String == "document_write_result")
+                let file = OsaurusPaths.containerAgentDir(documentAgent).appendingPathComponent("report.docx")
+                #expect(try Data(contentsOf: file).prefix(2) == Data([0x50, 0x4B]))
+
+                // A broken fixture has an owned leftover. Wait for its real
+                // poll to reach this second mock so the baseline reproduces
+                // the CI failure rather than depending on export timing.
+                if leftover != nil {
+                    let deadline = ContinuousClock.now.advanced(by: .seconds(5))
+                    while ContinuousClock.now < deadline {
+                        if await documentRunner.calls.contains(where: { call in
+                            if case .agent(_, let command) = call { return command.contains("kill -0 \(pid)") }
+                            return false
+                        }) { break }
+                        try await Task.sleep(nanoseconds: 10_000_000)
+                    }
+                }
+                let calls = await documentRunner.calls
+                let receivedOwnedPoll = calls.contains { call in
+                    if case .agent(let agent, let command) = call {
+                        return agent == backgroundAgent && command.contains("kill -0 \(pid)")
+                    }
+                    return false
+                }
+                if leftover != nil {
+                    #expect(receivedOwnedPoll, "a leftover baseline must actually reproduce the cross-fixture poll")
+                }
+                #expect(calls.isEmpty, "document bytes must not travel through the shell bridge")
+
+                let observed: [String: Any] = [
+                    "pid": ProcessInfo.processInfo.processIdentifier,
+                    "completion": completion,
+                    "owned_tool_call_id": callId,
+                    "mock_background_pid": pid,
+                    "leftover_live_entry": leftover != nil,
+                    "owned_poll_observed_by_own_runner": polledByOwningRunner,
+                    "unrelated_entry_preserved": unrelated?.currentStatus() == .running,
+                    "owned_poll_reached_next_document_runner": receivedOwnedPoll,
+                    "document_runner_calls": calls.map { call -> [String: String] in
+                        switch call {
+                        case .agent(let agent, let command): return ["kind": "agent", "agent": agent, "command": command]
+                        case .root(let command): return ["kind": "root", "command": command]
+                        case .exec(_, let command, _): return ["kind": "exec", "command": command]
+                        }
+                    },
+                    "runtime_flags": ProcessInfo.processInfo.environment.filter { key, _ in
+                        ["OSAURUS_DISABLE_KEYCHAIN_FOR_TESTS", "OSAURUS_TEST_ROOT", "OSU_MODELS_DIR",
+                         "OSAURUS_PREFILL_DEBUG", "OSAURUS_IMAGE_MODELS_DIR"].contains(key)
+                    },
+                ]
+                if let evidenceRoot = ProcessInfo.processInfo.environment["OSAURUS_TEST_ROOT"] {
+                    let receipt = URL(fileURLWithPath: evidenceRoot)
+                        .appendingPathComponent("background-fixture-crossflow-observation-\(completion).json")
+                    try JSONSerialization.data(withJSONObject: observed, options: [.prettyPrinted, .sortedKeys])
+                        .write(to: receipt, options: .atomic)
+                }
+
+                // Only this test's fake job is touched, even on a failing
+                // baseline. No terminateAll/clearAll and no process signals.
+                leftover?.onDrop?()
+                await LiveExecRegistry.shared.unregister(toolCallId: callId)
+                await SandboxBackgroundJobs.shared.unregister(agentName: backgroundAgent, pid: pid)
+                await LiveExecRegistry.shared.unregister(toolCallId: unrelatedId)
+            }
+        }
+    }
+
+    @Test
+    func backgroundCommand_capsTheLogWithoutStoppingTheJob() async throws {
+        let command = SandboxExecTool.backgroundCommand(
+            "for i in $(seq 1 3); do echo it'\''s $i; done # trailing comment", cwd: "/tmp", logFile: "/tmp/bg-test.log")
+        // The cap filter drains everything past the limit instead of exiting,
+        // so the job never sees SIGPIPE; a trailing comment can't swallow the
+        // closing brace.
+        #expect(command.contains("cat > /dev/null"))
+        #expect(command.contains("# trailing comment\n} 2>&1"))
+        #expect(command.hasSuffix("> /tmp/bg-test.log 2>&1 & echo $!"))
+    }
+
+    @Test
+    func sandboxExec_usesTheRequestAgentsKeysNotTheRegisteringAgents() async throws {
+        try await SandboxTestLock.runWithStoragePaths {
+            try await CredentialStore.$taskLocalStore.withValue(CredentialStore.makeIsolated()) {
+                let manager = AgentManager.shared
+                let registering = Agent(
+                    name: "Exec Registering", agentAddress: "test-exec-registering",
+                    autonomousExec: AutonomousExecConfig(enabled: true))
+                let requesting = Agent(
+                    name: "Exec Requesting", agentAddress: "test-exec-requesting",
+                    autonomousExec: AutonomousExecConfig(enabled: true))
+                manager.add(registering)
+                manager.add(requesting)
+                let store = CredentialStore.current
+                store.save("TOKEN", scope: .agent(registering.id), value: "registering-secret", origin: .user)
+                store.save("TOKEN", scope: .agent(requesting.id), value: "requesting-secret", origin: .user)
+
+                let runner = MockSandboxToolCommandRunner(
+                    rootResults: [], agentResults: [],
+                    execResults: [.init(stdout: "requesting-secret\n", stderr: "", exitCode: 0)])
+                await SandboxToolCommandRunnerRegistry.shared.setRunner(runner)
+                ToolRegistry.shared.unregisterAllSandboxTools()
+                BuiltinSandboxTools.register(
+                    agentId: registering.id.uuidString,
+                    agentName: SandboxAgentProvisioner.linuxName(for: registering.id.uuidString),
+                    config: AutonomousExecConfig(enabled: true))
+
+                let output = try? await ChatExecutionContext.$currentAgentId.withValue(requesting.id) {
+                    try await withSandboxToolScope {
+                        try await ToolRegistry.shared.execute(
+                            name: "sandbox_exec", argumentsJSON: #"{"command":"echo $TOKEN"}"#)
+                    }
+                }
+                let calls = await runner.calls
+                let logScrub = await runner.logScrubSecrets
+                ToolRegistry.shared.unregisterAllSandboxTools()
+                await SandboxToolCommandRunnerRegistry.shared.reset()
+                _ = await manager.delete(id: registering.id)
+                _ = await manager.delete(id: requesting.id)
+
+                let text = try #require(output)
+                guard case .exec(let user, _, let env) = try #require(calls.first) else {
+                    Issue.record("Expected exec call")
+                    return
+                }
+                #expect(env["TOKEN"] == "requesting-secret")
+                #expect(logScrub.first?["TOKEN"] == "requesting-secret", "the live log redacts it too")
+                #expect(user == "agent-\(SandboxAgentProvisioner.linuxName(for: requesting.id.uuidString))")
+                #expect(!text.contains("requesting-secret"), "the request agent's value is scrubbed")
+            }
+        }
     }
 
     @Test @MainActor
@@ -878,57 +1129,61 @@ struct BuiltinSandboxToolsTests {
 
     @Test @MainActor
     func concurrentProcessCallsRouteToEachRequestAgent() async throws {
-        let config = AutonomousExecConfig(
-            enabled: true,
-            pluginCreate: true,
-            backgroundProcessEnabled: true
-        )
-        let first = Agent(name: "Route A", autonomousExec: config)
-        let second = Agent(name: "Route B", autonomousExec: config)
-        AgentStore.save(first)
-        AgentStore.save(second)
-        AgentManager.shared.refresh()
-        defer {
-            _ = AgentStore.delete(id: first.id)
-            _ = AgentStore.delete(id: second.id)
+        // AgentStore/AgentManager read OsaurusPaths.overrideRoot; hold the storage lock (outside the sandbox
+        // lock) so a storage-path suite can't flip the root between save and lookup (SandboxTestLock.swift).
+        try await StoragePathsTestLock.shared.run { @MainActor in
+            let config = AutonomousExecConfig(
+                enabled: true,
+                pluginCreate: true,
+                backgroundProcessEnabled: true
+            )
+            let first = Agent(name: "Route A", autonomousExec: config)
+            let second = Agent(name: "Route B", autonomousExec: config)
+            AgentStore.save(first)
+            AgentStore.save(second)
             AgentManager.shared.refresh()
-        }
+            defer {
+                _ = AgentStore.delete(id: first.id)
+                _ = AgentStore.delete(id: second.id)
+                AgentManager.shared.refresh()
+            }
 
-        let runner = MockSandboxToolCommandRunner(
-            rootResults: [],
-            agentResults: [
-                .init(stdout: "alive\n", stderr: "", exitCode: 0),
-                .init(stdout: "alive\n", stderr: "", exitCode: 0),
-            ]
-        )
-        try await withRegisteredSandboxTools(runner: runner, backgroundEnabled: true) {
-            async let firstResult = ChatExecutionContext.$currentAgentId.withValue(first.id) {
-                try await ToolRegistry.shared.execute(
-                    name: "sandbox_process",
-                    argumentsJSON: #"{"action":"poll","pid":"41","tail_lines":0}"#
-                )
+            let runner = MockSandboxToolCommandRunner(
+                rootResults: [],
+                agentResults: [
+                    .init(stdout: "alive\n", stderr: "", exitCode: 0),
+                    .init(stdout: "alive\n", stderr: "", exitCode: 0),
+                ]
+            )
+            try await withRegisteredSandboxTools(runner: runner, backgroundEnabled: true) {
+                async let firstResult = ChatExecutionContext.$currentAgentId.withValue(first.id) {
+                    try await ToolRegistry.shared.execute(
+                        name: "sandbox_process",
+                        argumentsJSON: #"{"action":"poll","pid":"41","tail_lines":0}"#
+                    )
+                }
+                async let secondResult = ChatExecutionContext.$currentAgentId.withValue(second.id) {
+                    try await ToolRegistry.shared.execute(
+                        name: "sandbox_process",
+                        argumentsJSON: #"{"action":"poll","pid":"42","tail_lines":0}"#
+                    )
+                }
+                let outputs = try await [firstResult, secondResult]
+                #expect(outputs.allSatisfy { !ToolEnvelope.isError($0) })
             }
-            async let secondResult = ChatExecutionContext.$currentAgentId.withValue(second.id) {
-                try await ToolRegistry.shared.execute(
-                    name: "sandbox_process",
-                    argumentsJSON: #"{"action":"poll","pid":"42","tail_lines":0}"#
-                )
-            }
-            let outputs = try await [firstResult, secondResult]
-            #expect(outputs.allSatisfy { !ToolEnvelope.isError($0) })
-        }
 
-        let expectedNames = Set([
-            SandboxAgentProvisioner.linuxName(for: first.id.uuidString),
-            SandboxAgentProvisioner.linuxName(for: second.id.uuidString),
-        ])
-        let routedNames = Set(
-            await runner.calls.compactMap { call -> String? in
-                guard case .agent(let name, _) = call else { return nil }
-                return name
-            }
-        )
-        #expect(routedNames == expectedNames)
+            let expectedNames = Set([
+                SandboxAgentProvisioner.linuxName(for: first.id.uuidString),
+                SandboxAgentProvisioner.linuxName(for: second.id.uuidString),
+            ])
+            let routedNames = Set(
+                await runner.calls.compactMap { call -> String? in
+                    guard case .agent(let name, _) = call else { return nil }
+                    return name
+                }
+            )
+            #expect(routedNames == expectedNames)
+        }
     }
 
     @Test @MainActor
@@ -1034,42 +1289,216 @@ struct BuiltinSandboxToolsTests {
         #expect(!commands.contains { $0.contains("python3 -c") })
     }
 
+    /// The text bridge is one `sh -c` string per command and the VM kernel
+    /// caps a single argv string at 128 KiB, so a large `content` must be
+    /// delivered as consecutive `printf` appends — never refused or
+    /// truncated because of its size. Overwrite starts with `>`; every later
+    /// part (and every part of an append) uses `>>`.
     @Test @MainActor
-    func sandboxWriteFile_rejectsTextWrittenToBinaryDocumentExtension() async throws {
+    func sandboxWriteFile_largeContentIsWrittenInShellSizedParts() async throws {
+        let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+        let content = String(repeating: "line of text with a quote ' in it\n", count: 7_000)  // ~235 KB
+        #expect(content.utf8.count > 2 * SandboxWriteFileTool.shellWritePartBytes)
+        let args = try JSONSerialization.data(withJSONObject: ["path": "big/report.md", "content": content])
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_write_file",
+                argumentsJSON: String(decoding: args, as: UTF8.self)
+            )
+        }
+        let payload = try successPayload(output)
+        #expect(payload["size"] as? Int == content.utf8.count)
+
+        let calls = await runner.calls
+        let printfs = calls.compactMap { call -> String? in
+            guard case .agent(_, let c) = call, c.hasPrefix("printf") else { return nil }
+            return c
+        }
+        #expect(printfs.count == SandboxWriteFileTool.shellWriteParts(content).count)
+        #expect(printfs.count >= 3, "expected several parts, got \(printfs.count)")
+        #expect(printfs[0].contains(" > '"), "first part must create/truncate: \(printfs[0].suffix(60))")
+        for later in printfs.dropFirst() {
+            #expect(later.contains(" >> '"), "later parts must append: \(later.suffix(60))")
+        }
+        for command in printfs {
+            #expect(command.utf8.count < 128 * 1024, "one shell command must stay under MAX_ARG_STRLEN")
+        }
+
+        // Append mode: every part appends.
+        let appendRunner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+        let appendArgs = try JSONSerialization.data(withJSONObject: [
+            "path": "big/report.md", "content": content, "mode": "append",
+        ])
+        _ = try await withRegisteredSandboxTools(runner: appendRunner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_write_file",
+                argumentsJSON: String(decoding: appendArgs, as: UTF8.self)
+            )
+        }
+        let appendPrintfs = (await appendRunner.calls).compactMap { call -> String? in
+            guard case .agent(_, let c) = call, c.hasPrefix("printf") else { return nil }
+            return c
+        }
+        #expect(appendPrintfs.count == printfs.count)
+        #expect(appendPrintfs.allSatisfy { $0.contains(" >> '") })
+    }
+
+    /// WRITABLE combined mode: a `/workspace/...` `file_write` with
+    /// `source_path` reads the source through the sandbox's own reader
+    /// (`SandboxReadFileTool`, whole-file `cat`) — the same route `file_read`
+    /// takes for text under `/workspace` — so the VM sanitizer and the agent
+    /// user's permissions apply. Nothing is read from the VirtioFS share
+    /// host-side, and the text then lands through the ordinary shell write.
+    @Test @MainActor
+    func combinedMode_fileWrite_sourcePathReadsThroughSandboxReader() async throws {
+        let runner = MockSandboxToolCommandRunner(
+            rootResults: [],
+            agentResults: [
+                .init(stdout: "# Hello\n\nFrom the VM.\n", stderr: "", exitCode: 0),  // cat source
+                .init(stdout: "0\n", stderr: "", exitCode: 0),  // readForDiff: no prior file
+                .init(stdout: "", stderr: "", exitCode: 0),  // mkdir -p
+                .init(stdout: "", stderr: "", exitCode: 0),  // printf write
+            ]
+        )
+        let bridge = SandboxReadBridge(agentName: "test-agent", home: "/workspace/agents/test-agent")
+        let hostRoot = URL(fileURLWithPath: "/tmp/osaurus-combined-source-\(UUID().uuidString)")
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ChatExecutionContext.$sandboxReadBridge.withValue(bridge) {
+                try await FileWriteTool(rootPath: hostRoot).execute(
+                    argumentsJSON:
+                        #"{"path":"/workspace/agents/test-agent/out.md","source_path":"/workspace/agents/test-agent/in.md"}"#
+                )
+            }
+        }
+        let payload = try successPayload(output)
+        #expect(payload["path"] as? String == "/workspace/agents/test-agent/out.md")
+
+        let commands = (await runner.calls).compactMap { call -> String? in
+            guard case .agent(_, let c) = call else { return nil }
+            return c
+        }
+        #expect(commands.first == "cat '/workspace/agents/test-agent/in.md'", "\(commands)")
+        #expect(commands.contains { $0.hasPrefix("printf '%s' '# Hello\n\nFrom the VM.\n'") }, "\(commands)")
+    }
+
+    /// A `source_path` the sandbox sanitizer rejects (outside the agent home
+    /// and `/workspace/shared`) is refused before any command runs, with the
+    /// reader's own verdict re-attributed to `file_write` / `source_path`.
+    @Test @MainActor
+    func combinedMode_fileWrite_sourcePathOutsideAgentHomeIsRefused() async throws {
+        let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+        let bridge = SandboxReadBridge(agentName: "test-agent", home: "/workspace/agents/test-agent")
+        let hostRoot = URL(fileURLWithPath: "/tmp/osaurus-combined-source-\(UUID().uuidString)")
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ChatExecutionContext.$sandboxReadBridge.withValue(bridge) {
+                try await FileWriteTool(rootPath: hostRoot).execute(
+                    argumentsJSON:
+                        #"{"path":"/workspace/agents/test-agent/out.md","source_path":"/etc/passwd"}"#
+                )
+            }
+        }
+        let payload = try failurePayload(output)
+        #expect(payload["tool"] as? String == "file_write")
+        #expect(payload["field"] as? String == "source_path")
+        #expect(payload["retryable"] as? Bool == false)
+        let calls = await runner.calls
+        #expect(calls.isEmpty, "a rejected source_path must not run any sandbox command")
+    }
+
+    @Test func shellWriteParts_preserveContentAndCharacterBoundaries() {
+        #expect(SandboxWriteFileTool.shellWriteParts("") == [""])
+        #expect(SandboxWriteFileTool.shellWriteParts("small") == ["small"])
+
+        // Multi-byte characters and quotes (which quadruple under escaping)
+        // never straddle a part, and the parts concatenate to the original.
+        let content = String(repeating: "é'日本語 ", count: 40_000)
+        let parts = SandboxWriteFileTool.shellWriteParts(content)
+        #expect(parts.count > 1)
+        #expect(parts.joined() == content)
+        for part in parts {
+            let escaped = part.replacingOccurrences(of: "'", with: "'\\''")
+            #expect(escaped.utf8.count <= SandboxWriteFileTool.shellWritePartBytes)
+        }
+    }
+
+    /// `.docx`/`.xlsx`/`.pdf` are generated host-side into the VirtioFS
+    /// share: a real package lands under the agent's host home and the
+    /// text bridge (shell `printf`) is never used for the bytes.
+    @Test @MainActor
+    func sandboxWriteFile_generatesDocumentHostSideWithoutShellWrite() async throws {
+        let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+
+        try await StoragePathsTestLock.shared.run {
+            let previousRoot = OsaurusPaths.overrideRoot
+            let root = FileManager.default.temporaryDirectory
+                .appendingPathComponent("sandbox-doc-write-\(UUID().uuidString)", isDirectory: true)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            OsaurusPaths.overrideRoot = root
+            defer {
+                OsaurusPaths.overrideRoot = previousRoot
+                try? FileManager.default.removeItem(at: root)
+            }
+            DocumentAdaptersBootstrap.registerBuiltIns()
+
+            let output = try await withRegisteredSandboxTools(runner: runner) {
+                try await ToolRegistry.shared.execute(
+                    name: "sandbox_write_file",
+                    argumentsJSON: ##"{"path":"report.docx","content":"# Report\n\nQuarterly total: 42."}"##
+                )
+            }
+
+            let payload = try successPayload(output)
+            #expect(payload["kind"] as? String == "document_write_result")
+            #expect(payload["format"] as? String == "docx")
+            #expect(payload["path"] as? String == "/workspace/agents/test-agent/report.docx")
+            let written = OsaurusPaths.containerAgentDir("test-agent").appendingPathComponent("report.docx")
+            let bytes = try Data(contentsOf: written)
+            #expect(bytes.prefix(2) == Data([0x50, 0x4B]), "expected an OOXML zip package")
+            let calls = await runner.calls
+            #expect(calls.isEmpty, "document bytes must not travel through the shell bridge")
+        }
+    }
+
+    /// Formats with no writer at all (`.key`) are refused with a pivot that
+    /// names what the tool does produce, before any shell command runs.
+    @Test @MainActor
+    func sandboxWriteFile_rejectsUnsupportedDocumentExtension() async throws {
         let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
 
         let output = try await withRegisteredSandboxTools(runner: runner) {
             try await ToolRegistry.shared.execute(
                 name: "sandbox_write_file",
-                argumentsJSON: #"{"path":"report.docx","content":"not a real package"}"#
+                argumentsJSON: #"{"path":"deck.key","content":"not a real package"}"#
             )
         }
 
         let payload = try failurePayload(output)
         #expect(payload["kind"] as? String == "rejected")
         #expect(payload["field"] as? String == "path")
-        #expect((payload["message"] as? String)?.contains("only writes UTF-8 text") == true)
+        let message = payload["message"] as? String ?? ""
+        #expect(message.contains("presentation format"))
+        #expect(message.contains(".pptx"))
         let calls = await runner.calls
         #expect(calls.isEmpty)
     }
 
     /// `sandbox_write_file` with `old_string` selects the in-place edit
     /// path — the presence of the argument decides edit-vs-write, with no
-    /// separate `sandbox_edit_file` tool. It runs the exact-match Python
-    /// replace and returns a `summary`.
+    /// separate `sandbox_edit_file` tool. The file is read back, the edit
+    /// is applied host-side with the shared `file_edit` matcher, and the
+    /// whole result is staged to a temp file then spliced into the target.
     @Test @MainActor
     func sandboxWriteFile_oldStringRoutesToInPlaceEdit() async throws {
         let runner = MockSandboxToolCommandRunner(
             rootResults: [],
             agentResults: [
-                // Diff capture reads the file before and after the edit; the
-                // reads emit a `1`/`0` existence marker line then the contents.
-                .init(stdout: "1\nold()", stderr: "", exitCode: 0),  // readForDiff (before)
-                .init(stdout: "", stderr: "", exitCode: 0),  // mkdir tmp
-                .init(stdout: "", stderr: "", exitCode: 0),  // printf old
-                .init(stdout: "", stderr: "", exitCode: 0),  // printf new
-                .init(stdout: "replaced 1 line(s) with 1 line(s)", stderr: "", exitCode: 0),  // python
-                .init(stdout: "1\nnew()", stderr: "", exitCode: 0),  // readForDiff (after)
+                // The read emits a `1`/`0` existence marker line then the contents.
+                .init(stdout: "1\ndef f():\n    old()\n", stderr: "", exitCode: 0),  // read
+                .init(stdout: "", stderr: "", exitCode: 0),  // printf chunk > tmp
+                .init(stdout: "", stderr: "", exitCode: 0),  // cat tmp > target
             ]
         )
 
@@ -1082,15 +1511,118 @@ struct BuiltinSandboxToolsTests {
         }
 
         let payload = try successPayload(output)
-        #expect((payload["summary"] as? String)?.contains("replaced") == true)
+        #expect((payload["summary"] as? String)?.contains("applied 1 edit") == true, "\(payload)")
+        #expect(payload["replacements"] as? Int == 1)
+        #expect(payload["match_strategy"] as? String == "exact")
+        #expect(payload["matched_lines"] as? [String] == ["2"])
+        #expect((payload["diff"] as? String)?.contains("+    new()") == true, "\(payload)")
 
         let calls = await runner.calls
         let commands = calls.compactMap { call -> String? in
             if case .agent(_, let c) = call { return c }
             return nil
         }
-        // The edit path runs the exact-match Python replace, not a plain write.
-        #expect(commands.contains { $0.contains("python3 -c") })
+        #expect(commands.count == 3, "\(commands)")
+        // No Python in the loop any more: the matcher runs on the host.
+        #expect(!commands.contains { $0.contains("python3") })
+        // The staged content is the complete edited file, written with
+        // printf (no heredoc / echo quoting hazards) into a sibling temp file.
+        #expect(commands[1].hasPrefix("printf '%s' 'def f():\n    new()\n' > '/workspace/agents/test-agent/app.py.osaurus-edit-"), "\(commands[1])")
+        #expect(commands[2].hasPrefix("cat '/workspace/agents/test-agent/app.py.osaurus-edit-"), "\(commands[2])")
+        #expect(commands[2].contains("> '/workspace/agents/test-agent/app.py'; EC=$?; rm -f"), "\(commands[2])")
+    }
+
+    /// The sandbox edit branch shares `file_edit`'s contract: atomic
+    /// `edits` batches, `replace_all`, the tolerance cascade (with
+    /// `match_strategy` reported), and `dry_run` previews that never write.
+    @Test @MainActor
+    func sandboxWriteFile_editsBatchReplaceAllToleranceAndDryRun() async throws {
+        let file = "1\n\tfoo = 1\n\tbar = 2\n\tbaz = foo + bar\n"
+        // Batch: tab-indented file, model sends 4-space indentation for one
+        // edit and an exact match for the other. Both land; the file's tabs
+        // are kept for the unchanged text.
+        let batchRunner = MockSandboxToolCommandRunner(
+            rootResults: [],
+            agentResults: [
+                .init(stdout: file, stderr: "", exitCode: 0),
+                .init(stdout: "", stderr: "", exitCode: 0),
+                .init(stdout: "", stderr: "", exitCode: 0),
+            ]
+        )
+        let batch = try await withRegisteredSandboxTools(runner: batchRunner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_write_file",
+                argumentsJSON:
+                    #"{"path":"calc.py","edits":[{"old_string":"    foo = 1","new_string":"    foo = 10"},{"old_string":"\tbaz = foo + bar","new_string":"\tbaz = foo * bar"}]}"#
+            )
+        }
+        let batchPayload = try successPayload(batch)
+        #expect(batchPayload["edits_applied"] as? [Int] == [1, 1], "\(batchPayload)")
+        #expect(batchPayload["edit_strategies"] as? [String] == ["whitespace_normalized", "exact"], "\(batchPayload)")
+        #expect(batchPayload["match_strategy"] as? String == "whitespace_normalized")
+        let batchCommands = await batchRunner.calls.compactMap { call -> String? in
+            if case .agent(_, let c) = call { return c }
+            return nil
+        }
+        #expect(batchCommands[1].contains("'\tfoo = 10\n\tbar = 2\n\tbaz = foo * bar\n'"), "\(batchCommands[1])")
+        let batchWarnings = (parseEnvelope(batch)["warnings"] as? [String]) ?? []
+        #expect(batchWarnings.contains { $0.contains("did not match the file byte-for-byte") }, "\(batchWarnings)")
+
+        // replace_all: every occurrence goes in one write.
+        let allRunner = MockSandboxToolCommandRunner(
+            rootResults: [],
+            agentResults: [
+                .init(stdout: "1\na b a\na\n", stderr: "", exitCode: 0),
+                .init(stdout: "", stderr: "", exitCode: 0),
+                .init(stdout: "", stderr: "", exitCode: 0),
+            ]
+        )
+        let all = try await withRegisteredSandboxTools(runner: allRunner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_write_file",
+                argumentsJSON: #"{"path":"n.txt","old_string":"a","new_string":"z","replace_all":true}"#
+            )
+        }
+        #expect(try successPayload(all)["replacements"] as? Int == 3, "\(all)")
+
+        // Ambiguous without replace_all: refused, nothing written, retry hint.
+        let ambiguousRunner = MockSandboxToolCommandRunner(
+            rootResults: [], agentResults: [.init(stdout: "1\na b a\n", stderr: "", exitCode: 0)])
+        let ambiguous = try await withRegisteredSandboxTools(runner: ambiguousRunner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_write_file",
+                argumentsJSON: #"{"path":"n.txt","old_string":"a","new_string":"z"}"#
+            )
+        }
+        #expect(ToolEnvelope.isError(ambiguous))
+        #expect((try failurePayload(ambiguous)["message"] as? String)?.contains("Found 2 matches") == true, "\(ambiguous)")
+        #expect(await ambiguousRunner.calls.count == 1, "no write after a refused edit")
+
+        // dry_run: diff and PREVIEW warning, no write commands at all.
+        let dryRunner = MockSandboxToolCommandRunner(
+            rootResults: [], agentResults: [.init(stdout: "1\nhello\n", stderr: "", exitCode: 0)])
+        let dry = try await withRegisteredSandboxTools(runner: dryRunner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_write_file",
+                argumentsJSON: #"{"path":"h.txt","old_string":"hello","new_string":"bye","dry_run":true}"#
+            )
+        }
+        let dryPayload = try successPayload(dry)
+        #expect(dryPayload["dry_run"] as? Bool == true)
+        #expect((dryPayload["diff"] as? String)?.contains("+bye") == true, "\(dryPayload)")
+        #expect(((parseEnvelope(dry)["warnings"] as? [String]) ?? []).contains { $0.contains("PREVIEW ONLY") })
+        #expect(await dryRunner.calls.count == 1, "dry_run must not write")
+
+        // Missing file: a pointed not_found, not a Python traceback.
+        let missingRunner = MockSandboxToolCommandRunner(
+            rootResults: [], agentResults: [.init(stdout: "0\n", stderr: "", exitCode: 0)])
+        let missing = try await withRegisteredSandboxTools(runner: missingRunner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_write_file",
+                argumentsJSON: #"{"path":"nope.txt","old_string":"a","new_string":"b"}"#
+            )
+        }
+        #expect(try failurePayload(missing)["kind"] as? String == "not_found", "\(missing)")
     }
 
     /// `old_string` without `new_string` is the merge's only new
@@ -1182,6 +1714,64 @@ struct BuiltinSandboxToolsTests {
         // The read must NOT have run against the sandbox.
         let calls = await runner.calls
         #expect(calls.isEmpty, "no read call should be made when the path is rejected")
+    }
+
+    /// osaurus#2680: a raw sandbox read of a PDF decoded to nothing and the
+    /// model abandoned the document. When the host share cannot serve the
+    /// file (no share root in this harness) the read must be refused before
+    /// any exec, naming the `/workspace` share, `read_knowledge`, and shell
+    /// extraction as the working paths.
+    @Test @MainActor
+    func sandboxReadFile_refusesBinaryDocumentWithExtractionHint() async throws {
+        let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ToolRegistry.shared.execute(
+                name: "sandbox_read_file",
+                argumentsJSON: #"{"path":"invoice.pdf"}"#
+            )
+        }
+
+        #expect(ToolEnvelope.isError(output))
+        let payload = try failurePayload(output)
+        #expect(payload["kind"] as? String == "invalid_args")
+        let message = payload["message"] as? String ?? ""
+        #expect(message.contains("PDF"))
+        #expect(message.contains("/workspace/"))
+        #expect(message.contains("read_knowledge"))
+        #expect(message.contains("pdftotext"))
+
+        let calls = await runner.calls
+        #expect(calls.isEmpty, "no read call should be made for a binary document")
+    }
+
+    /// The combined-mode `file_read` bridge must surface the same refusal
+    /// (relabelled to `file_read`) rather than an empty-file success.
+    @Test @MainActor
+    func combinedMode_fileRead_workspacePdfRefusedWithHint() async throws {
+        let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
+        let bridge = SandboxReadBridge(
+            agentName: "test-agent",
+            home: "/workspace/agents/test-agent"
+        )
+        let hostRoot = URL(fileURLWithPath: "/tmp/osaurus-combined-pdf-\(UUID().uuidString)")
+
+        let output = try await withRegisteredSandboxTools(runner: runner) {
+            try await ChatExecutionContext.$sandboxReadBridge.withValue(bridge) {
+                try await FileReadTool(rootPath: hostRoot).execute(
+                    argumentsJSON: #"{"path":"/workspace/agents/test-agent/invoice.pdf"}"#
+                )
+            }
+        }
+
+        #expect(ToolEnvelope.isError(output))
+        let payload = try failurePayload(output)
+        #expect(payload["tool"] as? String == "file_read")
+        let message = payload["message"] as? String ?? ""
+        #expect(message.contains("read_knowledge"))
+
+        let calls = await runner.calls
+        #expect(calls.isEmpty, "no sandbox read should be issued for a binary document")
     }
 
     // MARK: - Combined-mode unified file routing
@@ -1503,12 +2093,9 @@ struct BuiltinSandboxToolsTests {
         let runner = MockSandboxToolCommandRunner(
             rootResults: [],
             agentResults: [
-                .init(stdout: "1\nold text\n", stderr: "", exitCode: 0),  // readForDiff
-                .init(stdout: "", stderr: "", exitCode: 0),  // mkdir tmp
-                .init(stdout: "", stderr: "", exitCode: 0),  // printf old
-                .init(stdout: "", stderr: "", exitCode: 0),  // printf new
-                .init(stdout: "replaced 1 line(s) with 1 line(s)\n", stderr: "", exitCode: 0),  // python replace
-                .init(stdout: "1\nnew text\n", stderr: "", exitCode: 0),  // post-edit readForDiff (if any)
+                .init(stdout: "1\nold text\n", stderr: "", exitCode: 0),  // read
+                .init(stdout: "", stderr: "", exitCode: 0),  // printf chunk > tmp
+                .init(stdout: "", stderr: "", exitCode: 0),  // cat tmp > target
             ]
         )
         let bridge = SandboxReadBridge(
@@ -1528,13 +2115,65 @@ struct BuiltinSandboxToolsTests {
 
         #expect(!ToolEnvelope.isError(output), "edit route should succeed: \(output)")
         #expect(output.contains(#""tool":"file_edit""#) || output.contains(#""tool" : "file_edit""#))
+        let payload = try successPayload(output)
+        #expect(payload["match_strategy"] as? String == "exact", "\(payload)")
+        #expect(payload["matched_lines"] as? [String] == ["1"], "\(payload)")
 
-        let calls = await runner.calls
-        let issuedPython = calls.contains { call in
-            guard case .agent(_, let cmd) = call else { return false }
-            return cmd.contains("python3")
+        let commands = await runner.calls.compactMap { call -> String? in
+            if case .agent(_, let cmd) = call { return cmd }
+            return nil
         }
-        #expect(issuedPython, "the sandbox edit branch runs the python replace script")
+        #expect(commands.count == 3, "\(commands)")
+        #expect(commands[1].contains("printf '%s' 'new text\n' >"), "\(commands[1])")
+        #expect(commands[2].contains("> '/workspace/agents/test-agent/app.py'"), "\(commands[2])")
+    }
+
+    /// WRITABLE combined mode: `file_edit`'s batch, `replace_all` and
+    /// `dry_run` forms reach the sandbox route intact — one contract on
+    /// both routes, no "not supported for /workspace paths" refusals.
+    @Test @MainActor
+    func combinedMode_fileEdit_workspacePathSupportsBatchReplaceAllAndDryRun() async throws {
+        let bridge = SandboxReadBridge(agentName: "test-agent", home: "/workspace/agents/test-agent")
+        let hostRoot = URL(fileURLWithPath: "/tmp/osaurus-combined-edit-\(UUID().uuidString)")
+
+        let batchRunner = MockSandboxToolCommandRunner(
+            rootResults: [],
+            agentResults: [
+                .init(stdout: "1\nalpha\nbeta\nalpha\n", stderr: "", exitCode: 0),
+                .init(stdout: "", stderr: "", exitCode: 0),
+                .init(stdout: "", stderr: "", exitCode: 0),
+            ]
+        )
+        let batch = try await withRegisteredSandboxTools(runner: batchRunner) {
+            try await ChatExecutionContext.$sandboxReadBridge.withValue(bridge) {
+                try await FileEditTool(rootPath: hostRoot).execute(
+                    argumentsJSON:
+                        #"{"path":"/workspace/agents/test-agent/w.txt","edits":[{"old_string":"alpha","new_string":"A"},{"old_string":"beta","new_string":"B"}],"replace_all":true}"#
+                )
+            }
+        }
+        let batchPayload = try successPayload(batch)
+        #expect(batchPayload["edits_applied"] as? [Int] == [2, 1], "\(batch)")
+        let batchCommands = await batchRunner.calls.compactMap { call -> String? in
+            if case .agent(_, let cmd) = call { return cmd }
+            return nil
+        }
+        #expect(batchCommands.count == 3, "\(batchCommands)")
+        #expect(batchCommands[1].contains("'A\nB\nA\n'"), "\(batchCommands[1])")
+
+        let dryRunner = MockSandboxToolCommandRunner(
+            rootResults: [], agentResults: [.init(stdout: "1\nalpha\n", stderr: "", exitCode: 0)])
+        let dry = try await withRegisteredSandboxTools(runner: dryRunner) {
+            try await ChatExecutionContext.$sandboxReadBridge.withValue(bridge) {
+                try await FileEditTool(rootPath: hostRoot).execute(
+                    argumentsJSON:
+                        #"{"path":"/workspace/agents/test-agent/w.txt","old_string":"alpha","new_string":"A","dry_run":true}"#
+                )
+            }
+        }
+        #expect(!ToolEnvelope.isError(dry), "\(dry)")
+        #expect(dry.contains("PREVIEW ONLY"), "\(dry)")
+        #expect(await dryRunner.calls.count == 1, "dry_run reads but never writes")
     }
 
     /// A bound VM bridge is authoritative. A relative public write resolves
@@ -1663,6 +2302,10 @@ private actor MockSandboxToolCommandRunner: SandboxToolCommandRunning {
     }
 
     private(set) var calls: [Call] = []
+    /// Container each `execAsRoot` targeted, in call order.
+    private(set) var rootTargets: [SandboxExecTarget] = []
+    /// What the live sandbox log would redact for each `exec`.
+    private(set) var logScrubSecrets: [[String: String]] = []
     private var execResults: [ContainerExecResult]
     private var rootResults: [ContainerExecResult]
     private var agentResults: [ContainerExecResult]
@@ -1703,11 +2346,13 @@ private actor MockSandboxToolCommandRunner: SandboxToolCommandRunning {
         // the unit tests.
         let recorded = cwd.map { "cd \($0) && \(command)" } ?? command
         calls.append(.exec(user, recorded, env))
+        logScrubSecrets.append(SandboxLogScrubbing.secrets)
         return execResults.isEmpty ? .init(stdout: "", stderr: "", exitCode: 0) : execResults.removeFirst()
     }
 
     func execAsRoot(
         command: String,
+        target: SandboxExecTarget,
         timeout _: TimeInterval?,
         streamToLogs _: Bool,
         logSource _: String?,
@@ -1715,6 +2360,7 @@ private actor MockSandboxToolCommandRunner: SandboxToolCommandRunning {
         stderrTee _: (any Writer)?
     ) async throws -> ContainerExecResult {
         calls.append(.root(command))
+        rootTargets.append(target)
         return rootResults.isEmpty ? .init(stdout: "", stderr: "", exitCode: 0) : rootResults.removeFirst()
     }
 
@@ -1771,17 +2417,84 @@ private func withRegisteredSandboxTools<T: Sendable>(
             config: config
         )
 
-        do {
-            let result = try await body()
+        // The background fixture launches one mock job. Give it an owned
+        // tool-call id so teardown can drain that job without clearing the
+        // shared registry or touching another test's entry.
+        let backgroundCallId = backgroundEnabled
+            ? (ChatExecutionContext.currentToolCallId ?? "sandbox-test-\(UUID().uuidString)")
+            : nil
+
+        @MainActor func finishFixture() async {
+            if let backgroundCallId {
+                // An unstructured cleanup task stays uncancelled when the
+                // fixture body throws CancellationError or cancels itself.
+                await Task { @MainActor in
+                    await drainBackgroundFixture(toolCallId: backgroundCallId, agentName: resolvedAgentName)
+                }.value
+            }
             ToolRegistry.shared.unregisterAllSandboxTools()
             await SandboxToolCommandRunnerRegistry.shared.reset()
+        }
+
+        do {
+            let result: T
+            if let backgroundCallId {
+                result = try await ChatExecutionContext.$currentToolCallId.withValue(backgroundCallId) {
+                    try await withSandboxToolScope { try await body() }
+                }
+            } else {
+                result = try await withSandboxToolScope { try await body() }
+            }
+            await finishFixture()
             return result
         } catch {
-            ToolRegistry.shared.unregisterAllSandboxTools()
-            await SandboxToolCommandRunnerRegistry.shared.reset()
+            await finishFixture()
             throw error
         }
     }
+}
+
+@MainActor
+private func drainBackgroundFixture(toolCallId: String, agentName: String) async {
+    guard let entry = await LiveExecRegistry.shared.handle(toolCallId: toolCallId) else { return }
+    let deadline = ContinuousClock.now.advanced(by: .seconds(8))
+    while ContinuousClock.now < deadline {
+        if await LiveExecRegistry.shared.handle(toolCallId: toolCallId) == nil { break }
+        try? await Task.sleep(nanoseconds: 10_000_000)
+    }
+    let remaining = await LiveExecRegistry.shared.handle(toolCallId: toolCallId)
+    #expect(remaining == nil, "the fixture's mock background job must finish and leave its normal grace tail")
+    #expect(entry.currentStatus() == .exited(0), "the real poll must report the mock process exited")
+    if remaining != nil {
+        // A failed teardown must not leak another poll into later tests.
+        // Preserve the failed assertions; cancel only this owned resource.
+        entry.onDrop?()
+        await LiveExecRegistry.shared.unregister(toolCallId: toolCallId)
+    }
+    await SandboxBackgroundJobs.shared.unregister(agentName: agentName, pid: entry.pid)
+}
+
+private enum SandboxFixtureBodyError: Error {
+    case expected
+}
+
+/// The sandbox adapters run by name only inside a request scope, as they do
+/// behind a chat or agent request.
+func withSandboxToolScope<T: Sendable>(
+    isolation: isolated (any Actor)? = #isolation,
+    _ body: () async throws -> T
+) async rethrows -> T {
+    let names = await MainActor.run {
+        ToolRegistry.sandboxBackendAdapterToolNames
+            .union(ToolRegistry.sandboxControlPlaneToolNames)
+            .union(ToolRegistry.shared.builtInSandboxToolNamesSnapshot)
+    }
+    let scope = ToolExecutionScope(
+        exposed: names.sorted().map {
+            Tool(type: "function", function: ToolFunction(name: $0, description: nil, parameters: nil))
+        }
+    )
+    return try await ChatExecutionContext.$toolExecutionScope.withValue(scope) { try await body() }
 }
 
 private func parseJSON(_ string: String) throws -> [String: Any]? {

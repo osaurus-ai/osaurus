@@ -28,7 +28,7 @@ public enum AgentInviteError: Error, LocalizedError {
         case .agentMissingIdentity:
             return "This agent has no derived crypto identity yet."
         case .relayBaseURLMissing:
-            return "The agent's relay tunnel is not connected."
+            return "The agent's remote access isn't connected. Turn it on in Sharing → Access."
         case .signingFailed:
             return "Could not sign the invite payload."
         case .signatureMismatch:
@@ -207,7 +207,7 @@ public enum AgentInviteIssuer {
         expiresAt: Date
     ) throws -> AgentInvite {
         guard MasterKey.exists() else { throw AgentInviteError.identityMissing }
-        guard let address = agent.agentAddress, let index = agent.agentIndex else {
+        guard let address = agent.agentAddress, let keyPath = agent.agentKeyPath else {
             throw AgentInviteError.agentMissingIdentity
         }
         guard !relayBaseURL.isEmpty else {
@@ -228,7 +228,7 @@ public enum AgentInviteIssuer {
         // Sign with the agent's per-agent child key (NOT the master key) so a
         // compromised invite signature can never impersonate the master.
         let payload = AgentInvite.signingPayload(addr: address, nonce: nonce, exp: exp)
-        var childKey = AgentKey.derive(masterKey: masterKey, index: index)
+        var childKey = AgentKey.derive(masterKey: masterKey, path: keyPath)
         defer { Self.zero(&childKey) }
         let sig: Data
         do {

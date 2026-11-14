@@ -1,0 +1,12 @@
+{
+  "id": "onboarding.step-control",
+  "domain": "onboarding",
+  "label": "onboarding • skip, back, later, and card names move the plan",
+  "query": "step_control",
+  "fixtures": {},
+  "expect": {
+    "onboarding": {
+      "check": "step_control"
+    }
+  }
+}

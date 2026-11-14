@@ -1,0 +1,82 @@
+{
+  "id": "workflow.team-ask-courier-reply",
+  "domain": "workflow",
+  "label": "workflow • prepared ask: what needs a reply",
+  "query": "prepared ask: what needs a reply",
+  "notes": "Runs the shipped file. Every tool step returns its fixture under its teammate, so nothing on this Mac is read. The fixtures are the shapes `mail_list` and `mail_read` return; the receipt sender is left out of the reads. The ask is about the venue, which only the body names.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "bundled": "prepared-ask-courier-reply",
+      "input": {},
+      "toolResults": {
+        "read": {
+          "messages": [
+            {
+              "id": "<friday-7@kim.test>",
+              "subject": "Quick question about Friday",
+              "sender": "Alex Kim <alex@kim.test>",
+              "dateReceived": "{{date:yesterday_start+900m}}",
+              "isRead": true,
+              "isFlagged": false,
+              "mailboxPath": "INBOX"
+            },
+            {
+              "id": "<r-5521@store.test>",
+              "subject": "Your receipt",
+              "sender": "Store <receipts@store.test>",
+              "dateReceived": "{{date:yesterday_start+540m}}",
+              "isRead": true,
+              "isFlagged": false,
+              "mailboxPath": "INBOX"
+            }
+          ],
+          "count": 2,
+          "mailbox_path": "INBOX",
+          "truncated": false
+        },
+        "bodies.item": {
+          "message": {
+            "id": "<friday-7@kim.test>",
+            "subject": "Quick question about Friday",
+            "sender": "Alex Kim <alex@kim.test>",
+            "to": ["me@example.test"],
+            "cc": [],
+            "dateReceived": "{{date:yesterday_start+900m}}",
+            "isRead": true,
+            "isFlagged": false,
+            "isJunk": false,
+            "mailboxPath": "INBOX",
+            "content": "Hey! Can you confirm the venue for Friday's dinner? I need to book a table by tonight.",
+            "attachments": []
+          }
+        }
+      },
+      "toolArguments": {
+        "read": {
+          "since": "{{date:days_ago:3}}",
+          "limit": 40
+        },
+        "bodies.item": {
+          "id": "<friday-7@kim.test>"
+        }
+      },
+      "outputKeys": [
+        "answer"
+      ],
+      "outputContains": {
+        "answer": [
+          "venue"
+        ]
+      },
+      "outputExcludes": {
+        "answer": [
+          "{",
+          "}",
+          "\": \"",
+          "\\n"
+        ]
+      }
+    }
+  }
+}

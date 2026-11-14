@@ -20,8 +20,8 @@ With Remote Providers, you can:
 
 ### Via the UI
 
-1. Open the Management window (`⌘ Shift M`)
-2. Click **Providers** in the sidebar
+1. Open Settings… (`⌘,`)
+2. Click **Providers** in the sidebar (Models group)
 3. Click **Add Provider**
 4. Select a preset or choose **Custom**
 5. Configure the connection settings
@@ -29,17 +29,28 @@ With Remote Providers, you can:
 
 ### Provider Presets
 
-Osaurus includes presets for common providers:
+Osaurus includes presets for common providers (`Models/Configuration/ProviderPresets.swift`).
+OpenAI, xAI and OpenRouter also offer a browser sign-in and are listed first;
+the rest are under **Use an API Key**:
 
-| Preset         | Host              | Port | Base Path | API Format | Auth             |
-| -------------- | ----------------- | ---- | --------- | ---------- | ---------------- |
-| **Anthropic**  | api.anthropic.com | 443  | /v1       | Anthropic  | API Key required |
-| **OpenAI**     | api.openai.com    | 443  | /v1       | OpenAI     | API Key required |
-| **xAI**        | api.x.ai          | 443  | /v1       | OpenAI     | API Key required |
-| **OpenRouter** | openrouter.ai     | 443  | /api/v1   | OpenAI     | API Key required |
-| **Custom**     | (you specify)     | —    | /v1       | OpenAI     | Optional         |
+| Preset                   | Host                              | Base Path      | API Format     | Auth             |
+| ------------------------ | --------------------------------- | -------------- | -------------- | ---------------- |
+| **OpenAI**               | api.openai.com                    | /v1            | Open Responses | Sign-in or API Key |
+| **xAI**                  | api.x.ai                          | /v1            | OpenAI         | Sign-in or API Key |
+| **OpenRouter**           | openrouter.ai                     | /api/v1        | OpenAI         | Sign-in or API Key |
+| **Anthropic**            | api.anthropic.com                 | /v1            | Anthropic      | API Key          |
+| **AtlasCloud**           | api.atlascloud.ai                 | /v1            | OpenAI         | API Key          |
+| **Azure OpenAI Foundry** | (your resource host)              | /openai/v1     | Azure OpenAI   | API Key          |
+| **DeepSeek**             | api.deepseek.com                  | /v1            | OpenAI         | API Key          |
+| **Fireworks AI**         | api.fireworks.ai                  | /inference/v1  | OpenAI         | API Key          |
+| **Google**               | generativelanguage.googleapis.com | /v1beta        | Gemini         | API Key          |
+| **MiniMax**              | api.minimax.io                    | /v1            | OpenAI         | API Key          |
+| **Mistral**              | api.mistral.ai                    | /v1            | OpenAI         | API Key          |
+| **Venice AI**            | api.venice.ai                     | /api/v1        | OpenAI         | API Key          |
+| **Ollama**               | localhost:11434 (HTTP)            | /v1            | OpenAI         | No Auth          |
+| **Custom**               | (you specify)                     | /v1            | OpenAI         | No Auth or API Key |
 
-**Note:** For Ollama, LM Studio, or other OpenAI-compatible endpoints, use the **Custom** preset and configure the host/port manually. See [Provider-Specific Notes](#provider-specific-notes) for configuration examples.
+**Note:** For LM Studio or other OpenAI-compatible endpoints, use **Add Custom Endpoint** and configure the host/port manually. See [Provider-Specific Notes](#provider-specific-notes) for configuration examples.
 
 ### API Format Types
 
@@ -67,7 +78,7 @@ Osaurus includes presets for common providers:
 
 | Setting       | Description                                  |
 | ------------- | -------------------------------------------- |
-| **Auth Type** | None or API Key                              |
+| **Auth Type** | No Auth or API Key                           |
 | **API Key**   | Your provider's API key (stored in Keychain) |
 
 ### Advanced Settings
@@ -75,9 +86,12 @@ Osaurus includes presets for common providers:
 | Setting            | Description                               | Default |
 | ------------------ | ----------------------------------------- | ------- |
 | **Enabled**        | Whether the provider is active            | true    |
-| **Auto-connect**   | Connect automatically when Osaurus starts | true    |
-| **Timeout**        | Request timeout in seconds                | 60      |
+| **Request Timeout** | Request timeout in seconds (10–300, or **Disable timeout** for no limit) | 60 |
 | **Custom Headers** | Additional HTTP headers to send           | {}      |
+
+Providers added from the app always connect when Osaurus starts
+(`autoConnect: true`); there is no control for it in the sheet. The value can
+still be set in a declarative config document.
 
 ### Custom Headers
 
@@ -207,20 +221,58 @@ forwarded rather than silently dropped, with per-format support:
   the upstream's own error.
 - **Gemini**: `seed` maps to `generationConfig.seed` and JSON mode maps to
   `generationConfig.responseMimeType: "application/json"`.
-- **Anthropic**: the Messages API has no `seed` equivalent. Its structured
-  outputs feature (`output_config.format`) only accepts a strict
+- **Compatible Responses endpoints**: explicit `seed`, `repetition_penalty`,
+  `top_k`, `min_p`, and `chat_template_kwargs` use Osaurus extensions. The
+  upstream remains responsible for accepting them. The Codex protocol rejects
+  unsupported extensions explicitly.
+- **Anthropic**: the Messages API has no `seed` or multiplicative
+  `repetition_penalty` equivalent; either explicit override returns a typed
+  client error before HTTP. Gemini also rejects `repetition_penalty`.
+  Anthropic's structured outputs feature (`output_config.format`) only accepts a strict
   `json_schema` (every object level must set `additionalProperties: false`),
   which has no faithful mapping from schema-free `json_object` mode — so
   JSON mode is omitted on that wire and the model may still fence or
   preface its JSON.
-- **Remote agent runs (Mode 2)**: all caller sampling fields, including seed
-  and JSON mode, are stripped — the remote agent owns its generation config.
+- **Remote agent runs (Mode 2)**: the remote agent owns its generation config.
+  Explicit seed or repetition-penalty overrides are rejected; the existing
+  host-owned handling of other sampling and JSON-mode settings is unchanged.
 
 Media inputs follow the same reject-loudly rule: audio (`input_audio`) and
 video (`video_url`) content parts have no mapping on the Anthropic and Gemini
 wires and return a typed error instead of being dropped from the conversation.
 OpenAI-compatible routes forward multimodal content parts as-is and defer to
 the upstream's own validation.
+
+### Prompt Caching on Remote Routes
+
+Multi-turn chats and agent loops re-send the same system prompt, tool schemas,
+and history every turn. Osaurus keeps that prefix byte-stable (see
+[JSON Determinism](JSON_DETERMINISM.md)) and then enables each provider's own
+prompt cache so repeated input bills at the provider's cached rate:
+
+- **OpenAI (`api.openai.com`), Azure OpenAI Foundry, OpenRouter, Osaurus
+  Router**: a session-scoped `prompt_cache_key` (`osaurus-session-{id}`) is
+  sent on every turn so one conversation stays on one cache shard. OpenRouter
+  additionally receives `session_id` for sticky upstream routing. Other
+  OpenAI-compatible hosts (xAI, DeepSeek, Fireworks, Mistral, custom) get
+  neither field: strict schemas can reject unknown keys, and their caches are
+  automatic where they exist.
+- **Anthropic**: a top-level `cache_control` marker is always sent. The TTL is
+  `1h` when the last message is a user turn (a human gap is likely) and the
+  default 5 minutes when the last message is a tool result (tight agent loop),
+  balancing the 2x / 1.25x write premium against the 0.1x read rate.
+- **Gemini**: implicit context caching only; no request field is needed.
+- **Osaurus Router**: forwards the key and injects `cache_control` upstream,
+  then bills cached input at the discounted rate and echoes the split — see
+  [Osaurus Router → Prompt Cache Contract](OSAURUS_ROUTER.md#prompt-cache-contract).
+
+What the provider reports back is parsed into the turn's stats — OpenAI
+`prompt_tokens_details.cached_tokens` / `input_tokens_details.cached_tokens`,
+Anthropic `cache_read_input_tokens` (with `input_tokens` correctly summed
+across the uncached, cache-read and cache-write buckets), Gemini
+`usageMetadata.cachedContentTokenCount` — and shown as an "N cached" chip in
+the assistant footer when non-zero. No cached-token field means "unknown", not
+zero.
 
 ---
 
@@ -241,16 +293,15 @@ servers.
 See [Osaurus Router](OSAURUS_ROUTER.md) for the Router request contract,
 streaming diagnostics, billing hints, idempotency behavior, and local ledger.
 
-### Osaurus Agents (paired / discovered)
+### Osaurus Agents (paired)
 
-A native Osaurus peer — paired over the LAN via Bonjour or through a relay
-invite — is added as an `.osaurus` provider and can be used **two ways**:
+A native Osaurus peer — paired through a relay invite — is added as an `.osaurus` provider and can be used **two ways**:
 
 - **Inference backend (Mode 1).** Treated like any OpenAI-compatible provider:
   requests go to `/chat/completions`, your selected model and sampling settings
   are honored, and the **local** agent loop drives any tools. Pick one of the
   peer's models from the model selector.
-- **Remote agent run (Mode 2).** When you select a paired/discovered *agent*
+- **Remote agent run (Mode 2).** When you select a paired *agent*
   (not just one of its models), the conversation runs **fully server-side** on
   the peer via `/agents/{address}/run`: the remote agent uses its **own** model,
   system prompt, memory, and tools, and only text deltas (plus sanitized

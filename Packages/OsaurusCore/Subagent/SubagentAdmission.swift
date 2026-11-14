@@ -87,7 +87,7 @@ public actor SubagentAdmission {
     ///
     /// A batch asks for its desired number of sequence slots and receives the
     /// currently available subset atomically. This prevents two independent
-    /// `spawn_batch` calls from each planning against the full engine/RAM
+    /// waves from each planning against the full engine/RAM
     /// ceiling and collectively oversubscribing it.
     public enum SlotOutcome: Sendable, Equatable {
         case admitted(slots: Int)

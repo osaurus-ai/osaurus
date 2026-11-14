@@ -81,6 +81,10 @@ public struct RouterBillingEntry: Codable, Sendable, Identifiable, Equatable {
     public let tokenSource: String
     public let inputTokens: Int
     public let outputTokens: Int
+    /// Prompt-cache split echoed by the router (schema v3). Subsets of
+    /// `inputTokens`; `0` on rows written before cache-aware billing.
+    public let cachedInputTokens: Int
+    public let cacheWriteTokens: Int
     public let costMicro: String
     public let status: String
     public var outcome: RouterBillingOutcome
@@ -96,6 +100,8 @@ public struct RouterBillingEntry: Codable, Sendable, Identifiable, Equatable {
         tokenSource: String,
         inputTokens: Int,
         outputTokens: Int,
+        cachedInputTokens: Int = 0,
+        cacheWriteTokens: Int = 0,
         costMicro: String,
         status: String,
         outcome: RouterBillingOutcome,
@@ -110,6 +116,8 @@ public struct RouterBillingEntry: Codable, Sendable, Identifiable, Equatable {
         self.tokenSource = tokenSource
         self.inputTokens = inputTokens
         self.outputTokens = outputTokens
+        self.cachedInputTokens = max(0, cachedInputTokens)
+        self.cacheWriteTokens = max(0, cacheWriteTokens)
         self.costMicro = costMicro
         self.status = status
         self.outcome = outcome
@@ -124,7 +132,7 @@ public final class RouterBillingDatabase: @unchecked Sendable {
 
     /// Highest schema version this build knows how to produce. Opening a DB
     /// stamped newer than this is refused (forward-version fail-fast).
-    private static let latestSchemaVersion = 2
+    private static let latestSchemaVersion = 3
 
     /// Retention cap: keep at most this many rows, and drop anything older than
     /// `maxRetentionDays`. A billing ledger is metadata-only and tiny, but it's
@@ -170,6 +178,13 @@ public final class RouterBillingDatabase: @unchecked Sendable {
     )
 
     func openInMemory() throws {
+        try openInMemory(upToSchemaVersion: Self.latestSchemaVersion)
+    }
+
+    /// Test hook: open an in-memory ledger migrated only up to `version`, so
+    /// migration tests can seed pre-migration rows (via `executeForTesting`)
+    /// and then finish with `migrateToLatestForTesting()`.
+    func openInMemory(upToSchemaVersion version: Int) throws {
         try queue.sync {
             guard db == nil else { return }
             db = try EncryptedSQLiteOpener.open(
@@ -177,8 +192,23 @@ public final class RouterBillingDatabase: @unchecked Sendable {
                 key: nil,
                 applyPerfPragmas: false
             )
-            try runMigrations()
+            try runMigrations(upTo: version)
         }
+    }
+
+    /// Test hook: raw SQL against the open connection (schema seeding only).
+    func executeForTesting(_ sql: String) throws {
+        try queue.sync { try executeRaw(sql) }
+    }
+
+    /// Test hook: run any remaining migrations up to the latest schema.
+    func migrateToLatestForTesting() throws {
+        try queue.sync { try runMigrations() }
+    }
+
+    /// Current `PRAGMA user_version`. Exposed for migration tests.
+    func schemaVersionForTesting() throws -> Int {
+        try queue.sync { try getSchemaVersion() }
     }
 
     public func close() {
@@ -194,7 +224,7 @@ public final class RouterBillingDatabase: @unchecked Sendable {
     private func openConnection() throws {
         let path = OsaurusPaths.billingLedgerDatabaseFile().path
         do {
-            db = try OsaurusStorageOpener.open(path: path)
+            db = try OsaurusStorageOpener.open(path: path, cacheTier: .cold)
         } catch let error as EncryptedSQLiteError {
             throw RouterBillingDatabaseError.failedToOpen(error.localizedDescription)
         }
@@ -202,7 +232,7 @@ public final class RouterBillingDatabase: @unchecked Sendable {
 
     // MARK: - Schema & Migrations
 
-    private func runMigrations() throws {
+    private func runMigrations(upTo target: Int = RouterBillingDatabase.latestSchemaVersion) throws {
         let currentVersion = try getSchemaVersion()
         // A database stamped by a newer build carries columns this build doesn't
         // understand; reading/writing it as the older schema would silently drop
@@ -213,9 +243,11 @@ public final class RouterBillingDatabase: @unchecked Sendable {
                 "on-disk schema v\(currentVersion) is newer than supported v\(Self.latestSchemaVersion)"
             )
         }
+        let target = min(target, Self.latestSchemaVersion)
         do {
-            if currentVersion < 1 { try migrateToV1() }
-            if currentVersion < 2 { try migrateToV2() }
+            if currentVersion < 1, target >= 1 { try migrateToV1() }
+            if currentVersion < 2, target >= 2 { try migrateToV2() }
+            if currentVersion < 3, target >= 3 { try migrateToV3() }
         } catch {
             throw RouterBillingDatabaseError.migrationFailed("v\(currentVersion + 1): \(error.localizedDescription)")
         }
@@ -267,11 +299,20 @@ public final class RouterBillingDatabase: @unchecked Sendable {
     }
 
     private func migrateToV2() throws {
-        try executeRaw("ALTER TABLE router_billing ADD COLUMN request_id TEXT")
+        try addColumnIfMissing("request_id", "TEXT")
         try executeRaw(
             "CREATE INDEX IF NOT EXISTS idx_router_billing_request ON router_billing(request_id)"
         )
         try setSchemaVersion(2)
+    }
+
+    /// Cache-aware billing: the router echoes how much of `input_tokens` was
+    /// served from / written to the upstream prompt cache. Additive, defaulted
+    /// to 0 so pre-migration rows read back as "no cache activity".
+    private func migrateToV3() throws {
+        try addColumnIfMissing("cached_input_tokens", "INTEGER NOT NULL DEFAULT 0")
+        try addColumnIfMissing("cache_write_tokens", "INTEGER NOT NULL DEFAULT 0")
+        try setSchemaVersion(3)
     }
 
     // MARK: - Raw execution
@@ -296,6 +337,18 @@ public final class RouterBillingDatabase: @unchecked Sendable {
         }
         defer { sqlite3_finalize(statement) }
         try handler(statement)
+    }
+
+    /// Stores converted by an older build lost `user_version` and re-run
+    /// migrations whose columns are already there.
+    private func addColumnIfMissing(_ column: String, _ definition: String) throws {
+        var found = false
+        try executeRaw("PRAGMA table_info(router_billing)") { stmt in
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let name = sqlite3_column_text(stmt, 1), String(cString: name) == column { found = true }
+            }
+        }
+        if !found { try executeRaw("ALTER TABLE router_billing ADD COLUMN \(column) \(definition)") }
     }
 
     private func prepareAndExecute(
@@ -327,13 +380,13 @@ public final class RouterBillingDatabase: @unchecked Sendable {
     // MARK: - CRUD
 
     private static let columns =
-        "entry_id, request_id, created_at, session_id, turn_id, model, token_source, input_tokens, output_tokens, cost_micro, status, outcome, app_version"
+        "entry_id, request_id, created_at, session_id, turn_id, model, token_source, input_tokens, output_tokens, cost_micro, status, outcome, app_version, cached_input_tokens, cache_write_tokens"
 
     public func insert(_ entry: RouterBillingEntry) throws {
         try executeUpdate(
             """
             INSERT INTO router_billing (\(Self.columns))
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
             ON CONFLICT(entry_id) DO UPDATE SET
                 request_id    = excluded.request_id,
                 created_at    = excluded.created_at,
@@ -346,7 +399,9 @@ public final class RouterBillingDatabase: @unchecked Sendable {
                 cost_micro    = excluded.cost_micro,
                 status        = excluded.status,
                 outcome       = excluded.outcome,
-                app_version   = excluded.app_version
+                app_version   = excluded.app_version,
+                cached_input_tokens = excluded.cached_input_tokens,
+                cache_write_tokens  = excluded.cache_write_tokens
             """
         ) { stmt in
             Self.bindText(stmt, index: 1, value: entry.id)
@@ -362,6 +417,8 @@ public final class RouterBillingDatabase: @unchecked Sendable {
             Self.bindText(stmt, index: 11, value: entry.status)
             Self.bindText(stmt, index: 12, value: entry.outcome.rawValue)
             Self.bindText(stmt, index: 13, value: entry.appVersion)
+            sqlite3_bind_int(stmt, 14, Int32(clamping: entry.cachedInputTokens))
+            sqlite3_bind_int(stmt, 15, Int32(clamping: entry.cacheWriteTokens))
         }
     }
 
@@ -385,6 +442,8 @@ public final class RouterBillingDatabase: @unchecked Sendable {
                 tokenSource: entry.tokenSource,
                 inputTokens: entry.inputTokens,
                 outputTokens: entry.outputTokens,
+                cachedInputTokens: entry.cachedInputTokens,
+                cacheWriteTokens: entry.cacheWriteTokens,
                 costMicro: entry.costMicro,
                 status: entry.status,
                 outcome: existing.outcome == .pending ? entry.outcome : existing.outcome,
@@ -508,6 +567,8 @@ public final class RouterBillingDatabase: @unchecked Sendable {
             tokenSource: sqlite3_column_text(stmt, 6).map { String(cString: $0) } ?? "",
             inputTokens: Int(sqlite3_column_int(stmt, 7)),
             outputTokens: Int(sqlite3_column_int(stmt, 8)),
+            cachedInputTokens: Int(sqlite3_column_int(stmt, 13)),
+            cacheWriteTokens: Int(sqlite3_column_int(stmt, 14)),
             costMicro: sqlite3_column_text(stmt, 9).map { String(cString: $0) } ?? "0",
             status: sqlite3_column_text(stmt, 10).map { String(cString: $0) } ?? "",
             outcome: sqlite3_column_text(stmt, 11)

@@ -143,7 +143,7 @@ swift test --package-path Packages/OsaurusCore \
 Coverage expected from these tests:
 
 - OpenAI content parts decode for text, image_url, input_audio, and video_url.
-- `mapOpenAIChatToMLX` forwards images, videos, audios, assistant
+- `makeMLXChatMessages` forwards images, videos, audios, assistant
   `reasoning_content`, assistant tool calls, and tool-role `tool_call_id`.
 - Local reasoning policy is family-aware: Ling is non-reasoning, ZAYA defaults
   off unless explicitly opted in, Hy3 uses `reasoning_effort`, MiniMax and

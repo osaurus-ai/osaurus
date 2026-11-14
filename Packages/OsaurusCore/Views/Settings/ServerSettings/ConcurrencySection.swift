@@ -16,6 +16,7 @@
 import SwiftUI
 
 struct ConcurrencySection: View {
+    @Environment(\.theme) private var theme
     @Binding var draft: VMLXServerRuntimeSettings
 
     @State private var maxConcurrentText: String = ""
@@ -34,23 +35,24 @@ struct ConcurrencySection: View {
             blurb:
                 "How many same-model requests, including local subagents, the engine can decode at once. Higher = more throughput, more wired memory."
         ) {
-            SettingsStepperField(
+            SettingsStepperRow(
                 label: "Concurrent Sessions",
                 help:
-                    "Shared with Main Chat Spawn and every agent's Max subagents per batch. This is the BatchEngine ceiling for same-model local waves; RAM safety and current occupancy may run a smaller wave. 1 keeps the compile fast-path engaged; >1 allows concurrent decode when Continuous Batching is on.",
+                    "Shared with the Orchestrator's and every agent's Max local subagents at once. This is the BatchEngine ceiling for same-model local waves; memory checks and current occupancy may run a smaller wave. 1 uses the single-request path; compilation also requires Compiled Decode to be enabled and the loaded model to support it. Values above 1 allow concurrent decode when Continuous Batching is on.",
                 text: $maxConcurrentText,
                 range: SpawnBatchConcurrencyContract.bounds,
                 step: 1,
-                defaultValue: effectiveBatchEngineLimit
+                defaultValue: effectiveBatchEngineLimit,
+                anchorId: "settings.server.concurrentSessions"
             )
             .onChange(of: maxConcurrentText) { _, _ in commitMaxConcurrent() }
 
             Text(effectiveBatchEngineSummary)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+                .textStyle(.micro)
+                .foregroundStyle(theme.text.secondary)
 
             SettingsToggle(
-                title: L("Continuous Batching"),
+                title: "Continuous Batching",
                 description:
                     "When off, Osaurus pins each local model to one active job even if Concurrent Sessions is higher. Remote jobs can still overlap, and jobs targeting different local models remain serialized by model residency.",
                 isOn: $draft.concurrency.continuousBatching
@@ -60,7 +62,8 @@ struct ConcurrencySection: View {
                 label: "Prompt Prefill Chunk Size",
                 placeholder: "Empty = engine default",
                 help: "How many prompt tokens are prefilled per step.",
-                value: $draft.concurrency.prefillStepSize
+                value: $draft.concurrency.prefillStepSize,
+                anchorId: "settings.server.prefillChunkSize"
             )
 
         }

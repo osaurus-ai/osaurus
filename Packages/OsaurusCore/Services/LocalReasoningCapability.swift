@@ -17,6 +17,7 @@
 
 import Foundation
 import Darwin
+import MLXLMCommon
 
 enum LocalReasoningCapability {
     struct Capability: Sendable, Equatable {
@@ -36,14 +37,19 @@ enum LocalReasoningCapability {
         ///     false (`enable_thinking is false`) → absent kwarg ⇒ thinking ON.
         ///   • Gemma-4: the thinking branch is gated on an explicit truthy value
         ///     (`... and enable_thinking`) → absent kwarg ⇒ thinking OFF.
-        /// Only meaningful when `isToggleableThinking` is true.
+        /// Only meaningful when `isToggleableThinking` is true and
+        /// `preservesOmittedThinking` is false. A native third mode must be
+        /// presented as Default, not as either boolean.
         let defaultThinkingOn: Bool
+        /// Omission is a distinct native mode, not equivalent to either bool.
+        /// Explicit user choices still use enable_thinking true/false.
+        let preservesOmittedThinking: Bool
         /// The serving default the PUBLISHER explicitly stamped into
         /// `generation_config.json > default_chat_template_kwargs >
-        /// enable_thinking` — the same key HF transformers honors when the
-        /// caller omits the kwarg. `nil` when the bundle carries no such
-        /// declaration (template-inferred and jang_config defaults do NOT
-        /// populate this). Distinct from `defaultThinkingOn` so policy code
+        /// enable_thinking`, or JANG's supported `chat.thinking` declaration
+        /// explicitly naming that template flag. `nil` when the bundle carries
+        /// no such contract (template inference and legacy reasoning metadata
+        /// do not populate this). Distinct from `defaultThinkingOn` so policy code
         /// can tell a deliberate bundle contract (Laguna/Raptor) apart from
         /// a heuristic template read.
         let declaredDefaultThinkingOn: Bool?
@@ -56,13 +62,15 @@ enum LocalReasoningCapability {
             hasEnableThinkingKwarg: Bool,
             templateInjectsThinkTag: Bool,
             defaultThinkingOn: Bool,
-            declaredDefaultThinkingOn: Bool? = nil
+            declaredDefaultThinkingOn: Bool? = nil,
+            preservesOmittedThinking: Bool = false
         ) {
             self.supportsThinking = supportsThinking
             self.hasEnableThinkingKwarg = hasEnableThinkingKwarg
             self.templateInjectsThinkTag = templateInjectsThinkTag
             self.defaultThinkingOn = defaultThinkingOn
             self.declaredDefaultThinkingOn = declaredDefaultThinkingOn
+            self.preservesOmittedThinking = preservesOmittedThinking
         }
 
         static let none = Capability(
@@ -73,47 +81,29 @@ enum LocalReasoningCapability {
         )
     }
 
-    private static nonisolated let lock = NSLock()
-    private static nonisolated(unsafe) var cache: [String: Capability] = [:]
-    private static nonisolated(unsafe) var inFlightBackgroundDetects: Set<String> = []
+    typealias Cache = ModelMetadataCache<Capability>
+
+    private static nonisolated let cache = Cache()
 
     static func capability(forModelId modelId: String) -> Capability {
         let key = modelId.lowercased()
-        lock.lock()
-        if let hit = cache[key] {
-            lock.unlock()
-            return hit
-        }
-        lock.unlock()
+        if let hit = cache.lookup(key) { return hit }
 
-        // A cold miss detects from on-disk config files (chat template,
-        // generation config) — an open(2) that stalls for seconds under disk
-        // pressure. The main thread reaches this from view-body recomputes
-        // (the model chip's reasoning suffix), so it never pays that read:
-        // detect on a background queue, memoize, and post
-        // `.localModelsChanged` so observing UI recomputes with the real
-        // answer. `.none` in the interim only softens presentation; dispatch
-        // paths (ChatEngine, the batch adapter) run off-main and keep the
-        // synchronous, authoritative resolution.
+        // UI reads never block on bundle I/O. Dispatch waits for authoritative
+        // detection, retrying if repair/invalidation overtakes its disk read.
         if Thread.isMainThread {
             scheduleBackgroundDetect(key: key, modelId: modelId)
             return .none
         }
-
-        let detected = detect(modelId: modelId)
-
-        // A main-thread lookup during the launch scan can miss purely
-        // because the local-models cache is still cold (see
-        // `localDirectory(forModelId:)`). Don't memoize that provisional
-        // miss — the next lookup after the scan lands gets the real answer.
-        if detected == .none, !ModelManager.isLocalModelsCacheWarm {
-            return detected
+        while true {
+            if let hit = cache.lookup(key) { return hit }
+            guard let generation = cache.begin(key, background: false) else { continue }
+            let detected = detect(modelId: modelId)
+            let provisional = detected == .none && !ModelManager.isLocalModelsCacheWarm
+            if cache.finish(key, generation: generation, value: provisional ? nil : detected, background: false) {
+                return detected
+            }
         }
-
-        lock.lock()
-        cache[key] = detected
-        lock.unlock()
-        return detected
     }
 
     /// Authoritative dispatch-time resolution that never performs model
@@ -125,9 +115,19 @@ enum LocalReasoningCapability {
         await ModelManager.awaitLocalModelsCacheReadyForDispatch()
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
+                // Effort and boolean controls form one contract. Warming only
+                // the latter still drops saved effort choices on the main actor.
+                _ = DeclaredReasoningEffort.declaration(forModelId: modelId)
                 continuation.resume(returning: capability(forModelId: modelId))
             }
         }
+    }
+
+    /// A cold UI lookup is unknown, not Off. Start nonblocking discovery but
+    /// let the view withhold its default-state indicator until it is resolved.
+    static func capabilityForPresentation(forModelId modelId: String) -> Capability? {
+        _ = capability(forModelId: modelId)
+        return cache.lookup(modelId.lowercased())
     }
 
     /// Resolve a main-thread cold miss off-main. Deduped per key so a burst
@@ -136,22 +136,13 @@ enum LocalReasoningCapability {
     /// a `.none` computed before the local-models scan finishes is not
     /// memoized (and not announced), so the next lookup retries.
     private static func scheduleBackgroundDetect(key: String, modelId: String) {
-        lock.lock()
-        let alreadyRunning = !inFlightBackgroundDetects.insert(key).inserted
-        lock.unlock()
-        if alreadyRunning { return }
-
+        guard let generation = cache.begin(key, background: true) else { return }
         DispatchQueue.global(qos: .utility).async {
             let detected = detect(modelId: modelId)
             let provisionalMiss = detected == .none && !ModelManager.isLocalModelsCacheWarm
-            lock.lock()
-            if !provisionalMiss {
-                cache[key] = detected
-            }
-            inFlightBackgroundDetects.remove(key)
-            lock.unlock()
-            // Only a real capability changes what the UI showed for the
-            // interim `.none`; skip the notification churn otherwise.
+            guard cache.finish(key, generation: generation,
+                value: provisionalMiss ? nil : detected, background: true)
+            else { return }
             if !provisionalMiss, detected != .none {
                 DispatchQueue.main.async {
                     NotificationCenter.default.post(name: .localModelsChanged, object: nil)
@@ -164,10 +155,9 @@ enum LocalReasoningCapability {
     /// Also drops the declared effort-contract cache — both read the same
     /// bundles and every current call site wants them refreshed together.
     static func invalidate() {
-        lock.lock()
-        cache.removeAll()
-        lock.unlock()
+        cache.invalidate()
         DeclaredReasoningEffort.invalidate()
+        DSV41ModelDetection.invalidate()
     }
 
     // MARK: - Detection
@@ -192,6 +182,7 @@ enum LocalReasoningCapability {
                 declaredCapability: declaredCapability
             )
             let declared = generationConfigDeclaredThinkingOn(at: dir)
+                ?? jangThinkingDeclaredDefault(at: dir)
             if let metadataDefault = declared ?? readTemplateDefaultThinkingOn(at: dir) {
                 return Capability(
                     supportsThinking: analyzed.supportsThinking,
@@ -240,7 +231,8 @@ enum LocalReasoningCapability {
             hasEnableThinkingKwarg: templateCapability.hasEnableThinkingKwarg,
             templateInjectsThinkTag: templateCapability.templateInjectsThinkTag,
             defaultThinkingOn: templateCapability.defaultThinkingOn,
-            declaredDefaultThinkingOn: templateCapability.declaredDefaultThinkingOn
+            declaredDefaultThinkingOn: templateCapability.declaredDefaultThinkingOn,
+            preservesOmittedThinking: templateCapability.preservesOmittedThinking
         )
     }
 
@@ -270,17 +262,37 @@ enum LocalReasoningCapability {
         let hasOpen = lower.contains("<think>") || lower.contains("<|think|>")
         let hasClose = lower.contains("</think>")
         let hasKwarg = lower.contains("enable_thinking")
+        // 3. MiniMax-M3 / M3.1: a `<mm:think>` … `</mm:think>` rail (vmlx's
+        //    `minimax_m3` parser) and a three-state `thinking_mode` kwarg:
+        //    omitted = adaptive (the model's first token decides), `enabled`
+        //    prefills `<mm:think>`, `disabled` prefills `</mm:think>`. vmlx-swift
+        //    maps enable_thinking true / false onto enabled / disabled
+        //    (`MiniMaxM3ThinkingTemplateContext`), so the boolean toggle drives
+        //    it, and omission is a native third mode (Default = Adaptive).
+        //    A template with the rail but no `thinking_mode` (M3.1 as first
+        //    shipped) is adaptive-only: a reasoning channel, no toggle.
+        let hasMiniMaxRail = lower.contains("<mm:think>")
+        let miniMaxThinkingMode = hasMiniMaxRail && lower.contains("thinking_mode")
         let injects =
             template.range(
                 of: #"\{\{-?\s*['\"]<\|?think\|?>"#,
                 options: .regularExpression
             ) != nil
         return Capability(
-            supportsThinking: hasOpen || hasClose,
-            hasEnableThinkingKwarg: hasKwarg,
+            supportsThinking: hasOpen || hasClose || hasMiniMaxRail,
+            hasEnableThinkingKwarg: hasKwarg || miniMaxThinkingMode,
             templateInjectsThinkTag: injects,
-            defaultThinkingOn: detectDefaultThinkingOn(lower)
+            defaultThinkingOn: detectDefaultThinkingOn(lower),
+            preservesOmittedThinking: hasExplicitOnlyThinkingTail(lower) || miniMaxThinkingMode
         )
+    }
+
+    /// Recognize a generation tail that emits either native thinking prefill
+    /// only inside an `is defined` guard with no absent-kwarg fallback. The
+    /// guard must own BOTH explicit bool branches; a negative-only Qwen gate
+    /// or a Bailing normalization fallback does not have this contract.
+    static func hasExplicitOnlyThinkingTail(_ lower: String) -> Bool {
+        ThinkingTemplateContract.preservesOmittedThinking(lower)
     }
 
     /// Resolve the template's default thinking state (thinking when the
@@ -408,7 +420,8 @@ enum LocalReasoningCapability {
             #"set\s+[a-z0-9_]*(think|reason)[a-z0-9_]*\s*=\s*(true|false|['"]([a-z_]+)['"])"#
         if let regex = try? NSRegularExpression(pattern: assignment),
             let match = regex.firstMatch(
-                in: branch, range: NSRange(location: 0, length: (branch as NSString).length)
+                in: branch,
+                range: NSRange(location: 0, length: (branch as NSString).length)
             )
         {
             let ns = branch as NSString
@@ -556,8 +569,7 @@ enum LocalReasoningCapability {
     /// from the jang_config fallback below because this one is a deliberate
     /// wire contract (HF transformers applies the same key when the caller
     /// omits `enable_thinking`) and `AgentReasoningPolicy` honors it even on
-    /// agent/tool surfaces, while jang_config defaults remain
-    /// presentation-level metadata.
+    /// agent/tool surfaces. This takes precedence over JANG metadata.
     private static func generationConfigDeclaredThinkingOn(at dir: URL) -> Bool? {
         guard
             let data = readSmallConfigFile(dir.appendingPathComponent("generation_config.json")),
@@ -566,6 +578,23 @@ enum LocalReasoningCapability {
             let enableThinking = defaults["enable_thinking"] as? Bool
         else { return nil }
         return enableThinking
+    }
+
+    /// JANG's native thinking contract identifies the actual template control,
+    /// unlike legacy reasoning metadata used only for presentation. Preserve
+    /// omission on agent requests as well as chat; explicit user choices still
+    /// win. MiMo V2.6 ships this shape with default=true and a template that
+    /// selects the direct rail only when enable_thinking is explicitly false.
+    private static func jangThinkingDeclaredDefault(at dir: URL) -> Bool? {
+        guard
+            let data = readSmallConfigFile(dir.appendingPathComponent("jang_config.json")),
+            let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let chat = root["chat"] as? [String: Any],
+            let thinking = chat["thinking"] as? [String: Any],
+            thinking["supported"] as? Bool == true,
+            thinking["template_flag"] as? String == "enable_thinking"
+        else { return nil }
+        return jangReasoningDefaultThinkingOn(thinking)
     }
 
     /// Bundle metadata can override the Jinja fallback for omitted kwargs. Laguna

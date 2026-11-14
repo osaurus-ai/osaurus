@@ -37,6 +37,9 @@ public final class KnowledgeManager: ObservableObject {
     private var initialLoad: Task<Void, Never>?
     private var hasLoadedRegistry = false
 
+    /// Whether `collections` holds the registry yet.
+    public var isRegistryLoaded: Bool { hasLoadedRegistry }
+
     private init() {
         initialLoad = Task.detached(priority: .userInitiated) { [weak self] in
             let loaded = KnowledgeCollectionStore.loadAll()
@@ -124,7 +127,15 @@ public final class KnowledgeManager: ObservableObject {
         // Adopting a folder that is already a git repo: remember its
         // `origin` so the card shows the link and Sync can pull/push.
         // A repo without a remote stays local-only (gitRemoteURL nil).
-        if collection.isGitRepository {
+        // `isGitRepository` calls FileManager.fileExists (lstat) which can
+        // block on slow/network volumes. Run it off the main actor so the UI
+        // is never stalled. KnowledgeCollection is Sendable (struct), so the
+        // capture across the task boundary is safe.
+        let isGitRepo = await Task.detached(
+            priority: .userInitiated,
+            operation: { @Sendable [collection] in collection.isGitRepository }
+        ).value
+        if isGitRepo {
             collection.gitRemoteURL = await KnowledgeGitSyncService.shared.remoteURL(of: collection.folderURL)
         }
         KnowledgeCollectionStore.save(collection)

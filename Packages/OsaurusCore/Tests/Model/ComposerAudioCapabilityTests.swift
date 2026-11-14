@@ -34,7 +34,8 @@ struct ComposerAudioCapabilityTests {
             modelId: id,
             fallbackSupportsImages: true,
             localModelType: "gemma4",
-            localHasAudioTensors: true)
+            localHasAudioTensors: true,
+            localCapabilities: .init(supportsImage: true, supportsVideo: false, supportsAudio: true))
         #expect(withCheckpoint.supportsAudio)
         #expect(withCheckpoint.supportsImage, "audio must not cost the image path")
     }
@@ -47,7 +48,8 @@ struct ComposerAudioCapabilityTests {
             modelId: "OsaurusAI/gemma-4-E2B-it-8bit",
             fallbackSupportsImages: true,
             localModelType: "gemma4",
-            localHasAudioTensors: true)
+            localHasAudioTensors: true,
+            localCapabilities: .init(supportsImage: true, supportsVideo: false, supportsAudio: true))
         #expect(caps.summary.contains("audio"), "got \(caps.summary)")
     }
 

@@ -154,6 +154,30 @@ public enum StorageFormatConverter {
         if sqlite3_exec(src, "SELECT sqlcipher_export('conv')", nil, nil, nil) != SQLITE_OK {
             throw StorageConversionError.exportFailed(String(cString: sqlite3_errmsg(src)))
         }
+        if let failure = copyHeaderPragmas(on: src, into: "conv") {
+            throw StorageConversionError.exportFailed(failure)
+        }
+    }
+
+    /// `sqlcipher_export` copies schema and rows but not the header's
+    /// `user_version` / `application_id`. Every store gates its migrations on
+    /// `user_version`, so a copy left at 0 re-runs them, and a non-idempotent
+    /// step (`ADD COLUMN`) then fails and the store won't open. Returns the
+    /// error message on failure.
+    static func copyHeaderPragmas(on db: OpaquePointer, into schema: String) -> String? {
+        for pragma in ["user_version", "application_id"] {
+            var stmt: OpaquePointer?
+            guard sqlite3_prepare_v2(db, "PRAGMA main.\(pragma)", -1, &stmt, nil) == SQLITE_OK else {
+                sqlite3_finalize(stmt)
+                return "read \(pragma): \(String(cString: sqlite3_errmsg(db)))"
+            }
+            let value = sqlite3_step(stmt) == SQLITE_ROW ? sqlite3_column_int(stmt, 0) : 0
+            sqlite3_finalize(stmt)
+            if sqlite3_exec(db, "PRAGMA \(schema).\(pragma) = \(value)", nil, nil, nil) != SQLITE_OK {
+                return "write \(pragma): \(String(cString: sqlite3_errmsg(db)))"
+            }
+        }
+        return nil
     }
 
     private static func exportEncryptedToPlaintext(srcPath: String, key: SymmetricKey, dstPath: String) throws {

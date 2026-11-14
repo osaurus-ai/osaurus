@@ -139,3 +139,14 @@ protocol PerCallApprovalTool {
 extension PerCallApprovalTool {
     var requiresApprovalEveryCall: Bool { true }
 }
+
+/// Argument-aware variant of `PerCallApprovalTool`: the same tool call is
+/// pre-grantable for some arguments and per-call for others. `mail_compose`
+/// / `mail_reply` create a draft by default (a lease may cover that) but
+/// SEND when `send: true`, and a send on the user's behalf must show its
+/// card every time — "Allow for this run" taken for a draft must never
+/// silently authorise an outgoing email later in the same turn. Must be
+/// side-effect free: it runs before approval and before execution.
+protocol ArgumentAwarePerCallApprovalTool {
+    func requiresApprovalEveryCall(argumentsJSON: String) -> Bool
+}

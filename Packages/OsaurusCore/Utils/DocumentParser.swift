@@ -125,8 +125,17 @@ enum DocumentParser {
         return utType.conforms(to: .image)
     }
 
+    /// UTTypes for the file picker's `allowedContentTypes`. Must stay in
+    /// parity with `canParse(url:)`, which matches on extension: NSOpenPanel
+    /// greys out any file whose bound UTI does not conform to one of these,
+    /// so every extension `canParse` accepts is also resolved here through
+    /// `UTType(filenameExtension:)`. That picks up whichever UTI the user's
+    /// Mac currently binds to the extension, which matters for `.md`: editors
+    /// like Obsidian or Typora register their own markdown UTI that does not
+    /// conform to `public.plain-text`, so a declared-type-only list left
+    /// markdown files unselectable.
     static var supportedDocumentTypes: [UTType] {
-        [
+        let declared: [UTType] = [
             .plainText, .utf8PlainText,
             .pdf,
             .rtf, .rtfd,
@@ -139,8 +148,24 @@ enum DocumentParser {
             UTType("public.swift-source") ?? .data,
             UTType("com.netscape.javascript-source") ?? .data,
             UTType("public.shell-script") ?? .data,
-        ].compactMap { $0 } + structuredDocumentTypes
+        ]
+        let fromExtensions = plainTextExtensions.union(richDocumentExtensions)
+            .sorted()
+            .compactMap { UTType(filenameExtension: $0) }
+        var seen = Set<UTType>()
+        return (declared + markdownTypes + fromExtensions + structuredDocumentTypes)
+            .filter { seen.insert($0).inserted }
     }
+
+    /// Well-known markdown UTIs. Apple's `net.daringfireball.markdown` is the
+    /// system default; the others are what popular editors claim for `.md`.
+    /// Listed explicitly so the picker accepts markdown even when a file's
+    /// UTI was stamped by an app that no longer owns the extension.
+    private static let markdownTypes: [UTType] = [
+        "net.daringfireball.markdown",
+        "public.markdown",
+        "com.unknown.md",
+    ].compactMap { UTType($0) }
 
     private static let structuredDocumentTypes: [UTType] = [
         UTType(filenameExtension: "xlsx"),
