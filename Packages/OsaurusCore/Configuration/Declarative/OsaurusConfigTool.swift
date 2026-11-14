@@ -1123,6 +1123,9 @@ public final class OsaurusConfigTool: OsaurusTool, PermissionedTool, @unchecked 
                 if overridesFromYAML { return .failure(conflictingYAMLEnvelope()) }
                 yaml = contents
             case .failure(let message):
+                // The library loads in the background; wait for it (without
+                // blocking the main actor) so the hint lists user templates.
+                await TemplateStore.shared.libraryLoaded()
                 let agentNames = await MainActor.run {
                     TemplateStore.shared.orchestratorVisible(kind: .agent).map(\.name)
                 }
