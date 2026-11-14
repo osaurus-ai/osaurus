@@ -432,10 +432,11 @@ struct FileReadImageAndFormatContractTests {
     // MARK: - FileDiff grounding caps huge reads before stripping (APPLE-MACOS-2YA)
 
     @Test func fileDiffGroundingCapsHugeLineFormattedReads() {
-        // ~5MB of `N|line` rows — the size that hung the main actor when the
-        // whole payload was split on newlines before the cap applied.
-        let rows = (1...200_000).map { "\($0)|line number \($0) payload" }
+        // Comfortably past the cap (~560KB of `N|line` rows) so the cut lands
+        // mid-payload; production reads can reach 5MB.
+        let rows = (1...20_000).map { "\($0)|line number \($0) payload" }
         let text = rows.joined(separator: "\n")
+        #expect(text.count > ContentBlock.knownFileContentCap)
         let result = ToolEnvelope.success(
             tool: "file_read",
             result: ["kind": "file", "path": "big.txt", "source": "raw_text", "text": text, "line_format": "N|"]
@@ -460,12 +461,12 @@ struct FileReadImageAndFormatContractTests {
         #expect(content.split(separator: "\n").allSatisfy { $0.hasPrefix("line number ") && $0.hasSuffix(" payload") })
     }
 
-    @Test func fileDiffGroundingCapsWrittenAndAppendedContent() {
+    @Test func fileDiffGroundingCapsWrittenAndAppendedContent() throws {
         let big = String(repeating: "x", count: ContentBlock.knownFileContentCap + 10)
-        func writeTurn(id: String, mode: String?) -> ChatTurn {
+        func writeTurn(id: String, mode: String?) throws -> ChatTurn {
             var args: [String: Any] = ["path": "w.txt", "content": big]
             if let mode { args["mode"] = mode }
-            let data = try! JSONSerialization.data(withJSONObject: args)
+            let data = try JSONSerialization.data(withJSONObject: args)
             let turn = ChatTurn(role: .assistant, content: "")
             turn.toolCalls = [
                 ToolCall(
@@ -477,8 +478,8 @@ struct FileReadImageAndFormatContractTests {
             return turn
         }
         let known = ContentBlock.knownFileContents(in: [
-            writeTurn(id: "1", mode: nil),
-            writeTurn(id: "2", mode: "append"),
+            try writeTurn(id: "1", mode: nil),
+            try writeTurn(id: "2", mode: "append"),
         ])
         #expect(known.first?.content.count == ContentBlock.knownFileContentCap)
     }
