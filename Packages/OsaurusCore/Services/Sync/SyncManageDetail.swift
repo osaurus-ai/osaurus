@@ -191,12 +191,23 @@ final class SyncManageDetail {
         let scope = conversation.scope
         var existing: [String: (id: String, digest: String?)] = [:]
         var stale: [String] = []
+        // Only a message written as this user can have its app data replaced (sync error 103 otherwise,
+        // on every publish); one written under another key is removed and sent again.
+        let me = "u:" + (try core.userKey())
         var cursor: PageCursor?
         repeat {
             let page = try core.messages(scope: scope, before: cursor, limit: 200)
             for message in page.messages {
                 guard let (key, digest) = detailKey(of: message) else { continue }
-                if existing[key] != nil { stale.append(message.id) } else { existing[key] = (message.id, digest) }
+                if message.author != me {
+                    log.info(
+                        "detail \(key, privacy: .public) written as \(message.author, privacy: .public): sent again")
+                    stale.append(message.id)
+                } else if existing[key] != nil {
+                    stale.append(message.id)
+                } else {
+                    existing[key] = (message.id, digest)
+                }
             }
             cursor = page.nextCursor
         } while cursor != nil

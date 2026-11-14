@@ -40,9 +40,24 @@ final class SyncConversationStore: ConversationStore, @unchecked Sendable {
         /// Attachments the message carries natively. A message's files can't
         /// change after it is sent, so a turn that gains one is sent again.
         var attachmentIds: Set<UUID>
-        /// This device wrote the message, so it alone writes its turn detail.
+        /// The engine lets this device replace the message's app data: written as this user, or
+        /// sent from here as an agent. One written under an earlier user key isn't (sync error 103).
         var authoredHere = true
+        /// The engine lets this device edit the message's text: written as this user.
+        var editableHere = true
         var detailHash: String?
+    }
+
+    /// Whether `message` may have its app data replaced and its text edited from this device, by
+    /// the engine's own rules (`set_message_app_data`, `edit_message`).
+    static func authorship(of message: SyncMessage, me: String?, device: String) -> (appData: Bool, edit: Bool) {
+        let mine = me != nil && message.author == me
+        return (mine || (message.isAgent && message.authorDevice == device), mine)
+    }
+
+    /// This user as message authors name it (`u:<key>`).
+    static func principal(core: SyncCore) -> String? {
+        (try? core.userKey()).map { "u:" + $0 }
     }
 
     /// One session's messages, in order.
@@ -450,7 +465,7 @@ final class SyncConversationStore: ConversationStore, @unchecked Sendable {
                 // message's app data`): one another device wrote, an iPhone's prompt
                 // in a hosted chat say, stays as it wrote it. Trying failed the whole
                 // save, and its retry looped every 2 seconds.
-                if ref.authoredHere, turn.role != .tool, ref.contentHash != contentHash {
+                if ref.editableHere, turn.role != .tool, ref.contentHash != contentHash {
                     try core.editMessage(id: ref.messageId, content: encodedTurn.content)
                     ref.contentHash = contentHash
                 }
@@ -711,6 +726,7 @@ final class SyncConversationStore: ConversationStore, @unchecked Sendable {
     private func index(for sessionId: UUID, scope: String, core: SyncCore, reload: Bool = false) throws -> SessionIndex {
         if !reload, let cached = lock.withLock({ indexes[sessionId] }) { return cached }
         let messages = try allMessages(scope: scope, core: core)
+        let (me, device) = (Self.principal(core: core), core.deviceKey())
         var index = SessionIndex(repeated: Self.repeatedMessages(messages))
         for message in messages where !index.repeated.contains(message.id) {
             let appData = message.appData(SyncConversationMapper.turnNamespace)
@@ -738,7 +754,8 @@ final class SyncConversationStore: ConversationStore, @unchecked Sendable {
                 extras: extras,
                 incomplete: incomplete || appData?.blobs.contains(where: { !$0.available }) == true,
                 attachmentIds: attachmentIds,
-                authoredHere: message.authorDevice == core.deviceKey(),
+                authoredHere: Self.authorship(of: message, me: me, device: device).appData,
+                editableHere: Self.authorship(of: message, me: me, device: device).edit,
                 detailHash: Self.detailHash(of: message)
             )
         }
@@ -775,6 +792,7 @@ final class SyncConversationStore: ConversationStore, @unchecked Sendable {
         else { return nil }
         let local = SyncLocalSessionStore.load(id)
         var session = SyncConversationMapper.session(from: conversation, local: local)
+        let (me, device) = (Self.principal(core: core), core.deviceKey())
         guard let messages = try? allMessages(scope: scope, core: core) else { return session }
 
         var index = SessionIndex(repeated: Self.repeatedMessages(messages))
@@ -812,7 +830,8 @@ final class SyncConversationStore: ConversationStore, @unchecked Sendable {
                 incomplete: incomplete || appData?.blobs.contains(where: { !$0.available }) == true,
                 attachmentIds: SyncConversationMapper.nativeAttachmentIds(
                     of: message, object: SyncConversationMapper.parseObject(appData?.bytes) ?? [:]),
-                authoredHere: message.authorDevice == core.deviceKey(),
+                authoredHere: Self.authorship(of: message, me: me, device: device).appData,
+                editableHere: Self.authorship(of: message, me: me, device: device).edit,
                 detailHash: Self.detailHash(of: message)
             )
         }
