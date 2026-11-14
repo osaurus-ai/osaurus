@@ -156,6 +156,40 @@ struct SyncConversationStoreTests {
     }
 
     @Test
+    func resavesPickUpAppDataEditsToEarlierTurns() async throws {
+        try await withStore { store, core in
+            var session = toolSession()
+            try store.saveSession(session)
+            try store.saveSession(session)
+            let scope = try #require(store.scope(forSession: session.id))
+            let before = try messages(core, scope)
+
+            session.turns[1].thinking = "Call the weather tool for Lisbon."
+            session.turns[1].toolCalls = [
+                ToolCall(
+                    id: "call_1",
+                    type: "function",
+                    function: ToolCallFunction(name: "weather_lookup", arguments: #"{"city":"Lisbon"}"#)
+                )
+            ]
+            try store.saveSession(session)
+
+            let after = try messages(core, scope)
+            func turnAppDataHLC(_ message: OsaurusSync.Message) -> UInt64? {
+                message.appData.first { $0.namespace == "ai.osaurus.turn/1" }.map { UInt64($0.hlc) }
+            }
+            #expect(after.map(\.id) == before.map(\.id))
+            #expect(try #require(turnAppDataHLC(after[1])) > (try #require(turnAppDataHLC(before[1]))))
+            #expect(turnAppDataHLC(after[0]) == turnAppDataHLC(before[0]))
+            #expect(turnAppDataHLC(after[3]) == turnAppDataHLC(before[3]))
+            store.invalidateCaches()
+            let reloaded = try #require(store.loadSession(id: session.id))
+            #expect(reloaded.turns[1].thinking == "Call the weather tool for Lisbon.")
+            #expect(reloaded.turns[1].toolCalls?.first?.function.name == "weather_lookup")
+        }
+    }
+
+    @Test
     func savesOnlyTouchChangedTurns() async throws {
         try await withStore { store, core in
             var session = toolSession()

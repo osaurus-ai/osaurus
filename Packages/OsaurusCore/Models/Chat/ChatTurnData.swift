@@ -8,7 +8,7 @@
 import Foundation
 
 /// Codable version of ChatTurn for session persistence
-public struct ChatTurnData: Codable, Identifiable, Sendable {
+public struct ChatTurnData: Codable, Identifiable, Sendable, Equatable {
     public let id: UUID
     public let role: MessageRole
     public var content: String

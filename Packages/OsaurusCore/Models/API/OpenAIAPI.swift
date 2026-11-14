@@ -1507,7 +1507,7 @@ enum ToolChoiceOption: Codable, Sendable, Equatable {
 }
 
 /// Assistant tool call in responses
-public struct ToolCall: Codable, Sendable {
+public struct ToolCall: Codable, Sendable, Equatable {
     public let id: String
     public let type: String  // "function"
     public let function: ToolCallFunction
@@ -1522,7 +1522,7 @@ public struct ToolCall: Codable, Sendable {
     }
 }
 
-public struct ToolCallFunction: Codable, Sendable {
+public struct ToolCallFunction: Codable, Sendable, Equatable {
     public let name: String
     /// Arguments serialized as JSON string per OpenAI spec
     public let arguments: String
