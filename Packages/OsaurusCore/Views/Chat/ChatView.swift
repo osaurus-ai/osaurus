@@ -8334,6 +8334,8 @@ final class ChatSession: ObservableObject {
                     // through the post-tool recovery path.
                     var hasStructuredToolWorkThisRun = false
 
+                    let attachmentMessages = TurnAttachmentMessageCache()
+
                     /// Convert a single turn to a ChatMessage (returns nil if should be skipped)
                     @MainActor
                     func turnToMessage(_ t: ChatTurn, isLastTurn: Bool, isLatestUserTurn: Bool) -> ChatMessage? {
@@ -8349,20 +8351,24 @@ final class ChatSession: ObservableObject {
                             // on a picture) ride as multimodal tool messages
                             // for vision models. Same helper as warm-up so
                             // both serialise byte-identical history.
-                            return ToolResultMediaBridge.toolMessage(
-                                content: t.content,
-                                toolCallId: t.toolCallId,
-                                attachments: t.attachments,
-                                supportsImages: turnSupportsImages
-                            )
+                            return attachmentMessages.message(for: t) {
+                                ToolResultMediaBridge.toolMessage(
+                                    content: t.content,
+                                    toolCallId: t.toolCallId,
+                                    attachments: t.attachments,
+                                    supportsImages: turnSupportsImages
+                                )
+                            }
                         case .user:
-                            let base = Self.buildUserChatMessage(
-                                content: t.content,
-                                attachments: t.attachments,
-                                supportsImages: turnSupportsImages,
-                                supportsAudio: turnSupportsAudio,
-                                supportsVideo: turnSupportsVideo
-                            )
+                            let base = attachmentMessages.message(for: t) {
+                                Self.buildUserChatMessage(
+                                    content: t.content,
+                                    attachments: t.attachments,
+                                    supportsImages: turnSupportsImages,
+                                    supportsAudio: turnSupportsAudio,
+                                    supportsVideo: turnSupportsVideo
+                                )
+                            }
                             // Replay the frozen memory / screen-context block
                             // this turn was originally sent with, so its wire
                             // bytes never change once it has been part of a
