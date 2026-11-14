@@ -68,8 +68,17 @@ struct InspectorAssignedTextEditor: NSViewRepresentable {
         ]
         view.typingAttributes = attributes
         view.textStorage?.setAttributes(attributes, range: NSRange(location: 0, length: view.textStorage?.length ?? 0))
-        view.selectedRanges = selected.filter { NSMaxRange($0.rangeValue) <= (view.string as NSString).length }
+        view.selectedRanges = Self.restoredSelection(selected, length: (view.string as NSString).length)
         context.coordinator.measure(view)
+    }
+    /// The prior selection, minus ranges past the new end. Never empty:
+    /// `NSTextView` raises on an empty list, and an exception thrown through
+    /// a SwiftUI update corrupts later updates. Clearing the text from code
+    /// (a form reset after Send) drops every range, so the caret moves to the
+    /// end instead.
+    static func restoredSelection(_ selected: [NSValue], length: Int) -> [NSValue] {
+        let kept = selected.filter { NSMaxRange($0.rangeValue) <= length }
+        return kept.isEmpty ? [NSValue(range: NSRange(location: length, length: 0))] : kept
     }
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     @MainActor final class Coordinator: NSObject, NSTextViewDelegate {
