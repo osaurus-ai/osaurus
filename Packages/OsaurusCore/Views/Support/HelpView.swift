@@ -2,7 +2,7 @@
 //  HelpView.swift
 //  osaurus
 //
-//  Settings → Help. Two things on one page:
+//  The Help window's content (`HelpWindow`). Two things on one page:
 //
 //  - "Report a Problem": describe what went wrong, see exactly what is sent
 //    with it, tick the Terms and Privacy box, send.
@@ -80,13 +80,13 @@ struct HelpView: View {
     private var hasIdentity: Bool { OsaurusIdentity.existsCached() }
 
     private var identityRequiredSection: some View {
-        SettingsSection(title: "Report a Problem", anchorId: "help.report") {
+        SettingsSection(title: "Report a Problem") {
             SettingsEmptyState(
                 inline: "person.crop.circle.badge.questionmark",
                 title: "Set up your Osaurus ID to get help here",
                 hint: "Reports and replies are tied to your Osaurus ID, so we can answer you in the app.",
                 action: .init(title: L("Open Osaurus ID"), icon: "person.crop.circle") {
-                    ManagementStateManager.shared.selectedTab = .identity
+                    AppDelegate.shared?.showManagementWindow(initialTab: .identity)
                 }
             )
         }
@@ -128,7 +128,7 @@ struct HelpView: View {
     }
 
     private var reportSection: some View {
-        SettingsSection(title: "Report a Problem", anchorId: "help.report") {
+        SettingsSection(title: "Report a Problem") {
             if isAtOpenLimit {
                 SettingsEmptyState(
                     inline: "tray.full",
@@ -286,8 +286,7 @@ struct HelpView: View {
             title: "Your Reports",
             footer: support.threads.isEmpty
                 ? nil
-                : "Replies show up here. Osaurus checks for them when it opens, while you have an open report.",
-            anchorId: "help.reports"
+                : "Replies show up here. Osaurus checks for them when it opens, while you have an open report."
         ) {
             if support.threads.isEmpty {
                 if let error = support.refreshError, !support.hasLoaded {

@@ -27,7 +27,7 @@ usage metadata needed to bill credits" — with upstream providers disclaimed
 rather than guaranteed.
 
 Help reports are the one exception, and only by the user's own action. A report
-sent from Settings → Help stores what the user wrote (the description and any
+sent from the Help window stores what the user wrote (the description and any
 later messages in that thread) on the router, together with the app and macOS
 version, the Mac's model, chip and memory, and a metadata-only diagnostics
 bundle. Nothing is sent until the user ticks the Terms and Privacy box for
@@ -346,15 +346,15 @@ pulled — without a release. `AnnouncementsService` owns the client side:
 
 ## Help and Bug Reports
 
-Settings → Help (also the question mark on the main window rail) lets a user
-report a problem to the Osaurus team and read the replies in the app. Each
+The Help window, opened by the question mark on the main window rail, lets a
+user report a problem to the Osaurus team and read the replies in the app. Each
 report is a two-way thread on the router; staff answer from the admin console
 (`/support`). `SupportService` owns the client side, `HelpView` /
-`HelpThreadView` the page.
+`HelpThreadView` the window's content (`HelpWindow`).
 
 - Identity: every `/support/*` call is wallet-signed, like `/credits/*`. A
   report belongs to the wallet that sent it; there is no email and no separate
-  account. Without an Osaurus ID the page explains that and links to Osaurus
+  account. Without an Osaurus ID the window explains that and links to Osaurus
   ID instead of showing the form.
 - Endpoints: `GET /support/threads` (summaries plus `unread_count`),
   `POST /support/threads` (new report), `GET /support/threads/:id` (with
@@ -379,21 +379,20 @@ report is a two-way thread on the router; staff answer from the admin console
   the full tool registry, and sends the report with no diagnostics if it
   still does not fit. The preview says so when that happens.
 - Limits (router-enforced): 3 threads that are not closed per wallet, 5 new
-  threads per 24 hours, 30 messages per hour. The page hides the form at 3
+  threads per 24 hours, 30 messages per hour. The window hides the form at 3
   open reports rather than letting the send fail.
 - Status wording: `open` is "Waiting for us", `answered` is "Replied",
   `closed` is "Closed". Staff messages carry no author identity and render as
   "Osaurus team".
 - Unread: a thread is unread when a staff message is newer than the last time
   the user read or answered it. Opening a thread fetches it, then calls
-  `/read`; the count drives the dot on the rail's Help icon and the Help row
-  in the Settings sidebar. There is no push and no system notification.
+  `/read`; the count drives the dot on the rail's Help icon. There is no push and no system notification.
 - First action: `/support/*` does not count as the account's first action on
   the router, and `RouterCreditAcquisitionCoordinator.allowsSignedRequest`
   lets `/support` through while the welcome choice is pending, so reporting a
   problem never costs a first-time redeem code or the welcome credit.
 - Failure handling: background refresh failures keep the previous list and
-  show nothing. On the Help page, errors are mapped to plain sentences by
+  show nothing. In the Help window, errors are mapped to plain sentences by
   `SupportService.userMessage(for:)`; router error text is never shown.
 - Known limit: the app polls only while it knows of a report that is not
   closed. A staff reply on a closed thread moves it to `answered`, but the

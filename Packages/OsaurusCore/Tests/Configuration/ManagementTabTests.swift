@@ -84,7 +84,7 @@ struct ManagementTabTests {
     }
 
     @Test func groupedCategories() {
-        #expect(ManagementSection.general.tabs == [.settings, .chat, .keys, .identity, .privacy, .help])
+        #expect(ManagementSection.general.tabs == [.settings, .chat, .keys, .identity, .privacy])
         #expect(ManagementSection.sharing.tabs == [.workspaces, .access, .devices])
         #expect(ManagementSection.sharing.title == "Sharing")
         #expect(ManagementSection.models.tabs == [.models, .providers, .modelDefaults])
@@ -100,22 +100,6 @@ struct ManagementTabTests {
         #expect(ManagementSection.context.tabs == [.memory, .projects, .knowledge, .skills])
         #expect(ManagementTab.projects.parent == nil)
         #expect(ManagementTab.projects.label == "Projects")
-    }
-
-    /// Help is its own sidebar row at the end of General, reachable by the
-    /// deep link the rail button and announcements use, and by plain words.
-    @Test func helpIsATopLevelGeneralTab() {
-        #expect(ManagementSection.general.tabs.last == .help)
-        #expect(ManagementTab.help.section == .general)
-        #expect(ManagementTab.help.parent == nil)
-        #expect(ManagementTab.help.children.isEmpty)
-        #expect(ManagementTab.help.sidebarTab == .help)
-        #expect(ManagementTab.help.label == "Help")
-        #expect(ManagementTab.help.icon == "questionmark.circle.fill")
-        #expect(ManagementTab.visibleCases.contains(.help))
-        #expect(ManagementTab.resolved(from: "help") == .help)
-        #expect(ManagementTab.resolved(from: "support") == .help)
-        #expect(ManagementTab.resolved(from: "feedback") == .help)
     }
 
     // MARK: - Legacy raw-value resolution

@@ -721,17 +721,6 @@ struct SettingsSearchSelfFindProbe {
             ("Delete Project", "projects.delete"),
             ("Show Discovery Cards", "settings.chat.discoveryCards"),
             ("Set Up Osaurus", "settings.chat.setUpOsaurus"),
-            ("Help", "help.report"),
-            ("Report a Problem", "help.report"),
-            ("What went wrong?", "help.report"),
-            ("What's Included", "help.report"),
-            ("Send Report", "help.report"),
-            ("bug", "help.report"),
-            ("feedback", "help.report"),
-            ("contact", "help.report"),
-            ("Your Reports", "help.reports"),
-            ("New reply", "help.reports"),
-            ("Waiting for us", "help.reports"),
         ]
 
         let missed = labels.filter { label in

@@ -32,9 +32,11 @@ struct HelpThreadView: View {
 
     var body: some View {
         SettingsPage {
+            // Not the subject: page titles are one line that never truncates,
+            // so a long description would push the status and refresh out of
+            // the window. The subject is the first message below.
             SettingsPageHeader(
-                title: thread?.subject ?? L("Report"),
-                verbatimTitle: true,
+                title: "Report",
                 subtitle: thread.map(Self.sentLine(for:)),
                 verbatimSubtitle: true,
                 onRefresh: { Task { await load() } },

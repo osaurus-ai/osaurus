@@ -797,7 +797,6 @@ enum FeatureTelemetry {
         case .insights: return "insights"
         case .modelDefaults: return "model_defaults"
         case .keys: return "keys"
-        case .help: return "help"
         }
     }
 

@@ -73,7 +73,7 @@ final class SupportService: ObservableObject {
     /// True once a list fetch has succeeded in this run.
     @Published private(set) var hasLoaded = false
     @Published private(set) var isRefreshing = false
-    /// Why the last list refresh failed, for the Help page. Cleared by the
+    /// Why the last list refresh failed, for the Help window. Cleared by the
     /// next success. Background triggers never surface it anywhere else.
     @Published private(set) var refreshError: String?
 
@@ -145,7 +145,7 @@ final class SupportService: ObservableObject {
 
     /// Fetch the user's reports if the trigger's budget allows it.
     /// Concurrent callers share one in-flight request. Failures keep the
-    /// previous list; only the Help page shows `refreshError`.
+    /// previous list; only the Help window shows `refreshError`.
     func refreshIfDue(trigger: Trigger) async {
         if let inFlight {
             await inFlight.value

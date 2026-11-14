@@ -2740,26 +2740,6 @@ public enum SettingsSearchIndex {
                 "Websites asking you to sign in with your identity. Not Access Keys (Server → Access Keys) and not Connections (Main window → Workflows), which are sign-ins Osaurus uses."
         ),
         .init(
-            id: "help.report",
-            tab: .help,
-            title: "Report a Problem",
-            keywords: [
-                "bug", "bug report", "report a bug", "feedback", "support", "contact", "contact us",
-                "something is broken", "send report", "what's included", "what went wrong",
-            ],
-            disambiguation:
-                "Sends a report to the Osaurus team and gets a reply in the app. Not Devices ▸ Support Report, which saves sync logs to a file, and not Send Crash Reports (Privacy & Security)."
-        ),
-        .init(
-            id: "help.reports",
-            tab: .help,
-            title: "Your Reports",
-            keywords: [
-                "my reports", "sent reports", "replies", "reply from osaurus", "support reply",
-                "waiting for us", "new reply", "conversation with support",
-            ]
-        ),
-        .init(
             id: "workspaces.overview",
             tab: .workspaces,
             title: "Workspaces",
