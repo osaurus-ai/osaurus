@@ -981,6 +981,7 @@ public enum CapabilityClaimsEvaluator {
         // auth, rate, incomplete and cancellation errors must not be replayed.
         let maxJudgeAttempts = 3
         var lastError: Error?
+        var lastIncompleteRaw: String?
         var attemptsUsed = 0
         for attempt in 1 ... maxJudgeAttempts {
             attemptsUsed = attempt
@@ -988,7 +989,13 @@ public enum CapabilityClaimsEvaluator {
                 let response = try await ResponsesEvaluationStep.collect(engine: engine, request: request) {
                     judgeAttempt.observe($0)
                 }
-                try ResponsesEvaluationStep.requireNaturalFinal(response)
+                do {
+                    try ResponsesEvaluationStep.requireNaturalFinal(response)
+                } catch {
+                    lastIncompleteRaw =
+                        "[incomplete: \(response.reasoning.count) reasoning chars] " + response.text
+                    throw error
+                }
                 let raw = response.text
                 if let parsed = parseVerdicts(raw, expected: conditions.count) {
                     return CapabilityClaimsJudgeAudit(
@@ -1026,7 +1033,7 @@ public enum CapabilityClaimsEvaluator {
                 )
             },
             judgeModelId: resolvedModel,
-            raw: nil,
+            raw: lastIncompleteRaw,
             attempts: attemptsUsed
         )
     }
