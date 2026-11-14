@@ -1516,11 +1516,11 @@ extension ContentBlock {
 
     /// Tools whose results are surfaced through dedicated inline UI
     /// (todo banner, completion banner, clarify overlay) rather than
-    /// the generic tool-call chip group, plus the Orchestrator's `state`,
-    /// which is bookkeeping and never shown (Insights keeps it).
+    /// the generic tool-call chip group, plus the Orchestrator's retired
+    /// `state` call, which saved chats still carry and is never shown.
     /// Centralized so the chip filter and any other render-time skip stay
     /// in lockstep.
-    private static let agentLoopToolNames: Set<String> = ["todo", "complete", "clarify", StateTool.toolName]
+    private static let agentLoopToolNames: Set<String> = ["todo", "complete", "clarify", "state"]
 
     static func isAgentLoopToolName(_ name: String) -> Bool {
         agentLoopToolNames.contains(name)

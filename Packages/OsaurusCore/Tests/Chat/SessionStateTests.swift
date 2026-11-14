@@ -1,11 +1,11 @@
 //
-//  StateToolTests.swift
+//  SessionStateTests.swift
 //  OsaurusCoreTests
 //
-//  The Orchestrator's session state: a `state` call replaces the whole
-//  object (last call in a turn wins), a turn without one keeps the previous
-//  object marked stale, `in_flight` is always the harness's, and the block
-//  rides with the user turn.
+//  The Orchestrator's session state is the harness's: no tool writes it, a
+//  finished turn keeps the previous object marked stale until extraction
+//  replaces it, `in_flight` is always the harness's, and the block rides
+//  with the user turn.
 //
 
 import Foundation
@@ -15,57 +15,28 @@ import Testing
 
 @Suite(.serialized)
 @MainActor
-struct StateToolTests {
+struct SessionStateTests {
 
-    private static func callState(_ json: String, sessionId: String, agentId: UUID = Agent.defaultId) async -> String {
-        await ChatExecutionContext.$currentAgentId.withValue(agentId) {
-            await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
-                (try? await StateTool().execute(argumentsJSON: json)) ?? ""
-            }
+    @Test
+    func theOrchestratorIsNeverAskedToWriteState() {
+        #expect(!ToolRegistry.orchestratorRoutingToolNames.contains("state"))
+        #expect(!DefaultAgentSystemPromptBuilder.orchestratorRequiredToolNames.contains("state"))
+        #expect(!OrchestratorTurnBlock.presentingTurnToolNames.contains("state"))
+        #expect(!ToolRegistry.shared.isRegistered("state"))
+        let block = OrchestratorTurnBlock.injectedBlock(state: SessionState(goal: "g").rendered(), dispatchedTool: nil)
+        #expect(!block.contains("`state`"))
+        for result in [
+            HandoffResult.answer("a"), .applied("b"), .needsSetup("c"), .declined("d"),
+            .awaitingUser(RunRef(runId: "r", workflow: "w", status: "awaiting_user"), question: "q"),
+        ] {
+            let envelope = result.envelope(tool: "configurator_handoff")
+            #expect(!envelope.contains("call state"), "\(envelope)")
+            #expect(!envelope.contains("Then call state"), "\(envelope)")
         }
     }
 
     @Test
-    func aStateCallReplacesTheWholeObject() async {
-        let registry = SessionStateRegistry.shared
-        let sid = "state-replace-\(UUID().uuidString)"
-        registry.seed(
-            sessionId: sid,
-            state: SessionState(goal: "old goal", decisions: ["keep A"], facts: ["fact 1"], openItems: ["todo 1"]))
-
-        let result = await Self.callState(#"{"goal":"new goal","facts":["fact 2"]}"#, sessionId: sid)
-        #expect(ToolEnvelope.isSuccess(result))
-        let next = registry.finishTurn(sessionId: sid, inFlight: [])
-        #expect(next.goal == "new goal")
-        #expect(next.facts == ["fact 2"])
-        #expect(next.decisions.isEmpty, "a field left out is dropped, never merged")
-        #expect(next.openItems.isEmpty)
-        #expect(!next.stale)
-    }
-
-    /// A bare "Saved." read before the reply was relayed as "Done." on
-    /// answers where nothing was done.
-    @Test
-    func theSaveResultNamesTheReplyStillOwed() async {
-        let result = await Self.callState(#"{"goal":"g"}"#, sessionId: "state-saved-\(UUID().uuidString)")
-        #expect(ToolEnvelope.isSuccess(result))
-        #expect(result.contains("not news for the user"))
-        #expect(result.contains("now write your reply"))
-    }
-
-    @Test
-    func theLastCallInATurnWins() async {
-        let registry = SessionStateRegistry.shared
-        let sid = "state-last-wins-\(UUID().uuidString)"
-        _ = await Self.callState(#"{"goal":"first"}"#, sessionId: sid)
-        _ = await Self.callState(#"{"goal":"second","open_items":["x"]}"#, sessionId: sid)
-        let next = registry.finishTurn(sessionId: sid, inFlight: [])
-        #expect(next.goal == "second")
-        #expect(next.openItems == ["x"])
-    }
-
-    @Test
-    func aTurnWithoutAStateCallKeepsThePreviousObjectMarkedStale() {
+    func aFinishedTurnKeepsThePreviousObjectMarkedStale() {
         let registry = SessionStateRegistry.shared
         let sid = "state-stale-\(UUID().uuidString)"
         let previous = SessionState(goal: "plan a trip", decisions: ["by train"])
@@ -77,56 +48,31 @@ struct StateToolTests {
         #expect(next.stale)
         #expect(next.rendered().contains("(stale: not updated last turn)"))
 
-        registry.recordModelWrite(sessionId: sid, state: SessionState(goal: "plan a trip"))
-        let refreshed = registry.finishTurn(sessionId: sid, inFlight: [])
-        #expect(!refreshed.stale)
-        #expect(!refreshed.rendered().contains("stale"))
+        let refreshed = registry.applyExtracted(sessionId: sid, state: SessionState(goal: "plan a trip"))
+        #expect(refreshed?.stale == false)
+        #expect(refreshed?.rendered().contains("stale") == false)
     }
 
     @Test
-    func inFlightIsTheHarnessesWhateverTheModelWrites() async {
+    func inFlightIsTheHarnessesWhateverExtractionWrites() {
         let registry = SessionStateRegistry.shared
         let sid = "state-inflight-\(UUID().uuidString)"
-        _ = await Self.callState(
-            #"{"goal":"g","in_flight":[{"run_id":"fake","workflow":"Invented","status":"running"}],"stale":true}"#,
-            sessionId: sid)
         let harness = [RunRef(runId: "r-1", workflow: "Weekly report", status: "running")]
-        let next = registry.finishTurn(sessionId: sid, inFlight: harness)
-        #expect(next.inFlight == harness)
-        #expect(!next.stale)
-        #expect(next.rendered().contains("Weekly report (running, run r-1)"))
-        #expect(!next.rendered().contains("Invented"))
+        registry.finishTurn(sessionId: sid, inFlight: harness)
+        let extracted = SessionStateExtraction.parse(
+            #"{"goal":"g","in_flight":[{"run_id":"fake","workflow":"Invented","status":"running"}],"stale":true}"#)
+        let next = registry.applyExtracted(sessionId: sid, state: extracted ?? .empty)
+        #expect(next?.inFlight == harness)
+        #expect(next?.stale == false)
+        #expect(next?.rendered().contains("Weekly report (running, run r-1)") == true)
+        #expect(next?.rendered().contains("Invented") == false)
 
         let quiet = registry.finishTurn(sessionId: sid, inFlight: [])
         #expect(quiet.inFlight.isEmpty, "a finished run leaves in_flight on the next turn")
     }
 
     @Test
-    func aDiscardedTurnCommitsNothing() async {
-        let registry = SessionStateRegistry.shared
-        let sid = "state-discard-\(UUID().uuidString)"
-        registry.seed(sessionId: sid, state: SessionState(goal: "kept"))
-        _ = await Self.callState(#"{"goal":"cancelled turn"}"#, sessionId: sid)
-        #expect(registry.hasPendingWrite(sessionId: sid))
-        registry.discardPending(sessionId: sid)
-        #expect(!registry.hasPendingWrite(sessionId: sid))
-        #expect(registry.state(for: sid).goal == "kept")
-    }
-
-    @Test
-    func onlyTheOrchestratorInAChatMayWriteState() async {
-        let custom = await Self.callState(#"{"goal":"g"}"#, sessionId: "s", agentId: UUID())
-        #expect(ToolEnvelope.isError(custom))
-        let noSession = await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
-            (try? await StateTool().execute(argumentsJSON: #"{"goal":"g"}"#)) ?? ""
-        }
-        #expect(ToolEnvelope.isError(noSession))
-        let sid = "state-bad-args-\(UUID().uuidString)"
-        #expect(ToolEnvelope.isError(await Self.callState("[1,2]", sessionId: sid)))
-    }
-
-    @Test
-    func modelWritesAreBounded() {
+    func extractedObjectsAreBounded() {
         let long = String(repeating: "a", count: SessionState.maxItemCharacters + 50)
         let items = (0..<20).map { "\"item \($0)\"" }.joined(separator: ",")
         let state = SessionState.fromModelArguments(#"{"goal":"\#(long)","facts":[\#(items)],"decisions":"one"}"#)
@@ -184,21 +130,20 @@ struct StateToolTests {
         #expect(older.content == (frozen ?? "") + "earlier")
     }
 
-    // MARK: Extraction after a turn without `state`
+    // MARK: Extraction after each settled turn
 
     @Test
-    func extractionRunsOnlyWhereTheForcedStepWould() {
-        #expect(SessionStateExtraction.applies(interrupted: false, lastStepEndedOn: .finalText, stateWritten: false))
-        #expect(SessionStateExtraction.applies(interrupted: false, lastStepEndedOn: .iterationCap, stateWritten: false))
-        #expect(!SessionStateExtraction.applies(interrupted: true, lastStepEndedOn: .finalText, stateWritten: false))
-        #expect(!SessionStateExtraction.applies(interrupted: false, lastStepEndedOn: .finalText, stateWritten: true))
-        #expect(!SessionStateExtraction.applies(interrupted: false, lastStepEndedOn: .clarify, stateWritten: false))
-        #expect(!SessionStateExtraction.applies(interrupted: false, lastStepEndedOn: .awaitingUser, stateWritten: false))
-        #expect(!SessionStateExtraction.applies(interrupted: false, lastStepEndedOn: nil, stateWritten: false))
+    func extractionRunsAfterEverySettledTurn() {
+        #expect(SessionStateExtraction.applies(interrupted: false, lastStepEndedOn: .finalText))
+        #expect(SessionStateExtraction.applies(interrupted: false, lastStepEndedOn: .iterationCap))
+        #expect(!SessionStateExtraction.applies(interrupted: true, lastStepEndedOn: .finalText))
+        #expect(!SessionStateExtraction.applies(interrupted: false, lastStepEndedOn: .clarify))
+        #expect(!SessionStateExtraction.applies(interrupted: false, lastStepEndedOn: .awaitingUser))
+        #expect(!SessionStateExtraction.applies(interrupted: false, lastStepEndedOn: nil))
     }
 
     @Test
-    func anExtractedAnswerIsReadLikeAStateCallAndAnEmptyOneIsNoWrite() {
+    func anExtractedAnswerIsReadAsTheObjectAndAnEmptyOneIsNoWrite() {
         let fenced = "```json\n{\"goal\":\"ship it\",\"facts\":[\"port 1337\"],\"in_flight\":[{\"run_id\":\"x\"}]}\n```"
         let state = SessionStateExtraction.parse(fenced)
         #expect(state?.goal == "ship it")
@@ -241,7 +186,7 @@ struct StateToolTests {
         #expect(applied?.inFlight == runs)
         #expect(registry.state(for: sid).goal == "new")
 
-        // A later write already landed: the extraction changes nothing.
+        // An object that is no longer stale: a late extraction changes nothing.
         #expect(registry.applyExtracted(sessionId: sid, state: SessionState(goal: "late")) == nil)
         #expect(registry.state(for: sid).goal == "new")
     }

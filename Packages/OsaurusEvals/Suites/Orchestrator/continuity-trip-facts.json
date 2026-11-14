@@ -3,7 +3,7 @@
   "domain": "orchestrator",
   "label": "orchestrator • five turns: trip facts from turn 1 survive three unrelated turns",
   "query": "Quick note before I forget: my partner and I are going to Lisbon from May 3 to May 9, and we're both vegetarian. No need to do anything yet.",
-  "notes": "Continuity: the Orchestrator keeps only the 3 latest exchanges, so by turn 5 turn 1 has dropped out of the history it sees. The dates and diet reach turn 5 only through the session state (the model's `state` call, the forced step, or extraction). Turns 2-4 are unrelated one-line asks it answers itself.",
+  "notes": "Continuity: the Orchestrator keeps only the 3 latest exchanges, so by turn 5 turn 1 has dropped out of the history it sees. The dates and diet reach turn 5 only through the session state, which extraction writes after each turn. Turns 2-4 are unrelated one-line asks it answers itself.",
   "fixtures": {},
   "expect": {
     "defaultAgent": {

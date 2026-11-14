@@ -320,7 +320,6 @@ extension ShareArtifactTool {
             ], required: ["filename", "path"])
     }
 }
-extension StateTool { public var outputSchema: JSONValue? { ToolOutputSchema.text("`Saved.`") } }
 
 extension AgentChannelListConnectionsTool {
     public var outputSchema: JSONValue? { BuiltinToolOutputSchemas.channelConnections }

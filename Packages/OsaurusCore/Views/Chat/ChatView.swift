@@ -781,7 +781,7 @@ final class ChatSession: ObservableObject {
     private var sessionStateKey: (UUID) -> String { { $0.uuidString } }
 
     /// Prompt/scope agreement tripwire (advisory, never a block): the
-    /// Orchestrator persona names its routing tools (`status`, `state`, the
+    /// Orchestrator persona names its routing tools (`status`, the
     /// handoffs) unconditionally; if this turn's schema does not expose one
     /// of them the scope refuses it with `tool_not_found` and the model has
     /// been set up to loop (seen live after an agent-chip switch before the
@@ -808,9 +808,9 @@ final class ChatSession: ObservableObject {
     /// The Orchestrator's session state as of the last finished turn;
     /// persisted with the session and injected beside the next user turn.
     var sessionState: SessionState?
-    /// How this turn's last model step ended, as the forced `state` step saw
-    /// it. Nil when the turn ended any other way (a `clarify`, an error).
-    var orchestratorTurnEnding: StateStepEnding?
+    /// How this turn's last model step ended (`AgentLoopHooks.noteTurnEnding`).
+    /// Nil when the turn ended any other way (a `clarify`, an error).
+    var orchestratorTurnEnding: TurnEnding?
     /// The finished turn a running `SessionStateExtraction` belongs to.
     private var stateExtractionToken: UUID?
 
@@ -3568,7 +3568,6 @@ final class ChatSession: ObservableObject {
         let oldSid = expectedTodoSessionId
         Task { await AgentTodoStore.shared.clear(for: oldSid) }
         sessionState = nil
-        SessionStateRegistry.shared.discardPending(sessionId: oldSid)
         SessionStateRegistry.shared.seed(sessionId: expectedTodoSessionId, state: nil)
         // Keep current agentId - don't reset when creating new chat within same agent
 
@@ -5161,8 +5160,8 @@ final class ChatSession: ObservableObject {
         OnboardingFirstRun.shared.runEnded(in: self)
         DiscoveryCenter.shared.runEnded(in: self)
         if let sid = sessionId, let sessionState {
-            // A new chat gets its id in `save()`; the next turn's `state`
-            // calls and handoffs address that id.
+            // A new chat gets its id in `save()`; the next turn's
+            // extraction and handoffs address that id.
             SessionStateRegistry.shared.seed(sessionId: sid.uuidString, state: sessionState)
         }
         maybeGenerateAutoTitle()
@@ -5189,13 +5188,12 @@ final class ChatSession: ObservableObject {
         continueAfterWorkingFolderAttachIfEligible()
     }
 
-    /// The user stopped this turn. Its pending `state` write is dropped,
-    /// and the forced `state` step never runs on it.
+    /// The user stopped this turn; extraction never runs on it.
     var orchestratorTurnInterrupted: Bool { stopRequested }
 
-    /// End an Orchestrator turn's session state: commit this turn's last
-    /// `state` write, or keep the previous object marked stale, and set
-    /// `inFlight` from the runs this chat is waiting on.
+    /// End an Orchestrator turn's session state: keep the previous object
+    /// marked stale, set `inFlight` from the runs this chat is waiting on,
+    /// and extract the new object from a settled turn.
     /// Without `turnRan` nothing is committed: marking the session dirty
     /// would make the next save re-stamp `updatedAt` on a chat the user only
     /// navigated away from.
@@ -5206,8 +5204,6 @@ final class ChatSession: ObservableObject {
         guard turnRan, (agentId ?? Agent.defaultId) == Agent.defaultId, !isRemoteAgentTarget else { return }
         let key = expectedTodoSessionId
         let interrupted = orchestratorTurnInterrupted
-        if interrupted { SessionStateRegistry.shared.discardPending(sessionId: key) }
-        let stateWritten = SessionStateRegistry.shared.hasPendingWrite(sessionId: key)
         let finished = SessionStateRegistry.shared.finishTurn(
             sessionId: key,
             inFlight: orchestratorInFlightRuns(sessionKey: key)
@@ -5215,15 +5211,14 @@ final class ChatSession: ObservableObject {
         sessionState = finished
         isDirty = true
         guard
-            SessionStateExtraction.applies(
-                interrupted: interrupted, lastStepEndedOn: ending, stateWritten: stateWritten),
+            SessionStateExtraction.applies(interrupted: interrupted, lastStepEndedOn: ending),
             let model = selectedModel
         else { return }
         extractSessionState(previous: finished, turn: orchestratorTurnLines(), model: model)
     }
 
-    /// `SessionStateExtraction` after a turn without a `state` call. Its
-    /// object lands only while that turn is still the latest finished one.
+    /// `SessionStateExtraction` after a settled turn. Its object lands only
+    /// while that turn is still the latest finished one.
     private func extractSessionState(previous: SessionState, turn: [SessionStateExtraction.Line], model: String) {
         let token = UUID()
         stateExtractionToken = token
@@ -5235,7 +5230,7 @@ final class ChatSession: ObservableObject {
                 let next = SessionStateRegistry.shared.applyExtracted(
                     sessionId: self.expectedTodoSessionId, state: extracted)
             else { return }
-            print("[Osaurus][State] extracted the session state after a turn without `state`")
+            print("[Osaurus][State] extracted the session state")
             self.sessionState = next
             self.isDirty = true
             if !self.isStreaming { self.save() }
@@ -8174,9 +8169,8 @@ final class ChatSession: ObservableObject {
                     let dispatchedToolName = routedDispatch?.toolName
                     var presentingAfterDispatch = false
                     var routedCallId: String?
-                    // The forced `state` step, once armed, and the last
-                    // handoff result this turn got (both decide whether it arms).
-                    var forcedStateStep: (tools: [Tool], choice: ToolChoiceOption)?
+                    // The last handoff result this turn got: a parked
+                    // `awaiting_user` leaves nothing settled to extract.
                     var lastHandoffResult: HandoffResult?
                     if !isRemoteAgentTarget {
                         freezeInjectedContextOntoLatestUserTurn(
@@ -8188,8 +8182,7 @@ final class ChatSession: ObservableObject {
                     let orchestratorStateBlock: String? =
                         effectiveAgentId == Agent.defaultId && !isRemoteAgentTarget
                         ? OrchestratorTurnBlock.injectedBlock(
-                            state: (sessionState ?? .empty).rendered(), dispatchedTool: dispatchedToolName,
-                            stateOffered: toolScope.authorizedNames.contains(StateTool.toolName))
+                            state: (sessionState ?? .empty).rendered(), dispatchedTool: dispatchedToolName)
                         : nil
 
                     var effectiveMaxTokensForAgent = turnGenerationControls.agentDefaultsCaptured == true
@@ -8600,26 +8593,6 @@ final class ChatSession: ObservableObject {
                             lastHandoffResult = handoff
                         }
 
-                        // `state` closes the Orchestrator's turn when it rides
-                        // with the written answer and nothing else: another
-                        // generation would only restate the reply. With several
-                        // `state` calls in one message the last one closes it,
-                        // so the last write still wins.
-                        if inv.toolName == StateTool.toolName, !ToolEnvelope.isError(resultText),
-                            let owner = self.turns.last(where: { turn in
-                                turn.role == .assistant
-                                    && (turn.toolCalls?.contains { $0.id == callId } ?? false)
-                            }),
-                            let calls = owner.toolCalls,
-                            calls.allSatisfy({ $0.function.name == StateTool.toolName }),
-                            calls.last?.id == callId,
-                            !owner.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                        {
-                            self.turns.append(recordToolTurn(resultText, callId: callId))
-                            self.rebuildVisibleBlocks()
-                            return AgentLoopToolExecution(result: resultText, endRun: true)
-                        }
-
                         // Tools loaded via capabilities, first-use sandbox
                         // provisioning, or sandbox_plugin_register.
                         // Add their schemas to the next model iteration as well as
@@ -8949,7 +8922,7 @@ final class ChatSession: ObservableObject {
                         // batch serially when it contains Todo; onBatchComplete
                         // still persists all result turns in slot order.
                         if calls.contains(where: {
-                            $0.invocation.toolName == "todo" || $0.invocation.toolName == StateTool.toolName
+                            $0.invocation.toolName == "todo"
                         }),
                             !AgentToolLoop.containsIntercept(calls)
                         {
@@ -9273,12 +9246,11 @@ final class ChatSession: ObservableObject {
                                 return .toolCalls([dispatch])
                             }
                             let iterationToolSpecs =
-                                forcedStateStep?.tools
-                                ?? (presentingAfterDispatch
-                                    ? toolScope.modelVisibleSpecs.filter {
-                                        OrchestratorTurnBlock.presentingTurnToolNames.contains($0.function.name)
-                                    }
-                                    : toolScope.modelVisibleSpecs)
+                                presentingAfterDispatch
+                                ? toolScope.modelVisibleSpecs.filter {
+                                    OrchestratorTurnBlock.presentingTurnToolNames.contains($0.function.name)
+                                }
+                                : toolScope.modelVisibleSpecs
                             ttftTrace?.set("messageCount", msgs.count)
                             ttftTrace?.set("conversationTurns", self.turns.count)
 
@@ -9305,8 +9277,7 @@ final class ChatSession: ObservableObject {
                                 }
                             #endif
                             let requestedToolChoice =
-                                forcedStateStep?.choice
-                                ?? ChatToolChoicePolicy.resolve(
+                                ChatToolChoicePolicy.resolve(
                                     tools: iterationToolSpecs,
                                     taskIntent: taskIntent,
                                     attempt: attempt
@@ -9414,31 +9385,16 @@ final class ChatSession: ObservableObject {
                                     conversation: msgs
                                 )
                             }
-                            // The forced `state` step streams into a turn that
-                            // joins the transcript only with its `state` call:
-                            // a local decoder is not constrained to the forced
-                            // tool, and a refusal must not add a second answer
-                            // to the one already on screen.
-                            let isForcedStateStep = forcedStateStep != nil
                             do {
                                 let streamStartTime = self.beginModelStep()
                                 let (invocations, finalTurn) = try await self.processStreamDeltas(
                                     stream: try await engine.streamResponses(request: req),
-                                    assistantTurn: isForcedStateStep
-                                        ? ChatTurn(role: .assistant, content: "") : assistantTurn,
+                                    assistantTurn: assistantTurn,
                                     runId: runId,
                                     streamStartTime: streamStartTime,
                                     ttftTrace: ttftTrace,
                                     selectedModel: turnModelId
                                 )
-                                if isForcedStateStep {
-                                    guard !invocations.isEmpty else {
-                                        print("[Osaurus][State] forced `state` step refused (no call)")
-                                        return .finalResponse
-                                    }
-                                    self.turns.append(finalTurn)
-                                    self.rebuildVisibleBlocks()
-                                }
                                 assistantTurn = finalTurn
                                 // Stream finished naturally without a tool call — reset
                                 // the transient-retry budget so a future, unrelated
@@ -9490,11 +9446,6 @@ final class ChatSession: ObservableObject {
                                 }
                                 hasStructuredToolWorkThisRun = true
                                 return .toolCalls(invocations)
-                            } catch let error as NSError
-                                where isForcedStateStep && error.domain == "OsaurusToolChoice"
-                            {
-                                print("[Osaurus][State] forced `state` step refused: \(error.localizedDescription)")
-                                return .finalResponse
                             } catch let error as RemoteProviderServiceError {
                                 // Transient provider-side stream errors — most commonly
                                 // mid-tool-args truncation flagged by
@@ -9772,23 +9723,11 @@ final class ChatSession: ObservableObject {
                     // the hooks literal above stays type-checkable.
                     loopHooks.authorizedToolNames = { toolScope.authorizedNames }
                     if effectiveAgentId == Agent.defaultId, !isRemoteAgentTarget {
-                        let stateSessionKey = expectedTodoSessionId
-                        loopHooks.armForcedStateStep = { [weak self] ending in
-                            guard let self else { return false }
+                        loopHooks.noteTurnEnding = { [weak self] ending in
+                            guard let self else { return }
                             var lastStep = ending
                             if ending == .finalText, case .awaitingUser? = lastHandoffResult { lastStep = .awaitingUser }
                             self.orchestratorTurnEnding = lastStep
-                            forcedStateStep = ChatToolChoicePolicy.forceStateIfMissing(
-                                qualifying: presentingAfterDispatch || lastHandoffResult != nil,
-                                interrupted: self.orchestratorTurnInterrupted || !self.isRunActive(runId),
-                                lastStepEndedOn: lastStep,
-                                stateWritten: SessionStateRegistry.shared.hasPendingWrite(sessionId: stateSessionKey),
-                                tools: toolScope.modelVisibleSpecs
-                            )
-                            if forcedStateStep != nil {
-                                print("[Osaurus][State] forcing one `state` step (\(ending))")
-                            }
-                            return forcedStateStep != nil
                         }
                     }
                     // The announce-only nudge classifies the rest of the

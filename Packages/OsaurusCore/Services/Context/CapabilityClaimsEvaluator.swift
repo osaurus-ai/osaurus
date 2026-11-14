@@ -90,10 +90,8 @@ public struct CapabilityClaimsTranscript: Sendable, Codable {
     public let peakContextTokens: Int?
     /// Number of model requests included in the context-cost totals.
     public let modelSteps: Int?
-    /// Orchestrator turns only: `model` when the model's own `state` call
-    /// landed, `forced` when it landed only on the forced `state` step,
-    /// `extracted` when `SessionStateExtraction` wrote the object, nil when
-    /// none did.
+    /// Orchestrator turns only: `extracted` when `SessionStateExtraction`
+    /// wrote the object, nil when it did not.
     public let stateSource: String?
     /// Multi-turn runs only: each turn's `stateSource` (`none` for nil) and
     /// visible answer, in order. `stateSource` and `finalText` are the last
@@ -216,7 +214,7 @@ public struct CapabilityClaimsJudgeAudit: Sendable, Codable {
 }
 
 /// What one Orchestrator eval conversation carries from turn to turn, as
-/// `ChatSession` does: the session id `state` writes under, the committed
+/// `ChatSession` does: the session id state is kept under, the committed
 /// state the next turn's block shows, and the earlier exchanges, which
 /// `OrchestratorContextPolicy` trims on every request.
 @MainActor
@@ -399,7 +397,7 @@ public enum CapabilityClaimsEvaluator {
         let launchingSessionBox = WeakChatSessionBox(launchingSession)
         defer { withExtendedLifetime(launchingSession) {} }
         // A chat turn binds the user's text (handoffs pass it verbatim) and a
-        // session id (`state` writes under it); the Orchestrator needs both.
+        // session id (state is kept under it); the Orchestrator needs both.
         let isOrchestrator = resolvedAgentId == Agent.defaultId
         var executionMode = ExecutionMode.none
         if let workingFolder {
@@ -444,41 +442,25 @@ public enum CapabilityClaimsEvaluator {
                 // Production parity (`ChatSession.send`): the Orchestrator's
                 // latest user turn carries the session-state block.
                 if isOrchestrator {
-                    let offered = Set(frozenTools.map(\.function.name))
                     let block = OrchestratorTurnBlock.injectedBlock(
-                        state: (conversation?.state ?? .empty).rendered(), dispatchedTool: nil,
-                        stateOffered: offered.contains(StateTool.toolName))
+                        state: (conversation?.state ?? .empty).rendered(), dispatchedTool: nil)
                     history = [ChatMessage(role: "user", content: timePrefix + block + "\n\n" + query)]
                 }
 
-                // The forced `state` step (`AgentLoopHooks.armForcedStateStep`).
-                var forcedState: (tools: [Tool], choice: ToolChoiceOption)?
-                var forcedStateEnding: StateStepEnding?
-                var forcedStateAsked = false
-                var forcedStateStepRan = false
-                var finalTextBeforeForcedState = ""
+                // How the turn ended (`AgentLoopHooks.noteTurnEnding`).
                 var lastHandoff: HandoffResult?
-                var stateWritten = false
-                var stateWrittenOnForcedStep = false
-                var answerInHistory = false
-                var lastStateEnding: StateStepEnding?
-                func armForcedState(_ ending: StateStepEnding) -> Bool {
-                    guard isOrchestrator, !forcedStateAsked else { return false }
-                    forcedStateAsked = true
+                var lastTurnEnding: TurnEnding?
+                func noteTurnEnding(_ ending: TurnEnding) {
+                    guard isOrchestrator else { return }
                     var lastStep = ending
                     if ending == .finalText, case .awaitingUser? = lastHandoff { lastStep = .awaitingUser }
-                    lastStateEnding = lastStep
-                    forcedState = ChatToolChoicePolicy.forceStateIfMissing(
-                        qualifying: lastHandoff != nil, interrupted: Task.isCancelled,
-                        lastStepEndedOn: lastStep, stateWritten: stateWritten, tools: frozenTools)
-                    if forcedState != nil { forcedStateEnding = ending }
-                    return forcedState != nil
+                    lastTurnEnding = lastStep
                 }
 
                 while true {
-                    if forcedStateStepRan, forcedStateEnding == .finalText { break }
-                    if iterations >= maxIterations + (forcedState == nil ? 0 : 1) {
-                        guard iterations == maxIterations, armForcedState(.iterationCap) else { break }
+                    if iterations >= maxIterations {
+                        noteTurnEnding(.iterationCap)
+                        break
                     }
                     var requestMessages = withPriorTurns(
                         ChatMessage(role: "system", content: firstTurnPrompt), history)
@@ -505,11 +487,10 @@ public enum CapabilityClaimsEvaluator {
                         )
                     }
 
-                    let stepTools = forcedState?.tools ?? frozenTools
+                    let stepTools = frozenTools
                     var request = ResponsesInferenceRequest(model: resolvedModel, input: requestMessages)
                     request.tools = stepTools
-                    request.toolChoice = forcedState?.choice ?? .auto
-                    if forcedState != nil { forcedStateStepRan = true }
+                    request.toolChoice = .auto
                     request.sessionID = runSessionId
                     request.context.samplingParametersAreImplicit = true
                     request.context.isAgentRequest = !stepTools.isEmpty
@@ -523,13 +504,6 @@ public enum CapabilityClaimsEvaluator {
                     let response: ResponsesGenerationResult
                     do {
                         response = try await ResponsesEvaluationStep.collect(engine: engine, request: request)
-                    } catch let error as NSError
-                        where forcedStateStepRan && error.domain == "OsaurusToolChoice"
-                    {
-                        // A refused forced step leaves the answer as it was, as in chat.
-                        completionUsageComplete = false
-                        finalText = finalTextBeforeForcedState
-                        break
                     } catch {
                         completionUsageComplete = false
                         throw error
@@ -541,8 +515,7 @@ public enum CapabilityClaimsEvaluator {
                             decodeTpsTokenWeight += count
                         }
                     } else { completionUsageComplete = false }
-                    // The forced step continues the answer already on screen.
-                    finalText = forcedStateStepRan ? finalTextBeforeForcedState + response.text : response.text
+                    finalText = response.text
                     let step = try ResponsesEvaluationStep.classify(
                         response, toolsWereOffered: !stepTools.isEmpty)
                     switch step {
@@ -553,12 +526,6 @@ public enum CapabilityClaimsEvaluator {
                     let message = try response.completedAssistantInput()
 
                     guard let calls = message.tool_calls, !calls.isEmpty else {
-                        // A model that ignored the forced choice gets no second
-                        // try, and its text never joins the answer.
-                        if forcedStateStepRan {
-                            finalText = finalTextBeforeForcedState
-                            break
-                        }
                         let visible = (message.content ?? "")
                             .trimmingCharacters(in: .whitespacesAndNewlines)
                         if visible.isEmpty, emptyTurnRetries < AgentToolLoop.maxEmptyTurnRetries {
@@ -589,13 +556,7 @@ public enum CapabilityClaimsEvaluator {
                             pendingStateNotice = notice
                             continue
                         }
-                        if armForcedState(.finalText) {
-                            // The answer stays in context for the forced step, as in chat.
-                            finalTextBeforeForcedState = finalText
-                            history.append(message)
-                            answerInHistory = true
-                            continue
-                        }
+                        noteTurnEnding(.finalText)
                         // Tool-call-free answer → the loop is done.
                         break
                     }
@@ -661,10 +622,6 @@ public enum CapabilityClaimsEvaluator {
                             resultPreview: String(toolResult.prefix(500))
                         )
                         if let handoff = HandoffResult.parse(envelope: toolResult) { lastHandoff = handoff }
-                        if call.function.name == StateTool.toolName, !ToolEnvelope.isError(toolResult) {
-                            stateWritten = true
-                            if forcedStateStepRan { stateWrittenOnForcedStep = true }
-                        }
                         if !hasGroundedApply,
                             GroundedConfigClaimCheck.isGroundedApplyOutcome(
                                 toolName: call.function.name,
@@ -737,7 +694,7 @@ public enum CapabilityClaimsEvaluator {
                         )
                     }
                 }
-                if iterations >= maxIterations, forcedStateEnding != .finalText { hitCap = true }
+                if iterations >= maxIterations { hitCap = true }
                 if hitCap {
                     // Production parity (ChatView): a cap-hit run gets ONE
                     // final tool-free request so the user still sees a
@@ -779,11 +736,8 @@ public enum CapabilityClaimsEvaluator {
                 var committed =
                     isOrchestrator
                     ? SessionStateRegistry.shared.finishTurn(sessionId: runSessionId, inFlight: []) : .empty
-                if isOrchestrator, stateWritten {
-                    stateSource = stateWrittenOnForcedStep ? "forced" : "model"
-                } else if isOrchestrator,
-                    SessionStateExtraction.applies(
-                        interrupted: Task.isCancelled, lastStepEndedOn: lastStateEnding, stateWritten: false)
+                if isOrchestrator,
+                    SessionStateExtraction.applies(interrupted: Task.isCancelled, lastStepEndedOn: lastTurnEnding)
                 {
                     var lines = [SessionStateExtraction.Line(speaker: "User", text: query)]
                     for call in toolCalls {
@@ -805,7 +759,7 @@ public enum CapabilityClaimsEvaluator {
                 if let conversation {
                     var turnMessages = history
                     turnMessages[0] = ChatMessage(role: "user", content: sentUserTurn)
-                    if !answerInHistory, !finalText.isEmpty {
+                    if !finalText.isEmpty {
                         turnMessages.append(ChatMessage(role: "assistant", content: finalText))
                     }
                     conversation.priorMessages += turnMessages

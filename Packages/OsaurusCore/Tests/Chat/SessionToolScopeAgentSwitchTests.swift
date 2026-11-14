@@ -373,12 +373,11 @@ struct OrchestratorAddendumRequiredToolsTests {
 
     /// The static required-name list and the rendered prose cannot drift:
     /// every required name is advertised (in backticks) by BOTH addendum
-    /// variants (`state` through the injected block's rule line), and every
+    /// variants, and every
     /// required name is a routing tool the Default agent's allowlist carries.
     @Test func requiredNames_areAdvertisedByBothVariantsAndAllowed() {
         for compact in [false, true] {
             let rendered = DefaultAgentSystemPromptBuilder._renderForTests(compact: compact, exposure: .full)
-                + "\n" + OrchestratorTurnBlock.stateRuleLine
             for name in DefaultAgentSystemPromptBuilder.orchestratorRequiredToolNames {
                 #expect(
                     rendered.contains("`\(name)`"),

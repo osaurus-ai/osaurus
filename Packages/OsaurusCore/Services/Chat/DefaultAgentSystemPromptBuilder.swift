@@ -11,8 +11,6 @@
 //  `ConfiguratorSystemPromptBuilder`, not here.
 //
 //  The text is the seven rules, each one testable, plus the routing table.
-//  The `state` rule rides at the end of each turn's injected block
-//  (`OrchestratorTurnBlock.injectedBlock`), where small models attend to it.
 //  Each variant is memoized, so every turn with the same exposure sees
 //  byte-identical text and the prompt prefix stays in the KV cache.
 //
@@ -23,13 +21,12 @@ import Foundation
 public enum DefaultAgentSystemPromptBuilder {
     private static var cache: [String: String] = [:]
 
-    /// Tools every rendered variant, with the injected block's `state`
-    /// line, tells the model to call. A prompt that
+    /// Tools every rendered variant tells the model to call. A prompt that
     /// names these while the request's tool scope refuses them sets up a
     /// `tool_not_found` loop; the schema resolver keeps them exposed for the
     /// Default agent, and tests pin it with `missingRequiredToolNames`.
     nonisolated public static let orchestratorRequiredToolNames: Set<String> = [
-        StatusTool.toolName, StateTool.toolName, ConfiguratorHandoffTool.toolName, ArchitectHandoffTool.toolName,
+        StatusTool.toolName, ConfiguratorHandoffTool.toolName, ArchitectHandoffTool.toolName,
     ]
 
     /// The required names that `exposed` does NOT contain; empty when the

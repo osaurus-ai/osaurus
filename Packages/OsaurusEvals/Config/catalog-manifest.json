@@ -548,7 +548,7 @@
       "orchestrator.route-import-command",
       "orchestrator.route-import-mcp-json",
       "orchestrator.route-import-skill-link",
-      "orchestrator.route-settings-change-calls-state",
+      "orchestrator.route-settings-change",
       "orchestrator.route-settings-question",
       "orchestrator.route-status",
       "orchestrator.run-workflow-now",

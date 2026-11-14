@@ -397,11 +397,10 @@ public final class ToolRegistry: ObservableObject {
             WorkflowProposeSaveTool(),
             ArchitectHandoffTool(),
             // The Orchestrator's way to the hidden Configurator, and its
-            // two session tools. Each refuses outside an Orchestrator turn;
+            // session tool. Each refuses outside an Orchestrator turn;
             // the composer strips them from every other agent.
             ConfiguratorHandoffTool(),
             StatusTool(),
-            StateTool(),
             // The Configurator's New Agent draft. Refuses outside a
             // Configurator turn; the composer strips it from every other
             // agent (`agentCreationToolNames`).
@@ -3822,12 +3821,11 @@ extension ToolRegistry {
         "get_current_time", "calculate", "share_artifact",
     ]
 
-    /// The Orchestrator's routing surface: read status, keep session state,
-    /// hand Osaurus questions and changes to the Configurator, hand new
+    /// The Orchestrator's routing surface: read status, hand Osaurus questions and changes to the Configurator, hand new
     /// workflows to the Architect, run an installed workflow, or ask one
     /// question.
     nonisolated static let orchestratorRoutingToolNames: Set<String> = [
-        StatusTool.toolName, StateTool.toolName, ConfiguratorHandoffTool.toolName,
+        StatusTool.toolName, ConfiguratorHandoffTool.toolName,
         ArchitectHandoffTool.toolName, RunWorkflowTool.toolName, "clarify",
     ]
 

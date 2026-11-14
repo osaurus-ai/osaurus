@@ -17,13 +17,11 @@ struct RuntimePolicySourceTests {
         return try String(contentsOf: url, encoding: .utf8)
     }
 
-    /// The chat loop's tool_choice comes only from `ChatToolChoicePolicy`:
-    /// its forced `state` step when one is due, otherwise `resolve`.
+    /// The chat loop's tool_choice comes only from `ChatToolChoicePolicy.resolve`.
     private static func chatToolChoiceComesFromPolicy(_ chatView: String) -> Bool {
         chatView.range(
-            of: #"let requestedToolChoice =\s*forcedStateStep\?\.choice\s*\?\? ChatToolChoicePolicy\.resolve\("#,
+            of: #"let requestedToolChoice =\s*ChatToolChoicePolicy\.resolve\("#,
             options: .regularExpression) != nil
-            && chatView.contains("forcedStateStep = ChatToolChoicePolicy.forceStateIfMissing(")
     }
 
     private static func functionBody(_ signature: String, in source: String) throws -> String {

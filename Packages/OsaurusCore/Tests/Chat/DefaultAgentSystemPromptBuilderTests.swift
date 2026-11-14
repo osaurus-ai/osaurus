@@ -172,7 +172,7 @@ struct DefaultAgentSystemPromptBuilderTests {
     func requiredToolNamesAreTheRoutingCore() {
         #expect(
             DefaultAgentSystemPromptBuilder.orchestratorRequiredToolNames
-                == ["status", "state", "configurator_handoff", "architect_handoff"])
+                == ["status", "configurator_handoff", "architect_handoff"])
         #expect(
             DefaultAgentSystemPromptBuilder.orchestratorRequiredToolNames
                 .isSubset(of: ToolRegistry.orchestratorRoutingToolNames))
@@ -198,9 +198,7 @@ struct DefaultAgentSystemPromptBuilderTests {
                 #expect(
                     advertised.isSubset(of: schema),
                     "compact=\(compact) exposure=\(exposure): \(advertised.subtracting(schema).sorted())")
-                let withStateLine = DefaultAgentSystemPromptBuilder.advertisedToolNames(
-                    in: rendered + "\n" + OrchestratorTurnBlock.stateRuleLine, known: known)
-                #expect(withStateLine.isSuperset(of: DefaultAgentSystemPromptBuilder.orchestratorRequiredToolNames))
+                #expect(advertised.isSuperset(of: DefaultAgentSystemPromptBuilder.orchestratorRequiredToolNames))
             }
         }
     }

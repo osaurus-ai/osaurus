@@ -32,18 +32,18 @@ public struct RunRef: Codable, Equatable, Sendable, Hashable {
     }
 }
 
-/// The Orchestrator's working memory for one chat: rewritten whole by the
-/// `state` tool each turn (last call wins), persisted on the session record,
-/// and injected beside the latest user message. `inFlight` and `stale` are
-/// harness-owned: a model write never sets them.
+/// The Orchestrator's working memory for one chat: rewritten whole by
+/// `SessionStateExtraction` after each settled turn, persisted on the session
+/// record, and injected beside the latest user message. `inFlight` and
+/// `stale` come from the harness, never from the extracted object.
 public struct SessionState: Codable, Equatable, Sendable {
     public var goal: String?
     public var decisions: [String]
     public var facts: [String]
     public var openItems: [String]
     public var inFlight: [RunRef]
-    /// True when the last turn ended without a `state` call, so this object
-    /// may be out of date.
+    /// True when extraction has not replaced this object since the last
+    /// turn, so it may be out of date.
     public var stale: Bool
 
     /// Bounds that keep the injected block small whatever the model writes.
@@ -88,7 +88,7 @@ public struct SessionState: Codable, Equatable, Sendable {
         stale = try c.decodeIfPresent(Bool.self, forKey: .stale) ?? false
     }
 
-    /// The model-writable fields of a `state` call. Unknown keys, and the
+    /// The fields of an extracted state object. Unknown keys, and the
     /// harness-owned `in_flight` / `stale`, are ignored. Nil when the
     /// arguments are not a JSON object.
     public static func fromModelArguments(_ argumentsJSON: String) -> SessionState? {
@@ -282,11 +282,11 @@ public enum HandoffResult: Equatable, Sendable {
     private var presentInstruction: String {
         switch self {
         case .answer, .applied, .files, .needsSetup:
-            return "Give the user `text` as written, then call state."
+            return "Give the user `text` as written."
         case .declined:
-            return "Tell the user `text` as written; nothing was changed. Then call state."
+            return "Tell the user `text` as written; nothing was changed."
         case .awaitingUser:
-            return "Ask the user `text` as written; their reply resumes the run. Then call state."
+            return "Ask the user `text` as written; their reply resumes the run."
         case .needsChoice:
             return "Call clarify with `question` set to `text` and `options` set to `options`."
         }
