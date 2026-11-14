@@ -27,7 +27,7 @@ usage metadata needed to bill credits" — with upstream providers disclaimed
 rather than guaranteed.
 
 Help reports are the one exception, and only by the user's own action. A report
-sent from the Help window stores what the user wrote (the description and any
+sent from Help stores what the user wrote (the description and any
 later messages in that thread) on the router, together with the app and macOS
 version, the Mac's model, chip and memory, and a metadata-only diagnostics
 bundle. Nothing is sent until the user ticks the Terms and Privacy box for
@@ -317,7 +317,7 @@ pulled — without a release. `AnnouncementsService` owns the client side:
 - Endpoint: `GET /announcements?app_version=<CFBundleShortVersionString>`,
   unauthenticated (no wallet headers), IP rate-limited, 60s cacheable. The
   router already filtered on status and schedule against its own clock; the
-  app never re-evaluates the window locally. The call is not logged to
+  app never shows anything by its own clock. The call is not logged to
   Insights (no account data leaves the Mac).
 - Triggers: ~2s after a non-silent launch and on foreground activation. The
   service enforces a 60s floor between any two fetches and throttles
@@ -336,21 +336,29 @@ pulled — without a release. `AnnouncementsService` owns the client side:
   (`https://` only) opens in the browser; `deeplink` (`osaurus://` only)
   routes through `handleOsaurusDeepLink`. Anything else is dropped; at most
   three buttons plus the app's own Close.
+- Help: every live announcement also sits at the top of the Help page
+  (`HelpAnnouncementCard`, from `AnnouncementsService.standingAnnouncements`)
+  with the same title, image, body and buttons, whether or not its dialog
+  was dismissed, and with no way to dismiss it there. It leaves when the
+  router stops serving it (ended or archived) or once its `ends_at` passes on
+  this Mac's clock, which only ever hides. Opening Help refreshes the feed
+  under the activation throttle.
 - Failure handling: network errors, non-200s and malformed bodies mean "no
   announcements"; the previous in-memory list is kept and nothing is shown
   to the user.
-- Telemetry: `announcement_shown` / `announcement_clicked`, keyed by `slug`.
+- Telemetry: `announcement_shown` / `announcement_clicked`, keyed by `slug`,
+  for the dialog only; buttons on the Help page are not counted.
 - DEBUG: Dock menu → "Reset Announcements & Fetch" clears the seen flags of
   the cached slugs, bypasses the throttles and runs the production presenter
   (point `ai.osaurus.router.baseURL` at staging to test a draft campaign).
 
 ## Help and Bug Reports
 
-The Help window, opened by the question mark on the main window rail, lets a
-user report a problem to the Osaurus team and read the replies in the app. Each
-report is a two-way thread on the router; staff answer from the admin console
-(`/support`). `SupportService` owns the client side, `HelpView` /
-`HelpThreadView` the window's content (`HelpWindow`).
+Help, a page of the main window opened by the question mark on its rail, lets
+a user report a problem to the Osaurus team and read the replies in the app.
+Each report is a two-way thread on the router; staff answer from the admin
+console (`/support`). `SupportService` owns the client side, `HelpView` /
+`HelpThreadView` the page (`ChatWindowState.MainSurface.help`).
 
 - Identity: every `/support/*` call is wallet-signed, like `/credits/*`. A
   report belongs to the wallet that sent it; there is no email and no separate
@@ -386,13 +394,17 @@ report is a two-way thread on the router; staff answer from the admin console
   "Osaurus team".
 - Unread: a thread is unread when a staff message is newer than the last time
   the user read or answered it. Opening a thread fetches it, then calls
-  `/read`; the count drives the dot on the rail's Help icon. There is no push and no system notification.
+  `/read`; the count drives the dot on the rail's Help icon. There is no push
+  and no system notification: replies are found by the launch, activation
+  and in-front poll refreshes below, so a reply lights the dot within about
+  5 minutes while the app is in front. A reply that arrives while its report
+  is open on screen is loaded and marked read at once.
 - First action: `/support/*` does not count as the account's first action on
   the router, and `RouterCreditAcquisitionCoordinator.allowsSignedRequest`
   lets `/support` through while the welcome choice is pending, so reporting a
   problem never costs a first-time redeem code or the welcome credit.
 - Failure handling: background refresh failures keep the previous list and
-  show nothing. In the Help window, errors are mapped to plain sentences by
+  show nothing. On the Help page, errors are mapped to plain sentences by
   `SupportService.userMessage(for:)`; router error text is never shown.
 - Known limit: the app polls only while it knows of a report that is not
   closed. A staff reply on a closed thread moves it to `answered`, but the
@@ -430,11 +442,14 @@ something or opens a surface, not on a schedule.
   never fetches a second copy. The detail view's 30 s presence poll and the
   connect service's auto-connect sweep both read the roster the stream
   already delivered instead of fetching their own.
-- `/support/threads` (Help) is fetched on launch and on activation only while
+- `/support/threads` (Help) is fetched on launch, on activation, and by a
+  poll while the app is in front (`SupportService.startPolling`, a 60 s tick
+  that sends nothing unless a fetch is due), only while
   `ai.osaurus.support.hasOpenThreads` is set, which happens once the account
-  is known to have a report that is not closed. Activation is throttled to
-  one fetch per 30 minutes, any two background attempts are at least 60 s
-  apart, a `429` is honored via `retry-after`, and nothing is fetched while
+  is known to have a report that is not closed. Activation and the poll share
+  one fetch per 5 minutes, so an open report costs at most 12 calls an hour
+  while the app is in front and none while it is in the background. Any two
+  background attempts are at least 60 s apart, a `429` is honored via `retry-after`, and nothing is fetched while
   **Use Osaurus Router** is off. An account that never sent a report makes no
   `/support` calls. Opening Help always fetches, and sending or replying works
   with the switch off, so someone who turned the Router off because it is

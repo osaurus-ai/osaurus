@@ -90,7 +90,7 @@ struct SupportLiveRouterTests {
         )
     }
 
-    /// The service the Help window uses, on top of that client.
+    /// The service Help uses, on top of that client.
     private func service(client: OsaurusRouterAPIClient, defaults: UserDefaults) -> SupportService {
         SupportService(
             defaults: defaults,

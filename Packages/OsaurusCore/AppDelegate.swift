@@ -1381,9 +1381,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             // switching never turns into a stream of feed requests.
             await AnnouncementsService.shared.refreshIfDue(trigger: .activation)
             self?.presentAnnouncementIfEligible()
-            // Same trigger, same 30 minute throttle, for replies to the
-            // user's open Help reports. No open report, no request.
+            // Replies to the user's open Help reports, at most once per 5
+            // minutes, then polled while the app stays in front. No open
+            // report, no request.
             await SupportService.shared.refreshIfDue(trigger: .activation)
+            SupportService.shared.startPolling { NSApp.isActive }
         }
     }
 
@@ -3115,8 +3117,7 @@ extension AppDelegate {
         }
         var buttons: [AlertButtonConfig] = [dismissButton]
         var seenLabels: Set<String> = [dismissButton.title]
-        for (index, cta) in ordered {
-            guard let url = cta.resolvedURL else { continue }
+        for (index, cta) in ordered where cta.resolvedURL != nil {
             // Button rows are keyed by title; a duplicate label would
             // collapse two CTAs into one.
             var label = cta.label
@@ -3126,18 +3127,7 @@ extension AppDelegate {
                     service.markSeen(slug)
                     FeatureTelemetry.announcementClicked(
                         slug: slug, action: "cta", ctaKind: cta.kind, ctaIndex: index)
-                    if cta.isDeepLink {
-                        self?.handleOsaurusDeepLink(url)
-                    } else {
-                        // `open` makes a synchronous XPC round-trip to
-                        // LaunchServices that can block for seconds while
-                        // the browser cold-launches and hang the main
-                        // thread; NSWorkspace is thread-safe, so fire it
-                        // off main.
-                        DispatchQueue.global(qos: .userInitiated).async {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }
+                    self?.openAnnouncementCTA(cta)
                 })
         }
 
@@ -3165,6 +3155,22 @@ extension AppDelegate {
             scope: scope
         )
         return nil
+    }
+
+    /// An announcement button, from the dialog or from Help.
+    func openAnnouncementCTA(_ cta: OsaurusRouterAnnouncement.CTA) {
+        guard let url = cta.resolvedURL else { return }
+        if cta.isDeepLink {
+            handleOsaurusDeepLink(url)
+        } else {
+            // `open` makes a synchronous XPC round-trip to LaunchServices
+            // that can block for seconds while the browser cold-launches and
+            // hang the main thread; NSWorkspace is thread-safe, so fire it
+            // off main.
+            DispatchQueue.global(qos: .userInitiated).async {
+                NSWorkspace.shared.open(url)
+            }
+        }
     }
 }
 

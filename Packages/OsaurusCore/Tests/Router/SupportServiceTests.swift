@@ -269,23 +269,63 @@ struct SupportServiceTests {
         #expect(h.script.listCalls == 2)
     }
 
-    @Test func openReport_launchFetchesAndActivationIsThrottledTo30Minutes() async {
+    @Test func openReport_launchFetchesAndActivationIsThrottledTo5Minutes() async {
         let h = makeHarness([list([thread("a")])], hasOpenThreads: true)
         defer { h.tearDown() }
 
         await h.service.refreshIfDue(trigger: .launch)
         #expect(h.script.listCalls == 1)
 
-        h.clock.advance(5 * 60)
+        h.clock.advance(2 * 60)
         await h.service.refreshIfDue(trigger: .activation)
-        h.clock.advance(24 * 60)
+        h.clock.advance(2 * 60)
         await h.service.refreshIfDue(trigger: .activation)
         #expect(h.script.listCalls == 1)
 
-        h.clock.advance(2 * 60)
+        h.clock.advance(61)
         #expect(h.service.isFetchDue(trigger: .activation))
         await h.service.refreshIfDue(trigger: .activation)
         #expect(h.script.listCalls == 2)
+    }
+
+    /// The in-front poll is how a reply reaches the rail's Help dot while
+    /// the user stays in the app: once per 5 minutes, only with an open
+    /// report, and never with the Router off.
+    @Test func poll_findsANewReplyEvery5MinutesWhileAReportIsOpen() async {
+        let h = makeHarness(
+            [list([thread("a")]), list([thread("a", status: "answered", unread: true)])],
+            hasOpenThreads: true)
+        defer { h.tearDown() }
+
+        await h.service.refreshIfDue(trigger: .launch)
+        #expect(h.service.unreadCount == 0)
+
+        for _ in 0 ..< 4 {
+            h.clock.advance(60)
+            await h.service.refreshIfDue(trigger: .poll)
+        }
+        #expect(h.script.listCalls == 1)
+
+        h.clock.advance(60)
+        await h.service.refreshIfDue(trigger: .poll)
+        #expect(h.script.listCalls == 2)
+        #expect(h.service.unreadCount == 1)
+
+        h.routerEnabled.value = false
+        h.clock.advance(3600)
+        await h.service.refreshIfDue(trigger: .poll)
+        #expect(h.script.listCalls == 2)
+    }
+
+    @Test func poll_neverReported_makesNoRequests() async {
+        let h = makeHarness([list([])])
+        defer { h.tearDown() }
+
+        for _ in 0 ..< 10 {
+            h.clock.advance(5 * 60)
+            await h.service.refreshIfDue(trigger: .poll)
+        }
+        #expect(h.script.listCalls == 0)
     }
 
     /// The flag survives a relaunch, which is the only way a launch can know

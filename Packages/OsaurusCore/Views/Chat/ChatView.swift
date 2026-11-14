@@ -12125,6 +12125,11 @@ struct ChatView: View {
                                 .padding(.top, Self.headerHeight(theme))
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                                 .transition(pageTransition)
+                        } else if windowState.mainSurface == .help {
+                            HelpView()
+                                .padding(.top, Self.headerHeight(theme))
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .transition(pageTransition)
                         } else if windowState.mainSurface == .newAgent {
                             AgentCreatorMainDestination(windowState: windowState)
                                 .padding(.top, Self.headerHeight(theme))
@@ -13768,7 +13773,7 @@ private struct MainNavigationRail: View {
             destination(.chat, symbol: "message", label: "Chat")
             destination(.workflows, symbol: "point.forward.to.point.capsulepath", label: "Workflows")
             Spacer(minLength: 8)
-            NavigationHelpButton()
+            NavigationHelpButton(windowState: windowState)
             NavigationUsageButton()
             destination(.insights, symbol: "chart.bar.doc.horizontal", label: "Insights")
             destination(.settings, symbol: "gearshape", label: "Settings")

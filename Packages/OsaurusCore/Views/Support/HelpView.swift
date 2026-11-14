@@ -2,8 +2,11 @@
 //  HelpView.swift
 //  osaurus
 //
-//  The Help window's content (`HelpWindow`). Two things on one page:
+//  Help, a page of the main window (`ChatWindowState.MainSurface.help`),
+//  opened from the rail. On one page:
 //
+//  - "Announcements": what the Osaurus team is announcing right now, still
+//    here after its dialog was dismissed (`HelpAnnouncementCard`).
 //  - "Report a Problem": describe what went wrong, see exactly what is sent
 //    with it, tick the Terms and Privacy box, send.
 //  - "Your Reports": everything this account has sent, with the team's
@@ -17,6 +20,7 @@ import SwiftUI
 
 struct HelpView: View {
     @ObservedObject private var support = SupportService.shared
+    @ObservedObject private var announcements = AnnouncementsService.shared
     @Environment(\.theme) private var theme
 
     @State private var openThreadId: String?
@@ -45,22 +49,28 @@ struct HelpView: View {
 
     private var helpPage: some View {
         SettingsPage {
-            SettingsPageHeader(
-                title: "Help",
-                subtitle: "Tell us what went wrong. We read every report and reply here.",
-                // Unread replies: the same number as the sidebar badge and
-                // the rail dot, read from the source the badge store reads.
-                count: support.unreadCount > 0 ? support.unreadCount : nil,
-                onRefresh: hasIdentity ? { Task { await support.refreshIfDue(trigger: .helpOpened) } } : nil,
-                refreshHelp: "Check for replies",
-                isRefreshing: support.isRefreshing
-            )
+            HelpColumn(header: true) {
+                SettingsPageHeader(
+                    title: "Help",
+                    subtitle: "Tell us what went wrong. We read every report and reply here.",
+                    // Unread replies: the same number as the rail dot.
+                    count: support.unreadCount > 0 ? support.unreadCount : nil,
+                    onRefresh: hasIdentity ? { Task { await support.refreshIfDue(trigger: .helpOpened) } } : nil,
+                    refreshHelp: "Check for replies",
+                    isRefreshing: support.isRefreshing
+                )
+            }
         } content: {
-            if hasIdentity {
-                reportSection
-                reportsSection
-            } else {
-                identityRequiredSection
+            HelpColumn {
+                if !announcements.standingAnnouncements.isEmpty {
+                    announcementsSection
+                }
+                if hasIdentity {
+                    reportSection
+                    reportsSection
+                } else {
+                    identityRequiredSection
+                }
             }
         }
         .task {
@@ -68,6 +78,9 @@ struct HelpView: View {
             report = await SupportReportBuilder.buildCurrent()
             await support.refreshIfDue(trigger: .helpOpened)
         }
+        // Same 30-minute throttle as activation, so an announcement the
+        // team ended leaves this page without a request per visit.
+        .task { await announcements.refreshIfDue(trigger: .activation) }
         .onChange(of: description) { _, value in
             support.draftDescription = value
             if didSend, !value.isEmpty { didSend = false }
@@ -78,6 +91,15 @@ struct HelpView: View {
     /// synchronous keychain check can block the main thread. The signer
     /// still verifies the identity before any request is sent.
     private var hasIdentity: Bool { OsaurusIdentity.existsCached() }
+
+    /// Live announcements, kept here after their dialog is dismissed.
+    private var announcementsSection: some View {
+        SettingsSection(title: "Announcements") {
+            ForEach(announcements.standingAnnouncements) { announcement in
+                HelpAnnouncementCard(announcement: announcement)
+            }
+        }
+    }
 
     private var identityRequiredSection: some View {
         SettingsSection(title: "Report a Problem") {
@@ -243,11 +265,17 @@ struct HelpView: View {
                 } else if !trimmedDescription.isEmpty, !isLongEnough {
                     Text("Add a little more detail to send.", bundle: .module)
                         .foregroundColor(theme.text.tertiary)
+                } else if isLongEnough, !isTooLong, !hasConsented {
+                    Text("Tick the box above to send.", bundle: .module)
+                        .foregroundColor(theme.text.tertiary)
                 }
             }
             .font(SettingsFont.caption)
             .fixedSize(horizontal: false, vertical: true)
-            .frame(maxWidth: .infinity, alignment: .leading)
+
+            // An empty message renders nothing, so the spacer is what keeps
+            // the button on the trailing edge.
+            Spacer(minLength: 0)
 
             SettingsButton(.primary, "Send Report", icon: "paperplane.fill", isLoading: isSending) {
                 send()
@@ -286,7 +314,7 @@ struct HelpView: View {
             title: "Your Reports",
             footer: support.threads.isEmpty
                 ? nil
-                : "Replies show up here. Osaurus checks for them when it opens, while you have an open report."
+                : "Replies show up here, and a dot on the Help icon means one is waiting."
         ) {
             if support.threads.isEmpty {
                 if let error = support.refreshError, !support.hasLoaded {
@@ -338,6 +366,32 @@ struct HelpView: View {
             format: thread.lastStaffMessageAt == nil ? L("Sent %@") : L("Updated %@"),
             when
         )
+    }
+}
+
+// MARK: - Column
+
+/// Help's pages read in the Workflows column, centered in the window, so a
+/// wide window doesn't stretch the form. The header pads itself by the
+/// page inset, so its column is that much wider to line up with the
+/// sections.
+struct HelpColumn<Content: View>: View {
+    @Environment(\.theme) private var theme
+    var header = false
+    @ViewBuilder let content: Content
+
+    init(header: Bool = false, @ViewBuilder content: () -> Content) {
+        self.header = header
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: theme.settingsSectionGap) { content }
+            .frame(
+                maxWidth: WorkflowLibraryLayout.columnWidth + (header ? 2 * theme.settingsPageInset : 0),
+                alignment: .leading
+            )
+            .frame(maxWidth: .infinity)
     }
 }
 

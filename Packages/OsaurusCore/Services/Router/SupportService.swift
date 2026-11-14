@@ -9,10 +9,11 @@
 //  Request budget (see docs/OSAURUS_ROUTER.md, "Help and Bug Reports"):
 //  - There is no push. Replies are discovered by asking.
 //  - Opening Help always refreshes.
-//  - Launch and foreground activation refresh only while the user has a
-//    report that is not closed (`ai.osaurus.support.hasOpenThreads`), at most
-//    once per 30 minutes on activation, and not at all when the Osaurus Cloud
-//    switch is off. A user who never sent a report makes no `/support` calls.
+//  - Launch, foreground activation and a poll while the app is in front
+//    refresh only while the user has a report that is not closed
+//    (`ai.osaurus.support.hasOpenThreads`), at most once per 5 minutes after
+//    launch, and not at all when the Osaurus Cloud switch is off. A user who
+//    never sent a report makes no `/support` calls.
 //  - Sending and replying are explicit user actions and work with the Cloud
 //    switch off: someone who turned Cloud off because it is broken must still
 //    be able to say so.
@@ -30,8 +31,12 @@ final class SupportService: ObservableObject {
         /// landed in the last minute.
         case launch
         /// Foreground activation. Only while a report is open, at most once
-        /// per `activationRefreshInterval`.
+        /// per `replyCheckInterval`.
         case activation
+        /// The tick while the app is in front (`startPolling`), so a reply
+        /// lights the rail's Help dot without the user switching apps. Same
+        /// rules as activation.
+        case poll
         /// The user opened Help (or pulled to refresh). Always fetches.
         case helpOpened
     }
@@ -58,9 +63,12 @@ final class SupportService: ObservableObject {
     nonisolated static let hasOpenThreadsDefaultsKey = "ai.osaurus.support.hasOpenThreads"
     /// Floor between two background attempts, whatever the trigger.
     nonisolated static let minimumFetchSpacing: TimeInterval = 60
-    /// Activation refreshes are at most this frequent, so a reply reaches a
-    /// user who keeps the app open within this window.
-    nonisolated static let activationRefreshInterval: TimeInterval = 30 * 60
+    /// Activation and poll refreshes are at most this frequent, so a reply
+    /// reaches a user who keeps the app open within this window.
+    nonisolated static let replyCheckInterval: TimeInterval = 5 * 60
+    /// How often the poll asks `isFetchDue`. The check is free; the interval
+    /// above decides when a request is actually sent.
+    nonisolated static let pollTick: Duration = .seconds(60)
     /// Fallback backoff after a 429 with no parseable `retry-after`.
     nonisolated static let defaultRateLimitBackoff: TimeInterval = 10 * 60
 
@@ -73,7 +81,7 @@ final class SupportService: ObservableObject {
     /// True once a list fetch has succeeded in this run.
     @Published private(set) var hasLoaded = false
     @Published private(set) var isRefreshing = false
-    /// Why the last list refresh failed, for the Help window. Cleared by the
+    /// Why the last list refresh failed, for the Help page. Cleared by the
     /// next success. Background triggers never surface it anywhere else.
     @Published private(set) var refreshError: String?
 
@@ -137,15 +145,30 @@ final class SupportService: ObservableObject {
         if let last = lastAttemptAt, instant.timeIntervalSince(last) < Self.minimumFetchSpacing {
             return false
         }
-        if trigger == .activation, let last = lastFetchedAt {
-            return instant.timeIntervalSince(last) >= Self.activationRefreshInterval
+        if trigger == .activation || trigger == .poll, let last = lastFetchedAt {
+            return instant.timeIntervalSince(last) >= Self.replyCheckInterval
         }
         return true
     }
 
+    private var pollTask: Task<Void, Never>?
+
+    /// Start the in-front poll once per process. `isAppActive` keeps a
+    /// backgrounded app silent; activation catches up when it returns.
+    func startPolling(isAppActive: @escaping @MainActor () -> Bool) {
+        guard pollTask == nil else { return }
+        pollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.pollTick)
+                guard let self, !Task.isCancelled else { return }
+                if isAppActive() { await self.refreshIfDue(trigger: .poll) }
+            }
+        }
+    }
+
     /// Fetch the user's reports if the trigger's budget allows it.
     /// Concurrent callers share one in-flight request. Failures keep the
-    /// previous list; only the Help window shows `refreshError`.
+    /// previous list; only the Help page shows `refreshError`.
     func refreshIfDue(trigger: Trigger) async {
         if let inFlight {
             await inFlight.value

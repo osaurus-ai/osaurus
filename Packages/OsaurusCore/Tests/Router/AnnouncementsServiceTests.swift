@@ -220,6 +220,49 @@ struct AnnouncementsServiceTests {
         #expect(h.service.eligibleAnnouncement == nil)
     }
 
+    /// Help keeps a dismissed announcement on screen until the router stops
+    /// serving it or its `ends_at` passes.
+    @Test func standing_keepsDismissedUntilTheRouterEndsIt() async {
+        let ending = OsaurusRouterAnnouncement(
+            id: "id-ending", slug: "ending", title: "Ending", body: "Body", endsAt: "2026-09-21T15:13:20.000Z")
+        let h = makeHarness([
+            feed([ann("html", bodyFormat: "html"), ann("launch"), ending]),
+            feed([ending]),
+        ])
+        defer { h.tearDown() }
+
+        await h.service.refreshIfDue(trigger: .launch)
+        h.service.willPresent(h.service.eligibleAnnouncement!)
+        h.service.didDismiss()
+        h.service.markSeen("ending")
+        #expect(h.service.eligibleAnnouncement == nil)
+        #expect(h.service.standingAnnouncements.map(\.slug) == ["launch", "ending"])
+
+        // The harness starts at 2026-09-21T14:13:20Z, an hour before the
+        // ending one's end.
+        h.clock.advance(3599)
+        #expect(h.service.standingAnnouncements.map(\.slug) == ["launch", "ending"])
+        h.clock.advance(1)
+        #expect(h.service.standingAnnouncements.map(\.slug) == ["launch"])
+
+        // The team archived "launch": the next feed leaves it out.
+        h.clock.advance(AnnouncementsService.minimumFetchSpacing + 1)
+        await h.service.refreshIfDue(trigger: .launch)
+        #expect(h.service.standingAnnouncements.isEmpty)
+    }
+
+    @Test func hasEnded_readsBothISO8601Forms() {
+        let end = Date(timeIntervalSince1970: 1_790_000_000)
+        for endsAt in ["2026-09-21T14:13:20Z", "2026-09-21T14:13:20.000Z"] {
+            let a = OsaurusRouterAnnouncement(id: "1", slug: "s", title: "T", body: "B", endsAt: endsAt)
+            #expect(!a.hasEnded(at: end.addingTimeInterval(-1)))
+            #expect(a.hasEnded(at: end))
+        }
+        #expect(!ann("open").hasEnded(at: .distantFuture))
+        let garbled = OsaurusRouterAnnouncement(id: "1", slug: "s", title: "T", body: "B", endsAt: "soon")
+        #expect(!garbled.hasEnded(at: .distantFuture))
+    }
+
     @Test func seenFlag_persistsAcrossServiceInstancesAndFetches() async {
         let h = makeHarness([feed([ann("raptor")])])
         defer { h.tearDown() }

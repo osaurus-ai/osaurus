@@ -25,7 +25,7 @@ order: 180
 ## Getting help
 
 - Ask this assistant — it can read the guide and inspect your configuration.
-- Tell the Osaurus team: click the question mark icon above the usage icon in the main window rail to open the Help window, then use **Report a Problem**. You see exactly what is sent (**What's Included** → **Show Details**), you tick the Terms and Privacy box, and the reply arrives in the same window under **Your Reports**, with a dot on the icon until you read it. Needs an Osaurus ID. This is not Devices → Support Report (saves sync logs to a file) or Send Crash Reports (Privacy & Security).
+- Tell the Osaurus team: click the question mark icon above the usage icon in the main window rail to open Help, then use **Report a Problem**. You see exactly what is sent (**What's Included** → **Show Details**), you tick the Terms and Privacy box, and the reply arrives in Help under **Your Reports**, with a dot on the icon until you read it. Needs an Osaurus ID. This is not Devices → Support Report (saves sync logs to a file) or Send Crash Reports (Privacy & Security).
 - README and docs: https://docs.osaurus.ai
 - Search GitHub issues (open and closed) for similar problems; file bugs with the "Bug report" template (steps, expected/actual, environment).
 - Feature ideas: the "Feature request" template. Questions: GitHub Discussions.
