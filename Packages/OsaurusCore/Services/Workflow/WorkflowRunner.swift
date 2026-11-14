@@ -160,6 +160,11 @@ public actor WorkflowRunner {
     /// came from: install secrets resolved for code nodes and secret
     /// dialog answers. Nothing published or returned contains them.
     private var knownSecrets: [String: String] = [:]
+    /// Each node's last scrubbed copy, keyed by node id, valid while
+    /// `knownSecrets` is unchanged. A streaming step republishes several
+    /// times a second; only the node that changed is scrubbed again.
+    private var redactedNodes: [String: (raw: NodeRun, redacted: NodeRun)] = [:]
+    private var redactedNodesSecrets: [String: String] = [:]
     /// Seconds a wait step or form had already spent when a previous launch
     /// quit, by node id, so it waits only the rest.
     private var resumedElapsed: [String: TimeInterval] = [:]
@@ -919,10 +924,32 @@ public actor WorkflowRunner {
     /// `run` with every known secret value replaced, for anything that
     /// leaves the runner: observers, the store, and the returned result.
     private func redacted(_ run: WorkflowRun) -> WorkflowRun {
-        Self.redact(run, secrets: knownSecrets)
+        if redactedNodesSecrets != knownSecrets {
+            redactedNodes.removeAll()
+            redactedNodesSecrets = knownSecrets
+        }
+        var cache = redactedNodes
+        let result = Self.redact(run, secrets: knownSecrets) { node, scrub in
+            if let cached = cache[node.nodeID], cached.raw == node { return cached.redacted }
+            let scrubbed = scrub(node)
+            cache[node.nodeID] = (node, scrubbed)
+            return scrubbed
+        }
+        redactedNodes = cache
+        return result
     }
 
     static func redact(_ run: WorkflowRun, secrets: [String: String]) -> WorkflowRun {
+        redact(run, secrets: secrets) { node, scrub in scrub(node) }
+    }
+
+    /// `nodeRedaction` decides per node whether to call the scrubber it is
+    /// handed or reuse an earlier result for an unchanged node.
+    static func redact(
+        _ run: WorkflowRun,
+        secrets: [String: String],
+        nodeRedaction: (NodeRun, (NodeRun) -> NodeRun) -> NodeRun
+    ) -> WorkflowRun {
         let live = secrets.filter { $0.value.count >= SecretScrubber.minimumValueLength }
         guard !live.isEmpty else { return run }
         func text(_ s: String) -> String { SecretScrubber.scrub(s, secrets: live) }
@@ -935,20 +962,22 @@ public actor WorkflowRunner {
             copy.error = error
         }
         copy.nodes = run.nodes.map { node in
-            var n = node
-            n.input = value(node.input)
-            n.output = value(node.output)
-            n.error = node.error.map(text)
-            n.logs = node.logs.map(text)
-            n.streamed = node.streamed.map(text)
-            n.fetches = node.fetches.map(text)
-            n.toolCallRecords = node.toolCallRecords.map { record in
-                var r = record
-                r.arguments = text(record.arguments)
-                r.resultPreview = record.resultPreview.map(text)
-                return r
+            nodeRedaction(node) { node in
+                var n = node
+                n.input = value(node.input)
+                n.output = value(node.output)
+                n.error = node.error.map(text)
+                n.logs = node.logs.map(text)
+                n.streamed = node.streamed.map(text)
+                n.fetches = node.fetches.map(text)
+                n.toolCallRecords = node.toolCallRecords.map { record in
+                    var r = record
+                    r.arguments = text(record.arguments)
+                    r.resultPreview = record.resultPreview.map(text)
+                    return r
+                }
+                return n
             }
-            return n
         }
         return copy
     }

@@ -209,9 +209,58 @@ struct WorkflowRunHistoryStoreTests {
         for i in 0 ..< WorkflowRunDatabase.retentionPerWorkflow {
             store.record(makeRun(workflowID: workflowID, startedAt: Date(timeIntervalSince1970: 10_000 + Double(i))))
         }
+        store.flushPendingWrites()
         #expect(!FileManager.default.fileExists(atPath: oldestFiles.path))
         #expect(try db.run(id: oldest.id) == nil)
         try? FileManager.default.removeItem(at: OsaurusPaths.workflowDirectory(workflowID))
+    }
+
+    /// A streaming run republishes several times a second; its writes run
+    /// off the main actor and collapse to the latest state, while `live`
+    /// shows every state at once.
+    @Test
+    func streamingRecordsCollapseToTheLatestWrite() throws {
+        let db = WorkflowRunDatabase()
+        try db.openInMemory()
+        let store = WorkflowRunStore(database: db)
+        var run = makeRun(status: .running)
+        for step in 0 ..< 20 {
+            run.update("a") { $0.streamed = String(repeating: "x", count: step) }
+            store.record(run)
+            #expect(store.run(id: run.id)?.node("a")?.streamed?.count == step)
+        }
+        store.flushPendingWrites()
+        #expect(try db.run(id: run.id)?.node("a")?.streamed?.count == 19)
+
+        run.status = .completed
+        store.record(run)
+        #expect(store.abandonedRuns().isEmpty)
+        #expect(try db.run(id: run.id)?.status == .completed)
+    }
+
+    /// The runner reuses a node's scrubbed copy while the node is unchanged;
+    /// the result must match scrubbing the whole run every time.
+    @Test
+    func incrementalRedactionMatchesFullRedaction() {
+        let secret = "sk-live-0123456789abcdef"
+        let secrets = ["api_key": secret]
+        var run = makeRun(status: .running)
+        run.update("a") { $0.output = .object(["token": .string(secret)]) }
+        var cache: [String: (raw: NodeRun, redacted: NodeRun)] = [:]
+        func incremental(_ run: WorkflowRun) -> WorkflowRun {
+            WorkflowRunner.redact(run, secrets: secrets) { node, scrub in
+                if let cached = cache[node.nodeID], cached.raw == node { return cached.redacted }
+                let scrubbed = scrub(node)
+                cache[node.nodeID] = (node, scrubbed)
+                return scrubbed
+            }
+        }
+        for step in 0 ..< 3 {
+            run.update("b") { $0.streamed = "key \(secret) step \(step)" }
+            let full = WorkflowRunner.redact(run, secrets: secrets)
+            #expect(incremental(run) == full)
+            #expect(full.node("b")?.streamed?.contains(secret) == false)
+        }
     }
 
     @Test
