@@ -143,6 +143,21 @@ struct FileDiffStreamingPreviewTests {
         #expect(FileDiff.inferredEditPath(partialArgs: unknown, knownFiles: files) == nil)
     }
 
+    @Test("known-files index is not built for too-short excerpts")
+    func inferredEditPathDefersKnownFiles() {
+        var built = 0
+        func files() -> [(path: String, content: String)] {
+            built += 1
+            return [(path: "a.txt", content: "a long enough line of file content here")]
+        }
+        let short = #"{"old_string": "    }"#
+        #expect(FileDiff.inferredEditPath(partialArgs: short, knownFiles: files()) == nil)
+        #expect(built == 0)
+        let long = #"{"old_string": "a long enough line of file"#
+        #expect(FileDiff.inferredEditPath(partialArgs: long, knownFiles: files()) == "a.txt")
+        #expect(built == 1)
+    }
+
     @Test("write tools never take the fallback path")
     func noFallbackForWrites() throws {
         let args = #"{"content": "hello""#

@@ -674,6 +674,18 @@ extension ContentBlock {
     ) -> [ContentBlock] {
         var blocks: [ContentBlock] = []
         var previousRole: MessageRole? = previousTurn?.role
+
+        // The known-files index scans (and JSON-parses) every file_read result
+        // in `turns`. Build it at most once per call, and only when a file-edit
+        // card actually needs to infer its path — rebuilding it per edit call
+        // made full rebuilds O(edits × reads × payload) on the main actor.
+        var knownFilesCache: [(path: String, content: String)]?
+        func cachedKnownFiles() -> [(path: String, content: String)] {
+            if let cached = knownFilesCache { return cached }
+            let built = Self.knownFileContents(in: turns)
+            knownFilesCache = built
+            return built
+        }
         var previousTurnId: UUID? = previousTurn?.id
         // Start of the assistant group being built: the first assistant turn
         // after the user message. A tool-calling response spans several
@@ -993,7 +1005,7 @@ extension ContentBlock {
                             isStreaming: false,
                             fallbackPath: FileDiff.inferredEditPath(
                                 partialArgs: call.function.arguments,
-                                knownFiles: Self.knownFileContents(in: turns)
+                                knownFiles: cachedKnownFiles()
                             )
                         )
                     {
@@ -1020,7 +1032,7 @@ extension ContentBlock {
                             partialArgs: call.function.arguments,
                             fallbackPath: FileDiff.inferredEditPath(
                                 partialArgs: call.function.arguments,
-                                knownFiles: Self.knownFileContents(in: turns)
+                                knownFiles: cachedKnownFiles()
                             )
                         )
                     {
@@ -1081,7 +1093,7 @@ extension ContentBlock {
                         partialArgs: partialArgs,
                         fallbackPath: FileDiff.inferredEditPath(
                             partialArgs: partialArgs,
-                            knownFiles: Self.knownFileContents(in: turns)
+                            knownFiles: cachedKnownFiles()
                         )
                     )
                 {
@@ -1280,6 +1292,11 @@ extension ContentBlock {
     /// `FileDiff.inferredEditPath`, which matches a streaming edit's
     /// `old_string` against these to name the card before its `path`
     /// argument streams.
+    /// Largest `file_read` result (UTF-8 bytes) `knownFileContents` will
+    /// JSON-parse. Bigger reads are left out of the index; an edit against
+    /// them just keeps its placeholder card name until `path` streams.
+    static let knownFileParseByteLimit = 1_048_576
+
     static func knownFileContents(in turns: [ChatTurn]) -> [(path: String, content: String)] {
         var latest: [String: String] = [:]
         for turn in turns {
@@ -1288,6 +1305,10 @@ extension ContentBlock {
                 switch call.function.name {
                 case "file_read", "sandbox_read_file":
                     guard let result = turn.toolResults[call.id],
+                        // Skip oversized reads before the full JSON parse:
+                        // only a 256KB prefix is kept below anyway, and
+                        // parsing multi-MB envelopes here hung the main thread.
+                        result.utf8.count <= knownFileParseByteLimit,
                         let payload = ToolEnvelope.successPayload(result) as? [String: Any],
                         (payload["kind"] as? String) != "directory",
                         // Image and workbook envelopes carry descriptive

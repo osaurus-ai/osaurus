@@ -428,6 +428,37 @@ struct FileReadImageAndFormatContractTests {
         #expect(known.map(\.path) == ["a.txt"])
         #expect(known.first?.content == "hello")
     }
+
+    @Test func fileDiffGroundingSkipsOversizedReadsWithoutParsing() {
+        func toolTurn(id: String, result: String) -> ChatTurn {
+            let turn = ChatTurn(role: .assistant, content: "")
+            turn.toolCalls = [
+                ToolCall(
+                    id: id,
+                    type: "function",
+                    function: ToolCallFunction(name: "file_read", arguments: #"{"path":"x"}"#)
+                )
+            ]
+            turn.toolResults = [id: result]
+            return turn
+        }
+        let huge = ToolEnvelope.success(
+            tool: "file_read",
+            result: [
+                "kind": "file", "path": "big.txt",
+                "text": String(repeating: "x", count: ContentBlock.knownFileParseByteLimit + 1),
+            ]
+        )
+        let small = ToolEnvelope.success(
+            tool: "file_read",
+            result: ["kind": "file", "path": "small.txt", "text": "hello"]
+        )
+        let known = ContentBlock.knownFileContents(in: [
+            toolTurn(id: "1", result: huge),
+            toolTurn(id: "2", result: small),
+        ])
+        #expect(known.map(\.path) == ["small.txt"])
+    }
 }
 
 // MARK: - Fixtures
