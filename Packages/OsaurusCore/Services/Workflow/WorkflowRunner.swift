@@ -683,12 +683,13 @@ public actor WorkflowRunner {
     private func readyNodes(
         _ def: WorkflowDefinition, order: [String], nodesByID: [String: WorkflowNode], running: Set<String>
     ) -> [String] {
+        let incomingByNode = Dictionary(grouping: def.edges, by: \.to)
         var changed = true
         while changed {
             changed = false
             for id in order where run.node(id)?.status == .pending && !running.contains(id) {
                 guard let node = nodesByID[id] else { continue }
-                let incoming = def.edges.filter { $0.to == id }
+                let incoming = incomingByNode[id] ?? []
                 guard incoming.allSatisfy({ isResolved($0.from) }) else { continue }
                 if !joinSatisfied(node, incoming: incoming) {
                     outputs[id] = .null
@@ -699,8 +700,7 @@ public actor WorkflowRunner {
         }
         return order.filter { id in
             guard run.node(id)?.status == .pending, !running.contains(id) else { return false }
-            let incoming = def.edges.filter { $0.to == id }
-            return incoming.allSatisfy { isResolved($0.from) }
+            return (incomingByNode[id] ?? []).allSatisfy { isResolved($0.from) }
         }
     }
 

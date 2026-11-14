@@ -2462,14 +2462,29 @@ final class ChatSession: ObservableObject {
             result.insert(.onboardingPanel(turnId: turnId, panel: panel), at: index + 1)
             return result
         }
-        var result = withoutAuthoredActions(blocks)
+        let stripped = withoutAuthoredActions(blocks)
         let streamingId = isStreaming ? turns.last?.id : nil
-        for turn in turns.reversed() where turn.role == .assistant && turn.id != streamingId {
-            guard let location = turn.runLocation,
-                let index = result.lastIndex(where: { $0.turnId == turn.id })
-            else { continue }
+        var labels: [UUID: ContentBlock] = [:]
+        for turn in turns where turn.role == .assistant && turn.id != streamingId {
+            guard let location = turn.runLocation else { continue }
             let label = location.label(tokensPerSecond: turn.generationTokensPerSecond)
-            result.insert(.runLocation(turnId: turn.id, text: label), at: index + 1)
+            labels[turn.id] = .runLocation(turnId: turn.id, text: label)
+        }
+        // Each label goes right after its turn's last block, in one pass
+        // (this runs on every streaming delta).
+        var lastIndexByTurn: [UUID: Int] = [:]
+        if !labels.isEmpty {
+            for (index, block) in stripped.enumerated() where labels[block.turnId] != nil {
+                lastIndexByTurn[block.turnId] = index
+            }
+        }
+        var result: [ContentBlock] = []
+        result.reserveCapacity(stripped.count + lastIndexByTurn.count + 1)
+        for (index, block) in stripped.enumerated() {
+            result.append(block)
+            if lastIndexByTurn[block.turnId] == index, let label = labels[block.turnId] {
+                result.append(label)
+            }
         }
         // After the walkthrough, this chat can hold a discovery's panel too.
         if let (turnId, panel) = OnboardingFirstRun.shared.panel(for: self) ?? DiscoveryCenter.shared.panel(for: self),
