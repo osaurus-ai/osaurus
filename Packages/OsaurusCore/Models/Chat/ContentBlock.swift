@@ -682,6 +682,17 @@ extension ContentBlock {
 
         let filteredTurns = turns.filter { $0.role != .tool }
 
+        // `knownFileContents` walks every turn and re-parses each file_read
+        // envelope. Build it at most once per call instead of once per failed
+        // or streaming file-write call (APPLE-MACOS-2YA).
+        var knownFilesCache: [(path: String, content: String)]?
+        func knownFiles() -> [(path: String, content: String)] {
+            if let cached = knownFilesCache { return cached }
+            let built = Self.knownFileContents(in: turns)
+            knownFilesCache = built
+            return built
+        }
+
         for (index, turn) in filteredTurns.enumerated() {
             let isStreaming = turn.id == streamingTurnId
             // Run still open for this turn (streaming, or output complete
@@ -993,7 +1004,7 @@ extension ContentBlock {
                             isStreaming: false,
                             fallbackPath: FileDiff.inferredEditPath(
                                 partialArgs: call.function.arguments,
-                                knownFiles: Self.knownFileContents(in: turns)
+                                knownFiles: knownFiles()
                             )
                         )
                     {
@@ -1020,7 +1031,7 @@ extension ContentBlock {
                             partialArgs: call.function.arguments,
                             fallbackPath: FileDiff.inferredEditPath(
                                 partialArgs: call.function.arguments,
-                                knownFiles: Self.knownFileContents(in: turns)
+                                knownFiles: knownFiles()
                             )
                         )
                     {
@@ -1081,7 +1092,7 @@ extension ContentBlock {
                         partialArgs: partialArgs,
                         fallbackPath: FileDiff.inferredEditPath(
                             partialArgs: partialArgs,
-                            knownFiles: Self.knownFileContents(in: turns)
+                            knownFiles: knownFiles()
                         )
                     )
                 {
@@ -1298,17 +1309,29 @@ extension ContentBlock {
                         let path = payload["path"] as? String, !path.isEmpty,
                         let text = payload["text"] as? String
                     else { continue }
-                    // Reads render each line as `<line number>|<content>`;
-                    // strip the display prefix so excerpts match raw bytes.
-                    let content =
-                        payload["line_format"] == nil
-                        ? text
-                        : text.components(separatedBy: "\n")
+                    // Cap BEFORE any per-line work: a file_read can be up to
+                    // 5MB, and splitting the whole payload on the main actor
+                    // hung the UI for seconds (APPLE-MACOS-2YA). Only the
+                    // capped prefix is ever returned, so nothing is lost.
+                    var capped = text.prefix(knownFileContentCap)
+                    let content: String
+                    if payload["line_format"] == nil {
+                        content = String(capped)
+                    } else {
+                        // Drop a line cut mid-way by the cap so a truncated
+                        // `<line number>|` prefix is never kept as content.
+                        if capped.endIndex < text.endIndex, let lastNewline = capped.lastIndex(of: "\n") {
+                            capped = capped[..<lastNewline]
+                        }
+                        // Reads render each line as `<line number>|<content>`;
+                        // strip the display prefix so excerpts match raw bytes.
+                        content = String(capped).components(separatedBy: "\n")
                             .map { line -> Substring in
                                 guard let bar = line.firstIndex(of: "|") else { return line[...] }
                                 return line[line.index(after: bar)...]
                             }
                             .joined(separator: "\n")
+                    }
                     latest[path] = content
                 case "file_write", "sandbox_write_file":
                     guard let data = call.function.arguments.data(using: .utf8),
@@ -1316,10 +1339,14 @@ extension ContentBlock {
                         let path = (obj["path"] as? String), !path.isEmpty,
                         let content = obj["content"] as? String
                     else { continue }
-                    // Appends only add bytes; overwrites replace them.
-                    latest[path] = (obj["mode"] as? String) == "append"
-                        ? (latest[path] ?? "") + content
-                        : content
+                    // Appends only add bytes; overwrites replace them. Entries
+                    // stay within the cap so repeated appends can't grow them.
+                    if (obj["mode"] as? String) == "append" {
+                        let base = latest[path] ?? ""
+                        latest[path] = String((base + content.prefix(knownFileContentCap)).prefix(knownFileContentCap))
+                    } else {
+                        latest[path] = String(content.prefix(knownFileContentCap))
+                    }
                 default:
                     continue
                 }
@@ -1329,8 +1356,11 @@ extension ContentBlock {
         // `String.contains` — cap each entry so a huge file_read (up to 5MB)
         // can't turn the tick into a main-thread scan. An excerpt past the
         // cap just leaves the card on its placeholder.
-        return latest.map { (path: $0.key, content: String($0.value.prefix(262_144))) }
+        return latest.map { (path: $0.key, content: String($0.value.prefix(knownFileContentCap))) }
     }
+
+    /// Per-entry character cap for `knownFileContents`.
+    static let knownFileContentCap = 262_144
 
     private static func parseSharedArtifactFromResult(_ result: String) -> SharedArtifact? {
         SharedArtifact.fromEnrichedToolResult(result)
