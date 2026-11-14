@@ -48,6 +48,12 @@ Agents are the core of Osaurus. Each agent has its own system prompt, default mo
 - **Limit to selected skills** above the tool picker narrows that to a list: only ticked skills appear in the agent's prompt, `capabilities_load`, and its slash commands. Turning it on starts with every installed skill ticked; **Choose Skills…** opens the checklist. A listed skill that is not installed here is flagged **not installed** and starts working once it is installed (for example by an `osaurus import` bundle).
 - In config YAML this is `agents[].skills`: omit it to leave it unchanged, `null` for all skills, a list (skill names or slugs) for only those. Templates and bundles carry the list; the Templates review shows missing skills as an advisory.
 
+## Model (agent → Configure → Model)
+
+- The model picker sets the agent's default model. Picking another model from the chat's model pill also saves it as the agent's default.
+- **Lock Model** (custom agents, off by default) keeps every chat with the agent on that model. The chat shows a fixed lock chip instead of the model pill and runtime columns, and `/model` says the agent is locked. `/agents/{id}/run` refuses a different `model`, and a launcher's spawn model override doesn't apply to the agent. If the model or its provider is missing, the chat shows a warning with **Open Agent Settings** and nothing sends; it never falls back to another model. Turn the switch off to choose models from the chat again.
+- Installing a template or bundle whose main model is `strictness: always` turns Lock Model on; saving a locked agent as a template writes `strictness: always`. In config YAML this is `agents[].model_locked`.
+
 ## Runtime (agent → Configure → Runtime)
 
 - **Runs on** chooses who runs the agent's chats: Osaurus (built-in), or a harness registered under Settings → **Agent Runtimes**, such as Claude Code, Pi, or a Pi-based harness. The chat model picker lists the same runtimes as columns, so you can switch from the composer; it changes this setting for the agent.

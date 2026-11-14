@@ -96,6 +96,8 @@ Template parameters (JSON) passes an object to a supporting model's own chat tem
 
 Open the model pill to browse Provider and Model columns. Installed Local models come first, followed by active Osaurus Cloud models and connected providers. Inactive Local and Osaurus Cloud entries remain available with an Explore action. Local opens model downloads in Settings; Osaurus Cloud opens the Cloud model browser.
 
+An agent with **Lock Model** on shows a fixed lock chip instead of the pill, and `/model` doesn't open the picker. If the locked model or its provider is missing, a warning above the composer says so and nothing sends until you repair it or change the model in Settings… (⌘,) → Agents → *agent* → Configure → Model.
+
 The Cloud shortlist contains favorites plus the current Cloud model. Use the star to add or remove a favorite in either the shortlist or the full browser. More models opens the same Local or Cloud destination.
 
 In the Cloud browser, search by model name or provider and filter by Category or Context. Category tags identify each model’s task; models with available minimum pricing show From credits beneath their name. Selecting a model closes the browser, while starring a model keeps it open. Manage Credits opens your Cloud account controls.

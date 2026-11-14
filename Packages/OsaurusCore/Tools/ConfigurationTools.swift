@@ -1387,6 +1387,7 @@ extension OsaurusInspectTool {
                         "generated_description": agent.generatedDescription ?? "",
                         "system_prompt": agent.systemPrompt,
                         "model": agent.defaultModel ?? "",
+                        "model_locked": agent.modelLocked == true,
                         "temperature": agent.temperature ?? 0,
                         "max_tokens": agent.maxTokens ?? 0,
                         "is_built_in": agent.isBuiltIn,

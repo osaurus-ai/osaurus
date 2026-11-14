@@ -642,6 +642,8 @@ struct SettingsSearchSelfFindProbe {
             ("Temperature", "agents.generation.temperature"),
             ("Show Response Metrics", "agents.showResponseMetrics"),
             ("Show Follow-Up Suggestions", "agents.followUpSuggestions"),
+            ("Lock Model", "agents.model.locked"),
+            ("hide model picker", "agents.model.locked"),
             ("Max Tokens", "agents.generation.maxTokens"),
             ("Top P", "agents.generation.topP"),
             ("Top K", "agents.generation.topK"),

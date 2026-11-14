@@ -53,7 +53,7 @@ private struct InspectorComposerContextMenuCheck: View {
                 }
                 Text("Local attachments: \(attachments.count)")
             }
-            FloatingInputCard(text: $text, selectedModel: .constant(nil), pendingAttachments: $attachments, isContinuousVoiceMode: .constant(false), voiceInputState: .constant(.idle), showVoiceOverlay: .constant(false), pickerItems: [], activeModelOptions: .constant([:]), isStreaming: false, supportsImages: true, estimatedContextTokens: 0, onSend: { _ in }, onStop: {}, isModelPinned: true, pinnedModelLabel: "Local sample", isRemoteAgentRun: true, folderState: folder)
+            FloatingInputCard(text: $text, selectedModel: .constant(nil), pendingAttachments: $attachments, isContinuousVoiceMode: .constant(false), voiceInputState: .constant(.idle), showVoiceOverlay: .constant(false), pickerItems: [], activeModelOptions: .constant([:]), isStreaming: false, supportsImages: true, estimatedContextTokens: 0, onSend: { _ in }, onStop: {}, modelPin: .remoteAgent, pinnedModelLabel: "Local sample", isRemoteAgentRun: true, folderState: folder)
                 .inspectorContextMenuOnly(part, clipboard: clipboardContent)
                 .id(clipboardKind)
             if part == 8 { Text("Local draft: " + (text.isEmpty ? "empty" : text)) }

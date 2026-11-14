@@ -561,7 +561,8 @@ final class TextSubagentKind:
     /// `spawn_agent`: gate the agent allow-list, resolve the agent (its
     /// system prompt becomes the seed system message), and resolve its model
     /// through the shared precedence (eval seam → per-agent override → the
-    /// target agent's own model) + live residency decision.
+    /// target agent's own model) + live residency decision. A target locked
+    /// to its model skips the per-agent override.
     private func resolveAgentTarget(
         _ agentID: UUID,
         scope: SubagentScope,
@@ -659,6 +660,9 @@ final class TextSubagentKind:
         // is read from the LAUNCHING agent (`scope.agentId`); the default is
         // used only when no override is configured.
         let targetAgentId = agent.id
+        let targetIsLocked = await MainActor.run {
+            AgentManager.shared.lockedModel(for: targetAgentId) != nil
+        }
         let resolved = try await SubagentModelResolution.resolve(
             capabilityId: capability.id,
             agentId: scope.agentId,
@@ -667,6 +671,8 @@ final class TextSubagentKind:
             idleWaitSeconds: self.budgets.maxElapsedSeconds,
             deniedMessage: residencyDeniedMessage,
             unavailableMessage: "Agent '\(agent.name)' has no available model configured.",
+            // A target locked to its model ignores the launcher's override.
+            honorConfiguredOverride: !targetIsLocked,
             // Carry this exact model into the child so admission and execution
             // both honor the launcher's configured agent-target override.
             defaultModel: { AgentManager.shared.effectiveModel(for: targetAgentId) }

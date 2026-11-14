@@ -173,6 +173,7 @@ struct ClassicResaveRecoveryTests {
         var agent = Agent(name: "Builder")
         agent.sharedToolApproval = SharedToolApprovalPolicy(mode: .askOwner, timeoutSeconds: 120)
         agent.pluginId = "acme-plugin"
+        agent.modelLocked = true
         agent.autonomousExec = AutonomousExecConfig(enabled: true, hostServicesEnabled: true)
         agent.settings.enabledWorkflowIDs = [UUID(), UUID()]
         agent.settings.workingFolderReadOnly = true

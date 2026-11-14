@@ -92,6 +92,7 @@ extension Template {
             if let v = overrides.description { entry.description = v }
             if let v = overrides.systemPrompt { entry.systemPrompt = v }
             if overrides.model.isSpecified { entry.model = overrides.model }
+            if let v = overrides.modelLocked { entry.modelLocked = v }
             if overrides.temperature.isSpecified { entry.temperature = overrides.temperature }
             if overrides.maxTokens.isSpecified { entry.maxTokens = overrides.maxTokens }
             if overrides.generationSettings.isSpecified { entry.generationSettings = overrides.generationSettings }
@@ -165,7 +166,10 @@ extension Template {
         var reqs = copy.requirements
         if sections.contains(.systemPrompt) { entry.systemPrompt = nil }
         if sections.contains(.description) { entry.description = nil }
-        if sections.contains(.model) { entry.model = .absent }
+        if sections.contains(.model) {
+            entry.model = .absent
+            entry.modelLocked = nil
+        }
         if sections.contains(.tools) {
             entry.tools = nil
             entry.mcpServers = nil
@@ -350,7 +354,8 @@ extension Template {
     }
 
     /// The agent entry mapped onto this Mac: knowledge names become local
-    /// ids, a missing model becomes `null` (the user's default).
+    /// ids, a missing model becomes `null` (the user's default), and an
+    /// `always` main model slot locks the agent to its model.
     @MainActor
     public func resolvedEntry(overrides: AgentEntry? = nil) -> AgentEntry {
         var entry = document(overrides: overrides).agents?.first ?? agent
@@ -361,6 +366,11 @@ extension Template {
             case .fallbackToDefault, .blocked:
                 entry.model = .null
             }
+        }
+        if entry.modelLocked == nil, modelPolicy == .always,
+            agent.model.valueOrNil?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        {
+            entry.modelLocked = true
         }
         let wanted = knowledgeCollectionNames
         if !wanted.isEmpty {

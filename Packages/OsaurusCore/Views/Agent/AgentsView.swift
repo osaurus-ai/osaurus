@@ -396,7 +396,7 @@ struct AgentsView: View {
         if pending == "agents.workflows" { return "abilities" }
         if pending.hasPrefix("agents.sandbox.") { return "sandbox" }
         if pending == "agents.automation.recentTasks" { return "automation" }
-        if pending == "agents.followUpSuggestions" { return "configure" }
+        if pending == "agents.followUpSuggestions" || pending == "agents.model.locked" { return "configure" }
         return nil
     }
 
@@ -2852,7 +2852,13 @@ struct AgentDetailView: View {
     /// reach for most. Temperature / Max Tokens overrides moved into the Advanced
     /// disclosure below.
     private var defaultModelSection: some View {
-        SettingsSection(title: "Model") {
+        let isLocked = currentAgent.modelLocked == true
+        let hasModel = selectedModel?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        return SettingsSection(title: "Model") {
+            if isLocked && hasModel {
+                StatusChip(L("Locked"), icon: "lock.fill")
+            }
+        } content: {
             ModelSearchablePicker(
                 items: pickerItems,
                 selection: Binding(
@@ -2865,6 +2871,23 @@ struct AgentDetailView: View {
                 ),
                 noneTitle: L("Default (from global settings)")
             )
+
+            if !currentAgent.isBuiltIn {
+                SettingsToggle(
+                    title: "Lock Model",
+                    description: "Chats with this agent always use this model and hide the model picker.",
+                    anchorId: "agents.model.locked",
+                    isOn: Binding(
+                        get: { isLocked },
+                        set: { locked in
+                            agentManager.updateModelLocked(for: agent.id, locked: locked)
+                            showSaveIndicator()
+                        }
+                    )
+                )
+                .accessibilityIdentifier("agent.modelLocked")
+                .disabled(!isLocked && !hasModel)
+            }
         }
     }
 

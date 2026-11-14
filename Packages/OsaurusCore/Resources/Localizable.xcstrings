@@ -412,6 +412,210 @@
         }
       }
     },
+    "Lock Model" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modell sperren"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모델 잠금"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Закрепить модель"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "锁定模型"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "鎖定模型"
+          }
+        }
+      }
+    },
+    "Model Locked" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modell gesperrt"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모델 잠김"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель закреплена"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型已锁定"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "模型已鎖定"
+          }
+        }
+      }
+    },
+    "Chats with this agent always use this model and hide the model picker." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Chats mit diesem Agenten verwenden immer dieses Modell und blenden die Modellauswahl aus."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 에이전트와의 채팅은 항상 이 모델을 사용하며 모델 선택기를 숨깁니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Чаты с этим агентом всегда используют эту модель, а выбор модели скрыт."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "与此智能体的聊天始终使用此模型，并隐藏模型选择器。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "與此智能體的聊天始終使用此模型，並隱藏模型選擇器。"
+          }
+        }
+      }
+    },
+    "This agent is locked to its model. Change it in the agent's settings." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieser Agent ist an sein Modell gebunden. Ändere es in den Einstellungen des Agenten."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 에이전트는 모델이 잠겨 있습니다. 에이전트 설정에서 변경하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот агент закреплён за своей моделью. Измените её в настройках агента."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此智能体已锁定其模型。请在智能体设置中更改。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此智能體已鎖定其模型。請在智能體設定中更改。"
+          }
+        }
+      }
+    },
+    "This agent is locked to this model, which isn't available. Repair it or change it in the agent's settings." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieser Agent ist an dieses Modell gebunden, das nicht verfügbar ist. Repariere es oder ändere es in den Einstellungen des Agenten."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 에이전트는 이 모델에 잠겨 있지만 모델을 사용할 수 없습니다. 복구하거나 에이전트 설정에서 변경하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот агент закреплён за этой моделью, но она недоступна. Восстановите её или измените в настройках агента."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此智能体锁定的模型不可用。请修复它，或在智能体设置中更改。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此智能體鎖定的模型不可用。請修復它，或在智能體設定中更改。"
+          }
+        }
+      }
+    },
+    "This agent's model (%@) isn't available. Repair it in the app that installed it, or change the model in the agent's settings." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Das Modell dieses Agenten (%@) ist nicht verfügbar. Repariere es in der App, die es installiert hat, oder ändere das Modell in den Einstellungen des Agenten."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 에이전트의 모델(%@)을 사용할 수 없습니다. 설치한 앱에서 복구하거나 에이전트 설정에서 모델을 변경하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модель этого агента (%@) недоступна. Восстановите её в приложении, которое её установило, или измените модель в настройках агента."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此智能体的模型（%@）不可用。请在安装它的应用中修复，或在智能体设置中更改模型。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此智能體的模型（%@）不可用。請在安裝它的應用中修復，或在智能體設定中更改模型。"
+          }
+        }
+      }
+    },
     "—" : {
       "comment" : "A placeholder text to indicate missing data.",
       "isCommentAutoGenerated" : true,

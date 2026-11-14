@@ -352,7 +352,7 @@ public struct Template: Codable, Equatable, Sendable, Identifiable {
             out.models = [
                 ModelRequirement(
                     slot: ModelRequirement.agentSlot, preferred: model,
-                    strictness: prior?.strictness ?? .preferred,
+                    strictness: entry.modelLocked == true ? .always : (prior?.strictness ?? .preferred),
                     locality: prior?.locality ?? .cloudAllowed,
                     needsToolUse: entry.capabilities?.toolsEnabled ?? true)
             ]

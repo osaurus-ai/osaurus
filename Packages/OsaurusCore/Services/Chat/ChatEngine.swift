@@ -132,6 +132,10 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             /// Maps to 403.
             case routerSpendNotAuthorized
             case invalidStructuredOutput(String)
+            /// The agent is locked to `model` (`Agent.modelLocked`) and that
+            /// model is not available. Fails closed instead of running the
+            /// agent on another model. Maps to 503.
+            case agentModelUnavailable(agentName: String, model: String)
         }
 
         let kind: Kind
@@ -148,6 +152,9 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             case .routerSpendNotAuthorized:
                 return
                     "This model routes through the Osaurus Router and spends account credits. Include a valid Osaurus access key (Authorization: Bearer <key>), or enable 'Allow local API access without a key' for the Router in Osaurus Credits settings."
+            case .agentModelUnavailable(let agentName, let model):
+                return
+                    "\(agentName) is locked to model '\(model)', which isn't available. Repair the model or its provider in the app that installed this agent, or change the model in the agent's settings."
             }
         }
 
@@ -159,6 +166,7 @@ actor ChatEngine: Sendable, ChatEngineProtocol, ResponsesEngineProtocol {
             case .remoteAgentUnavailable: return 503
             case .routerSpendNotAuthorized: return 403
             case .invalidStructuredOutput: return 400
+            case .agentModelUnavailable: return 503
             }
         }
     }
