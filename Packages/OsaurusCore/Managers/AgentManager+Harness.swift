@@ -11,22 +11,29 @@ import Foundation
 extension AgentManager {
     /// Which loop runs this agent's chats.
     public func effectiveRuntime(for agentId: UUID) -> AgentRuntime {
-        if agentId == Agent.defaultId {
-            return DefaultAgentConfigurationStore.load().runtime ?? .builtIn
-        }
-        guard let agent = agent(for: agentId) else { return .builtIn }
-        return effectiveRuntime(for: agent)
+        if let runtime = configuredRuntime(forBuiltInAgent: agentId) { return runtime }
+        return agent(for: agentId)?.runtime ?? .builtIn
     }
 
     /// Agent-instance overload that avoids a second `agents` array access.
     /// Pass a pre-fetched `Agent` value to skip the `agent(for:)` lookup (and
     /// the associated `@Published` property read) when iterating over a
-    /// snapshot of the agents array.
-    func effectiveRuntime(for agent: Agent) -> AgentRuntime {
-        if agent.id == Agent.defaultId {
+    /// snapshot of the agents array. Resolves built-in agents through the
+    /// same `configuredRuntime(forBuiltInAgent:)` as the id overload, so both
+    /// always agree.
+    public func effectiveRuntime(for agent: Agent) -> AgentRuntime {
+        if let runtime = configuredRuntime(forBuiltInAgent: agent.id) { return runtime }
+        return agent.runtime ?? .builtIn
+    }
+
+    /// Built-in agents keep their runtime in a configuration store rather
+    /// than on the `Agent` row. Every built-in special case lives here (and
+    /// only here) so the id and value overloads can't drift apart.
+    private func configuredRuntime(forBuiltInAgent agentId: UUID) -> AgentRuntime? {
+        if agentId == Agent.defaultId {
             return DefaultAgentConfigurationStore.load().runtime ?? .builtIn
         }
-        return agent.runtime ?? .builtIn
+        return nil
     }
 
     /// The harness this agent runs on, or nil for the built-in loop. A
