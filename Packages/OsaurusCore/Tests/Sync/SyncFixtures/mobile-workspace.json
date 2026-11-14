@@ -1,0 +1,46 @@
+{
+  "description": "An iPhone's chat with a teammate's agent shared into one of the user's workspaces, run by the user's Mac (SYNC_MOBILE_CONTRACT.md v2 §3.5).",
+  "conversation": {
+    "title": "Ask the researcher",
+    "created_ms": 1767571800000,
+    "pinned": false,
+    "archived": false,
+    "tags": {
+      "osaurus.session": "9c0d1e2f-3a4b-4c5d-8e6f-7a8b9c0d1e2f",
+      "source": "chat",
+      "hostDevice": "7c1f0e2d9a8b4c3d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5"
+    },
+    "app_data": {
+      "ai.osaurus.session/1": {
+        "v": 1,
+        "id": "9c0d1e2f-3a4b-4c5d-8e6f-7a8b9c0d1e2f",
+        "source": "chat",
+        "hostDevice": "7c1f0e2d9a8b4c3d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5",
+        "workspace": {
+          "workspaceId": "ws_3f2a",
+          "agentAddress": "0xabababababababababababababababababababab"
+        }
+      }
+    }
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "What did the team ship last week?",
+      "created_ms": 1767571800000,
+      "app_data": {
+        "ai.osaurus.turn/1": {
+          "v": 1,
+          "id": "f2000000-0000-4000-8000-000000000001",
+          "role": "user",
+          "createdAt": 1767571800000,
+          "hostRun": {
+            "device": "7c1f0e2d9a8b4c3d5e6f708192a3b4c5d6e7f8091a2b3c4d5e6f708192a3b4c5",
+            "requestedMs": 1767571800000,
+            "privacy": "off"
+          }
+        }
+      }
+    }
+  ]
+}

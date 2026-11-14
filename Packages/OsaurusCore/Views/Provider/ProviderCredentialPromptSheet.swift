@@ -48,7 +48,7 @@ struct ProviderCredentialPromptSheet: View {
     /// share one visual identity (gradient base + glass edge + shadow).
     private var cardGradient: LinearGradient {
         LinearGradient(
-            colors: [theme.cardBackground, theme.cardBackground.opacity(0.95)],
+            colors: [theme.surface.raised, theme.surface.raised],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
         )
@@ -128,14 +128,14 @@ struct ProviderCredentialPromptSheet: View {
 
     var body: some View {
         ZStack {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: theme.radius.xlarge, style: .continuous)
                 .fill(cardGradient)
 
-            VStack(spacing: 0) {
+            VStack(spacing: theme.space.s0) {
                 header
                 bodyDivider
                 ScrollView(.vertical, showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: theme.space.s16) {
                         if hasBrandedPreset {
                             helpCard
                         } else if let hint = request.instructions.keyFormatHint {
@@ -150,8 +150,8 @@ struct ProviderCredentialPromptSheet: View {
                             rotateFooterNote
                         }
                     }
-                    .padding(.horizontal, 24)
-                    .padding(.vertical, 20)
+                    .padding(.horizontal, theme.space.s24)
+                    .padding(.vertical, theme.space.s16)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     // Propagate the natural content height up through the
                     // ScrollView so the outer panel hugs short forms (no
@@ -165,28 +165,19 @@ struct ProviderCredentialPromptSheet: View {
         }
         .frame(width: 540)
         .fixedSize(horizontal: false, vertical: true)
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: theme.radius.xlarge, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+            RoundedRectangle(cornerRadius: theme.radius.xlarge, style: .continuous)
                 .strokeBorder(
-                    LinearGradient(
-                        colors: [theme.glassEdgeLight, theme.glassEdgeLight.opacity(0.3)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1
+                    theme.border.default,
+                    lineWidth: theme.stroke.default
                 )
         )
         // Subtle ambient shadow — just enough lift to separate the
         // card from the window behind without the bloomy halo
         // `ToolPermissionView` uses for its more dramatic floating
         // permission prompt.
-        .shadow(
-            color: theme.shadowColor.opacity(theme.shadowOpacity),
-            radius: 12,
-            x: 0,
-            y: 6
-        )
+        .themeElevation(theme.elevation.overlay)
         .onAppear {
             seedPrefilledExtraFieldsIfNeeded()
             autoFocusApiKeyField()
@@ -212,9 +203,7 @@ struct ProviderCredentialPromptSheet: View {
     /// `ToolPermissionView` draws above its action band so every modal
     /// card uses the same separator weight.
     private var bodyDivider: some View {
-        Rectangle()
-            .fill(theme.primaryBorder.opacity(0.3))
-            .frame(height: 1)
+        ThemeHairlineDivider()
     }
 
     /// Ceiling for the scroll area. Picked so the tallest realistic
@@ -226,23 +215,23 @@ struct ProviderCredentialPromptSheet: View {
     // MARK: - Header
 
     private var header: some View {
-        HStack(alignment: .center, spacing: 14) {
+        HStack(alignment: .center, spacing: theme.space.s14) {
             brandedIcon
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(headerTitle)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.detailTitle)
+                    .foregroundColor(theme.text.primary)
                 Text(headerSubtitle)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.caption)
+                    .foregroundColor(theme.text.secondary)
                     .lineLimit(2)
             }
 
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 18)
+        .padding(.horizontal, theme.space.s24)
+        .padding(.vertical, theme.space.s16)
     }
 
     @ViewBuilder
@@ -254,14 +243,10 @@ struct ProviderCredentialPromptSheet: View {
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                ProviderIcon(preset: preset, size: 20, color: .white)
+                .clipShape(RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous))
+                ProviderIcon(preset: preset, size: 20, color: FixedPalette.onMedia)
             } else {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(theme.accentColor.opacity(0.12))
-                Image(systemName: isOAuthFlow ? "person.badge.key.fill" : "key.fill")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
+                SettingsIconTile(icon: isOAuthFlow ? "person.badge.key.fill" : "key.fill", size: 44)
             }
         }
         .frame(width: 44, height: 44)
@@ -286,10 +271,10 @@ struct ProviderCredentialPromptSheet: View {
     // MARK: - Help card
 
     private var helpCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             Text(L("Don't have a key?"))
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.sectionTitle)
+                .foregroundColor(theme.text.secondary)
 
             if let hint = request.instructions.keyFormatHint {
                 helpStep(number: 1, text: hint)
@@ -297,32 +282,25 @@ struct ProviderCredentialPromptSheet: View {
 
             ProviderHelpLinks(
                 preset: preset,
-                accentColor: theme.accentColor,
-                secondaryTextColor: theme.secondaryText
+                accentColor: theme.status.info.foreground,
+                secondaryTextColor: theme.text.secondary
             )
-            .padding(.top, 2)
+            .padding(.top, theme.space.s2)
         }
-        .padding(16)
+        .padding(theme.space.s16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
+        .settingsChrome(.card)
     }
 
     private func helpStep(number: Int, text: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: theme.space.s10) {
             Text("\(number).")
-                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.monoSmall)
+                .foregroundColor(theme.text.tertiary)
                 .frame(width: 16, alignment: .trailing)
             Text(text)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.caption)
+                .foregroundColor(theme.text.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -331,14 +309,14 @@ struct ProviderCredentialPromptSheet: View {
     /// use `inputBackground`, and wrapping this in another rounded rect made
     /// the hint read like an empty input field.
     private func unbrandedHint(_ hint: String) -> some View {
-        HStack(alignment: .top, spacing: 6) {
+        HStack(alignment: .top, spacing: theme.space.s6) {
             Image(systemName: "info.circle")
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
-                .padding(.top, 1)
+                .glyphSize(.footnote)
+                .foregroundColor(theme.text.tertiary)
+                .padding(.top, theme.space.s2)
             Text(hint)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.caption)
+                .foregroundColor(theme.text.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
@@ -346,7 +324,7 @@ struct ProviderCredentialPromptSheet: View {
     // MARK: - API key body
 
     private var apiKeyBody: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             if supportsApiKeyAlternative && preferApiKeyEntry {
                 Button {
                     preferApiKeyEntry = false
@@ -354,42 +332,35 @@ struct ProviderCredentialPromptSheet: View {
                     testSucceededModelCount = nil
                 } label: {
                     Text(String(format: L("Sign in with %@ instead"), request.instructions.displayName))
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.accentColor)
+                        .font(SettingsFont.compactLabel)
+                        .foregroundColor(theme.text.link)
                 }
                 .buttonStyle(.plain)
             }
             ForEach(request.instructions.extraFields, id: \.key) { field in
-                VStack(alignment: .leading, spacing: 4) {
-                    ProviderTextField(
-                        label: field.label + (field.isRequired ? " *" : ""),
-                        placeholder: field.placeholder,
+                SettingsFieldRow(
+                    label: field.label + (field.isRequired ? " *" : ""),
+                    hint: field.helpText,
+                    verbatimHint: true,
+                    verbatimLabel: true
+                ) {
+                    SettingsTextField(
+                        placeholder: LCached(field.placeholder),
                         text: Binding(
                             get: { extraFieldValue(for: field.key) },
                             set: { extraFieldValues[field.key] = $0 }
-                        ),
-                        isMonospaced: field.key == "host"
+                        )
                     )
-                    if let help = field.helpText, !help.isEmpty {
-                        Text(help)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
                 }
             }
 
-            VStack(alignment: .leading, spacing: 6) {
-                Text(requiresApiKey ? L("API KEY *") : L("API KEY (optional)"))
-                    .textCase(.uppercase)
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundColor(theme.tertiaryText)
-                    .tracking(0.5)
-
-                ProviderSecureField(
+            SettingsFieldRow(label: requiresApiKey ? "API key *" : "API key (optional)") {
+                SettingsTextField(
                     placeholder: "sk-…",
                     text: $apiKey,
-                    isFocused: $apiKeyFieldFocused
+                    monospaced: true,
+                    isSecure: true,
+                    focus: $apiKeyFieldFocused
                 )
             }
         }
@@ -399,13 +370,13 @@ struct ProviderCredentialPromptSheet: View {
 
     @ViewBuilder
     private var oauthBody: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             if oauthTokens != nil {
                 signedInPill
             } else {
                 Text(L("Click the button below to sign in. A browser window will open."))
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+                    .font(SettingsFont.caption)
+                    .foregroundColor(theme.text.secondary)
 
                 oauthSignInButton
 
@@ -415,8 +386,8 @@ struct ProviderCredentialPromptSheet: View {
                         signInError = nil
                     } label: {
                         Text(L("Paste an API key instead"))
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(theme.accentColor)
+                            .font(SettingsFont.compactLabel)
+                            .foregroundColor(theme.text.link)
                     }
                     .buttonStyle(.plain)
                 }
@@ -430,27 +401,18 @@ struct ProviderCredentialPromptSheet: View {
 
     private var oauthSignInButton: some View {
         Button(action: startOAuthSignIn) {
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 if isSigningIn {
-                    ProgressView()
-                        .scaleEffect(0.6)
-                        .frame(width: 14, height: 14)
+                    SettingsSpinner()
                 } else {
                     Image(systemName: "person.badge.shield.checkmark.fill")
-                        .font(.system(size: 12, weight: .medium))
+                        .glyphSize(.caption, weight: .medium)
                 }
                 Text(String(format: L("Sign in with %@"), request.instructions.displayName))
-                    .font(.system(size: 13, weight: .semibold))
+                    .font(SettingsFont.sectionTitle)
             }
-            .foregroundColor(.white)
-            .padding(.vertical, 10)
-            .padding(.horizontal, 16)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(oauthButtonBackground)
-            )
         }
-        .buttonStyle(.plain)
+        .assignedSettingsButtonStyle(.primary)
         .disabled(isSigningIn)
     }
 
@@ -468,47 +430,44 @@ struct ProviderCredentialPromptSheet: View {
                 )
             )
         }
-        return AnyShapeStyle(theme.accentColor)
+        return AnyShapeStyle(theme.action.primary.default.background)
     }
 
     private var signedInPill: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 13))
-                .foregroundColor(theme.successColor)
+                .glyphSize(.label)
+                .foregroundColor(theme.status.success.foreground)
             Text(L("Signed in. Ready to save."))
-                .font(.system(size: 13, weight: .medium))
-                .foregroundColor(theme.successColor)
+                .font(SettingsFont.rowTitle)
+                .foregroundColor(theme.status.success.foreground)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(theme.successColor.opacity(0.12))
-        )
+        .padding(.horizontal, theme.space.s12)
+        .padding(.vertical, theme.space.s8)
+        .settingsChrome(.status(.success))
     }
 
     private func inlineError(_ text: String) -> some View {
-        HStack(alignment: .top, spacing: 6) {
+        HStack(alignment: .top, spacing: theme.space.s6) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 11))
-                .foregroundColor(theme.errorColor)
+                .glyphSize(.footnote)
+                .foregroundColor(theme.status.error.foreground)
             Text(text)
-                .font(.system(size: 12))
-                .foregroundColor(theme.errorColor)
+                .font(SettingsFont.caption)
+                .foregroundColor(theme.status.error.foreground)
                 .lineLimit(3)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
     private var rotateFooterNote: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: theme.space.s6) {
             Image(systemName: "arrow.triangle.2.circlepath")
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .glyphSize(.footnote)
+                .foregroundColor(theme.text.tertiary)
             Text(String(format: L("Replacing key for %@. Cancel keeps the existing key."), request.providerName))
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
                 .lineLimit(2)
         }
     }
@@ -516,15 +475,13 @@ struct ProviderCredentialPromptSheet: View {
     // MARK: - Footer
 
     private var footer: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             // Single hairline rule above the action band — same weight
             // as `bodyDivider` so the modal card reads as one surface
             // with section dividers rather than stacked panels.
-            Rectangle()
-                .fill(theme.primaryBorder.opacity(0.3))
-                .frame(height: 1)
+            ThemeHairlineDivider()
 
-            HStack(spacing: 12) {
+            HStack(spacing: theme.space.s8) {
                 testResultBadge
 
                 Spacer(minLength: 0)
@@ -533,49 +490,22 @@ struct ProviderCredentialPromptSheet: View {
                     onComplete(.cancelled)
                 } label: {
                     Text(L("Cancel"))
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 9)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.tertiaryBackground)
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(theme.inputBorder, lineWidth: 1)
-                                )
-                        )
                 }
-                .buttonStyle(.plain)
+                .assignedSettingsButtonStyle(.secondary)
                 .keyboardShortcut(.cancelAction)
 
                 primaryButton
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 14)
+            .padding(.horizontal, theme.settingsSheetInset)
+            .padding(.vertical, theme.space.s16)
         }
     }
 
     private var primaryButton: some View {
         Button(action: primaryAction) {
-            HStack(spacing: 6) {
-                if isTesting || isSigningIn {
-                    ProgressView()
-                        .scaleEffect(0.5)
-                        .frame(width: 14, height: 14)
-                }
-                Text(primaryButtonTitle)
-                    .font(.system(size: 13, weight: .semibold))
-            }
-            .foregroundColor(.white)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(primaryButtonColor)
-            )
+            Text(primaryButtonTitle)
         }
-        .buttonStyle(.plain)
+        .assignedSettingsButtonStyle(.primary, isLoading: isTesting || isSigningIn)
         .disabled(!primaryButtonEnabled)
         .keyboardShortcut(.return, modifiers: .command)
     }
@@ -586,33 +516,30 @@ struct ProviderCredentialPromptSheet: View {
             badgePill(
                 icon: "checkmark.circle.fill",
                 text: count == 1 ? L("1 model found") : L("\(count) models found"),
-                tint: theme.successColor
+                tint: theme.status.success.foreground
             )
         } else if let error = testError {
             badgePill(
                 icon: "xmark.circle.fill",
                 text: error,
-                tint: theme.errorColor
+                tint: theme.status.error.foreground
             )
         }
     }
 
     private func badgePill(icon: String, text: String, tint: Color) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: theme.space.s6) {
             Image(systemName: icon)
-                .font(.system(size: 12))
+                .glyphSize(.caption)
                 .foregroundColor(tint)
             Text(text)
-                .font(.system(size: 11, weight: .medium))
+                .font(SettingsFont.smallLabel)
                 .foregroundColor(tint)
                 .lineLimit(2)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(tint.opacity(0.12))
-        )
+        .padding(.horizontal, theme.space.s8)
+        .padding(.vertical, theme.space.s6)
+        .settingsChrome(.tinted(tint))
     }
 
     private var primaryButtonTitle: String {
@@ -631,9 +558,9 @@ struct ProviderCredentialPromptSheet: View {
     /// red after a failure to draw attention to the retry, accent
     /// while neutral.
     private var primaryButtonColor: Color {
-        if hasVerified { return theme.successColor }
-        if testError != nil { return theme.errorColor }
-        return theme.accentColor
+        if hasVerified { return theme.status.success.foreground }
+        if testError != nil { return theme.status.error.foreground }
+        return theme.action.primary.default.background
     }
 
     private var primaryButtonEnabled: Bool {

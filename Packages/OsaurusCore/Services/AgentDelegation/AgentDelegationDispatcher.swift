@@ -94,6 +94,49 @@ struct AgentDelegationOutcome: Sendable {
     }
 }
 
+/// Typed metadata from the one terminal tool rejection in a chat run.
+/// Kept separately from its user-visible lifecycle error string.
+struct DelegatedToolFailure: Sendable {
+    let runID: UUID
+    let kind: ToolEnvelope.Kind
+    let message: String
+    let retryable: Bool?
+}
+
+struct DelegatedToolFailureState {
+    private(set) var runID: UUID?
+    private var accepting = false
+    private var failure: DelegatedToolFailure?
+
+    mutating func begin(runID: UUID) {
+        self.runID = runID
+        accepting = true
+        failure = nil
+    }
+
+    mutating func finish(runID: UUID) {
+        guard self.runID == runID else { return }
+        accepting = false
+    }
+
+    mutating func record(_ envelope: String, runID: UUID) {
+        guard accepting, self.runID == runID,
+            let data = envelope.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            object["ok"] as? Bool == false,
+            let rawKind = object["kind"] as? String,
+            let kind = ToolEnvelope.Kind(rawValue: rawKind)
+        else { return }
+        failure = DelegatedToolFailure(runID: runID, kind: kind,
+            message: ToolEnvelope.failureMessage(envelope), retryable: object["retryable"] as? Bool)
+    }
+
+    var current: DelegatedToolFailure? {
+        guard let failure, failure.runID == runID else { return nil }
+        return failure
+    }
+}
+
 enum AgentDelegationDispatcher {
     /// Prefix a delegated child uses to hand a question back to the
     /// requester instead of guessing (the child has no `clarify` tool —
@@ -111,6 +154,15 @@ enum AgentDelegationDispatcher {
         finalText.trimmingCharacters(in: .whitespacesAndNewlines)
             .uppercased()
             .hasPrefix(needsInputMarker)
+    }
+
+    /// Whether the marker appears somewhere other than the start — the
+    /// contract is prefix-only, so `needs_input` stays false, but the
+    /// mismatch between the recorded flag and the text must be observable
+    /// (payload hint + log) rather than silently lost.
+    static func hasOffPrefixNeedsInputMarker(_ finalText: String) -> Bool {
+        guard !isNeedsInput(finalText) else { return false }
+        return finalText.uppercased().contains(needsInputMarker)
     }
 
     /// Title prefix for delegated child sessions in the target agent's
@@ -332,7 +384,8 @@ enum AgentDelegationDispatcher {
         interrupt: InterruptToken,
         parentSessionId: String? = nil,
         launcherWorkingFolder: DelegatedWorkingFolder? = nil,
-        continueSessionId: UUID? = nil
+        continueSessionId: UUID? = nil,
+        freshSessionId: UUID? = nil
     ) async throws -> AgentDelegationOutcome {
         try await run(
             target: .local(targetAgentId),
@@ -347,7 +400,8 @@ enum AgentDelegationDispatcher {
             interrupt: interrupt,
             parentSessionId: parentSessionId,
             launcherWorkingFolder: launcherWorkingFolder,
-            continueSessionId: continueSessionId
+            continueSessionId: continueSessionId,
+            freshSessionId: freshSessionId
         )
     }
 
@@ -383,35 +437,54 @@ enum AgentDelegationDispatcher {
                     + "wait for its result before continuing it."
             )
         }
-        let db = ChatHistoryDatabase.shared
-        if !db.isOpen { try? db.open() }
+        let db = ConversationStores.current
+        if !db.isOpenNonBlocking { try? db.open() }
         guard let session = db.loadSession(id: sessionId) else {
             throw SubagentError.unavailable(
                 "No delegated worker session \(sessionId.uuidString) exists to continue. "
                     + "Start a new task instead (omit `continue`)."
             )
         }
+        // A `continue` that names the wrong agent or a non-worker session is
+        // a correctable call-shape mistake, not a policy refusal: nothing ran
+        // and no state changed. `invalid_args` gives the parent one correction
+        // (pick the producing agent, or omit `continue`) instead of the
+        // chat loop's terminal `rejected` stop. Live Raptor 0.6.1 wave
+        // (2026-09-29): a `rejected` here ended the whole turn with the
+        // second worker never dispatched.
         guard session.source == .delegation else {
-            throw SubagentError.denied(
-                "Session \(sessionId.uuidString) is not a delegated worker session; only "
-                    + "`session_id` values returned by spawn_agent can be continued."
+            throw SubagentError.invalidArgs(
+                message:
+                    "Session \(sessionId.uuidString) is not a delegated worker session; only "
+                    + "`session_id` values returned by spawn_agent can be continued. "
+                    + "Omit `continue` to start a new task.",
+                field: "continue",
+                expected: "a session_id returned by an earlier spawn_agent result"
             )
         }
         switch target {
         case .local(let agentId):
             guard session.agentId == agentId else {
-                throw SubagentError.denied(
-                    "Session \(sessionId.uuidString) belongs to a different agent than "
-                        + "'\(targetAgentName)'. Continue it with the agent that produced it."
+                throw SubagentError.invalidArgs(
+                    message:
+                        "Session \(sessionId.uuidString) belongs to a different agent than "
+                        + "'\(targetAgentName)'. Continue it with the agent that produced it, "
+                        + "or omit `continue` to give '\(targetAgentName)' a new task.",
+                    field: "agent",
+                    expected: "the agent named in the spawn_result that returned this session_id"
                 )
             }
         case .workspace(let ref):
             guard let stamped = session.workspace,
                 stamped.agentAddress.caseInsensitiveCompare(ref.agentAddress) == .orderedSame
             else {
-                throw SubagentError.denied(
-                    "Session \(sessionId.uuidString) was not produced by workspace agent "
-                        + "'\(targetAgentName)'."
+                throw SubagentError.invalidArgs(
+                    message:
+                        "Session \(sessionId.uuidString) was not produced by workspace agent "
+                        + "'\(targetAgentName)'. Continue it with the agent that produced it, "
+                        + "or omit `continue` to give '\(targetAgentName)' a new task.",
+                    field: "agent",
+                    expected: "the agent named in the spawn_result that returned this session_id"
                 )
             }
         }
@@ -443,7 +516,8 @@ enum AgentDelegationDispatcher {
         interrupt: InterruptToken,
         parentSessionId: String? = nil,
         launcherWorkingFolder: DelegatedWorkingFolder? = nil,
-        continueSessionId: UUID? = nil
+        continueSessionId: UUID? = nil,
+        freshSessionId: UUID? = nil
     ) async throws -> AgentDelegationOutcome {
         let started = Date()
         // The folder the child will actually run in: the target agent's
@@ -467,8 +541,10 @@ enum AgentDelegationDispatcher {
                 )
             }
         }
-        let sessionId = continueSessionId ?? UUID()
-        let request = DispatchRequest(
+        // A caller that announced the session ahead of the run (background
+        // ack) passes the same `freshSessionId`, so ack and result agree.
+        let sessionId = continueSessionId ?? freshSessionId ?? UUID()
+        var request = DispatchRequest(
             id: sessionId,
             prompt: delegatedPrompt(
                 input: input,
@@ -495,8 +571,10 @@ enum AgentDelegationDispatcher {
             delegationResponseTokenCap: maxResponseTokens,
             delegationContextPositionCap: maxContextPositions,
             delegationAssistantTurnCap: maxAssistantTurns,
-            delegationModel: target.isWorkspace ? nil : model
+            delegationModel: target.isWorkspace ? nil : model,
+            taskIntent: ChatTaskIntent(userText: input)
         )
+        request.inferenceSourceOverride = ChatExecutionContext.inferenceSourceOverride
 
         // The child is a REAL chat session of the target agent, not a
         // nested subagent loop: clear the family recursion guard so the
@@ -661,14 +739,15 @@ enum AgentDelegationDispatcher {
         // watchdog only backstops a cancel that never reaches a terminal
         // state.
         let watchdogSeconds = UInt64(queueGrace + runBudget) + 120
-        let result = await withTaskCancellationHandler {
-            await BackgroundTaskManager.shared.awaitCompletion(
+        let completion = await withTaskCancellationHandler {
+            await BackgroundTaskManager.shared.awaitCompletionWithToolFailure(
                 taskId,
                 timeoutSeconds: watchdogSeconds
             )
         } onCancel: {
             cancelChild(.parentTask)
         }
+        let result = completion.result
         let elapsed = Date().timeIntervalSince(started)
 
         // Artifact pass-through for EVERY terminal state: whatever the child
@@ -721,11 +800,21 @@ enum AgentDelegationDispatcher {
                 )
             }
         case .failed(let message):
-            throw SubagentError.executionFailed(
-                message: "Delegated agent '\(targetAgentName)' failed: \(message)",
-                retryable: true
-            )
+            throw failureForChild(message: message, targetAgentName: targetAgentName,
+                terminalFailure: completion.terminalToolFailure)
         }
+    }
+
+    /// Preserve a terminal tool refusal across the child background-task
+    /// boundary, without classifying user-facing summary strings.
+    static func failureForChild(message: String, targetAgentName: String,
+        terminalFailure: DelegatedToolFailure?) -> SubagentError
+    {
+        if let terminalFailure, terminalFailure.kind == .userDenied {
+            return .userDenied("Delegated agent '\(targetAgentName)' stopped: \(terminalFailure.message)")
+        }
+        return .executionFailed(message: "Delegated agent '\(targetAgentName)' failed: \(message)",
+            retryable: terminalFailure?.retryable ?? true)
     }
 
     /// Read the persisted child session (saved by `markCompleted` before the

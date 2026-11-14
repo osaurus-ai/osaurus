@@ -26,6 +26,8 @@ final class DiffBackgroundView: NSView {
     var removedBackground: NSColor = .clear
     var addedBar: NSColor = .clear
     var removedBar: NSColor = .clear
+    var markerFont: NSFont?
+    static let markerWidth: CGFloat = 16
 
     override var isFlipped: Bool { true }
     override func hitTest(_ point: NSPoint) -> NSView? { nil }  // never intercept clicks
@@ -53,13 +55,26 @@ final class DiffBackgroundView: NSView {
                     forCharacterRange: lineRange,
                     actualCharacterRange: nil
                 )
-                layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { rect, _, _, _, _ in
+                layoutManager.enumerateLineFragments(forGlyphRange: glyphRange) { rect, _, _, fragmentRange, _ in
                     let local = self.convert(rect, from: tv)
                     guard local.maxY >= dirtyRect.minY, local.minY <= dirtyRect.maxY else { return }
                     bg.setFill()
                     NSRect(x: 0, y: local.origin.y, width: fullWidth, height: local.height).fill()
                     bar.setFill()
-                    NSRect(x: 0, y: local.origin.y, width: 3, height: local.height).fill()
+                    NSRect(x: 0, y: local.origin.y, width: 2, height: local.height).fill()
+                    if fragmentRange.location == glyphRange.location {
+                        var attributes: [NSAttributedString.Key: Any] = [.foregroundColor: bar]
+                        attributes[.font] = self.markerFont ?? tv.font
+                        let marker = NSAttributedString(
+                            string: kind == .added ? "+" : "−",
+                            attributes: attributes
+                        )
+                        let size = marker.size()
+                        marker.draw(at: NSPoint(
+                            x: local.minX - (Self.markerWidth + size.width) / 2,
+                            y: local.midY - size.height / 2
+                        ))
+                    }
                 }
             }
 
@@ -78,7 +93,7 @@ final class NativeFileDiffView: NSView {
 
     // MARK: Layout constants
 
-    /// Left text inset leaves room past the 3pt accent bar.
+    /// The leading inset leaves room for change markers and the edge rule.
     private static let textInsetLeft: CGFloat = 14
     private static let textInsetRight: CGFloat = 8
     private static let textInsetTop: CGFloat = 6
@@ -103,8 +118,16 @@ final class NativeFileDiffView: NSView {
     private let addedLabel = NSTextField(labelWithString: "")
     private let removedLabel = NSTextField(labelWithString: "")
     private let previewBadge = NSTextField(labelWithString: "")
+    private let metadataStack = NSStackView()
+    private let headerDivider = NSView()
     private let copyButton = NSButton()
     private let collapseButton = NSButton()
+    /// File-history controls: status badge ("Reverted"), View (opens the
+    /// File Changes inspector on this write) and Revert / Undo.
+    private let historyStack = NSStackView()
+    private let historyBadge = NSTextField(labelWithString: "")
+    private let viewButton = NSButton()
+    private let revertButton = NSButton()
     private var diffBackground: DiffBackgroundView?
     private var diffTextView: CodeNSTextView?
     private var bodyHeightConstraint: NSLayoutConstraint?
@@ -119,10 +142,28 @@ final class NativeFileDiffView: NSView {
     // MARK: State
 
     private var lastDiff: FileDiff?
-    private var lastWidth: CGFloat = 0
-    private var lastThemeId = ""
+    private var lastThemeFingerprint: Int?
     private var isCollapsed = false
     private var copyResetTask: Task<Void, Never>?
+    private var lastTheme: (any ThemeProtocol)?
+    private var inspectorHovered = false
+    private func metric(_ property: String, _ fallback: CGFloat) -> CGFloat {
+        NativeComponentInspectionStyle.metric(38, property, fallback, lastTheme ?? CustomizableTheme.light())
+    }
+    private var space: ThemeSpaceScale { (lastTheme ?? CustomizableTheme.light()).space }
+    static func inspectionHeaderHeight(_ theme: any ThemeProtocol) -> CGFloat {
+        let name = theme.assignedNativeFont(NativeComponentInspectionStyle.key(38, "heading"), fallback: theme.nsFont(.caption))
+        let caption = theme.assignedNativeFont(NativeComponentInspectionStyle.key(38, "caption"), fallback: theme.nsFont(.caption))
+        let textHeight = max(ceil(name.ascender - name.descender + name.leading), ceil(caption.ascender - caption.descender + caption.leading), theme.assignedLineHeight(NativeComponentInspectionStyle.key(38, "heading"), fallback: 18), theme.assignedLineHeight(NativeComponentInspectionStyle.key(38, "caption"), fallback: 16))
+        return max(NativeComponentInspectionStyle.metric(38, "height", headerHeight, theme), textHeight + 2 * theme.space.s8)
+    }
+    private var assignedHeaderHeight: CGFloat { Self.inspectionHeaderHeight(lastTheme ?? CustomizableTheme.light()) }
+    private var historySetId: UUID?
+    private var historySessionId: String?
+    private var historyStatus: FileChangeSetStatus?
+    private var historyUndoSetId: UUID?
+    private var historyBusy = false
+    nonisolated(unsafe) private var historyObserver: NSObjectProtocol?
 
     // MARK: Init
 
@@ -133,29 +174,45 @@ final class NativeFileDiffView: NSView {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    deinit {
+        if let historyObserver { NotificationCenter.default.removeObserver(historyObserver) }
+    }
+
     // MARK: Configure
 
     func configure(diff: FileDiff, collapsed: Bool, width: CGFloat, theme: any ThemeProtocol) {
-        let themeId = "\(theme.monoFontName)|\(theme.codeSize)|\(theme.isDark)"
+        let theme = theme.catalogFamily(38)
+        let themeId = theme.renderFingerprint
         // Only the expensive syntax-highlight pass is gated; header styling and
         // layout always run so every reconfigure reports an accurate height —
         // an early return here let the row get stuck after a few toggles when a
         // SwiftUI update wiped the height cache without a fresh measurement.
         let diffChanged = diff != lastDiff
-        let themeChanged = themeId != lastThemeId
+        let themeChanged = themeId != lastThemeFingerprint
 
         lastDiff = diff
-        lastWidth = width
-        lastThemeId = themeId
+        lastThemeFingerprint = themeId
         isCollapsed = collapsed
+        lastTheme = theme
+
+        let setId = diff.isPreview || diff.isStreamingPreview ? nil : diff.operationId
+        if setId != historySetId {
+            historySetId = setId
+            historySessionId = nil
+            historyStatus = nil
+            historyUndoSetId = nil
+            refreshHistoryState()
+        }
 
         applyHeaderStyling(diff: diff, theme: theme)
+        applyHistoryControls(theme: theme)
         updateCollapseChevron(theme: theme)
 
         let tv = ensureTextView(theme: theme)
         if diffChanged || themeChanged {
             applyDiffText(to: tv, diff: diff, theme: theme)
         }
+        applyInspectionStyle(theme)
         layoutBody(width: width, collapsed: collapsed, theme: theme)
     }
 
@@ -164,12 +221,12 @@ final class NativeFileDiffView: NSView {
     /// what the chart / tool-group height paths guard against). Uses the view's
     /// own `isCollapsed` so a local toggle reports the correct height without the
     /// caller threading a (potentially stale) collapsed flag.
-    func measuredCardHeight(outerWidth: CGFloat) -> CGFloat {
-        if isCollapsed { return Self.headerHeight }
+    func measuredCardHeight(cardWidth: CGFloat) -> CGFloat {
+        if isCollapsed { return assignedHeaderHeight }
         guard let tv = diffTextView, let tc = tv.textContainer, let lm = tv.layoutManager else {
-            return Self.headerHeight + 40
+            return assignedHeaderHeight + 40
         }
-        let innerW = max(1, bodyTextWidth(forOuterWidth: outerWidth))
+        let innerW = max(1, bodyTextWidth(forCardWidth: cardWidth))
         let wasTracking = tc.widthTracksTextView
         let wasSize = tc.containerSize
         tc.widthTracksTextView = false
@@ -180,7 +237,29 @@ final class NativeFileDiffView: NSView {
         }
         lm.ensureLayout(for: tc)
         let textH = ceil(lm.usedRect(for: tc).height)
-        return Self.headerHeight + Self.textInsetTop + max(textH, 1) + Self.textInsetBottom
+        return assignedHeaderHeight + metric("padding", Self.textInsetTop) + max(textH, 1) + metric("padding", Self.textInsetBottom)
+    }
+
+    private func applyInspectionStyle(_ theme: any ThemeProtocol) {
+        headerView.constraints.first { $0.firstAttribute == .height }?.constant = assignedHeaderHeight
+        let gap = metric("gap", space.s8)
+        historyStack.spacing = gap
+        for c in headerView.constraints {
+            let view = c.firstItem as? NSView
+            if view === iconLabel, c.firstAttribute == .leading { c.constant = metric("padding", space.s10) }
+            if c.firstAttribute == .leading, view === fileLabel || view === metadataStack { c.constant = gap }
+            if c.firstAttribute == .trailing, view === collapseButton { c.constant = -metric("padding", space.s8) }
+        }
+        for c in constraints where c.firstItem as? NSView === diffTextView {
+            if c.firstAttribute == .leading { c.constant = (metric("padding", Self.textInsetLeft) + DiffBackgroundView.markerWidth) }
+            if c.firstAttribute == .trailing { c.constant = -metric("padding", Self.textInsetRight) }
+            if c.firstAttribute == .top { c.constant = metric("padding", Self.textInsetTop) }
+        }
+        NativeComponentInspectionStyle.label(fileLabel, family: 38, property: "heading", theme: theme)
+        NativeComponentInspectionStyle.label(iconLabel, family: 38, property: "code", theme: theme)
+        for field in [addedLabel, removedLabel, previewBadge, historyBadge] { NativeComponentInspectionStyle.label(field, family: 38, property: "caption", theme: theme) }
+        diffTextView?.selectedTextAttributes = [.backgroundColor: NSColor(theme.selection.background)]
+        diffTextView?.insertionPointColor = NSColor(theme.cursor)
     }
 
     // MARK: - Private: Build
@@ -188,8 +267,6 @@ final class NativeFileDiffView: NSView {
     private func buildViews() {
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
-        layer?.cornerRadius = 8
-        layer?.borderWidth = 1
         layer?.masksToBounds = true
 
         headerView.translatesAutoresizingMaskIntoConstraints = false
@@ -213,9 +290,22 @@ final class NativeFileDiffView: NSView {
             label.isEditable = false
             label.isBordered = false
             label.drawsBackground = false
-            headerView.addSubview(label)
         }
+        headerView.addSubview(fileLabel)
         fileLabel.lineBreakMode = .byTruncatingMiddle
+
+        metadataStack.translatesAutoresizingMaskIntoConstraints = false
+        metadataStack.orientation = .horizontal
+        metadataStack.alignment = .firstBaseline
+        metadataStack.spacing = 4
+        for label in [addedLabel, removedLabel, previewBadge] {
+            metadataStack.addArrangedSubview(label)
+        }
+        headerView.addSubview(metadataStack)
+
+        headerDivider.translatesAutoresizingMaskIntoConstraints = false
+        headerDivider.wantsLayer = true
+        headerView.addSubview(headerDivider)
 
         copyButton.translatesAutoresizingMaskIntoConstraints = false
         copyButton.title = ""
@@ -235,6 +325,33 @@ final class NativeFileDiffView: NSView {
         collapseButton.alphaValue = 0.55
         headerView.addSubview(collapseButton)
 
+        historyStack.translatesAutoresizingMaskIntoConstraints = false
+        historyStack.orientation = .horizontal
+        historyStack.spacing = 6
+        historyStack.alignment = .centerY
+        historyBadge.isEditable = false
+        historyBadge.isBordered = false
+        historyBadge.drawsBackground = false
+        viewButton.title = ""
+        viewButton.image = SymbolImageCache.image("sidebar.right", accessibilityDescription: L("View change"))
+        viewButton.toolTip = L("Show in File Changes")
+        viewButton.isBordered = false
+        viewButton.target = self
+        viewButton.action = #selector(openInPanel)
+        viewButton.alphaValue = 0.55
+        viewButton.widthAnchor.constraint(equalToConstant: 20).isActive = true
+        viewButton.heightAnchor.constraint(equalToConstant: 20).isActive = true
+        revertButton.isBordered = false
+        revertButton.bezelStyle = .inline
+        revertButton.target = self
+        revertButton.action = #selector(revertOrUndo)
+        revertButton.alphaValue = 0.75
+        for view in [historyBadge, viewButton, revertButton] as [NSView] {
+            historyStack.addArrangedSubview(view)
+        }
+        historyStack.isHidden = true
+        headerView.addSubview(historyStack)
+
         // Transparent toggle overlay over the header up to the action buttons,
         // added last so it sits in front of the icon/labels and captures their
         // clicks while copy / collapse keep their own.
@@ -252,14 +369,14 @@ final class NativeFileDiffView: NSView {
             headerButton.leadingAnchor.constraint(equalTo: headerView.leadingAnchor),
             headerButton.topAnchor.constraint(equalTo: headerView.topAnchor),
             headerButton.bottomAnchor.constraint(equalTo: headerView.bottomAnchor),
-            headerButton.trailingAnchor.constraint(equalTo: copyButton.leadingAnchor),
+            headerButton.trailingAnchor.constraint(equalTo: historyStack.leadingAnchor),
         ])
 
         NSLayoutConstraint.activate([
             headerView.leadingAnchor.constraint(equalTo: leadingAnchor),
             headerView.trailingAnchor.constraint(equalTo: trailingAnchor),
             headerView.topAnchor.constraint(equalTo: topAnchor),
-            headerView.heightAnchor.constraint(equalToConstant: Self.headerHeight),
+            headerView.heightAnchor.constraint(equalToConstant: assignedHeaderHeight),
 
             iconLabel.leadingAnchor.constraint(equalTo: headerView.leadingAnchor, constant: 10),
             // The file name is the header's single vertical reference: the icon
@@ -284,22 +401,17 @@ final class NativeFileDiffView: NSView {
             fileLabel.leadingAnchor.constraint(equalTo: iconLabel.trailingAnchor, constant: 7),
             fileLabel.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
 
-            // Baseline-align the counts/badge to the file name — these labels
-            // use different fonts (semibold name vs smaller monospaced-digit
-            // counts), so centering their frames leaves the text visibly
-            // off-axis.
-            addedLabel.leadingAnchor.constraint(equalTo: fileLabel.trailingAnchor, constant: 8),
-            addedLabel.firstBaselineAnchor.constraint(equalTo: fileLabel.firstBaselineAnchor),
+            metadataStack.leadingAnchor.constraint(equalTo: fileLabel.trailingAnchor, constant: 8),
+            metadataStack.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
+            metadataStack.trailingAnchor.constraint(lessThanOrEqualTo: historyStack.leadingAnchor, constant: -8),
 
-            removedLabel.leadingAnchor.constraint(equalTo: addedLabel.trailingAnchor, constant: 5),
-            removedLabel.firstBaselineAnchor.constraint(equalTo: fileLabel.firstBaselineAnchor),
+            headerDivider.leadingAnchor.constraint(equalTo: headerView.leadingAnchor),
+            headerDivider.trailingAnchor.constraint(equalTo: headerView.trailingAnchor),
+            headerDivider.bottomAnchor.constraint(equalTo: headerView.bottomAnchor),
+            headerDivider.heightAnchor.constraint(equalToConstant: 1),
 
-            previewBadge.leadingAnchor.constraint(equalTo: removedLabel.trailingAnchor, constant: 8),
-            previewBadge.firstBaselineAnchor.constraint(equalTo: fileLabel.firstBaselineAnchor),
-            previewBadge.trailingAnchor.constraint(
-                lessThanOrEqualTo: copyButton.leadingAnchor,
-                constant: -8
-            ),
+            historyStack.trailingAnchor.constraint(equalTo: copyButton.leadingAnchor, constant: -6),
+            historyStack.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
 
             collapseButton.trailingAnchor.constraint(equalTo: headerView.trailingAnchor, constant: -8),
             collapseButton.centerYAnchor.constraint(equalTo: headerView.centerYAnchor),
@@ -316,6 +428,15 @@ final class NativeFileDiffView: NSView {
         fileLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         addedLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         removedLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        historyStack.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        historyObserver = NotificationCenter.default.addObserver(
+            forName: .fileChangesDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.refreshHistoryState() }
+        }
     }
 
     private func ensureTextView(theme: any ThemeProtocol) -> CodeNSTextView {
@@ -342,7 +463,7 @@ final class NativeFileDiffView: NSView {
         tv.textContainer?.lineFragmentPadding = 0
         // Diff card draws no gutter — keep CodeNSTextView's line numbers off.
         tv.lineCount = 0
-        tv.selectedTextAttributes = [.backgroundColor: NSColor(theme.selectionColor)]
+        tv.selectedTextAttributes = [.backgroundColor: NSColor(theme.selection.background)]
         addSubview(tv)
         bgView.textView = tv
 
@@ -351,9 +472,9 @@ final class NativeFileDiffView: NSView {
         bodyHeightConstraint = hc
 
         NSLayoutConstraint.activate([
-            tv.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.textInsetLeft),
-            tv.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.textInsetRight),
-            tv.topAnchor.constraint(equalTo: headerView.bottomAnchor, constant: Self.textInsetTop),
+            tv.leadingAnchor.constraint(equalTo: leadingAnchor, constant: (metric("padding", Self.textInsetLeft) + DiffBackgroundView.markerWidth)),
+            tv.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -metric("padding", Self.textInsetRight)),
+            tv.topAnchor.constraint(equalTo: headerView.bottomAnchor, constant: metric("padding", Self.textInsetTop)),
 
             bgView.leadingAnchor.constraint(equalTo: leadingAnchor),
             bgView.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -371,18 +492,17 @@ final class NativeFileDiffView: NSView {
         // theme's background so syntax colors land on the surface they were
         // tuned for. Diff tints are semi-transparent and blend over it.
         ensureHighlightrTheme(for: theme)
-        let bgColor = highlightrThemeBackgroundNSColor()
-        layer?.backgroundColor = bgColor.cgColor
-        layer?.borderColor =
-            NSColor(theme.primaryBorder)
-            .withAlphaComponent(theme.borderOpacity).cgColor
-        headerView.layer?.backgroundColor = bgColor.withAlphaComponent(0.6).cgColor
+        layer?.backgroundColor = NSColor(theme.surface.code).cgColor
+        headerView.layer?.backgroundColor = inspectorHovered ? NSColor(theme.surface.hover).cgColor : nil
+        catalogAssignmentTarget(["background", "hover", "border"].map { "component.library.38." + $0 }, name: "File-change preview", theme: theme)
+        layer?.borderColor = NSColor(theme.border.default).cgColor
+        layer?.borderWidth = theme.stroke.default
+        layer?.cornerRadius = theme.radius.medium
+        headerDivider.layer?.backgroundColor = NSColor(theme.border.subtle).cgColor
+        headerDivider.isHidden = isCollapsed
 
-        iconLabel.font = NSFont.monospacedSystemFont(
-            ofSize: CGFloat(theme.captionSize),
-            weight: .semibold
-        )
-        iconLabel.textColor = NSColor(theme.tertiaryText)
+        iconLabel.font = theme.nsFont(.caption, weight: .semibold, family: .code)
+        iconLabel.textColor = NSColor(theme.text.tertiary)
 
         // Collapsed + still streaming: swap the code glyph for a spinner so the
         // header shows the write is in flight even with the body hidden.
@@ -397,59 +517,58 @@ final class NativeFileDiffView: NSView {
         // The path argument may not have streamed yet — hold the name slot
         // with a placeholder so the header doesn't render as a bare count.
         fileLabel.stringValue = diff.fileName.isEmpty ? L("Untitled") : diff.fileName
-        fileLabel.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize), weight: .semibold)
-        fileLabel.textColor = NSColor(theme.primaryText)
+        fileLabel.toolTip = diff.fileName.isEmpty ? nil : diff.fileName
+        fileLabel.font = theme.nsFont(.caption, weight: .semibold)
+        fileLabel.textColor = NSColor(theme.text.primary)
 
-        let countFont = NSFont.monospacedDigitSystemFont(
-            ofSize: CGFloat(theme.captionSize) - 1,
-            weight: .medium
-        )
+        let countFont = theme.nsFont(.caption, monospacedDigit: true)
         addedLabel.font = countFont
         removedLabel.font = countFont
         addedLabel.stringValue = diff.addedCount > 0 ? "+\(diff.addedCount)" : ""
         removedLabel.stringValue = diff.removedCount > 0 ? "−\(diff.removedCount)" : ""
-        addedLabel.textColor = NSColor(theme.successColor)
-        removedLabel.textColor = NSColor(theme.errorColor)
+        addedLabel.isHidden = diff.addedCount == 0
+        removedLabel.isHidden = diff.removedCount == 0
+        addedLabel.textColor = NSColor(theme.status.success.foreground)
+        removedLabel.textColor = NSColor(theme.status.error.foreground)
 
         // The spinner already signals streaming; the "…" badge would duplicate it.
         if showSpinner {
             previewBadge.stringValue = ""
             previewBadge.isHidden = true
         } else if diff.isStreamingPreview || diff.isPreview {
-            previewBadge.stringValue = diff.isStreamingPreview ? "…" : L("preview")
-            previewBadge.font = NSFont.systemFont(ofSize: CGFloat(theme.captionSize) - 2, weight: .medium)
-            previewBadge.textColor = NSColor(theme.tertiaryText)
+            previewBadge.stringValue = diff.isStreamingPreview ? "…" : L("Preview")
+            previewBadge.font = theme.nsFont(.micro, weight: .medium)
+            previewBadge.textColor = NSColor(theme.text.tertiary)
             previewBadge.isHidden = false
         } else {
             previewBadge.stringValue = ""
             previewBadge.isHidden = true
         }
 
-        copyButton.contentTintColor = NSColor(theme.tertiaryText)
-        collapseButton.contentTintColor = NSColor(theme.tertiaryText)
+        copyButton.contentTintColor = NSColor(theme.text.tertiary)
+        collapseButton.contentTintColor = NSColor(theme.text.tertiary)
     }
 
     private func updateCollapseChevron(theme: any ThemeProtocol) {
         let symbol = isCollapsed ? "chevron.right" : "chevron.down"
         collapseButton.image = SymbolImageCache.image(symbol, accessibilityDescription: nil)
-        collapseButton.contentTintColor = NSColor(theme.tertiaryText)
+        collapseButton.contentTintColor = NSColor(theme.text.tertiary)
     }
 
     private func applyDiffText(to tv: CodeNSTextView, diff: FileDiff, theme: any ThemeProtocol) {
-        let fontSize = max(10, CGFloat(theme.codeSize) - 1)
-        let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
-        let para = NSMutableParagraphStyle()
-        para.lineBreakMode = .byCharWrapping
+        let font = theme.nsFont(.code)
+        let para = theme.paragraphStyle(.code, lineBreakMode: .byCharWrapping)
 
-        tv.textStorage?.setAttributedString(
-            highlightedBody(diff: diff, theme: theme, font: font, paragraphStyle: para)
-        )
+        let body = NSMutableAttributedString(attributedString: highlightedBody(diff: diff, theme: theme, font: font, paragraphStyle: para))
+        body.addAttribute(.kern, value: theme.assignedTracking(NativeComponentInspectionStyle.key(38, "code")) ?? 0, range: NSRange(location: 0, length: body.length))
+        tv.textStorage?.setAttributedString(body)
 
         diffBackground?.lineKinds = diff.lines.map(\.kind)
-        diffBackground?.addedBackground = NSColor(theme.successColor).withAlphaComponent(0.14)
-        diffBackground?.removedBackground = NSColor(theme.errorColor).withAlphaComponent(0.14)
-        diffBackground?.addedBar = NSColor(theme.successColor).withAlphaComponent(0.6)
-        diffBackground?.removedBar = NSColor(theme.errorColor).withAlphaComponent(0.6)
+        diffBackground?.markerFont = font
+        diffBackground?.addedBackground = NSColor(theme.status.success.background)
+        diffBackground?.removedBackground = NSColor(theme.status.error.background)
+        diffBackground?.addedBar = NSColor(theme.status.success.border)
+        diffBackground?.removedBar = NSColor(theme.status.error.border)
     }
 
     /// Builds the body text. When a language is known, the hunk is syntax-
@@ -494,7 +613,7 @@ final class NativeFileDiffView: NSView {
         // Plain fallback: meta lines dimmed, everything else primary text.
         let body = NSMutableAttributedString()
         for (idx, line) in diff.lines.enumerated() {
-            let color = line.kind == .meta ? NSColor(theme.tertiaryText) : NSColor(theme.primaryText)
+            let color = line.kind == .meta ? NSColor(theme.text.tertiary) : NSColor(theme.text.primary)
             let text = idx == diff.lines.count - 1 ? line.text : line.text + "\n"
             body.append(
                 NSAttributedString(
@@ -506,11 +625,9 @@ final class NativeFileDiffView: NSView {
         return body
     }
 
-    private func bodyTextWidth(forOuterWidth outerWidth: CGFloat) -> CGFloat {
-        // Card spans the cell minus 16pt insets on each side (see configureAsFileDiff);
-        // the text view is further inset by the left/right insets.
-        let cardWidth = outerWidth - 32
-        return cardWidth - Self.textInsetLeft - Self.textInsetRight
+    private func bodyTextWidth(forCardWidth cardWidth: CGFloat) -> CGFloat {
+        cardWidth - metric("padding", Self.textInsetLeft) - DiffBackgroundView.markerWidth
+            - metric("padding", Self.textInsetRight)
     }
 
     private func layoutBody(width: CGFloat, collapsed: Bool, theme: any ThemeProtocol) {
@@ -525,7 +642,7 @@ final class NativeFileDiffView: NSView {
             onHeightChanged?()
             return
         }
-        let innerW = max(1, bodyTextWidth(forOuterWidth: width))
+        let innerW = max(1, bodyTextWidth(forCardWidth: width))
         tc.containerSize = NSSize(width: innerW, height: .greatestFiniteMagnitude)
         lm.ensureLayout(for: tc)
         let h = ceil(lm.usedRect(for: tc).height)
@@ -536,8 +653,8 @@ final class NativeFileDiffView: NSView {
     }
 
     override var intrinsicContentSize: NSSize {
-        let bodyH = isCollapsed ? 0 : (Self.textInsetTop + (bodyHeightConstraint?.constant ?? 0) + Self.textInsetBottom)
-        return NSSize(width: NSView.noIntrinsicMetric, height: Self.headerHeight + bodyH)
+        let bodyH = isCollapsed ? 0 : (metric("padding", Self.textInsetTop) + (bodyHeightConstraint?.constant ?? 0) + metric("padding", Self.textInsetBottom))
+        return NSSize(width: NSView.noIntrinsicMetric, height: assignedHeaderHeight + bodyH)
     }
 
     // MARK: - Hover (copy button visibility)
@@ -556,18 +673,26 @@ final class NativeFileDiffView: NSView {
     }
 
     override func mouseEntered(with event: NSEvent) {
+        inspectorHovered = true
+        if let theme = lastTheme { headerView.layer?.backgroundColor = NSColor(theme.surface.hover).cgColor }
         NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.15
+            ctx.duration = ThemeManager.shared.currentTheme.motion.quickInterval
             copyButton.animator().alphaValue = 1
             collapseButton.animator().alphaValue = 1
+            viewButton.animator().alphaValue = 1
+            revertButton.animator().alphaValue = 1
         }
     }
 
     override func mouseExited(with event: NSEvent) {
+        inspectorHovered = false
+        headerView.layer?.backgroundColor = nil
         NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.15
+            ctx.duration = ThemeManager.shared.currentTheme.motion.quickInterval
             copyButton.animator().alphaValue = 0.55
             collapseButton.animator().alphaValue = 0.55
+            viewButton.animator().alphaValue = 0.55
+            revertButton.animator().alphaValue = 0.75
         }
     }
 
@@ -586,12 +711,108 @@ final class NativeFileDiffView: NSView {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(diff.rawDiff, forType: .string)
         copyButton.image = SymbolImageCache.image("checkmark", accessibilityDescription: nil)
-        copyButton.contentTintColor = .systemGreen
+        copyButton.contentTintColor = lastTheme.map { NSColor($0.status.success.foreground) } ?? .systemGreen
         copyResetTask?.cancel()
         copyResetTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             self.copyButton.image = SymbolImageCache.image("doc.on.doc", accessibilityDescription: nil)
-            self.copyButton.contentTintColor = nil
+            self.copyButton.contentTintColor = self.lastTheme.map { NSColor($0.text.tertiary) }
+        }
+    }
+
+    // MARK: - File history
+
+    private func refreshHistoryState() {
+        guard let setId = historySetId else { return }
+        Task { @MainActor [weak self] in
+            let journal = FileChangeJournal.shared
+            let set = await journal.changeSet(id: setId)
+            let undo: FileChangeSet?
+            if let set {
+                undo = await journal.activeRevert(of: setId, sessionId: set.sessionId)
+            } else {
+                undo = nil
+            }
+            guard let self, self.historySetId == setId else { return }
+            self.historySessionId = set?.sessionId
+            self.historyStatus = set?.status
+            self.historyUndoSetId = undo?.id
+            if let theme = self.lastTheme { self.applyHistoryControls(theme: theme) }
+        }
+    }
+
+    private func applyHistoryControls(theme: any ThemeProtocol) {
+        guard historySetId != nil, historySessionId != nil, let status = historyStatus else {
+            historyStack.isHidden = true
+            return
+        }
+        historyStack.isHidden = false
+        let captionFont = theme.nsFont(.footnote, weight: .medium)
+
+        let badge: String?
+        switch status {
+        case .reverted: badge = L("Reverted")
+        case .partiallyReverted: badge = L("Partly reverted")
+        case .untracked: badge = L("Not tracked")
+        default: badge = nil
+        }
+        historyBadge.stringValue = badge ?? ""
+        historyBadge.isHidden = badge == nil
+        historyBadge.font = captionFont
+        historyBadge.textColor = NSColor(theme.text.tertiary)
+
+        let title: String?
+        if status == .reverted {
+            title = historyUndoSetId == nil ? nil : L("Undo")
+        } else if status == .applied || status == .partiallyReverted {
+            title = L("Revert")
+        } else {
+            title = nil
+        }
+        revertButton.isHidden = title == nil
+        revertButton.isEnabled = !historyBusy
+        if let title {
+            revertButton.attributedTitle = NSAttributedString(
+                string: title,
+                attributes: [.font: captionFont, .foregroundColor: NSColor(theme.text.secondary)]
+            )
+            revertButton.toolTip =
+                status == .reverted
+                ? L("Put this change back")
+                : L("Restore the file to how it was before this change")
+        }
+        viewButton.contentTintColor = NSColor(theme.text.tertiary)
+        NativeComponentInspectionStyle.label(historyBadge, family: 38, property: "caption", theme: theme)
+        let actionTheme = theme.catalogFamily(38, enabled: revertButton.isEnabled)
+        revertButton.contentTintColor = NSColor(actionTheme.text.secondary)
+        NativeComponentInspectionStyle.button(revertButton, family: 38, property: "label", theme: theme.catalogFamily(38, enabled: revertButton.isEnabled))
+    }
+
+    @objc private func openInPanel() {
+        guard let setId = historySetId, let sessionId = historySessionId else { return }
+        FileChangeSummaryStore.requestPanel(sessionId: sessionId, focusing: setId)
+    }
+
+    @objc private func revertOrUndo() {
+        guard !historyBusy, let setId = historySetId, let sessionId = historySessionId else { return }
+        historyBusy = true
+        revertButton.isEnabled = false
+        let undoSetId = historyStatus == .reverted ? historyUndoSetId : nil
+        Task { @MainActor [weak self] in
+            let journal = FileChangeJournal.shared
+            let scope: FileChangeJournal.RevertScope = .set(undoSetId ?? setId)
+            // Anything that needs a decision (files edited since, snapshots
+            // unavailable) goes through the inspector's confirmation flow.
+            let preview = await journal.previewRevert(scope, sessionId: sessionId)
+            var needsPanel = preview.conflictCount > 0 || preview.unrestorableCount > 0
+            if !needsPanel {
+                let summary = await journal.revert(scope, sessionId: sessionId)
+                needsPanel = !summary.isClean
+            }
+            guard let self else { return }
+            self.historyBusy = false
+            if needsPanel { self.openInPanel() }
+            self.refreshHistoryState()
         }
     }
 }

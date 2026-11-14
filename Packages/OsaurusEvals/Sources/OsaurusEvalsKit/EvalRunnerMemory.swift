@@ -68,6 +68,7 @@ extension EvalRunner {
         let transcript = await MemoryRecallEvaluator.run(
             queries: queries,
             agentId: agentId,
+            model: modelId,
             maxTokens: exp.maxTokens ?? 512
         )
         let elapsedMs = Date().timeIntervalSince(started) * 1000
@@ -136,6 +137,11 @@ extension EvalRunner {
             }
         }
 
+        for (index, turn) in transcript.turns.enumerated() {
+            notes.append(turn.decodeTokensPerSecond.map {
+                String(format: "turn %d decode tok/s: %.3f", index + 1, $0)
+            } ?? "turn \(index + 1): runtime decode tok/s unavailable")
+        }
         return EvalCaseReport(
             id: testCase.id,
             label: label,
@@ -144,7 +150,14 @@ extension EvalRunner {
             outcome: passed ? .passed : .failed,
             notes: notes,
             modelId: modelId,
-            latencyMs: elapsedMs
+            latencyMs: elapsedMs,
+            telemetry: EvalCaseTelemetry(
+                decodeTokensPerSecond: transcript.turns.last?.decodeTokensPerSecond,
+                completionTokens: {
+                    let counts = transcript.turns.compactMap(\.tokenCount)
+                    return counts.isEmpty ? nil : counts.reduce(0, +)
+                }()
+            )
         )
     }
 }

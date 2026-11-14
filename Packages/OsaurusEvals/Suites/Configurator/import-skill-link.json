@@ -1,0 +1,33 @@
+{
+  "id": "configurator.import-skill-link",
+  "domain": "configurator",
+  "label": "configurator • \"Read <SKILL.md link> and set it up\" goes to osaurus_import with the link",
+  "query": "Read https://tempo.xyz/SKILL.md and set up tempo",
+  "notes": "Universal chat import, the motivating example. The Configurator passes the link to osaurus_import (code fetches it) rather than reading the page with web tools or writing a skill by hand. The selection assertion pins the link; the fetch itself depends on the network, so the rubric accepts an honest failure report.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_import"
+      ],
+      "mustNotCallTools": [
+        "web_fetch",
+        "web_search",
+        "search_and_extract",
+        "capabilities_discover"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_import",
+          "args": {
+            "source": "tempo.xyz/SKILL.md"
+          }
+        }
+      ],
+      "rubric": [
+        "Reports what the tool result says (the Tempo skill was added, or why it could not be fetched) in one or two sentences, without inventing skill contents."
+      ],
+      "maxIterations": 6
+    }
+  }
+}

@@ -98,4 +98,14 @@ struct NativeMTPAdmissionTests {
         // fallback; a native-MTP refusal must not change that independent path.
         #expect(try selected.requestStrategy(loaded: nil, mtp: settings.mtp) == nil)
     }
+    @Test func offDisablesWarmDFlashAndCanReenableWithoutDroppingSelection() throws {
+        var selected = evidence
+        selected.externalDrafterSelected = true
+        let loaded = DraftStrategy.dflash2(drafterPath: URL(fileURLWithPath: "/fixture/drafter"), blockSize: 8)
+        #expect(try selected.requestStrategy(loaded: loaded, mtp: .init(mode: .off)) == nil)
+        #expect(try selected.requestStrategy(loaded: loaded, mtp: .init(mode: .auto))?.usesDFlash2 == true)
+        #expect(ModelRuntime.requestDraftStrategy(loaded, mtp: .init(mode: .off)) == nil)
+        #expect(ModelRuntime.requestDraftStrategy(loaded, mtp: .init(mode: .auto))?.usesDFlash2 == true)
+    }
+
 }

@@ -138,8 +138,8 @@ public struct DelegationRecord: Identifiable, Sendable, Equatable {
 enum DelegationRecordLoader {
     /// Most recent `limit` records per direction, newest first.
     static func load(limit: Int = 40) -> (sent: [DelegationRecord], received: [DelegationRecord]) {
-        let db = ChatHistoryDatabase.shared
-        if !db.isOpen { try? db.open() }
+        let db = ConversationStores.current
+        if !db.isOpenNonBlocking { try? db.open() }
         let sentMeta = db.loadMetadata(forAgent: nil, source: .delegation).prefix(limit)
         let receivedMeta = db.loadMetadata(forAgent: nil, source: .workspace)
             .filter { $0.workspace?.isServedForTeammate == true }

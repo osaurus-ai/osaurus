@@ -144,8 +144,8 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
                 invokingParentModelName: scope.parentModelName,
                 idleWaitSeconds: Self.residencyIdleWaitSeconds,
                 deniedMessage:
-                    "Running Computer Use on a different local model requires \"Local Orchestrator "
-                    + "Handoff\" enabled in Settings → Subagents (so the chat model can unload to "
+                    "Running Computer Use on a different local model requires \"Swap Local Models for "
+                    + "Subagents\" enabled in Settings → Agents → Delegation (so the chat model can unload to "
                     + "make room).",
                 unavailableMessage:
                     "No model is selected for this agent, so Computer Use can't run. Pick a model first.",
@@ -205,7 +205,7 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
         if agentId == Agent.defaultId {
             return "Computer Use is not available to the built-in Default agent. "
                 + "Switch to a custom agent that has Computer Use enabled "
-                + "(Agents → Configure → Subagents → Computer Use)."
+                + "(Agents → the agent → Abilities → Subagents → Computer Use)."
         }
         guard let agent else {
             return "Computer Use is not enabled for this custom agent: the agent could not be "
@@ -217,7 +217,7 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
         }
         if !agent.settings.computerUseEnabled {
             return "Computer Use is not enabled for this custom agent. Enable it under "
-                + "Agents → Configure → Subagents → Computer Use."
+                + "Agents → the agent → Abilities → Subagents → Computer Use."
         }
         return nil
     }
@@ -232,6 +232,7 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
 
     private func validateAuthority(_ scope: SubagentScope) async throws {
         guard evalHarness == nil else { return }
+        if scope.isGrantedByWorkflow(capability) { return }
         let refusal = await MainActor.run {
             Self.authorizationRefusal(
                 agentId: scope.agentId, agent: AgentManager.shared.agent(for: scope.agentId)
@@ -318,7 +319,8 @@ final class ComputerUseKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
             },
             confirmUnavailable: {
                 await MainActor.run {
-                    ComputerUsePromptQueue.shared.canPresent
+                    // The paired phone shows the card for its own runs.
+                    ComputerUsePromptQueue.shared.canPresent || ChatExecutionContext.hasRemoteReviewer
                         ? nil
                         : "no chat window is open to show the approval card"
                 }

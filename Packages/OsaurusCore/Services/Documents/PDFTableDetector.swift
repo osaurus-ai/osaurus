@@ -19,6 +19,9 @@ struct PDFTableDetector {
         let bounds: CGRect
 
         var midY: CGFloat { bounds.midY }
+        var characterRange: Range<Int> {
+            characterIndex ..< (characterIndex + text.utf16.count)
+        }
     }
 
     struct Row: Equatable {
@@ -28,9 +31,11 @@ struct PDFTableDetector {
         let cells: [Cell]
 
         var characterRange: Range<Int> {
-            let indexes = glyphs.map(\.characterIndex)
-            guard let min = indexes.min(), let max = indexes.max() else { return 0 ..< 0 }
-            return min ..< (max + 1)
+            let ranges = glyphs.map(\.characterRange)
+            guard let min = ranges.map(\.lowerBound).min(),
+                let max = ranges.map(\.upperBound).max()
+            else { return 0 ..< 0 }
+            return min ..< max
         }
     }
 
@@ -43,9 +48,11 @@ struct PDFTableDetector {
         let bounds: CGRect
 
         var characterRange: Range<Int> {
-            let indexes = glyphs.map(\.characterIndex)
-            guard let min = indexes.min(), let max = indexes.max() else { return 0 ..< 0 }
-            return min ..< (max + 1)
+            let ranges = glyphs.map(\.characterRange)
+            guard let min = ranges.map(\.lowerBound).min(),
+                let max = ranges.map(\.upperBound).max()
+            else { return 0 ..< 0 }
+            return min ..< max
         }
     }
 
@@ -56,9 +63,11 @@ struct PDFTableDetector {
         let bounds: CGRect
 
         var characterRange: Range<Int> {
-            let indexes = rows.flatMap(\.glyphs).map(\.characterIndex)
-            guard let min = indexes.min(), let max = indexes.max() else { return 0 ..< 0 }
-            return min ..< (max + 1)
+            let ranges = rows.flatMap(\.glyphs).map(\.characterRange)
+            guard let min = ranges.map(\.lowerBound).min(),
+                let max = ranges.map(\.upperBound).max()
+            else { return 0 ..< 0 }
+            return min ..< max
         }
     }
 
@@ -307,12 +316,18 @@ struct PDFTableDetector {
                 try Task.checkCancellation()
                 guard let order = rowOrderByKey[rowKey(row)],
                     order < lineTokens.count,
-                    lineTokens[order].count == row.cells.count
+                    lineTokens[order].count == row.cells.count,
+                    zip(row.cells, lineTokens[order]).allSatisfy({ cell, text in
+                        whitespaceFreeCellText(cell.text) == whitespaceFreeCellText(text)
+                    })
                 else {
                     rows.append(row)
                     continue
                 }
 
+                // PDFKit's logical lines may be column-ordered. Equal token
+                // counts do not identify a visual row; only reconcile spacing
+                // when every candidate retains that cell's glyph characters.
                 let cells = zip(row.cells, lineTokens[order]).map { cell, text in
                     Cell(
                         pageIndex: cell.pageIndex,
@@ -342,6 +357,10 @@ struct PDFTableDetector {
             )
         }
         return reconciledTables
+    }
+
+    private static func whitespaceFreeCellText(_ text: String) -> String {
+        text.components(separatedBy: .whitespacesAndNewlines).joined()
     }
 
     private static func rowKey(_ row: Row) -> String {

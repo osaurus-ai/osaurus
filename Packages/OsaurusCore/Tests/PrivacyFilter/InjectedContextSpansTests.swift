@@ -63,4 +63,34 @@ struct InjectedContextSpansTests {
         )
         #expect(counts[.phone] == nil)
     }
+
+    @Test func modelPiecesSeparateTheMessageFromEachInjectedBlock() {
+        let screen = "[Screen Context]\nDoing: In Safari\n[/Screen Context]"
+        let memory = "[Memory]\nfact\n[/Memory]"
+        let message = "My name is Alice Smith, call me on 0211238389"
+        let text = screen + "\n\n" + memory + "\n\n" + timeBlock + "\n\n" + message
+        let pieces = InjectedContextSpans.modelPieces(in: text).map { String(text[$0]) }
+        // The time block is skipped outright; blank stretches are dropped
+        // and the message is trimmed to its first and last character.
+        #expect(pieces == [screen, memory, message])
+    }
+
+    @Test func modelPiecesKeepAPlainMessageWhole() {
+        let text = "My name is Alice Smith"
+        #expect(InjectedContextSpans.modelPieces(in: text).map { String(text[$0]) } == [text])
+    }
+
+    @Test func leadingBlocksSplitFromTheUsersWords() throws {
+        let prefix = "[Memory]\nfact\n[/Memory]\n\n" + timeBlock + "\n\n"
+        let split = try #require(InjectedContextSpans.splittingLeadingBlocks(prefix + "hello\n\nthere"))
+        #expect(split.prefix == prefix)
+        #expect(split.rest == "hello\n\nthere")
+    }
+
+    @Test func textWithoutALeadingBlockIsNotSplit() {
+        #expect(InjectedContextSpans.splittingLeadingBlocks("hello") == nil)
+        // A tag the user typed mid-message, or a block that never closes.
+        #expect(InjectedContextSpans.splittingLeadingBlocks("see [Memory]\nx\n[/Memory]\n\nhi") == nil)
+        #expect(InjectedContextSpans.splittingLeadingBlocks("[Memory]\nunfinished") == nil)
+    }
 }

@@ -88,6 +88,7 @@ private final class PublishHarness: @unchecked Sendable {
     private var _sendCount = 0
     private var _senderError: Error?
     private var _lastSentContent: String?
+    private var _postedTo: String?
 
     let store: AgentChannelMessageStore
 
@@ -123,6 +124,7 @@ private final class PublishHarness: @unchecked Sendable {
         set { lock.withLock { _senderError = newValue } }
     }
     var lastSentContent: String? { lock.withLock { _lastSentContent } }
+    var postedTo: String? { lock.withLock { _postedTo } }
 
     func makeService() -> AgentChannelPublishService {
         AgentChannelPublishService(
@@ -135,11 +137,12 @@ private final class PublishHarness: @unchecked Sendable {
                 return connection
             },
             killSwitchSnapshot: { [self] in killSwitch },
-            sender: { [self] _, content in
+            sender: { [self] binding, content in
                 if let error = senderError { throw error }
                 lock.withLock {
                     _sendCount += 1
                     _lastSentContent = content
+                    _postedTo = binding.connectionId
                 }
                 return "provider-msg-\(sendCount)"
             },
@@ -416,6 +419,38 @@ struct AgentChannelPublishServiceTests {
         #expect(harness.sendCount == 0)
         let intent = try #require(try harness.store.outboundIntent(id: intentId))
         #expect(intent.status == .pending)
+    }
+
+    @Test @MainActor func aPostGoesOutThroughTheAgentsBot() async throws {
+        var connection = makeConnection(id: "discord")
+        connection.kind = .discord
+        let harness = try PublishHarness(
+            bindings: [makeBinding(connectionId: connection.id)], connection: connection)
+        harness.configuration = AgentChannelConfiguration(
+            connections: [connection], bindings: [makeBinding(connectionId: connection.id)])
+        defer { harness.store.close() }
+        let sessions = SignInSessionStore.shared
+        let hadPrimary = sessions.sessions(for: .channel(.discord)).contains(where: \.isPrimary)
+        let main = sessions.ensurePrimary(for: .channel(.discord))
+        let second = sessions.add(service: .channel(.discord), name: "Second bot")
+        defer {
+            sessions.removeAgent(agentA)
+            sessions.remove(second.id)
+            if !hadPrimary { sessions.remove(main.id) }
+        }
+
+        sessions.assign(agentId: agentA, service: .channel(.discord), sessionId: second.id)
+        #expect(await harness.makeService().publish(request(intentKey: "a"), context: makeContext()).isSent)
+        #expect(harness.postedTo == "discord-\(second.id.uuidString.lowercased())", "the second bot's connection")
+        #expect(ChannelSessions.postingConnectionId(for: "telegram", agentId: agentA) == nil)
+        #expect(
+            ChannelSessions.postingConnectionId(for: "discord-\(second.id.uuidString.lowercased())", agentId: agentA)
+                == nil, "a post addressed to an extra bot stays on it")
+
+        sessions.removeAgent(agentA)
+        harness.now = harness.now.addingTimeInterval(3_600)
+        #expect(await harness.makeService().publish(request(intentKey: "b"), context: makeContext()).isSent)
+        #expect(harness.postedTo == "discord", "no pick: the default bot")
     }
 
     @Test func confirmModeSendsOnAttendedRuns() async throws {

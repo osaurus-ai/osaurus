@@ -27,7 +27,7 @@ enum HuggingFaceDeepLinkAlert {
         var offersToken = false
 
         switch resolution {
-        case .model:
+        case .model, .image:
             return .dismissed
 
         case .unsupported(.unauthorized):

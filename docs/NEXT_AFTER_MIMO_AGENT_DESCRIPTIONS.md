@@ -2,6 +2,12 @@
 
 Requested by Eric on 2026-09-23. Queue this immediately after the current MiMo runtime, native audio/visual proof, and companion merge work. Do not expand the active MiMo PR with this feature. No release/tag is authorized.
 
+## Active implementation status — 2026-09-23
+
+Eric directed this task to proceed after MiMo integration merged. Osaurus #2863 is merged at `32a8b845dae3cbc85e21c4ce4b657d9868734706`; the retained MiMo audio failure is a separate unfinished qualification item, not a claim of complete media support. This feature is now being implemented on `feat/required-agent-descriptions`, with no release authorization.
+
+The canonical field, UI creation/repair notices, default/starter metadata, tool/config validation, and local/workspace routing checks are implemented but not qualified. A first compiled run executed 80 tests with six issues, including a discovered Xcode test-environment isolation failure; none of that run is promoted as final qualification. Corrected isolated tests, additional boundary checks, fresh Release app proof, model routing comparisons/evals, CI and merge remain pending. Private evidence: `~/vmlx-private-evidence/agent-descriptions-2026-09-23/IMPLEMENTATION_STATUS.md`.
+
 ## Problem and intended behavior
 
 Small orchestrator models choose agents from names with insufficient purpose/context and may call Osaurus Helper or another default agent when it cannot help. Every available agent must expose a concise explicitly supplied description beside its name so the calling model can distinguish purpose and when delegation is useful.

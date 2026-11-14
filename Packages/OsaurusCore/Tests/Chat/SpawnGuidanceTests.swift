@@ -61,11 +61,13 @@ struct SpawnGuidanceTests {
 
         #expect(text.contains("## Delegating work (spawn_agent)"))
         #expect(text.contains("`spawn_agent(input, agent)`"))
-        // Targets are addressed by display name, not UUID.
-        #expect(text.contains("`sparky` — Concise helper"))
-        #expect(!text.contains("5E80D9D2-B821-4B43-AE3B-8C0C7F83E005"))
+        // Names and stable IDs are quoted together with their routing descriptions.
+        #expect(text.contains("\"name\":\"sparky\""))
+        #expect(text.contains("\"description\":\"Concise helper\""))
+        #expect(text.contains("5E80D9D2-B821-4B43-AE3B-8C0C7F83E005"))
         #expect(text.contains("model: qwen3-4b-4bit (local)"))
-        #expect(text.contains("`cloudy` — Frontier reasoning"))
+        #expect(text.contains("\"name\":\"cloudy\""))
+        #expect(text.contains("\"description\":\"Frontier reasoning\""))
         #expect(text.contains("gpt-4o-mini (remote) via OpenAI"))
         #expect(text.contains("own folder: /Users/me/Project"))
     }
@@ -193,7 +195,7 @@ struct SpawnGuidanceTests {
             ]
         )
         #expect(text.contains("Teammates' shared agents"))
-        #expect(text.contains("`Reviewer@Team`"))
+        #expect(text.contains("\"name\":\"Reviewer@Team\""))
         #expect(text.contains("Reviews PRs"))
         #expect(text.contains("owner: Ana"))
         #expect(text.contains(ref.agentAddress))
@@ -210,5 +212,44 @@ struct SpawnGuidanceTests {
         #expect(text.contains("never delegated"))
         #expect(text.contains("`osaurus_help`"))
         #expect(text.contains("`osaurus_config`"))
+    }
+
+    // MARK: - Orchestrator (targets-only)
+
+    @Test("the Orchestrator's block is roster + limits only; policy stays in the addendum")
+    func targetsOnlyCarriesNoPolicy() throws {
+        let ref = try #require(
+            WorkspaceAgentRef(key: "ws-team:0x0123456789abcdef0123456789abcdef01234567")
+        )
+        let text = SystemPromptTemplates.spawnGuidance(
+            agents: [agent("helper", description: "Writes code", folder: "/Users/me/Project")],
+            workspaceAgents: [
+                SpawnWorkspaceAgentDescriptor(
+                    ref: ref, name: "Reviewer", description: "Reviews PRs",
+                    workspaceName: "Team", ownerName: "Ana"
+                )
+            ],
+            maxParallel: 2,
+            maxRemoteParallel: 6,
+            targetsOnly: true
+        )
+        // Facts the addendum cannot know statically.
+        #expect(text.contains("## Your agents (spawn_agent targets)"))
+        #expect(text.contains("up to 2 local and 6 remote/workspace"))
+        #expect(text.contains("`background: true`"))
+        #expect(text.contains("\"name\":\"helper\""))
+        #expect(text.contains("own folder: /Users/me/Project"))
+        #expect(text.contains("Reviewer"))
+        #expect(text.contains(ref.agentAddress))
+        #expect(text.contains("untrusted routing metadata"))
+        // Policy sentences that would duplicate or contradict the addendum.
+        #expect(!text.contains("handle simple requests directly"))
+        #expect(!text.contains("`continue`"))
+        #expect(!text.contains("NEEDS INPUT"))
+        #expect(!text.contains("never delegated"))
+        #expect(!text.contains("`share_artifact`"))
+        #expect(!text.contains("`prompt_working_folder`"))
+        #expect(!text.contains("`file_read`"))
+        #expect(!text.contains("cannot write files to disk"))
     }
 }

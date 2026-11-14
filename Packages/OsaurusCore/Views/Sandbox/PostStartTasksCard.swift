@@ -31,70 +31,54 @@ import SwiftUI
         }
 
         private func content(verifyStep: ProvisioningStepState) -> some View {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .controlSize(.small)
-                        .scaleEffect(0.75)
+            VStack(alignment: .leading, spacing: theme.space.s12) {
+                HStack(spacing: theme.space.s8) {
+                    SettingsSpinner(size: .mini)
                     Text("Restoring plugins", bundle: .module)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(theme.primaryText)
+                        .font(SettingsFont.cardTitle)
+                        .foregroundColor(theme.text.primary)
                     Spacer()
                     if let eta = verifyStep.etaSeconds, eta > 0 {
                         Text("≈ \(ProvisioningJourneyView.formatEta(eta))", bundle: .module)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
+                            .font(SettingsFont.rowDescription)
+                            .foregroundColor(theme.text.tertiary)
                             .monospacedDigit()
                     }
                 }
 
                 if !pluginManager.installProgress.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: theme.space.s6) {
                         ForEach(sortedProgress, id: \.0) { _, progress in
-                            HStack(spacing: 8) {
+                            HStack(spacing: theme.space.s8) {
                                 Image(systemName: "puzzlepiece.extension")
-                                    .font(.system(size: 11))
-                                    .foregroundColor(theme.accentColor)
+                                    .glyphSize(.footnote)
+                                    .foregroundColor(theme.text.link)
                                 Text(progress.pluginName)
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundColor(theme.primaryText)
+                                    .font(SettingsFont.compactLabel)
+                                    .foregroundColor(theme.text.primary)
                                 Text("·")
-                                    .foregroundColor(theme.tertiaryText)
+                                    .foregroundColor(theme.text.tertiary)
                                 Text(progress.phase)
-                                    .font(.system(size: 12))
-                                    .foregroundColor(theme.secondaryText)
+                                    .font(SettingsFont.caption)
+                                    .foregroundColor(theme.text.secondary)
                                     .lineLimit(1)
                                     .truncationMode(.tail)
                                 Spacer()
                             }
                         }
                     }
-                    .padding(10)
+                    .padding(theme.space.s8)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.inputBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(theme.inputBorder, lineWidth: 1)
-                            )
-                    )
+                    .settingsChrome(.control)
                 } else if let detail = verifyStep.detail {
                     Text(detail)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
+                        .font(SettingsFont.caption)
+                        .foregroundColor(theme.text.tertiary)
                 }
             }
-            .padding(16)
+            .padding(theme.space.s16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(theme.cardBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12)
-                            .stroke(theme.cardBorder, lineWidth: 1)
-                    )
-            )
+            .settingsChrome(.card)
         }
 
         /// Stable ordering so the rows don't churn between snapshots:

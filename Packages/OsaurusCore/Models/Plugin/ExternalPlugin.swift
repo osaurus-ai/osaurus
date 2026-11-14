@@ -804,6 +804,8 @@ final class ExternalPlugin: @unchecked Sendable {
             label: "com.osaurus.plugin.config.\(manifest.plugin_id)",
             qos: .userInitiated
         )
+        PluginCredentials.registerDeclaredSecrets(
+            pluginId: manifest.plugin_id, ids: (manifest.secrets ?? []).map(\.id))
     }
 
     var hasRouteHandler: Bool { abiVersion >= 2 && api.handle_route != nil }
@@ -1326,17 +1328,26 @@ final class ExternalPlugin: @unchecked Sendable {
         }
     }
 
-    /// Per-agent secrets merged on top of `Agent.defaultId` defaults.
+    /// What the plugin sees for `agentId`: its own config/state values, with
+    /// every declared secret resolved through the unified store (the agent's
+    /// value, else the value for all agents).
     func resolvedSecrets(agentId: UUID) -> [String: String] {
-        return ToolSecretsKeychain.resolvedSecretsWithDefaults(
-            pluginId: manifest.plugin_id,
-            agentId: agentId
-        )
+        let declared = (manifest.secrets ?? []).map(\.id)
+        let config = ToolSecretsKeychain.resolvedSecretsWithDefaults(pluginId: manifest.plugin_id, agentId: agentId)
+            .filter { !declared.contains($0.key) }
+        return PluginCredentials.environment(
+            base: config, declared: declared, pluginId: manifest.plugin_id, agentId: agentId)
+    }
+
+    /// Values of the manifest's declared secrets for `agentId`, for scrubbing
+    /// tool output. Undeclared config (URLs, flags) is left readable.
+    func declaredSecretValues(agentId: UUID) -> [String: String] {
+        PluginCredentials.resolvedSecrets(specs: manifest.secrets ?? [], pluginId: manifest.plugin_id, agentId: agentId)
     }
 
     /// Checks if all required secrets are configured for the given agent.
     func hasAllRequiredSecrets(agentId: UUID) -> Bool {
         guard let specs = manifest.secrets else { return true }
-        return ToolSecretsKeychain.hasAllRequiredSecrets(specs: specs, for: manifest.plugin_id, agentId: agentId)
+        return PluginCredentials.missingRequired(specs: specs, pluginId: manifest.plugin_id, agentId: agentId).isEmpty
     }
 }

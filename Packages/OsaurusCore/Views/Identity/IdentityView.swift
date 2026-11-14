@@ -17,9 +17,8 @@ struct IdentityView: View {
     @ObservedObject private var agentManager = AgentManager.shared
     @ObservedObject private var osaurusID = OsaurusIDService.shared
     @EnvironmentObject private var server: ServerController
-    private var theme: ThemeProtocol { themeManager.currentTheme }
+    private var theme: any ThemeProtocol { themeManager.currentTheme }
 
-    @State private var hasAppeared = false
     @State private var phase: IdentityPhase = .checking
     @State private var drift: IdentityDrift?
 
@@ -42,28 +41,12 @@ struct IdentityView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        SettingsPage {
             headerView
-                .managerHeaderEntrance(hasAppeared: hasAppeared)
-
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    phaseContent
-                }
-                .padding(24)
-                .settingsLandingAnchor("identity.keys")
-            }
-            .opacity(hasAppeared ? 1 : 0)
+        } content: {
+            phaseContent
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
-        .environment(\.theme, themeManager.currentTheme)
-        .onAppear {
-            checkIdentityStatus()
-            withAnimation(.easeOut(duration: 0.25).delay(0.05)) {
-                hasAppeared = true
-            }
-        }
+        .onAppear { checkIdentityStatus() }
         .sheet(
             isPresented: Binding(
                 get: { restoreSheetMode != nil },
@@ -116,21 +99,22 @@ struct IdentityView: View {
     private var phaseContent: some View {
         switch phase {
         case .checking:
-            ProgressView()
-                .frame(maxWidth: .infinity, minHeight: 200)
+            SettingsEmptyState(loading: "Loading identity...")
         case .noIdentity:
             IdentitySetupCard(
                 onCreated: handleIdentityCreated,
                 onRestore: { restoreSheetMode = .freshRestore },
                 onCheckAgain: checkIdentityStatus
             )
-        case .ready(let osaurusId, let deviceId):
-            readyContent(osaurusId: osaurusId, deviceId: deviceId)
+            .settingsLandingAnchor("identity.keys")
+            ManagementChildLinks(parent: .identity)
+        case .ready(let osaurusId, _):
+            readyContent(osaurusId: osaurusId)
         }
     }
 
     @ViewBuilder
-    private func readyContent(osaurusId: OsaurusID, deviceId: String) -> some View {
+    private func readyContent(osaurusId: OsaurusID) -> some View {
         if let drift, drift.hasDrift {
             IdentityDriftBanner(
                 drift: drift,
@@ -147,18 +131,23 @@ struct IdentityView: View {
         // The human-facing identity first; the cryptographic material below.
         OsaurusIDSection()
             .settingsLandingAnchor("identity.osaurusId")
+        SignInWithOsaurusSection()
+            .settingsLandingAnchor("identity.signInWithOsaurus")
+
+        ManagementChildLinks(parent: .identity)
 
         MasterAddressSection(
             osaurusId: osaurusId,
             isLoadingPhrase: isLoadingRecoveryPhrase,
             onViewRecoveryPhrase: viewRecoveryPhrase
         )
+        .settingsLandingAnchor("identity.keys")
         AgentAddressesSection(
             masterAddress: osaurusId,
             mismatchedAgentIds: Set((drift?.mismatchedAgents ?? []).map(\.id)),
             onChange: { runRefresh() }
         )
-        DeviceSection(deviceId: deviceId)
+        DevicesLinkSection()
         DangerZoneSection(
             onRestore: { restoreSheetMode = .replaceExisting(current: osaurusId) },
             onReset: { showResetConfirm = true }
@@ -168,12 +157,7 @@ struct IdentityView: View {
     // MARK: - Header
 
     private var headerView: some View {
-        ManagerHeaderWithActions(
-            title: L("Identity"),
-            subtitle: subtitleText
-        ) {
-            EmptyView()
-        }
+        SettingsPageHeader(title: "Osaurus ID", subtitle: subtitleText)
     }
 
     private var subtitleText: String {
@@ -207,29 +191,11 @@ struct IdentityView: View {
     }
 
     private func actionResultBanner(_ result: ActionResult) -> some View {
-        let tint = result.isError ? theme.errorColor : theme.successColor
-        return HStack(spacing: 8) {
-            Image(systemName: result.isError ? "exclamationmark.triangle.fill" : "checkmark.shield.fill")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundColor(tint)
-            Text(result.message)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(tint)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-            Button(action: { lastActionResult = nil }) {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundColor(theme.tertiaryText)
-                    .padding(4)
-            }
-            .buttonStyle(PlainButtonStyle())
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(tint.opacity(0.10))
+        InlineBanner(
+            kind: result.isError ? .error : .success,
+            title: result.message,
+            icon: result.isError ? "exclamationmark.triangle.fill" : "checkmark.shield.fill",
+            onDismiss: { lastActionResult = nil }
         )
     }
 
@@ -476,7 +442,9 @@ private enum IdentityPhase {
 // MARK: - Drift Banner
 
 private struct IdentityDriftBanner: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
 
     let drift: IdentityDrift
     let onRecover: () -> Void
@@ -484,18 +452,18 @@ private struct IdentityDriftBanner: View {
     let onReset: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: "exclamationmark.octagon.fill")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(theme.errorColor)
-                VStack(alignment: .leading, spacing: 2) {
+                    .glyphSize(.body, weight: .semibold)
+                    .foregroundColor(theme.status.error.foreground)
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text("Identity drift detected", bundle: .module)
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(theme.errorColor)
+                        .catalogTypography(.heading, theme: theme, fallback: SettingsFont.cardTitle)
+                        .foregroundColor(theme.status.error.foreground)
                     Text(summary)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.secondaryText)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                        .foregroundColor(theme.text.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
@@ -505,79 +473,27 @@ private struct IdentityDriftBanner: View {
                 "Your current Master Key no longer matches the addresses your agents and access keys were derived from. This usually means a Master Key was created on top of an existing one — for example, by a re-run of onboarding.",
                 bundle: .module
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.secondaryText)
+            .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+            .foregroundColor(theme.text.secondary)
             .fixedSize(horizontal: false, vertical: true)
 
-            HStack(spacing: 8) {
-                Button(action: onRecover) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "arrow.uturn.backward")
-                            .font(.system(size: 11, weight: .semibold))
-                        Text("Recover from phrase", bundle: .module)
-                            .font(.system(size: 12, weight: .semibold))
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.accentColor)
-                    )
+            HStack(spacing: theme.space.s8) {
+                SettingsButton(.primary, "Recover from phrase", icon: "arrow.uturn.backward", size: .compact) {
+                    onRecover()
                 }
-                .buttonStyle(PlainButtonStyle())
-
-                Button(action: onRepair) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "wrench.and.screwdriver")
-                            .font(.system(size: 11, weight: .semibold))
-                        Text("Repair forward", bundle: .module)
-                            .font(.system(size: 12, weight: .semibold))
-                    }
-                    .foregroundColor(theme.primaryText)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.tertiaryBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(theme.inputBorder, lineWidth: 1)
-                            )
-                    )
+                SettingsButton(.secondary, "Repair forward", icon: "wrench.and.screwdriver", size: .compact) {
+                    onRepair()
                 }
-                .buttonStyle(PlainButtonStyle())
-
-                Button(action: onReset) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "trash")
-                            .font(.system(size: 11, weight: .semibold))
-                        Text("Reset identity", bundle: .module)
-                            .font(.system(size: 12, weight: .semibold))
-                    }
-                    .foregroundColor(theme.errorColor)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.errorColor.opacity(0.10))
-                    )
+                SettingsButton(.destructive, "Reset identity", icon: "trash", size: .compact) {
+                    onReset()
                 }
-                .buttonStyle(PlainButtonStyle())
 
                 Spacer(minLength: 0)
             }
         }
-        .padding(16)
+        .padding(.horizontal, theme.space.s16).padding(.vertical, theme.space.s16)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.errorColor.opacity(0.06))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.errorColor.opacity(0.25), lineWidth: 1)
-                )
-        )
+        .settingsChrome(.status(.error))
     }
 
     private var summary: String {
@@ -604,71 +520,26 @@ private struct IdentityDriftBanner: View {
 // MARK: - Danger Zone
 
 private struct DangerZoneSection: View {
-    @Environment(\.theme) private var theme
     let onRestore: () -> Void
     let onReset: () -> Void
 
     var body: some View {
-        IdentitySection(title: L("DANGER ZONE"), icon: "exclamationmark.triangle.fill") {
-            VStack(spacing: 14) {
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Restore from recovery phrase", bundle: .module)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-                        Text(
-                            "Replaces the identity on this Mac with one restored from a 24-word phrase. Agents get new addresses and existing access keys are revoked.",
-                            bundle: .module
-                        )
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer()
-                    Button(action: onRestore) {
-                        Text("Restore…", bundle: .module)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(theme.warningColor)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 7)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(theme.warningColor.opacity(0.10))
-                            )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
-
-                Divider()
-
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Reset Identity", bundle: .module)
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-                        Text(
-                            "Wipes your signature, every agent address, and every access key, including the backup in your iCloud Keychain. Onboarding will start over.",
-                            bundle: .module
-                        )
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.secondaryText)
-                        .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer()
-                    Button(action: onReset) {
-                        Text("Reset…", bundle: .module)
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundColor(theme.errorColor)
-                            .padding(.horizontal, 14)
-                            .padding(.vertical, 7)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(theme.errorColor.opacity(0.10))
-                            )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
-            }
+        SettingsDestructiveZone {
+            SettingsDestructiveRow(
+                title: "Restore From Recovery Phrase",
+                description:
+                    "Replaces the identity on this Mac with one restored from a 24-word phrase. Agents get new addresses and existing access keys are revoked.",
+                actionTitle: "Restore…",
+                severity: .warning,
+                action: onRestore
+            )
+            SettingsDestructiveRow(
+                title: "Reset Identity",
+                description:
+                    "Wipes your signature, every agent address, and every access key, including the backup in your iCloud Keychain. Onboarding will start over.",
+                actionTitle: "Reset…",
+                action: onReset
+            )
         }
     }
 }
@@ -687,7 +558,7 @@ enum OsaurusIdentityContext {
 
 private struct IdentitySetupCard: View {
     @ObservedObject private var themeManager = ThemeManager.shared
-    private var theme: ThemeProtocol { themeManager.currentTheme }
+    private var theme: any ThemeProtocol { themeManager.currentTheme }
 
     let onCreated: (IdentityInfo) -> Void
     /// Open the fresh-restore mnemonic sheet.
@@ -700,116 +571,56 @@ private struct IdentitySetupCard: View {
     @State private var errorMessage: String?
 
     var body: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: theme.settingsSectionGap) {
             Spacer().frame(height: 40)
 
             Image(systemName: "person.badge.key.fill")
-                .font(.system(size: 48))
-                .foregroundStyle(theme.accentColor)
+                .glyphSize(.jumbo)
+                .foregroundStyle(theme.text.link)
 
-            VStack(spacing: 8) {
+            VStack(spacing: theme.space.s8) {
                 Text("Create Your Osaurus Identity", bundle: .module)
-                    .font(.system(size: 22, weight: .bold, design: .rounded))
-                    .foregroundColor(theme.primaryText)
+                    .catalogTypography(.heading, theme: theme, fallback: SettingsFont.pageTitle)
+                    .foregroundColor(theme.text.primary)
 
                 Text(
                     "Generate a cryptographic identity stored securely\nin your iCloud Keychain and Secure Enclave.",
                     bundle: .module
                 )
-                .font(.system(size: 14))
-                .foregroundColor(theme.secondaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.body)
+                .foregroundColor(theme.text.secondary)
                 .multilineTextAlignment(.center)
                 .lineSpacing(2)
             }
 
             if let errorMessage {
-                Text(errorMessage)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.errorColor)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 8)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.errorColor.opacity(0.1))
-                    )
+                InlineBanner(kind: .error, title: errorMessage)
             }
 
-            Button(action: createIdentity) {
-                HStack(spacing: 8) {
-                    if isCreating {
-                        ProgressView()
-                            .scaleEffect(0.7)
-                            .frame(width: 16, height: 16)
-                    } else {
-                        Image(systemName: "key.fill")
-                            .font(.system(size: 13, weight: .semibold))
-                    }
-                    Text("Generate Identity", bundle: .module)
-                        .font(.system(size: 14, weight: .semibold))
-                }
-                .foregroundColor(.white)
-                .padding(.horizontal, 24)
-                .padding(.vertical, 12)
-                .background(
-                    RoundedRectangle(cornerRadius: 10)
-                        .fill(theme.accentColor)
-                )
-            }
-            .buttonStyle(PlainButtonStyle())
-            .disabled(isCreating)
+            SettingsButton(.primary, "Generate Identity", icon: "key.fill", isLoading: isCreating, action: createIdentity)
+                .disabled(isCreating)
 
-            Button(action: onRestore) {
-                HStack(spacing: 6) {
-                    Image(systemName: "arrow.counterclockwise.circle")
-                        .font(.system(size: 12, weight: .semibold))
-                    Text("Restore from recovery phrase", bundle: .module)
-                        .font(.system(size: 13, weight: .medium))
-                }
-                .foregroundColor(theme.primaryText)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 9)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(theme.tertiaryBackground)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(theme.inputBorder, lineWidth: 1)
-                        )
-                )
-            }
-            .buttonStyle(PlainButtonStyle())
-            .disabled(isCreating)
+            SettingsButton(.secondary, "Restore From Recovery Phrase", icon: "arrow.counterclockwise.circle", action: onRestore)
+                .disabled(isCreating)
 
-            VStack(spacing: 4) {
+            VStack(spacing: theme.space.s4) {
                 Text(
                     "Already using Osaurus on another device? With iCloud Keychain enabled on both, your identity restores here automatically — it can take a few minutes to sync.",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: 420)
 
-                Button(action: onCheckAgain) {
-                    Text("Check again", bundle: .module)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(theme.accentColor)
-                }
-                .buttonStyle(PlainButtonStyle())
+                SettingsButton(.tertiary, "Check Again", size: .compact, action: onCheckAgain)
             }
 
             Spacer().frame(height: 40)
         }
         .frame(maxWidth: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
+        .settingsChrome(.card)
     }
 
     private func createIdentity() {
@@ -840,33 +651,30 @@ private struct IdentitySetupCard: View {
 /// `MasterMnemonicCard` (copy / save / print) when the load succeeded,
 /// or a friendly error card otherwise.
 private struct RecoveryPhraseSheet: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
 
     let words: [String]
     let error: String?
     let onClose: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: theme.space.s16) {
             HStack {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text("Your recovery phrase", bundle: .module)
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundColor(theme.primaryText)
+                        .catalogTypography(.heading, theme: theme, fallback: SettingsFont.detailTitle)
+                        .foregroundColor(theme.text.primary)
                     Text(
                         "Save it somewhere safe. Anyone with these words can recover your identity.",
                         bundle: .module
                     )
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
+                    .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                    .foregroundColor(theme.text.secondary)
                 }
                 Spacer()
-                Button(action: onClose) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 18))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                .buttonStyle(PlainButtonStyle())
+                SettingsIconButton("xmark", help: "Close", size: .compact, action: onClose)
             }
 
             if let error {
@@ -880,49 +688,17 @@ private struct RecoveryPhraseSheet: View {
                 Spacer()
                 Button(action: onClose) {
                     Text("Done", bundle: .module)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 9)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(theme.accentColor)
-                        )
                 }
-                .buttonStyle(PlainButtonStyle())
+                .assignedSettingsButtonStyle(.primary)
             }
         }
-        .padding(24)
+        .padding(.horizontal, theme.settingsPageInset).padding(.vertical, theme.space.s24)
         .frame(width: 540)
-        .background(theme.primaryBackground)
+        .background(theme.surface.canvas)
     }
 
     private func errorCard(_ message: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundColor(theme.errorColor)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Couldn't load your phrase", bundle: .module)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(theme.errorColor)
-                Text(message)
-                    .font(.system(size: 12))
-                    .foregroundColor(theme.secondaryText)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 0)
-        }
-        .padding(12)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.errorColor.opacity(0.08))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.errorColor.opacity(0.20), lineWidth: 1)
-                )
-        )
+        InlineBanner(kind: .error, title: L("Couldn't load your phrase"), caption: message)
     }
 }
 
@@ -930,7 +706,7 @@ private struct RecoveryPhraseSheet: View {
 
 private struct MasterAddressSection: View {
     @ObservedObject private var themeManager = ThemeManager.shared
-    private var theme: ThemeProtocol { themeManager.currentTheme }
+    private var theme: any ThemeProtocol { themeManager.currentTheme }
 
     let osaurusId: OsaurusID
     let isLoadingPhrase: Bool
@@ -939,90 +715,46 @@ private struct MasterAddressSection: View {
     @State private var copied = false
 
     var body: some View {
-        IdentitySection(title: L("MASTER ADDRESS"), icon: "person.badge.key.fill") {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Master Address", bundle: .module)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
-                        Text(osaurusId)
-                            .font(.system(size: 13, weight: .medium, design: .monospaced))
-                            .foregroundColor(theme.primaryText)
-                            .textSelection(.enabled)
-                    }
+        SettingsSection(
+            title: "Master Address",
+            subtitle:
+                "The key your Osaurus ID, agents and sign-ins are built from. Your recovery phrase restores it on a new Mac, so keep the phrase somewhere safe."
+        ) {
+            HStack(spacing: theme.space.s8) {
+                Text(osaurusId)
+                    .catalogTypography(.code, theme: theme, fallback: SettingsFont.mono)
+                    .foregroundColor(theme.text.primary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
 
-                    Spacer()
+                Spacer(minLength: theme.space.s12)
 
-                    Button(action: onViewRecoveryPhrase) {
-                        HStack(spacing: 4) {
-                            if isLoadingPhrase {
-                                ProgressView()
-                                    .scaleEffect(0.55)
-                                    .frame(width: 11, height: 11)
-                            } else {
-                                Image(systemName: "key.viewfinder")
-                                    .font(.system(size: 11, weight: .medium))
-                            }
-                            Text("View recovery phrase", bundle: .module)
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .foregroundColor(theme.secondaryText)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(theme.tertiaryBackground)
-                        )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                    .disabled(isLoadingPhrase)
+                SettingsButton(
+                    .secondary,
+                    "View recovery phrase",
+                    icon: "key.viewfinder",
+                    isLoading: isLoadingPhrase,
+                    size: .compact,
+                    action: onViewRecoveryPhrase
+                )
+                .disabled(isLoadingPhrase)
 
-                    Button(action: copyId) {
-                        HStack(spacing: 4) {
-                            Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                                .font(.system(size: 11, weight: .medium))
-                            Text(copied ? L("Copied") : L("Copy"))
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .foregroundColor(copied ? theme.successColor : theme.secondaryText)
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(theme.tertiaryBackground)
-                        )
-                    }
-                    .buttonStyle(PlainButtonStyle())
-                }
-
-                Divider().background(theme.secondaryBorder)
-
-                HStack(spacing: 24) {
-                    statusField(
-                        label: L("Recovery"),
-                        value: L("Backed up in iCloud Keychain"),
-                        icon: "checkmark.shield.fill",
-                        color: theme.successColor
-                    )
-                    statusField(label: L("Status"), value: L("Active"), icon: "circle.fill", color: theme.successColor)
-                }
+                SettingsButton(
+                    .secondary,
+                    copied ? "Copied" : "Copy",
+                    icon: copied ? "checkmark" : "doc.on.doc",
+                    size: .compact,
+                    action: copyId
+                )
             }
-        }
-    }
 
-    private func statusField(label: String, value: String, icon: String, color: Color) -> some View {
-        HStack(spacing: 6) {
-            Image(systemName: icon)
-                .font(.system(size: 10))
-                .foregroundColor(color)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(label)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(theme.tertiaryText)
-                Text(value)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+            SettingsRow(title: "Recovery", description: "") {
+                StatusChip(L("Backed up in iCloud Keychain"), tone: .success, icon: "checkmark.shield.fill")
+            }
+
+            SettingsRow(title: "Status", description: "") {
+                StatusChip(L("Active"), tone: .success, showsDot: true)
             }
         }
     }
@@ -1043,7 +775,7 @@ private struct AgentAddressesSection: View {
     @ObservedObject private var themeManager = ThemeManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
     @EnvironmentObject private var server: ServerController
-    private var theme: ThemeProtocol { themeManager.currentTheme }
+    private var theme: any ThemeProtocol { themeManager.currentTheme }
 
     let masterAddress: OsaurusID
     let mismatchedAgentIds: Set<UUID>
@@ -1065,13 +797,13 @@ private struct AgentAddressesSection: View {
     }
 
     var body: some View {
-        IdentitySection(title: L("AGENT ADDRESSES"), icon: "person.2.badge.key.fill") {
-            VStack(alignment: .leading, spacing: 10) {
+        SettingsSection(title: "Agent Addresses") {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
                 if customAgents.isEmpty {
                     Text("No agents yet — create one in the Agents tab", bundle: .module)
-                        .font(.system(size: 12))
-                        .foregroundColor(theme.tertiaryText)
-                        .padding(.vertical, 4)
+                        .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
+                        .foregroundColor(theme.text.tertiary)
+                        .padding(.vertical, theme.space.s4)
                 } else {
                     ForEach(customAgents) { agent in
                         if agent.agentAddress == nil {
@@ -1103,8 +835,8 @@ private struct AgentAddressesSection: View {
 
                 if let errorMessage {
                     Text(errorMessage)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.errorColor)
+                        .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
+                        .foregroundColor(theme.status.error.foreground)
                 }
             }
         }
@@ -1135,46 +867,34 @@ private struct AgentAddressesSection: View {
     // MARK: - Unassigned (no address yet)
 
     private func unassignedRow(for agent: Agent) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: "person.fill")
-                .font(.system(size: 10))
-                .foregroundColor(theme.accentColor)
+                .glyphSize(.micro)
+                .foregroundColor(theme.text.link)
                 .frame(width: 16)
 
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(agent.name)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.secondaryText)
+                    .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
+                    .foregroundColor(theme.text.secondary)
                 Text("No address", bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.tertiaryText)
+                    .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
+                    .foregroundColor(theme.text.tertiary)
             }
 
             Spacer()
 
             Button(action: { generateAddress(for: agent) }) {
-                HStack(spacing: 4) {
+                HStack(spacing: theme.space.s4) {
                     Image(systemName: "key.fill")
-                        .font(.system(size: 9, weight: .semibold))
                     Text("Generate", bundle: .module)
-                        .font(.system(size: 11, weight: .semibold))
                 }
-                .foregroundColor(.white)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(theme.accentColor)
-                )
             }
-            .buttonStyle(PlainButtonStyle())
+            .assignedSettingsButtonStyle(.primary, size: .compact)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(theme.tertiaryBackground.opacity(0.5))
-        )
+        .padding(.horizontal, theme.space.s8)
+        .padding(.vertical, theme.space.s8)
+        .settingsChrome(.inset)
     }
 
     // MARK: - Actions
@@ -1311,126 +1031,39 @@ private struct AgentAddressesSection: View {
 // MARK: - Generated Access Key Banner
 
 private struct GeneratedAccessKeyBanner: View {
-    @Environment(\.theme) private var theme
+    @Environment(\.theme) private var inheritedTheme
+    @Environment(\.isEnabled) private var inspectionEnabled
+    private var theme: any ThemeProtocol { inheritedTheme }
     let key: String
     let onDismiss: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.warningColor)
-                Text("Copy this key now. It won't be shown again.", bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.warningColor)
-                Spacer(minLength: 0)
-                Button(action: onDismiss) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundColor(theme.tertiaryText)
-                        .padding(4)
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-
-            HStack(spacing: 8) {
-                Text(key)
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundColor(theme.primaryText)
-                    .textSelection(.enabled)
-                    .lineLimit(1)
-
-                Spacer()
-
-                Button(action: copyToClipboard) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "doc.on.doc")
-                            .font(.system(size: 10, weight: .medium))
-                        Text("Copy", bundle: .module)
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(theme.accentColor)
-                    )
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-            .padding(8)
-            .background(
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(theme.tertiaryBackground)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(theme.warningColor.opacity(0.3), lineWidth: 1)
-                    )
-            )
+        SettingsCallout(
+            icon: "exclamationmark.triangle.fill",
+            title: "Copy this key now. It won't be shown again.",
+            message: "Anyone with this key can call the API.",
+            tone: .warning
+        ) {
+            SettingsCodeBlock(code: key, wraps: false)
+            SettingsButton(.secondary, "Dismiss", size: .compact, action: onDismiss)
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(theme.warningColor.opacity(0.06))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 10)
-                        .stroke(theme.warningColor.opacity(0.15), lineWidth: 1)
-                )
-        )
-    }
-
-    private func copyToClipboard() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(key, forType: .string)
     }
 }
 
-// MARK: - Device Section
+// MARK: - Devices Link
 
-private struct DeviceSection: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-    private var theme: ThemeProtocol { themeManager.currentTheme }
-
-    let deviceId: String
-
+/// This Mac's device record lives with the account's other devices on
+/// Sharing → Devices; Osaurus ID only points there.
+private struct DevicesLinkSection: View {
     var body: some View {
-        IdentitySection(title: L("DEVICES"), icon: "desktopcomputer") {
-            HStack(spacing: 12) {
-                Image(systemName: "desktopcomputer")
-                    .font(.system(size: 20))
-                    .foregroundColor(theme.accentColor)
-                    .frame(width: 36, height: 36)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(theme.accentColor.opacity(0.1))
-                    )
-
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(Host.current().localizedName ?? "This Mac")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundColor(theme.primaryText)
-                        Text("(this device)", bundle: .module)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
-                    }
-                    Text("Device ID: \(deviceId)", bundle: .module)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundColor(theme.secondaryText)
-                }
-
-                Spacer()
-
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(theme.successColor)
-                        .frame(width: 6, height: 6)
-                    Text("Active", bundle: .module)
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(theme.successColor)
-                }
+        SettingsSection(title: "Devices") {
+            SettingsLinkRow(
+                title: "This Mac and Your Other Devices",
+                description: "Pairing, sync and each device's ID live in Sharing → Devices.",
+                icon: "arrow.right",
+                actionTitle: "Open"
+            ) {
+                ManagementStateManager.shared.selectedTab = .devices
             }
         }
     }
@@ -1438,40 +1071,3 @@ private struct DeviceSection: View {
 
 // MARK: - Reusable Section Container
 
-/// Card chrome shared by every Identity section (`OsaurusIDSection`, master
-/// address, agent addresses, devices, danger zone).
-struct IdentitySection<Content: View>: View {
-    @ObservedObject private var themeManager = ThemeManager.shared
-    private var theme: ThemeProtocol { themeManager.currentTheme }
-
-    let title: String
-    let icon: String
-    @ViewBuilder let content: () -> Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: icon)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.accentColor)
-
-                Text(title)
-                    .font(.system(size: 11, weight: .bold))
-                    .foregroundColor(theme.secondaryText)
-                    .tracking(0.5)
-            }
-
-            content()
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(theme.cardBackground)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12)
-                        .stroke(theme.cardBorder, lineWidth: 1)
-                )
-        )
-    }
-}

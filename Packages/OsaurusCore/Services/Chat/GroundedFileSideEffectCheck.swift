@@ -35,28 +35,53 @@ enum GroundedFileSideEffectCheck {
     /// so "I saved it" after that failure is exactly the fabrication this
     /// check exists to catch.
     static func isGroundedFileWriteOutcome(toolName: String, result: String) -> Bool {
+        // Native media tools save and display their own artifacts. Requiring a
+        // second file_write/share_artifact after that completion incorrectly
+        // tells the model that the file it just produced does not exist.
+        if toolName == "image" || toolName == "video" {
+            guard let payload = ToolEnvelope.successPayload(result) as? [String: Any],
+                payload["status"] as? String == "completed"
+            else { return false }
+            if toolName == "image", payload["kind"] as? String == "native_image_generation_job",
+                let images = payload["images"] as? [[String: Any]]
+            {
+                return images.contains { ($0["path"] as? String)?.isEmpty == false }
+            }
+            if toolName == "video", payload["kind"] as? String == "generated_media_job",
+                let media = payload["media"] as? [String: Any]
+            {
+                return (media["path"] as? String)?.isEmpty == false
+            }
+            return false
+        }
         guard fileWritingToolNames.contains(toolName) else { return false }
         return ToolEnvelope.isSuccess(result)
     }
 
     static let ungroundedFileClaimNotice =
-        "[System Notice] Your previous message says a file was written, appended, saved, or "
-        + "created, but no file-writing tool (file_write / file_edit / sandbox_write_file) ran "
-        + "successfully this turn — nothing has been written. If a file-writing tool is in your "
-        + "tool list, call it now with the content. If none is available, tell the user plainly "
-        + "that you cannot write files in this chat (they can attach a folder with the Folder "
-        + "chip) and give them the content directly instead."
+        "[System Notice] No successful result from a file-writing tool was recorded this turn. "
+        + "The previous message's file-change claim is not grounded in this turn's recorded tool results."
 
     // MARK: - Claim detection
 
     /// "appended the file", "wrote the note", "saved this report",
     /// "creating the markdown document", "saving it to the file".
     private static let claimPatterns: [NSRegularExpression] = {
+        let writePredicate = "\\b(?:append(?:ed|ing)?|wrote|writing|saved|saving|created|creating)\\b"
+        let destinationPredicate = "(?:" + writePredicate + "|\\b(?:added|adding|pasted|pasting)\\b)"
+        let fileObject = "(?:it\\s+|this\\s+|that\\s+|the\\s+|your\\s+|a\\s+|an\\s+)?"
+            + "(?:file|note|document|markdown|report)s?\\b"
         let sources = [
-            "\\b(?:append(?:ed|ing)?|wrote|writing|saved|saving|created|creating)\\s+"
-                + "(?:it\\s+|this\\s+|that\\s+|the\\s+|your\\s+|a\\s+|an\\s+)?"
-                + "(?:file|note|document|markdown|report)s?\\b",
-            "\\bto\\s+(?:the\\s+|your\\s+)?file\\b",
+            writePredicate + "\\s+" + fileObject,
+            // A destination alone is not a write claim: "stale relative to
+            // the file on disk" is a read-result comparison. Require a
+            // governing write predicate in the same clause, preserving
+            // "appended the summary to the file" and passive "written to".
+            destinationPredicate + "\\s+[^.!?\\n,;]*?\\bto\\s+(?:the\\s+|your\\s+)?file\\b",
+            // "Written report" is an adjective, not an executed action.
+            // Keep actual perfect/passive predicates and "written to".
+            "\\b(?:have|has|had|was|were|is|are|been|being)\\s+written\\s+" + fileObject,
+            "\\bwritten\\s+to\\s+(?:the\\s+|your\\s+)?file\\b",
         ]
         return sources.compactMap {
             try? NSRegularExpression(pattern: $0, options: [.caseInsensitive])

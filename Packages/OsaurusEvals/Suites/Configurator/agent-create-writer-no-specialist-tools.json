@@ -1,0 +1,22 @@
+{
+  "id": "configurator.agent-create-writer-no-specialist-tools",
+  "domain": "configurator",
+  "label": "configurator • a writing agent is created without calculator or redaction tools",
+  "query": "Create a new custom agent named \"Quill\" that helps me draft and polish blog posts.",
+  "notes": "Negative control for the per-agent opt-ins: a prose agent needs neither `calculator_enabled` nor `redaction_tools_enabled`, so no apply may turn them on. Guards against the Configurator enabling every toggle it learns about.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": ["osaurus_config"],
+      "mustNotCallTools": ["capabilities_discover", "capabilities_load"],
+      "argsMustContain": [
+        { "tool": "osaurus_config", "args": { "action": "apply" }, "argsAnyOf": [{ "yaml": "Quill" }, { "overrides": "Quill" }] }
+      ],
+      "argsMustNotContain": [
+        { "tool": "osaurus_config", "args": { "yaml": "calculator_enabled: true" } },
+        { "tool": "osaurus_config", "args": { "yaml": "redaction_tools_enabled: true" } }
+      ],
+      "maxIterations": 8
+    }
+  }
+}

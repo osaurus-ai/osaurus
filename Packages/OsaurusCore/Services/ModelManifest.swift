@@ -30,8 +30,23 @@ struct ModelManifest: Equatable, Sendable {
         }
     }
 
+    /// The app's `CFBundleShortVersionString`. Processes without an
+    /// Info.plist (the SwiftPM eval runner, unit tests) have no bundle
+    /// version; they may declare the released version they stand in for via
+    /// `OSAURUS_HOST_VERSION`. Nothing is assumed when neither is present —
+    /// `compatibilityFailure` then refuses manifest-bearing bundles.
     static var hostVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
+        resolveHostVersion(
+            bundled: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String,
+            environment: ProcessInfo.processInfo.environment
+        )
+    }
+
+    /// Pure resolution behind `hostVersion` (testable in any process): the
+    /// bundle version wins; otherwise `OSAURUS_HOST_VERSION`; otherwise "".
+    static func resolveHostVersion(bundled: String?, environment: [String: String]) -> String {
+        if let bundled, !bundled.isEmpty { return bundled }
+        return environment["OSAURUS_HOST_VERSION"] ?? ""
     }
 
     static func decode(_ data: Data) throws -> ModelManifest {

@@ -15,7 +15,7 @@ import Foundation
 @MainActor
 final class AgentRunPowerManager {
     static let shared = AgentRunPowerManager()
-    static let keepAwakeDefaultsKey = "agentRunsKeepMacAwake"
+    nonisolated static let keepAwakeDefaultsKey = "agentRunsKeepMacAwake"
 
     typealias BeginActivity = (ProcessInfo.ActivityOptions, String) -> NSObjectProtocol
     typealias EndActivity = (NSObjectProtocol) -> Void

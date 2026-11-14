@@ -25,6 +25,28 @@ actor SessionToolStateStore {
 
     private var states: [String: SessionToolState] = [:]
 
+    struct ToolGrantSnapshot: Sendable, Equatable {
+        let agentAllowedNames: Set<String>?
+        let enabledDynamicNames: Set<String>
+        var schemas: [String: Data] = [:]
+        var capabilities: AgentCapabilities? = nil
+    }
+    private var toolGrants: [String: ToolGrantSnapshot] = [:]
+
+    /// Explicit grant edits apply on the next request. Preserve history-related
+    /// state while refreshing the catalog prefix; unchanged grants are a no-op.
+    func reconcileToolGrants(_ sessionId: String, current: ToolGrantSnapshot) {
+        let previous = toolGrants.updateValue(current, forKey: sessionId)
+        guard previous != current, var entry = states[sessionId] else { return }
+        debugLog("[SessionToolState] tool grant/catalog refresh session=\(sessionId)")
+        entry.initialAlwaysLoadedNames = nil
+        entry.initialToolSpecs = nil
+        entry.frozenManifest = nil
+        states[sessionId] = entry
+        lastSendCacheHint.removeValue(forKey: sessionId)
+        lastConversationSend.removeValue(forKey: sessionId)
+    }
+
     /// Per-session record of the most recent send: turn index + the
     /// cache-hint hex used as the prompt-prefix fingerprint. Lets the
     /// caller log a `[Cache] turn=N hint=... prevHint=... match=...` line
@@ -351,6 +373,7 @@ actor SessionToolStateStore {
     /// Drop the session's record. Call from chat-window close or HTTP
     /// session teardown so old state doesn't leak between conversations.
     func invalidate(_ sessionId: String) {
+        toolGrants.removeValue(forKey: sessionId)
         states.removeValue(forKey: sessionId)
         lastSendCacheHint.removeValue(forKey: sessionId)
         lastConversationSend.removeValue(forKey: sessionId)
@@ -388,6 +411,7 @@ actor SessionToolStateStore {
     /// acceptable cost; a stable but wrong toolset is worse than a clean
     /// one-turn refresh.
     func invalidateAll() {
+        toolGrants.removeAll()
         states.removeAll()
         lastSendCacheHint.removeAll()
         lastConversationSend.removeAll()
@@ -395,6 +419,7 @@ actor SessionToolStateStore {
 
     /// Reset everything (test helper).
     func reset() {
+        toolGrants.removeAll()
         states.removeAll()
         lastSendCacheHint.removeAll()
         lastConversationSend.removeAll()

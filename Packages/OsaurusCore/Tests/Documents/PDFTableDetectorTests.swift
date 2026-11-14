@@ -49,6 +49,78 @@ struct PDFTableDetectorTests {
         #expect(try PDFTableDetector.detectTables(glyphs: glyphs).isEmpty)
     }
 
+    @Test func detectTables_preservesVisualPairsForColumnOrderedSourceText() throws {
+        let glyphs = Self.gridGlyphs([
+            ["10", "101"],
+            ["11", "202"],
+        ])
+        let geometric = try PDFTableDetector.detectTables(glyphs: glyphs)
+
+        // The content stream lists the label column before the value column.
+        // Matching token counts must not turn the second label into a value.
+        let reconciled = try PDFTableDetector.detectTables(
+            glyphs: glyphs,
+            pageText: "10 11\n101 202"
+        )
+
+        #expect(reconciled == geometric)
+        #expect(reconciled.first?.rows.map { $0.cells.map(\.text) } == [
+            ["10", "101"],
+            ["11", "202"],
+        ])
+    }
+
+    @Test func detectTables_preservesVisualRowsForReversedSourceLines() throws {
+        let glyphs = Self.gridGlyphs([
+            ["First", "101"],
+            ["Second", "202"],
+        ])
+        let geometric = try PDFTableDetector.detectTables(glyphs: glyphs)
+
+        let reconciled = try PDFTableDetector.detectTables(
+            glyphs: glyphs,
+            pageText: "Second 202\nFirst 101"
+        )
+
+        #expect(reconciled == geometric)
+    }
+
+    @Test func detectTables_acceptsMatchingSourceWithWhitespaceSeparators() throws {
+        let glyphs = Self.gridGlyphs([
+            ["10", "101"],
+            ["11", "202"],
+        ])
+        let geometric = try PDFTableDetector.detectTables(glyphs: glyphs)
+
+        let reconciled = try PDFTableDetector.detectTables(
+            glyphs: glyphs,
+            pageText: " \t10\u{00A0}101\r\n\t11   202 \n"
+        )
+
+        // Includes bounds, glyphs, source character ranges and row/column IDs.
+        #expect(reconciled == geometric)
+    }
+
+    @Test(arguments: [
+        "ALPHA -101\nBETA 202",
+        "ALPHA 1.01\nBETA 202",
+        "ALPHA 102\nBETA 202",
+        "alpha 101\nBETA 202",
+    ])
+    func detectTables_preservesWholeRowWhenAnyCellCharactersDiffer(pageText: String) throws {
+        let glyphs = Self.gridGlyphs([
+            ["ALPHA", "101"],
+            ["BETA", "202"],
+        ])
+        let geometric = try PDFTableDetector.detectTables(glyphs: glyphs)
+
+        let reconciled = try PDFTableDetector.detectTables(glyphs: glyphs, pageText: pageText)
+
+        // Sign, punctuation, digits and case are identity, not whitespace.
+        // A matching neighbor never justifies overwriting a mismatched cell.
+        #expect(reconciled == geometric)
+    }
+
     private static func gridGlyphs(_ rows: [[String]]) -> [PDFTableDetector.Glyph] {
         var glyphs: [PDFTableDetector.Glyph] = []
         var index = 0

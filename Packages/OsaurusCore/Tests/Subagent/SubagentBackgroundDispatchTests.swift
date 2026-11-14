@@ -136,6 +136,44 @@ struct SubagentBackgroundDispatchTests {
         SubagentFeedRegistry.shared.removeNow(toolCallId: toolCallId)
     }
 
+    @Test("the ack names the worker session when the kind plans one; scripted kinds carry none")
+    func ackCarriesPlannedSessionId() throws {
+        let planned = UUID()
+        let ack = SubagentSession.backgroundAck(tool: "spawn_agent", helper: "Writer", sessionId: planned)
+        #expect(SubagentSession.isBackgroundAck(ack))
+        let payload = ToolEnvelope.successPayload(ack) as? [String: Any]
+        #expect(payload?["session_id"] as? String == planned.uuidString)
+
+        let anonymous = SubagentSession.backgroundAck(tool: "bg_test", helper: "x", sessionId: nil)
+        #expect(SubagentSession.isBackgroundAck(anonymous))
+        #expect((ToolEnvelope.successPayload(anonymous) as? [String: Any])?["session_id"] == nil)
+
+        // A settled result is not an ack, so the chat loop's Stop bookkeeping
+        // and the compaction never confuse the two.
+        let settled = ToolEnvelope.success(
+            tool: "spawn_agent", result: ["kind": "spawn_result", "summary": "done"])
+        #expect(!SubagentSession.isBackgroundAck(settled))
+        #expect(ScriptedKind().plannedSessionId == nil)
+    }
+
+    @Test("a delegated text spawn plans its session id before the run; continue reuses the handle")
+    func textSpawnPlansSessionId() {
+        let fresh = TextSubagentKind(agentID: UUID(), agentName: "Writer", input: "go")
+        let planned = fresh.plannedSessionId
+        #expect(planned != nil)
+        #expect(fresh.plannedSessionId == planned, "the planned id must be stable for the run")
+
+        let resume = UUID()
+        let continued = TextSubagentKind(
+            agentID: UUID(), agentName: "Writer", input: "more", continueSessionId: resume)
+        #expect(continued.plannedSessionId == resume)
+
+        // The in-memory eval path (model override) has no persisted session.
+        let ephemeral = TextSubagentKind(
+            agentID: UUID(), agentName: "Writer", input: "go", modelOverride: "local/x")
+        #expect(ephemeral.plannedSessionId == nil)
+    }
+
     @Test("a preparation failure returns the failure envelope synchronously")
     func prepareFailureStaysSynchronous() async throws {
         let toolCallId = "bg-dispatch-\(UUID().uuidString)"

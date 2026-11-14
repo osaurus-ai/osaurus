@@ -55,6 +55,22 @@ public struct IdentityDrift: Sendable {
 
 public enum IdentityHealthCheck {
 
+    /// Custom agents that share their address with an older custom agent.
+    /// In each group the earliest-created agent (ties broken by id) keeps
+    /// the address, since it held it first; the rest are returned, sorted
+    /// by id. Two agents on one address can't both be reached: every lookup
+    /// by address resolves to whichever is found first.
+    public static func duplicateAddressAgents(_ agents: [Agent]) -> [Agent] {
+        let addressed = agents.filter { !$0.isBuiltIn && $0.agentAddress?.isEmpty == false }
+        let groups = Dictionary(grouping: addressed) { $0.agentAddress?.lowercased() ?? "" }
+        return groups.values
+            .filter { $0.count > 1 }
+            .flatMap { group in
+                group.sorted { ($0.createdAt, $0.id.uuidString) < ($1.createdAt, $1.id.uuidString) }.dropFirst()
+            }
+            .sorted { $0.id.uuidString < $1.id.uuidString }
+    }
+
     /// Diagnose drift between the current master and persisted derivatives.
     ///
     /// - Parameters:

@@ -1,5 +1,6 @@
 import Foundation
 import MLXLLM
+import MLXLMCommon
 import MLXVLM
 
 /// Installed-checkpoint evidence, not a claim about inference quality. Names are
@@ -108,6 +109,23 @@ enum LocalVisionEvidence {
         return nil
     }
 
+    /// True when the linked vMLX builds the DeepSeek-V4.1 vision tower: its `DeepseekV4Model`
+    /// reports its lanes through `ModalityBearing` (the load-time tower check reads it), and the
+    /// tower is not switched off with vMLX's `VMLX_DSV41_VL=0`. Otherwise a V4.1 bundle stays
+    /// text-only instead of being refused at load.
+    static var deepseekV41VisionRuntimeAvailable: Bool {
+        let type: Any.Type = DeepseekV4Model.self
+        guard type is ModalityBearing.Type else { return false }
+        return DeepseekV41VisionConfiguration.enabled()
+    }
+
+    /// True when the linked vMLX builds the MiniMax-M3 / M3.1 vision stack: its `MiniMaxM3Model` reports its lanes
+    /// through `ModalityBearing` (the load-time tower check reads it). Otherwise an M3.1 bundle stays text-only.
+    static var miniMaxM3VisionRuntimeAvailable: Bool {
+        let type: Any.Type = MiniMaxM3Model.self
+        return type is ModalityBearing.Type
+    }
+
     private static func object(_ url: URL) -> [String: Any]? {
         guard let data = try? Data(contentsOf: url),
             let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -133,6 +151,84 @@ enum LocalVisionEvidence {
         if modelType == "mimo_v2", !mimo {
             return result(false, "The configured MiMo representation has no registered multimodal runtime.")
         }
+        if modelType == "deepseek_v41" {
+            guard deepseekV41VisionRuntimeAvailable else {
+                return result(false, "The linked vMLX runtime has no DeepSeek-V4.1 vision lane.")
+            }
+            // DeepSeek-V4.1-Flash loads through vMLX's LLM factory (`DeepseekV4Model`), which builds
+            // the vision tower from `vision_config` inside the text bundle and reports `.vision`
+            // through `ModalityBearing`. The bundle ships no processor file: the runtime places the
+            // image placeholders itself. Require the declared encoder depth, the aligner, the
+            // learned delimiters and the placeholder token.
+            guard let vision = config["vision_config"] as? [String: Any],
+                let depth = (vision["num_hidden_layers"] as? NSNumber)?.intValue, (1...1024).contains(depth),
+                ((config["image_token_id"] as? NSNumber)?.intValue ?? -1) >= 0
+            else {
+                return result(false, "The DeepSeek-V4.1 bundle has no vision configuration or image token.")
+            }
+            do {
+                names = try tensorNames(directory)
+            } catch {
+                return result(false, "Cannot verify the installed vision weights: \(error.localizedDescription)")
+            }
+            guard ModelFormatDetection.isMLXFormat(at: directory, refresh: true) else {
+                return result(false, "The installed weight format is rejected by the local runtime preflight.")
+            }
+            let required = ["vision.patch_embed.proj.weight", "vision.norm.weight", "aligner.w1.weight",
+                "aligner.w2.weight", "image_start", "image_end", "image_newline"]
+            guard required.allSatisfy(names.contains),
+                (0..<depth).allSatisfy({ i in
+                    names.contains("vision.blocks.\(i).attn.wqkv.weight")
+                        && names.contains("vision.blocks.\(i).mlp.w1.weight")
+                })
+            else {
+                return result(false, "The DeepSeek-V4.1 vision tower is missing encoder, aligner or delimiter weights.")
+            }
+            return result(true, "Image input is backed by the DeepSeek-V4.1 vision tower, aligner and delimiter weights in the bundle.")
+        }
+        if modelType == "minimax_m3_vl" {
+            guard miniMaxM3VisionRuntimeAvailable else {
+                return result(false, "The linked vMLX runtime has no MiniMax-M3 vision lane.")
+            }
+            // MiniMax-M3.1 loads through vMLX's LLM factory (`MiniMaxM3Model`), which builds the vision stack from
+            // `vision_config` and reports `.vision` through `ModalityBearing`; vMLX prepares images the way the
+            // bundle's own processor does (`preprocessor_config.json`). Require the declared encoder depth, the image
+            // token, the processor configuration, the patch embedding, every encoder layer, the projector and the
+            // patch-merge MLP.
+            guard let vision = config["vision_config"] as? [String: Any],
+                let depth = (vision["num_hidden_layers"] as? NSNumber)?.intValue, (1...1024).contains(depth),
+                ((config["image_token_index"] as? NSNumber)?.intValue ?? -1) >= 0
+            else {
+                return result(false, "The MiniMax-M3 bundle has no vision configuration or image token.")
+            }
+            guard let processor = object(directory.appendingPathComponent("preprocessor_config.json")),
+                !processor.isEmpty
+            else {
+                return result(false, "The MiniMax-M3 bundle has no readable preprocessor_config.json, so images cannot be prepared for it.")
+            }
+            do {
+                names = try tensorNames(directory)
+            } catch {
+                return result(false, "Cannot verify the installed vision weights: \(error.localizedDescription)")
+            }
+            guard ModelFormatDetection.isMLXFormat(at: directory, refresh: true) else {
+                return result(false, "The installed weight format is rejected by the local runtime preflight.")
+            }
+            let tower = "vision_tower.vision_model."
+            let required = [tower + "embeddings.patch_embedding.weight", tower + "pre_layrnorm.weight",
+                "multi_modal_projector.linear_1.weight", "multi_modal_projector.linear_2.weight",
+                "patch_merge_mlp.linear_1.weight", "patch_merge_mlp.linear_2.weight"]
+            guard required.allSatisfy(names.contains),
+                (0..<depth).allSatisfy({ i in
+                    let layer = tower + "encoder.layers.\(i)."
+                    return ["self_attn.q_proj.weight", "self_attn.out_proj.weight", "mlp.fc1.weight", "mlp.fc2.weight"]
+                        .allSatisfy { names.contains(layer + $0) }
+                })
+            else {
+                return result(false, "The MiniMax-M3 vision stack is missing encoder, projector or patch-merge weights.")
+            }
+            return result(true, "Image input is backed by the MiniMax-M3 vision tower, projector and patch-merge weights in the bundle.")
+        }
         guard VLMTypeRegistry.supportedModelTypes.contains(modelType) else {
             return result(false, "The configured architecture has no local vision runtime.")
         }
@@ -152,7 +248,7 @@ enum LocalVisionEvidence {
             processor = native.merging(["processor_class": "MiMoV26Processor"]) { _, new in new }
         } else {
             guard let processorURL, let selected = object(processorURL), !selected.isEmpty else {
-                return result(false, "The installed bundle has no readable processor configuration.")
+                return result(false, "The installed bundle has vision settings but no readable processor configuration (preprocessor_config.json or processor_config.json), so images cannot be prepared for it.")
             }
             processor = selected
         }
@@ -170,6 +266,16 @@ enum LocalVisionEvidence {
         guard ModelFormatDetection.isMLXFormat(at: directory, refresh: true) else {
             return result(false, "The installed weight format is rejected by the local runtime preflight.")
         }
+        if ["nemotron_h_omni", "nemotronh_nano_omni_reasoning_v3"].contains(modelType.lowercased()) {
+            // Super/Bolt share the Omni architecture but declare a null video
+            // token. Nano-Omni has a token and a separate temporal embedder.
+            // A family name or the generic vision patch size cannot establish
+            // video support for an installed checkpoint.
+            nativeVideo = (omni?["video_context_token_id"] as? Int ?? -1) >= 0
+                && names.contains {
+                    $0.hasSuffix("patch_generator.video_embedder.weight")
+                }
+        }
         if mimo {
             nativeAudio = mimoAudioEvidence(directory: directory, config: config,
                                             processor: processor, names: names)
@@ -180,6 +286,14 @@ enum LocalVisionEvidence {
                 && (processor["video_start_token_id"] as? Int ?? -1) >= 0
                 && (processor["video_end_token_id"] as? Int ?? -1) >= 0
                 && ((config["vision_config"] as? [String: Any])?["temporal_patch_size"] as? Int ?? 0) > 0
+        }
+        if modelType == "lfm3_audio" || modelType == "lfm3_omni" {
+            // LFM3 speech input: the mel downsampler, its LFM2 trunk and the projector into the
+            // decoder. The speech generator (depth decoder) is not part of the input lane.
+            nativeAudio = ["audio_tower.downsample.conv_in.weight",
+                "audio_tower.downsample.lin_out.weight", "audio_tower.lfm.embedding_norm.weight",
+                "audio_projector.linear_1.weight", "audio_projector.linear_2.weight"]
+                .allSatisfy(names.contains)
         }
         // Retain independent audio tensor evidence even when this configured
         // multimodal architecture has no vision tower. Gemma supports optional
@@ -229,6 +343,20 @@ enum LocalVisionEvidence {
                 return result(false, "The unified vision embedder is missing configured component weights.")
             }
             return result(true, "Image input is backed by the installed unified vision configuration and embedder weights.")
+        }
+        if modelType == "lfm3_vl" || modelType == "lfm3_omni" {
+            // LFM3's tower embeds patches with `patchifier` (no patch_embed), which the generic
+            // input check below does not recognise: require the patch embedding, every declared
+            // tower layer and both projector layers instead.
+            guard let depth = (vision["num_hidden_layers"] as? NSNumber)?.intValue, (1...1024).contains(depth),
+                ["vision_tower.patchifier.weight", "vision_tower.embedding_norm.weight",
+                    "multi_modal_projector.linear_1.weight", "multi_modal_projector.linear_2.weight"]
+                    .allSatisfy(names.contains),
+                (0..<depth).allSatisfy({ names.contains("vision_tower.layers.\($0).feed_forward.w1.weight") })
+            else {
+                return result(false, "The LFM3 vision tower is missing patch, layer or projector weights.")
+            }
+            return result(true, "Image input is backed by the installed LFM3 vision tower and projector weights.")
         }
         let weights = names.filter { $0.hasSuffix(".weight") || $0.hasSuffix(".weights") }
         let visionWeights = weights.filter { key in

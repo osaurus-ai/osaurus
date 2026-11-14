@@ -33,13 +33,6 @@ struct OnboardingTelemetryEventTests {
         var events: [Event] = []
     }
 
-    /// Drops the global `total_memory_gb` bucket (attached to every event by
-    /// `TelemetryService.track`) so per-event shape assertions stay focused on
-    /// the event-specific props.
-    private func business(_ props: [String: Any]) -> [String: Any] {
-        props.filter { $0.key != "total_memory_gb" }
-    }
-
     /// A granted + started service whose sends are captured. Returns the
     /// service, the recorder, and a cleanup that wipes the defaults suite.
     private func makeRecordingService() -> (TelemetryService, Recorder, () -> Void) {
@@ -57,15 +50,65 @@ struct OnboardingTelemetryEventTests {
         return (service, recorder, { defaults.removePersistentDomain(forName: suiteName) })
     }
 
-    @Test func started_emits_onboarding_started_with_no_props() {
+    /// Drops the global `total_memory_gb` bucket AND the per-event
+    /// `distribution` dimension (asserted separately below) so the shape
+    /// assertions stay focused on each event's own props.
+    private func business(_ props: [String: Any]) -> [String: Any] {
+        props.filter { $0.key != "total_memory_gb" && $0.key != "build_channel" && $0.key != "distribution" }
+    }
+
+    @Test func started_emits_onboarding_started_with_distribution_only() {
         let (service, rec, cleanup) = makeRecordingService()
         defer { cleanup() }
 
-        OnboardingTelemetry.started(service: service)
+        OnboardingTelemetry.started(distribution: .light, service: service)
 
         #expect(rec.events.count == 1)
         #expect(rec.events[0].name == "onboarding_started")
         #expect(business(rec.events[0].props).isEmpty)
+        #expect(rec.events[0].props["distribution"] as? String == "light")
+    }
+
+    /// Every funnel event carries `distribution` (`light` | `full`) so the
+    /// model-bundled DMG's shorter flow can be compared against the standard
+    /// one. Default resolves from the installed bundle; tests pin it.
+    @Test func every_event_carries_distribution() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        OnboardingTelemetry.started(distribution: .full, service: service)
+        OnboardingTelemetry.stepViewed(.welcome, distribution: .full, service: service)
+        OnboardingTelemetry.brainSourceSelected(.local, downloadStarted: false, distribution: .full, service: service)
+        OnboardingTelemetry.stepSkipped(.configureAI, distribution: .full, service: service)
+        OnboardingTelemetry.completed(lastStep: .welcome, via: .finishButton, distribution: .full, service: service)
+
+        #expect(rec.events.count == 5)
+        #expect(rec.events.allSatisfy { $0.props["distribution"] as? String == "full" })
+    }
+
+    @Test func distribution_defaults_to_installed_bundle_and_honors_override() {
+        let previous = OnboardingTelemetry.Distribution.overrideForTests
+        defer { OnboardingTelemetry.Distribution.overrideForTests = previous }
+
+        OnboardingTelemetry.Distribution.overrideForTests = .full
+        #expect(OnboardingTelemetry.Distribution.current == .full)
+        OnboardingTelemetry.Distribution.overrideForTests = .light
+        #expect(OnboardingTelemetry.Distribution.current == .light)
+
+        // The SwiftPM test bundle has no BundledModels manifest: light.
+        OnboardingTelemetry.Distribution.overrideForTests = nil
+        let previousSeeder = BundledModelSeeder.isFullDistributionOverrideForTests
+        defer { BundledModelSeeder.isFullDistributionOverrideForTests = previousSeeder }
+        BundledModelSeeder.isFullDistributionOverrideForTests = nil
+        #expect(OnboardingTelemetry.Distribution.current == .light)
+        BundledModelSeeder.isFullDistributionOverrideForTests = true
+        #expect(OnboardingTelemetry.Distribution.current == .full)
+    }
+
+    @Test func distribution_raw_values_match_the_documented_contract() {
+        #expect(OnboardingTelemetry.Distribution.light.rawValue == "light")
+        #expect(OnboardingTelemetry.Distribution.full.rawValue == "full")
+        #expect(OnboardingTelemetry.distributionKey == "distribution")
     }
 
     @Test func stepViewed_emits_step_name_and_index() {
@@ -90,8 +133,9 @@ struct OnboardingTelemetryEventTests {
 
         let event = rec.events[0]
         #expect(event.name == "brain_source_selected")
-        #expect(business(event.props).count == 2)
+        #expect(business(event.props).count == 3)
         #expect(event.props["source"] as? String == "provider_key")
+        #expect(event.props["surface"] as? String == "onboarding")
         #expect(event.props["provider"] as? String == ProviderPreset.openai.rawValue)
         #expect(event.props["privacy_tier"] == nil)
     }
@@ -104,7 +148,7 @@ struct OnboardingTelemetryEventTests {
 
         let event = rec.events[0]
         #expect(event.name == "brain_source_selected")
-        #expect(business(event.props).count == 1)
+        #expect(business(event.props).count == 2)
         #expect(event.props["source"] as? String == "local")
     }
 
@@ -118,7 +162,7 @@ struct OnboardingTelemetryEventTests {
 
         let event = rec.events[0]
         #expect(event.name == "brain_source_selected")
-        #expect(business(event.props).count == 2)
+        #expect(business(event.props).count == 3)
         #expect(event.props["source"] as? String == "local")
         #expect(event.props["download_started"] as? Bool == true)
     }
@@ -133,7 +177,7 @@ struct OnboardingTelemetryEventTests {
 
         let event = rec.events[0]
         #expect(event.name == "brain_source_selected")
-        #expect(business(event.props).count == 1)
+        #expect(business(event.props).count == 2)
         #expect(event.props["source"] as? String == "hosted")
         #expect(event.props["provider"] == nil)
     }
@@ -165,17 +209,54 @@ struct OnboardingTelemetryEventTests {
         #expect(event.props["via"] as? String == "finish_button")
     }
 
-    /// The early-close path carries `close_button`, distinguishing a
-    /// drop-off from a genuine finish on the same `onboarding_completed`
-    /// event.
-    @Test func completed_via_close_button_is_distinct() {
+    /// Skip setup carries `skip_button`, distinguishing a drop-off from a
+    /// genuine finish on the same `onboarding_completed` event.
+    @Test func completed_via_skip_button_is_distinct() {
         let (service, rec, cleanup) = makeRecordingService()
         defer { cleanup() }
 
-        OnboardingTelemetry.completed(lastStep: .createAgent, via: .closeButton, service: service)
+        OnboardingTelemetry.completed(lastStep: .welcome, via: .skipButton, service: service)
 
         let event = rec.events[0]
-        #expect(event.props["last_step"] as? String == "create_agent")
-        #expect(event.props["via"] as? String == "close_button")
+        #expect(event.props["last_step"] as? String == "welcome")
+        #expect(event.props["via"] as? String == "skip_button")
+    }
+
+    @Test func brainSourceSelected_from_chat_sheet_carries_its_surface() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        OnboardingTelemetry.brainSourceSelected(.claudeCode, surface: "chat_sheet", service: service)
+
+        let event = rec.events[0]
+        #expect(event.props["source"] as? String == "claude_code")
+        #expect(event.props["surface"] as? String == "chat_sheet")
+        #expect(business(event.props).count == 2)
+    }
+
+    @Test func keepResolved_maps_each_outcome_to_its_token() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        OnboardingTelemetry.keepResolved(offer: "turn_on", outcome: .turnedOn, service: service)
+        OnboardingTelemetry.keepResolved(offer: "turn_on", outcome: .declined, service: service)
+        OnboardingTelemetry.keepResolved(offer: "turn_on", outcome: .failed("no schedule"), service: service)
+
+        #expect(rec.events.map(\.name) == Array(repeating: "onboarding_keep_resolved", count: 3))
+        #expect(rec.events.map { $0.props["outcome"] as? String } == ["taken", "declined", "failed"])
+        #expect(rec.events.allSatisfy { $0.props["offer"] as? String == "turn_on" })
+        // The failure reason is free text and never leaves the Mac.
+        #expect(rec.events.allSatisfy { business($0.props).count == 2 })
+        #expect(rec.events.allSatisfy { $0.props["distribution"] != nil })
+    }
+
+    @Test func brainChooserOpened_has_no_business_props() {
+        let (service, rec, cleanup) = makeRecordingService()
+        defer { cleanup() }
+
+        OnboardingTelemetry.brainChooserOpened(service: service)
+
+        #expect(rec.events.map(\.name) == ["onboarding_brain_chooser_opened"])
+        #expect(business(rec.events[0].props).isEmpty)
     }
 }

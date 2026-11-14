@@ -231,6 +231,39 @@ struct CalendarToolExecutionTests {
 
 // MARK: - Shortcuts
 
+@Suite("Apple tools: calendar_open_event opens via the non-blocking opener", .serialized)
+struct CalendarOpenEventToolTests {
+
+    private final class Recorder: @unchecked Sendable {
+        var urls: [URL] = []
+    }
+
+    @Test("calendar_open_event routes through AppleURLOpener and maps failure to unavailable")
+    func openRoutesThroughOpener() async throws {
+        let original = AppleURLOpener.handler
+        defer { AppleURLOpener.handler = original }
+
+        let service = FakeCalendarService()
+        let start = Date(timeIntervalSince1970: 1_789_000_000)
+        service.events = [FakeCalendarService.event(id: "e1", title: "Standup", start: start, end: start.addingTimeInterval(900))]
+        let tool = CalendarOpenEventTool(service: service)
+
+        let recorder = Recorder()
+        AppleURLOpener.handler = { url in
+            recorder.urls.append(url)
+            return true
+        }
+        let payload = try result(await tool.execute(argumentsJSON: #"{"id":"e1"}"#))
+        #expect(payload["opened"] as? Bool == true)
+        #expect(recorder.urls.map(\.absoluteString) == ["ical://ekevent/e1"])
+
+        AppleURLOpener.handler = { _ in false }
+        let env = try envelope(await tool.execute(argumentsJSON: #"{"id":"e1"}"#))
+        #expect(env["kind"] as? String == "unavailable")
+        #expect(env["retryable"] as? Bool == true)
+    }
+}
+
 @Suite("Apple tools: Shortcuts over a fake service")
 struct ShortcutsToolExecutionTests {
 

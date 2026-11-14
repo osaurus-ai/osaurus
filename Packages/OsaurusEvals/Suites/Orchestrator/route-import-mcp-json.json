@@ -1,0 +1,22 @@
+{
+  "id": "orchestrator.route-import-mcp-json",
+  "domain": "orchestrator",
+  "label": "orchestrator • a pasted MCP config to add goes to the Configurator",
+  "query": "Add this MCP server:\n```json\n{\"mcpServers\":{\"acme-docs\":{\"url\":\"https://mcp.acme-docs.example/mcp\"}}}\n```",
+  "notes": "Universal chat import routing. A pasted config to install is a configuration change; the Orchestrator hands it to the Configurator rather than applying it or explaining it.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "configurator_handoff"
+      ],
+      "mustNotCallTools": [
+        "osaurus_config",
+        "osaurus_import",
+        "spawn_agent",
+        "architect_handoff"
+      ],
+      "maxIterations": 5
+    }
+  }
+}

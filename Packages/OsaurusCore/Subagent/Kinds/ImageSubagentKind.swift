@@ -47,6 +47,14 @@ struct ImageJobParams: Sendable {
     var strength: Float?
     var seed: UInt64?
     var numImages: Int?
+    var seeds: [UInt64]? = nil
+    var batchSize: Int? = nil
+    var sampler: String? = nil
+    var scheduler: String? = nil
+    var shift: Float? = nil
+    var previewInterval: Int? = nil
+    var previewMaxPixel: Int? = nil
+    var adapters: [ImageAdapterParameters] = []
 
     /// `source_paths` present → edit an existing image; otherwise generate.
     var isEdit: Bool { !sourcePaths.isEmpty }
@@ -55,7 +63,7 @@ struct ImageJobParams: Sendable {
 final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
     let capability = SubagentCapabilityRegistry.image
 
-    private let params: ImageJobParams
+    private var params: ImageJobParams
     private let argumentsJSON: String
     private var resolvedTarget: MediaModelTarget?
     private var selectedMediaModel: MediaModelInfo?
@@ -90,7 +98,7 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
             config: config,
             perAgentEnabled: settings?.imageEnabled ?? false
         )
-        guard imageAllowed else {
+        guard imageAllowed || scope.isGrantedByWorkflow(capability) else {
             throw SubagentError.denied(
                 params.isEdit
                     ? "Image edit is not enabled for this agent."
@@ -132,6 +140,17 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
             let target =
                 selected.mediaModel?.target
                 ?? MediaModelTarget(backend: .local, modelID: selected.id)
+            if target.backend != .local, params.seeds != nil || params.batchSize != nil || (params.numImages ?? 1) != 1
+                || params.sampler != nil || params.scheduler != nil || params.shift != nil
+                || params.previewInterval != nil || params.previewMaxPixel != nil || !params.adapters.isEmpty {
+                throw SubagentError.unavailable("Explicit batches and sampling controls require a local image model.")
+            }
+            if target.backend == .local {
+                // Canonical identity is from installed ImageModelInfo, copied
+                // into the picker; it is independent of a renamed directory.
+                try prepareLocalParameters(canonical: selected.imageCanonicalName,
+                    defaultGuidance: selected.imageDefaultGuidance)
+            }
             resolvedTarget = target
             selectedMediaModel = selected.mediaModel
             return ResolvedModel(
@@ -148,11 +167,40 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
                 available: models,
                 kind: modelKind
             )
+            if let info = models.first(where: { $0.id == model }) {
+                try prepareLocalParameters(canonical: info.canonicalName,
+                    defaultGuidance: info.defaultGuidance)
+            }
             resolvedTarget = MediaModelTarget(backend: .local, modelID: model)
             return ResolvedModel(name: model, id: model, isLocal: true)
         } catch {
             throw SubagentError.unavailable(String(describing: error))
         }
+    }
+
+    // Used after exact local model selection and before permission/admission.
+    // Invalid raw Q21 fields never reach coordinator coercion or eviction.
+    func prepareLocalParameters(canonical: String?, defaultGuidance: Float?) throws {
+        params = try ImageTool.paramsForResolvedLocalModel(params, argumentsJSON: argumentsJSON,
+            canonical: canonical, defaultGuidance: defaultGuidance)
+        guard (1...8).contains(params.numImages ?? 1), (params.batchSize ?? 1) > 0,
+            params.seeds.map({ $0.count == (params.numImages ?? 1) }) ?? true else {
+            throw ImageGenerationError.invalidRequest("Image batch requires 1...8 images, a positive batch_size and one seed per image when seeds is supplied")
+        }
+        if params.isEdit, params.seeds != nil || params.batchSize != nil || (params.numImages ?? 1) != 1 {
+            throw ImageGenerationError.invalidRequest("Image batch parameters are generation-only")
+        }
+    }
+
+    func localGenerateRequest(_ resolved: ResolvedModel,
+        context: NativeImageJobContext) -> NativeImageGenerateJobRequest
+    {
+        NativeImageGenerateJobRequest(prompt: params.prompt, model: resolved.id ?? resolved.name,
+            negativePrompt: params.negativePrompt, width: params.width, height: params.height,
+            steps: params.steps, guidance: params.guidance, seed: params.seed,
+            numImages: params.numImages ?? 1, seeds: params.seeds, batchSize: params.batchSize ?? 1,
+            outputFormat: .png, sampler: params.sampler, scheduler: params.scheduler, shift: params.shift,
+            previewInterval: params.previewInterval, previewMaxPixel: params.previewMaxPixel ?? 256, adapters: params.adapters, context: context)
     }
 
     /// Every local image run owns one producer and may swap the parent under
@@ -169,9 +217,8 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
         let config = SubagentConfigurationStore.snapshot()
         // Per-agent permission: Default / main chat → global permission map; a
         // custom agent → its own `subagentPermissions`, resolved from the
-        // launching agent (`scope`). The model is now chosen in the agent's
-        // Subagents tab, so the prompt is a plain allow / deny (the `.ask`
-        // policy); `.alwaysAllow` is set per-agent in that tab.
+        // launching agent (`scope`). A prompt's Always Allow must update that
+        // same policy source, just like an explicit edit in the Subagents tab.
         let isDefault = scope.agentId == Agent.defaultId
         let settings = await MainActor.run {
             AgentManager.shared.agent(for: scope.agentId)?.settings
@@ -217,29 +264,90 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
                 ? .allow
                 : .userDenied("User denied billable remote image generation.")
         }
-        return params.isEdit
-            ? await editPermission(policy: policy, argumentsJSON: approvalJSON)
-            : await generatePermission(policy: policy, argumentsJSON: approvalJSON)
+        // A workflow step that lists `image` was approved with the workflow;
+        // local runs cost nothing, so its `.ask` prompt is already answered.
+        let grantedByWorkflow = scope.isGrantedByWorkflow(capability)
+        return await localPermission(
+            scope, policy: policy, argumentsJSON: approvalJSON, granted: grantedByWorkflow)
     }
 
-    private func generatePermission(
+    private func localPermission(
+        _ scope: SubagentScope,
         policy: SubagentPermissionPolicy,
-        argumentsJSON: String
+        argumentsJSON: String,
+        granted: Bool
     ) async -> SubagentDecision {
+        let operation = params.isEdit ? "Image edit" : "Image generation"
+        let denied = SubagentDecision.userDenied("User denied \(operation.lowercased()).")
         switch policy {
         case .deny:
-            return .denied("Image generation is denied by this agent's permission settings.")
+            return .denied("\(operation) is denied by this agent's permission settings.")
         case .alwaysAllow:
             return .allow
         case .ask:
-            if ChatExecutionContext.autoApproveToolPrompts { return .allow }
-            let approved = await ToolPermissionPromptService.requestApproval(
+            if ChatExecutionContext.autoApproveToolPrompts || granted { return .allow }
+            let runScope = ChatExecutionContext.toolPermissionRunScope
+            if runScope?.allows("image") == true { return .allow }
+            let outcome = await ToolPermissionPromptService.requestPolicyApprovalOutcome(
                 toolName: "image",
                 description: ImageTool.toolDescription,
-                argumentsJSON: argumentsJSON
+                descriptionIsForModel: true,
+                argumentsJSON: argumentsJSON,
+                offersRunLease: runScope != nil,
+                commitApproval: { outcome in
+                    switch outcome {
+                    case .alwaysAllow:
+                        self.persistAlwaysAllow(launchingAgentId: scope.agentId)
+                    case .allowForRun:
+                        runScope?.allow("image")
+                    case .denied, .allowOnce:
+                        break
+                    }
+                },
+                revalidate: {
+                    let config = SubagentConfigurationStore.snapshot()
+                    let settings = await MainActor.run {
+                        AgentManager.shared.agent(for: scope.agentId)?.settings
+                    }
+                    switch SubagentToolVisibility.effectivePermission(
+                        capabilityId: SubagentCapabilityRegistry.image.id,
+                        isDefault: scope.agentId == Agent.defaultId,
+                        config: config,
+                        settings: settings
+                    ) {
+                    case .deny: return .denied
+                    case .alwaysAllow: return .allowOnce
+                    case .ask: return runScope?.allows("image") == true ? .allowOnce : nil
+                    }
+                }
             )
-            return approved ? .allow : .userDenied("User denied image generation.")
+            guard !Task.isCancelled else { return denied }
+            switch outcome {
+            case .denied:
+                return denied
+            case .allowOnce, .allowForRun, .alwaysAllow:
+                return .allow
+            }
         }
+    }
+
+    @MainActor
+    private func persistAlwaysAllow(launchingAgentId: UUID) {
+        if launchingAgentId == Agent.defaultId {
+            SubagentConfigurationStore.mutate { config in
+                config.permissionDefaults.setPolicy(.alwaysAllow, for: capability.id)
+            }
+            return
+        }
+        guard var agent = AgentManager.shared.agent(for: launchingAgentId), !agent.isBuiltIn else {
+            // This click still approves the current call; a missing launcher
+            // must never redirect persistence into the global/default policy.
+            print("[Osaurus] Could not persist image Always Allow for agent \(launchingAgentId)")
+            return
+        }
+        guard agent.settings.subagentPermissions.policy(for: capability.id) != .alwaysAllow else { return }
+        agent.settings.subagentPermissions.setPolicy(.alwaysAllow, for: capability.id)
+        AgentManager.shared.update(agent)
     }
 
     private static func backendDescription(_ model: MediaModelInfo) -> String {
@@ -250,26 +358,6 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
             return model.providerName
         case .osaurusCloud:
             return "Osaurus Cloud"
-        }
-    }
-
-    private func editPermission(
-        policy: SubagentPermissionPolicy,
-        argumentsJSON: String
-    ) async -> SubagentDecision {
-        switch policy {
-        case .deny:
-            return .denied("Image edit is denied by this agent's permission settings.")
-        case .alwaysAllow:
-            return .allow
-        case .ask:
-            if ChatExecutionContext.autoApproveToolPrompts { return .allow }
-            let approved = await ToolPermissionPromptService.requestApproval(
-                toolName: "image",
-                description: ImageTool.toolDescription,
-                argumentsJSON: argumentsJSON
-            )
-            return approved ? .allow : .userDenied("User denied image edit.")
         }
     }
 
@@ -362,38 +450,27 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
         do {
             if params.isEdit {
                 let sources = try Self.loadSourceImages(paths: params.sourcePaths)
+                try ImageHTTPParameterBuilder.validateSourceImages(sources)
                 let request = NativeImageEditJobRequest(
                     prompt: params.prompt,
-                    model: resolved.name,
+                    model: resolved.id ?? resolved.name,
                     sourceImages: sources,
                     negativePrompt: params.negativePrompt,
                     width: params.width,
                     height: params.height,
                     steps: params.steps,
                     guidance: params.guidance,
-                    strength: params.strength ?? 0.75,
+                    strength: params.strength,
                     seed: params.seed,
                     outputFormat: .png,
+                    sampler: params.sampler, scheduler: params.scheduler, shift: params.shift,
+                    previewInterval: params.previewInterval, previewMaxPixel: params.previewMaxPixel ?? 256, adapters: params.adapters,
                     context: NativeImageJobContext.current()
                 )
-                finalResult = try await Self.consumeEdit(request)
+                finalResult = try await Self.consumeEdit(request, interrupt: interrupt)
             } else {
-                let request = NativeImageGenerateJobRequest(
-                    prompt: params.prompt,
-                    model: resolved.name,
-                    negativePrompt: params.negativePrompt,
-                    width: params.width,
-                    height: params.height,
-                    steps: params.steps,
-                    guidance: params.guidance,
-                    seed: params.seed,
-                    // Force single-image: multi-image (n>1) sequential generation
-                    // trips the MLX CommandEncoder race (no per-image drain).
-                    numImages: 1,
-                    outputFormat: .png,
-                    context: NativeImageJobContext.current()
-                )
-                finalResult = try await Self.consumeGenerate(request)
+                let request = localGenerateRequest(resolved, context: NativeImageJobContext.current())
+                finalResult = try await Self.consumeGenerate(request, interrupt: interrupt)
             }
         } catch let inputError as NativeImageToolInputError {
             throw SubagentError.invalidArgs(
@@ -402,6 +479,9 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
                 expected: "existing local image files under 80 MB each"
             )
         } catch {
+            if interrupt.isInterrupted {
+                throw SubagentError.userDenied("User cancelled image generation.")
+            }
             throw SubagentError.executionFailed(
                 message: String(describing: error),
                 retryable: false
@@ -439,12 +519,13 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
     /// the residency unload can incidentally trigger) must not cascade into the
     /// engine drain and abort generation; the detached consumer keeps the
     /// producer alive to completion. Explicit user cancel still works via the
-    /// coordinator / `ImageGenerationService` jobID cancel path.
+    /// job-scoped InterruptToken bridge; it cancels the gate waiter and marks
+    /// soft cancellation while the detached producer continues draining.
     private static func consumeGenerate(
-        _ request: NativeImageGenerateJobRequest
+        _ request: NativeImageGenerateJobRequest, interrupt: InterruptToken
     ) async throws -> NativeImageJobResult? {
         try await Task.detached(priority: .userInitiated) {
-            let stream = await NativeImageJobCoordinator.shared.generate(request)
+            let stream = await NativeImageJobCoordinator.shared.generate(request, interrupt: interrupt)
             var last: NativeImageJobResult?
             for try await result in stream { last = result }
             return last
@@ -452,10 +533,10 @@ final class ImageSubagentKind: SubagentKind, @unchecked Sendable {
     }
 
     private static func consumeEdit(
-        _ request: NativeImageEditJobRequest
+        _ request: NativeImageEditJobRequest, interrupt: InterruptToken
     ) async throws -> NativeImageJobResult? {
         try await Task.detached(priority: .userInitiated) {
-            let stream = await NativeImageJobCoordinator.shared.edit(request)
+            let stream = await NativeImageJobCoordinator.shared.edit(request, interrupt: interrupt)
             var last: NativeImageJobResult?
             for try await result in stream { last = result }
             return last

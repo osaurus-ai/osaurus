@@ -8,7 +8,8 @@
 //  document or image has no useful raw-text form in the VM — the host side
 //  owns the extractors (PDFKit, RichDocumentAdapter, XLSX, Vision OCR) and
 //  the writers (`FileWriteDocumentRouting`). This helper resolves a sandbox
-//  path to its host-side URL, containment-checked, so `file_read` /
+//  path to its host-side URL, containment-checked against the calling
+//  agent's home and `/workspace/shared` (never another agent's home), so `file_read` /
 //  `file_write` and the `sandbox_*` twins serve those formats from the share
 //  instead of failing on raw bytes.
 //
@@ -57,22 +58,21 @@ enum WorkspaceShareRoute {
     }
 
     /// Map an absolute `/workspace/...` path to its host-side URL inside
-    /// the VirtioFS share. Reuses `resolvePath` for the symlink-safe
-    /// containment check, so `..` traversal and in-share symlinks cannot
-    /// escape the container workspace.
-    static func hostURL(forSandboxPath path: String) throws -> URL {
-        guard let relative = shareRelativePath(forSandboxPath: path) else {
+    /// the VirtioFS share, scoped to the calling agent's home and
+    /// `/workspace/shared` (`SandboxAgentPathScope`). Symlink-safe, so `..`
+    /// traversal and in-share symlinks cannot reach another agent's home
+    /// or escape the share.
+    static func hostURL(forSandboxPath path: String, home: String) throws -> URL {
+        guard let scope = SandboxAgentPathScope(agentHome: home) else {
+            throw FolderToolError.invalidArguments("'\(home)' is not a sandbox agent home.")
+        }
+        guard shareRelativePath(forSandboxPath: path)?.isEmpty == false else {
             throw FolderToolError.invalidArguments(
-                "'\(path)' is not under `\(mountPoint)`; only sandbox paths under the share can be served host-side."
+                "'\(path)' is not a file under `\(mountPoint)` — pass a file path "
+                    + "under your sandbox home or `\(SandboxAgentPathScope.sharedMountPath)`."
             )
         }
-        guard !relative.isEmpty else {
-            throw FolderToolError.invalidArguments(
-                "'\(mountPoint)' itself is a directory — pass a file path under it "
-                    + "(e.g. under your sandbox home)."
-            )
-        }
-        return try FolderToolHelpers.resolvePath(relative, rootPath: shareRoot)
+        return try scope.hostURL(forSandboxPath: path)
     }
 
     /// Host-side root of the share.
@@ -98,11 +98,11 @@ enum WorkspaceShareRoute {
     }
 
     static func resolveForWrite(path: String, home: String) -> Resolved? {
-        // The share root is created lazily by the sandbox runtime; a
-        // document written before the VM has ever started still belongs
-        // there, and containment resolution needs the root on disk so
-        // firmlinked temp roots resolve symmetrically.
-        try? FileManager.default.createDirectory(at: shareRoot, withIntermediateDirectories: true)
+        // The share is created lazily by the sandbox runtime; a document
+        // written before the VM has ever started still belongs there, and
+        // containment resolution needs the scope roots on disk so firmlinked
+        // temp roots resolve symmetrically.
+        SandboxAgentPathScope(agentHome: home)?.ensureRootsExist()
         return resolve(path: path, home: home, qualifies: servesWrite(extension:))
     }
 
@@ -116,7 +116,7 @@ enum WorkspaceShareRoute {
         guard let absolute = absoluteSandboxPath(path, home: home),
             let relative = shareRelativePath(forSandboxPath: absolute),
             !relative.isEmpty,
-            let hostURL = try? FolderToolHelpers.resolvePath(relative, rootPath: shareRoot)
+            let hostURL = try? Self.hostURL(forSandboxPath: absolute, home: home)
         else { return nil }
         return Resolved(
             sandboxPath: absolute,

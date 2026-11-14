@@ -46,12 +46,10 @@ public enum CoreModelError: Error, LocalizedError, Equatable {
 
 /// Who is waiting on a `CoreModelService` call.
 ///
-/// This matters because the runtime is strictly single-model: loading model B
-/// evicts resident model A, and a new load cancels an in-flight one. A call the
-/// user is waiting on has earned that right. A housekeeping call — memory
-/// distillation, voice-transcript cleanup, a greeting — has not: it must never
-/// evict the model the user is chatting with, nor cancel the load they are
-/// staring at a spinner for.
+/// Single-model policy may evict another resident model or cancel its pending
+/// load; flexible policy may evict to satisfy its memory budget. Housekeeping
+/// calls decline before either action. They may still load a model when
+/// admission permits it without displacing another resident or pending load.
 public enum CoreModelIntent: Sendable {
     /// The user is waiting on this call. May load/evict as needed.
     case interactive
@@ -131,7 +129,7 @@ public actor CoreModelService {
     private static let circuitBreakerMaxCooldownSeconds: TimeInterval = 30 * 60
 
     private init() {
-        localServices = [FoundationModelService(), ClaudeCodeService(), MLXService.shared]
+        localServices = [FoundationModelService(), MLXService.shared]
     }
 
     init(localServices: [ModelService]) {
@@ -142,7 +140,7 @@ public actor CoreModelService {
     /// - Parameters:
     ///   - prompt: The user prompt.
     ///   - systemPrompt: Optional system prompt.
-    ///   - temperature: Sampling temperature (default 0.3).
+    ///   - temperature: Optional explicit sampling temperature; omission preserves model/provider defaults.
     ///   - maxTokens: Maximum response tokens (default 2048).
     ///   - timeout: Maximum wall-clock seconds for the call (default 60).
     ///   - fallbackModel: Model identifier to fall back to when the configured
@@ -159,13 +157,14 @@ public actor CoreModelService {
     public func generate(
         prompt: String,
         systemPrompt: String? = nil,
-        temperature: Double = 0.3,
+        temperature: Double? = nil,
         maxTokens: Int = 2048,
         timeout: TimeInterval = 60,
         fallbackModel: String? = nil,
         intent: CoreModelIntent = .interactive,
         modelOverride: String? = nil,
-        fallBackOnResidencyRefusal: Bool = false
+        fallBackOnResidencyRefusal: Bool = false,
+        purpose: String? = nil
     ) async throws -> String {
         try await generate(
             prompt: prompt,
@@ -177,7 +176,8 @@ public actor CoreModelService {
             intent: intent,
             modelOverride: modelOverride,
             fallBackOnResidencyRefusal: fallBackOnResidencyRefusal,
-            modelOptions: [:]
+            modelOptions: [:],
+            purpose: purpose
         )
     }
 
@@ -195,17 +195,22 @@ public actor CoreModelService {
     ///   (titles, memory) keep their "never touch the resident" guarantee;
     ///   follow-ups opt in so they generate for users chatting on a remote
     ///   provider while a local model happens to be resident.
+    /// - Parameter purpose: Short machine label for the activity log
+    ///   (`chat_title`, `follow_up_suggestions`, `memory_distillation`, …).
+    ///   Every one-shot is recorded in Insights — these calls carry
+    ///   conversation text and go to the cloud when the core model is remote.
     func generate(
         prompt: String,
         systemPrompt: String? = nil,
-        temperature: Double = 0.3,
+        temperature: Double? = nil,
         maxTokens: Int = 2048,
         timeout: TimeInterval = 60,
         fallbackModel: String? = nil,
         intent: CoreModelIntent = .interactive,
         modelOverride: String? = nil,
         fallBackOnResidencyRefusal: Bool = false,
-        modelOptions: [String: ModelOptionValue]
+        modelOptions: [String: ModelOptionValue],
+        purpose: String? = nil
     ) async throws -> String {
         // A per-call override wins over the shared Core Model setting; empty
         // strings are treated as "no override" so callers can pass raw config.
@@ -221,8 +226,14 @@ public actor CoreModelService {
         }
         let fallback = Self.normaliseFallback(fallbackModel)
         let messages = buildMessages(prompt: prompt, systemPrompt: systemPrompt)
+        // Who is driving this (chat session / agent) — read on the caller's
+        // task so the activity row can be attributed even after actor hops.
+        let activity = ActivityContext(
+            purpose: purpose ?? "core_model",
+            attribution: InsightsService.ActivityAttribution.current()
+        )
         let params = GenerationParameters(
-            temperature: Float(temperature),
+            temperature: temperature.map { Float($0) },
             maxTokens: maxTokens,
             modelOptions: modelOptions,
             // Carried all the way into `ModelRuntime.loadContainer`, which refuses
@@ -256,7 +267,7 @@ public actor CoreModelService {
                     "Core model '\(primary)' breaker open; serving from chat model '\(fb)' during cooldown")
                 return try await runWithRetries(
                     model: fb, messages: messages, params: params, timeout: timeout, intent: intent,
-                    role: .fallback)
+                    role: .fallback, activity: activity)
             }
             throw CoreModelError.circuitBreakerOpen
         }
@@ -268,8 +279,114 @@ public actor CoreModelService {
             params: params,
             timeout: timeout,
             intent: intent,
-            fallBackOnResidencyRefusal: fallBackOnResidencyRefusal
+            fallBackOnResidencyRefusal: fallBackOnResidencyRefusal,
+            activity: activity
         )
+    }
+
+    /// One schema-enforced call for a workflow node. Runs exactly the bound
+    /// model: no chat-model fallback (a slot bound to a local model must
+    /// never be served from the cloud) and no circuit breaker (node
+    /// failures must not silence titles or memory). One attempt; the node's
+    /// own retry policy decides whether to call again. The backend enforces
+    /// `schema` natively or throws `StructuredOutputError.unsupportedModel`.
+    public func generateStructured(
+        model: String,
+        prompt: String,
+        systemPrompt: String?,
+        schema: JSONValue,
+        temperature: Double? = nil,
+        maxTokens: Int = 4096,
+        timeout: TimeInterval,
+        purpose: String = "workflow_node",
+        onDelta: (@Sendable (String) -> Void)? = nil
+    ) async throws -> String {
+        try await generateStructured(
+            model: model, prompt: prompt, systemPrompt: systemPrompt, schema: schema, temperature: temperature,
+            maxTokens: maxTokens, timeout: timeout, purpose: purpose, requestSource: .httpAPI, onDelta: onDelta)
+    }
+
+    /// `requestSource` owns a local model the call cold-loads (an existing
+    /// owner is kept); it also gates interactive privacy review for cloud
+    /// models, so pass a non-API source only for local ones.
+    func generateStructured(
+        model: String,
+        prompt: String,
+        systemPrompt: String?,
+        schema: JSONValue,
+        temperature: Double? = nil,
+        maxTokens: Int = 4096,
+        timeout: TimeInterval,
+        purpose: String = "workflow_node",
+        requestSource: RequestSource,
+        onDelta: (@Sendable (String) -> Void)? = nil
+    ) async throws -> String {
+        let messages = buildMessages(prompt: prompt, systemPrompt: systemPrompt)
+        let activity = ActivityContext(
+            purpose: purpose,
+            attribution: InsightsService.ActivityAttribution.current()
+        )
+        var params = GenerationParameters(
+            temperature: temperature.map { Float($0) },
+            maxTokens: maxTokens,
+            modelOptions: [:],
+            requestSource: requestSource,
+            loadIntent: .interactive,
+            preserveExistingResidencyOwner: true,
+            auxiliaryCacheIntent: true
+        )
+        // Scalar and array roots are wrapped here, once, so every backend
+        // (cloud `strictWire`, local `localWire`, and Foundation Models'
+        // `GenerationSchema`, which takes the schema as is) returns the
+        // `{value: …}` shape `StructuredOutputSchema.decode` unwraps.
+        params.responseSchema = StructuredOutputSchema.objectRoot(schema)
+        let finalParams = params
+        return try await withTimeout(seconds: timeout) {
+            try await self.executeModelCall(
+                model: model, messages: messages, params: finalParams, intent: .interactive,
+                applyFirstTokenDeadline: false, activity: activity, onDelta: onDelta)
+        }
+    }
+
+    /// One plain-text call for a workflow node whose output is a single
+    /// string field (`StructuredOutputSchema.singleTextField`). Same
+    /// contract as `generateStructured` (exactly the bound model, one
+    /// attempt, no fallback, no breaker) without a response schema, so the
+    /// model writes its answer as text rather than inside a JSON string.
+    /// A local model runs its native non-reasoning mode, as a schema-bound
+    /// step does. A reply cut off by the output budget throws.
+    func generateNodeText(
+        model: String,
+        prompt: String,
+        systemPrompt: String?,
+        temperature: Double? = nil,
+        maxTokens: Int = 4096,
+        timeout: TimeInterval,
+        purpose: String = "workflow_node",
+        requestSource: RequestSource,
+        onDelta: (@Sendable (String) -> Void)? = nil
+    ) async throws -> String {
+        let messages = buildMessages(prompt: prompt, systemPrompt: systemPrompt)
+        let activity = ActivityContext(
+            purpose: purpose,
+            attribution: InsightsService.ActivityAttribution.current()
+        )
+        let local = ModelManager.findInstalledModel(named: model) != nil
+        let params = GenerationParameters(
+            temperature: temperature.map { Float($0) },
+            maxTokens: maxTokens,
+            modelOptions: local ? ["disableThinking": .bool(true)] : [:],
+            requestSource: requestSource,
+            loadIntent: .interactive,
+            preserveExistingResidencyOwner: true,
+            auxiliaryCacheIntent: true,
+            requireCompleteOutput: true
+        )
+        return try await withTimeout(seconds: timeout) {
+            try await self.executeModelCall(
+                model: model, messages: messages, params: params, intent: .interactive,
+                applyFirstTokenDeadline: false, activity: activity, onDelta: onDelta)
+        }
     }
 
     /// Which model a `runWithRetries` pass is running. Decides the retry
@@ -298,7 +415,8 @@ public actor CoreModelService {
         params: GenerationParameters,
         timeout: TimeInterval,
         intent: CoreModelIntent,
-        fallBackOnResidencyRefusal: Bool
+        fallBackOnResidencyRefusal: Bool,
+        activity: ActivityContext
     ) async throws -> String {
         guard let primary else {
             guard let fb = fallback else { throw CoreModelError.modelUnavailable("none") }
@@ -306,7 +424,7 @@ public actor CoreModelService {
             do {
                 return try await runWithRetries(
                     model: fb, messages: messages, params: params, timeout: timeout, intent: intent,
-                    role: .solo)
+                    role: .solo, activity: activity)
             } catch {
                 recordPrimaryFailure(error)
                 throw error
@@ -317,7 +435,7 @@ public actor CoreModelService {
             do {
                 return try await runWithRetries(
                     model: primary, messages: messages, params: params, timeout: timeout, intent: intent,
-                    role: .solo)
+                    role: .solo, activity: activity)
             } catch {
                 recordPrimaryFailure(error)
                 throw error
@@ -329,7 +447,7 @@ public actor CoreModelService {
         do {
             return try await runWithRetries(
                 model: primary, messages: messages, params: params, timeout: timeout, intent: intent,
-                role: .primaryWithFallback)
+                role: .primaryWithFallback, activity: activity)
         } catch {
             primaryError = error
         }
@@ -366,7 +484,7 @@ public actor CoreModelService {
         )
         return try await runWithRetries(
             model: fb, messages: messages, params: params, timeout: timeout, intent: intent,
-            role: .fallback)
+            role: .fallback, activity: activity)
     }
 
     /// Whether a failed primary attempt should retry on the chat model.
@@ -476,7 +594,7 @@ public actor CoreModelService {
                 "Remote provider '\(provider)' is not connected. Reconnect it under Settings → Providers."
         }
         return
-            "No local model named '\(modelId)' is downloaded. Pick a different Core Model under Settings → General."
+            "No local model named '\(modelId)' is downloaded. Pick a different Core Model under Models → Model Defaults."
     }
 
     // MARK: - Private — breaker bookkeeping
@@ -592,7 +710,8 @@ public actor CoreModelService {
         params: GenerationParameters,
         timeout: TimeInterval,
         intent: CoreModelIntent,
-        role: ModelRole
+        role: ModelRole,
+        activity: ActivityContext
     ) async throws -> String {
         // With a healthy fallback waiting, a second or third attempt on a
         // failing primary only delays the answer the user is waiting on.
@@ -604,7 +723,7 @@ public actor CoreModelService {
                 let result = try await withTimeout(seconds: timeout) {
                     try await self.executeModelCall(
                         model: model, messages: messages, params: params, intent: intent,
-                        applyFirstTokenDeadline: applyFirstTokenDeadline)
+                        applyFirstTokenDeadline: applyFirstTokenDeadline, activity: activity)
                 }
                 if role != .fallback { clearBreakerState() }
                 return result
@@ -636,10 +755,8 @@ public actor CoreModelService {
     /// `.circuitBreakerOpen` won't either. Cancellation is never retryable.
     static func isRetryable(_ error: Error) -> Bool {
         if error is CancellationError { return false }
-        // A second Claude Code subprocess would spend the same subscription
-        // quota (or repeat the same auth/install failure). The CLI already owns
-        // its transport retries, so never replay a failed turn here.
-        if error is ClaudeCodeError { return false }
+        // The backend cannot enforce a schema; asking again changes nothing.
+        if case StructuredOutputError.unsupportedModel? = error as? StructuredOutputError { return false }
         if let fm = error as? FoundationModelServiceError { return fm.isTransient }
         guard let coreErr = error as? CoreModelError else { return true }
         return coreErr == .timedOut
@@ -655,12 +772,22 @@ public actor CoreModelService {
         return [ChatMessage(role: "user", content: prompt)]
     }
 
+    /// Activity-log attribution for one `generate` call. Captured once on
+    /// the caller's task; every attempt (primary, retry, fallback) logs a
+    /// row with the same purpose and driver.
+    struct ActivityContext: Sendable {
+        let purpose: String
+        let attribution: InsightsService.ActivityAttribution
+    }
+
     private func executeModelCall(
         model: String,
         messages: [ChatMessage],
         params: GenerationParameters,
         intent: CoreModelIntent,
-        applyFirstTokenDeadline: Bool
+        applyFirstTokenDeadline: Bool,
+        activity: ActivityContext,
+        onDelta: (@Sendable (String) -> Void)? = nil
     ) async throws -> String {
         let remoteServices: [ModelService] = await MainActor.run {
             RemoteProviderManager.shared.connectedServices()
@@ -678,32 +805,153 @@ public actor CoreModelService {
             logger.debug(
                 "Routing to \(service.id) (model: \(effectiveModel), prompt: \(promptLen) chars)"
             )
+            // Every one-shot is an interaction: local or cloud, it carries
+            // conversation text. Remote calls get a wire probe so the row
+            // shows the exact payload and privacy-filter outcome.
+            let connection = ChatEngine.remoteConnectionInfo(for: service, runAsRemoteAgent: false)?.info
+            let probe: WireTransportProbe? = connection != nil ? WireTransportProbe() : nil
+            let startedAt = Date()
             do {
-                if applyFirstTokenDeadline, let deadline = service.firstTokenDeadline {
-                    let stream = try await service.streamDeltas(
+                let text: String = try await WireTransportProbe.$current.withValue(probe) {
+                    // A caller that wants tokens as they come gets the
+                    // streaming path unless a schema is set that this
+                    // backend applies only in the one-shot below, where
+                    // the whole answer arrives at once.
+                    if let onDelta, params.responseSchema == nil || service.streamsResponseSchema {
+                        let stream = try await service.streamDeltas(
+                            messages: messages,
+                            parameters: params,
+                            requestedModel: model,
+                            stopSequences: []
+                        )
+                        return try await Self.collect(
+                            stream, requireCompleteOutput: params.requireCompleteOutput, onDelta: onDelta)
+                    }
+                    if applyFirstTokenDeadline, let deadline = service.firstTokenDeadline {
+                        let stream = try await service.streamDeltas(
+                            messages: messages,
+                            parameters: params,
+                            requestedModel: model,
+                            stopSequences: []
+                        )
+                        return try await Self.collect(
+                            stream, firstTokenDeadline: deadline, model: effectiveModel)
+                    }
+                    return try await service.generateOneShot(
                         messages: messages,
                         parameters: params,
-                        requestedModel: model,
-                        stopSequences: []
+                        requestedModel: model
                     )
-                    return try await Self.collect(
-                        stream, firstTokenDeadline: deadline, model: effectiveModel)
                 }
-                return try await service.generateOneShot(
-                    messages: messages,
-                    parameters: params,
-                    requestedModel: model
-                )
+                Self.logToInsights(
+                    model: effectiveModel, messages: messages, params: params, response: text,
+                    startedAt: startedAt, error: nil, connection: connection, probe: probe,
+                    activity: activity)
+                return text
             } catch let refusal as ModelRuntime.ResidencyRefusedError {
                 // `params.loadIntent == .background` and the load would have
                 // disturbed the user's model. Not a backend fault — surface it as
-                // the existing skip error so the breaker stays out of it.
+                // the existing skip error so the breaker stays out of it. Nothing
+                // ran, so nothing is logged.
                 logger.info("\(refusal.errorDescription ?? "background load refused")")
                 throw CoreModelError.backgroundWouldEvictUserModel(effectiveModel)
+            } catch {
+                if !(error is CancellationError) {
+                    Self.logToInsights(
+                        model: effectiveModel, messages: messages, params: params, response: nil,
+                        startedAt: startedAt, error: error.localizedDescription, connection: connection,
+                        probe: probe, activity: activity)
+                }
+                throw error
             }
         case .none:
             throw CoreModelError.modelUnavailable(model)
         }
+    }
+
+    /// One Insights row per executed one-shot. Prompt/response are stored as
+    /// a JSON request body (subject to Privacy › Activity Log); remote rows
+    /// carry the post-scrub wire payload captured by the probe.
+    private static func logToInsights(
+        model: String,
+        messages: [ChatMessage],
+        params: GenerationParameters,
+        response: String?,
+        startedAt: Date,
+        error: String?,
+        connection: RequestConnectionInfo?,
+        probe: WireTransportProbe?,
+        activity: ActivityContext
+    ) {
+        let requestBody: String? = {
+            let payload: [String: Any] = [
+                "model": model,
+                "purpose": activity.purpose,
+                "messages": messages.map { ["role": $0.role, "content": $0.content ?? ""] },
+            ]
+            guard
+                let data = try? JSONSerialization.data(
+                    withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+            else { return nil }
+            return String(decoding: data, as: UTF8.self)
+        }()
+        let inputTokens = messages.reduce(0) { $0 + TokenEstimator.estimate($1.content) }
+        let wire = probe?.snapshot()
+        let attribution = activity.attribution
+        InsightsService.logInference(
+            source: .system,
+            model: model,
+            inputTokens: inputTokens,
+            outputTokens: response.map { TokenEstimator.estimate($0) },
+            inputTokenSource: .estimated,
+            outputTokenSource: .estimated,
+            durationMs: Date().timeIntervalSince(startedAt) * 1000,
+            temperature: params.temperature,
+            maxTokens: params.maxTokens,
+            finishReason: error == nil ? .stop : .error,
+            errorMessage: error,
+            requestBody: requestBody,
+            responseBody: response,
+            wireRequestBody: wire?.request,
+            wireResponseBody: (wire?.response.isEmpty ?? true) ? nil : wire?.response,
+            wireResponseTruncated: wire?.truncated,
+            connection: connection,
+            path: "/internal/\(activity.purpose)",
+            privacy: probe?.privacyOutcome,
+            agentId: attribution.agentId,
+            agentName: attribution.agentName,
+            sessionId: attribution.sessionId,
+            workflowRunId: attribution.workflowRunId,
+            workflowNodeId: attribution.workflowNodeId
+        )
+    }
+
+    /// Drains `stream` into the full text, handing every visible chunk to
+    /// `onDelta` as it arrives. Hint sentinels (billing, reasoning, tool,
+    /// stats) that a remote stream interleaves are dropped from both. With
+    /// `requireCompleteOutput`, a stream whose stats report it was cut off
+    /// throws, as `MLXService.collectOneShot` does for the one-shot path.
+    static func collect(
+        _ stream: AsyncThrowingStream<String, Error>,
+        requireCompleteOutput: Bool = false,
+        onDelta: @Sendable (String) -> Void
+    ) async throws -> String {
+        var text = ""
+        var stopReason: String?
+        for try await delta in stream {
+            if let stats = StreamingStatsHint.decode(delta) {
+                stopReason = stats.stopReason
+                continue
+            }
+            if StreamingToolHint.isSentinel(delta) || delta.isEmpty { continue }
+            text += delta
+            onDelta(delta)
+        }
+        if requireCompleteOutput {
+            if stopReason == "length" { throw MLXService.OneShotError.outputTruncated }
+            if stopReason == "cancelled" { throw CancellationError() }
+        }
+        return text
     }
 
     /// Drain a delta stream into a single string, giving up with

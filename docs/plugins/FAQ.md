@@ -112,7 +112,7 @@ No — the web mount would shadow the route, and the manifest validation will re
 
 ### How do I cancel a streaming completion?
 
-Pass a `stream_id` UUID in the `complete_stream` request body, then call `complete_cancel(stream_id)` from anywhere — the `on_chunk` callback, a separate worker, etc. The host emits a final chunk with `finish_reason: "cancelled"` and the `complete_stream` return envelope is `{"error": "cancelled", "partial_content": "...", ...}`. The cancel call is non-blocking — the streaming task observes the flag between deltas and unwinds. See [HOST_API.md `complete_cancel`](HOST_API.md#complete_cancelstream_id---void) for the full envelope shape.
+Pass a `stream_id` UUID in the `complete_stream` request body, then call `complete_cancel(stream_id)` from anywhere — the `on_chunk` callback, a separate worker, etc. The host emits a final chunk with `finish_reason: "cancelled"` and the `complete_stream` return envelope is `{"error": "cancelled", "partial_content": "...", ...}`. The cancel call is non-blocking and cancels the active host task without waiting for another model event. Downstream cleanup still requires cooperative cancellation. See [HOST_API.md `complete_cancel`](HOST_API.md#complete_cancelstream_id---void) for the full envelope shape.
 
 ### Why does my streaming response not include `usage`?
 

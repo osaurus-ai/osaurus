@@ -221,6 +221,28 @@ struct StorageOptInEncryptionTests {
         sqlite3_close(plain)
     }
 
+    /// Stores gate their migrations on `user_version`; losing it re-runs
+    /// non-idempotent steps (Tasks v3 `ADD COLUMN`) and the store won't open.
+    @Test
+    func converterCarriesTheSchemaVersionBothWays() throws {
+        let path = tempDBPath()
+        let k = key(seed: 0x43)
+        try seedDB(at: path, key: nil, body: "versioned")
+        let seeded = try EncryptedSQLiteOpener.open(path: path, key: nil)
+        #expect(sqlite3_exec(seeded, "PRAGMA user_version = 7", nil, nil, nil) == SQLITE_OK)
+        sqlite3_close(seeded)
+
+        try StorageFormatConverter.encryptInPlace(path: path, key: k)
+        let enc = try EncryptedSQLiteOpener.open(path: path, key: k)
+        #expect(readSingleText(enc, "SELECT CAST(user_version AS TEXT) FROM pragma_user_version") == "7")
+        sqlite3_close(enc)
+
+        try StorageFormatConverter.decryptInPlace(path: path, key: k)
+        let plain = try EncryptedSQLiteOpener.open(path: path, key: nil)
+        #expect(readSingleText(plain, "SELECT CAST(user_version AS TEXT) FROM pragma_user_version") == "7")
+        sqlite3_close(plain)
+    }
+
     @Test
     func converterIsNoOpWhenAlreadyInTargetFormat() throws {
         let path = tempDBPath()
@@ -543,23 +565,6 @@ struct StorageOptInEncryptionTests {
             try StorageEncryptionPolicy.shared.setDesiredMode(.plaintext)
             #expect(StorageEncryptionPolicy.shared.persistedMode() == .plaintext)
         }
-    }
-
-    // MARK: - Invisible migration (no What's New notice)
-
-    /// The storage opt-in migration is fully invisible. 0.21.0 still ships its
-    /// own What's New release (image generation + spawn), but nothing in any
-    /// release announces the storage encryption opt-in: no page id references it
-    /// and no page links to the storage settings or the plaintext export.
-    @Test
-    func whatsNewNoLongerListsStorageNotice() {
-        let pages = WhatsNewContent.releases.flatMap(\.pages)
-        #expect(pages.contains { $0.id.contains("storage-optin") } == false)
-        #expect(
-            pages.contains {
-                $0.action == .openStorageSettings || $0.action == .exportPlaintextBackup
-            } == false
-        )
     }
 
     // MARK: - Issue classification (recovery categories)

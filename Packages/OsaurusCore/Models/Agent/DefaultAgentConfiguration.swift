@@ -30,6 +30,13 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
     /// unaffected by the name.
     public var displayName: String?
 
+    /// Mascot id (`AgentMascot`) for the Orchestrator. `nil` keeps the
+    /// stock green dino. Cosmetic only, like `displayName`.
+    public var avatar: String?
+
+    /// Custom avatar image under `agents/avatars/`; wins over `avatar`.
+    public var customAvatarFilename: String?
+
     /// System prompt prepended to every turn with the Default agent.
     /// The configure-agent prompt addendum (rendered by
     /// `DefaultAgentSystemPromptBuilder`) is prepended at compose time
@@ -55,6 +62,8 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
     public var autonomousExec: AutonomousExecConfig?
     /// Claude Code backend behavior for the Default agent.
     public var claudeCode: ClaudeCodeAgentConfig?
+    /// Which loop runs the Default agent's chats. Nil = built-in loop.
+    public var runtime: AgentRuntime?
 
     /// Tool selection mode (auto / manual). `nil` defaults to `.auto`.
     public var toolSelectionMode: ToolSelectionMode?
@@ -90,24 +99,30 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
 
     public init(
         displayName: String? = nil,
+        avatar: String? = nil,
+        customAvatarFilename: String? = nil,
         systemPrompt: String = "",
         defaultModel: String? = nil,
         temperature: Float? = nil,
         maxTokens: Int? = nil,
         autonomousExec: AutonomousExecConfig? = nil,
         claudeCode: ClaudeCodeAgentConfig? = nil,
+        runtime: AgentRuntime? = nil,
         toolSelectionMode: ToolSelectionMode? = nil,
         manualToolNames: [String]? = nil,
         workingFolderBookmark: Data? = nil,
         workingFolderPath: String? = nil
     ) {
         self.displayName = displayName
+        self.avatar = avatar
+        self.customAvatarFilename = customAvatarFilename
         self.systemPrompt = systemPrompt
         self.defaultModel = defaultModel
         self.temperature = temperature
         self.maxTokens = maxTokens
         self.autonomousExec = autonomousExec
         self.claudeCode = claudeCode
+        self.runtime = runtime
         self.toolSelectionMode = toolSelectionMode
         self.manualToolNames = manualToolNames
         self.workingFolderBookmark = workingFolderBookmark
@@ -117,6 +132,8 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         displayName = try c.decodeIfPresent(String.self, forKey: .displayName)
+        avatar = try c.decodeIfPresent(String.self, forKey: .avatar)
+        customAvatarFilename = try c.decodeIfPresent(String.self, forKey: .customAvatarFilename)
         systemPrompt = try c.decodeIfPresent(String.self, forKey: .systemPrompt) ?? ""
         defaultModel = try c.decodeIfPresent(String.self, forKey: .defaultModel)
         temperature = try c.decodeIfPresent(Float.self, forKey: .temperature)
@@ -124,6 +141,7 @@ public struct DefaultAgentConfiguration: Codable, Equatable, Sendable {
         autonomousExec = try c.decodeIfPresent(AutonomousExecConfig.self, forKey: .autonomousExec)
         // Added after initial release; absent in older config JSON.
         claudeCode = try c.decodeIfPresent(ClaudeCodeAgentConfig.self, forKey: .claudeCode)
+        runtime = try? c.decodeIfPresent(AgentRuntime.self, forKey: .runtime)
         toolSelectionMode = try c.decodeIfPresent(ToolSelectionMode.self, forKey: .toolSelectionMode)
         manualToolNames = try c.decodeIfPresent([String].self, forKey: .manualToolNames)
         // Working folder — added with the Orchestrator rework; absent before.

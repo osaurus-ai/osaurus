@@ -1,0 +1,16 @@
+{
+  "name": "login-with-osaurus-example",
+  "private": true,
+  "type": "module",
+  "description": "Reference relying party for Log in with Osaurus (osl-v1). See docs/LOGIN_WITH_OSAURUS.md.",
+  "engines": {
+    "node": ">=22.6"
+  },
+  "scripts": {
+    "start": "node --experimental-strip-types server.ts",
+    "check-vector": "node --experimental-strip-types check-vector.ts"
+  },
+  "dependencies": {
+    "viem": "^2.21.0"
+  }
+}

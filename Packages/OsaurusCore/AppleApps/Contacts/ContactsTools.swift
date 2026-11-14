@@ -381,7 +381,7 @@ final class ContactsOpenTool: AppleToolBase, @unchecked Sendable {
         guard let url = URL(string: contact.openURL) else {
             throw AppleToolError.execution("Could not build a Contacts link for `\(id)`.")
         }
-        let opened = await MainActor.run { NSWorkspace.shared.open(url) }
+        let opened = await AppleURLOpener.open(url)
         guard opened else {
             throw AppleToolError.unavailable("Contacts could not be opened for `\(contact.displayName)`.", retryable: true)
         }

@@ -95,8 +95,9 @@ public enum PrivacyFilterStore {
 
     // MARK: - Snapshot
 
-    /// Latest configuration. Returns the default value when nothing
-    /// has been persisted yet. Safe to call from any actor context.
+    /// Latest configuration. Returns the fresh-install value (locale-
+    /// seeded `homeRegions` + their default presets) when nothing has
+    /// been persisted yet. Safe to call from any actor context.
     public nonisolated static func snapshot() -> PrivacyFilterConfiguration {
         snapshotLock.lock()
         if let cached = cachedSnapshot {
@@ -104,7 +105,7 @@ public enum PrivacyFilterStore {
             return cached
         }
         snapshotLock.unlock()
-        return load() ?? .default
+        return load() ?? .freshInstall()
     }
 
     /// Drop the in-memory cache. Tests use this so the next snapshot()

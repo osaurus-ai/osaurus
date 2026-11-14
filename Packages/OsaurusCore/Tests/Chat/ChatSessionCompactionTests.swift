@@ -27,6 +27,19 @@ struct ChatSessionCompactionTests {
     private static let asyncTimeout: Duration = .seconds(15)
     private static let chatModel = "compaction-fallback-test-model"
 
+    @Test("popover Retry cannot start a competing summary during an active stream")
+    func retryDuringStreamingDoesNotStartSummary() async throws {
+        try await ChatHistoryTestStorage.run {
+            clearCompactionModel(contextCap: nil)
+            let session = makeSession(pairs: 4, charsPerTurn: 40)
+            session.isStreaming = true
+            session.retryCompaction()
+            #expect(session.compactionState == .idle)
+            #expect(session.conversationSummary == nil)
+            session.isStreaming = false
+        }
+    }
+
     @Test("manual Compact is available at low utilization with no configured model")
     func manualCompactAvailableAtLowUtilization() async throws {
         try await ChatHistoryTestStorage.run {
@@ -70,6 +83,8 @@ struct ChatSessionCompactionTests {
             // Small window so a modest transcript sits past the 85% auto gate.
             clearCompactionModel(contextCap: 8_192)
             let session = makeSession(pairs: 4, charsPerTurn: 4_000)
+            // A custom agent's chat: the Orchestrator's never auto-compacts.
+            session.agentId = UUID()
             let engine = ImmediateAnswerChatEngine()
             session.chatEngineFactory = { _ in engine }
             let turnCountBefore = session.turns.count
@@ -100,6 +115,31 @@ struct ChatSessionCompactionTests {
             #expect(session.hasPendingSendAfterCompaction == false)
             #expect(session.compactionState == .idle)
             #expect(session.turns[turnCountBefore].role == .user)
+            #expect(session.turns[turnCountBefore].content == "one more question")
+            try await waitUntil(timeout: Self.asyncTimeout) { !session.isSendActiveForComposer }
+        }
+    }
+
+    @Test("the Orchestrator's chat sends past the auto gate without compacting")
+    func orchestratorChatNeverAutoCompacts() async throws {
+        try await ChatHistoryTestStorage.run {
+            clearCompactionModel(contextCap: 8_192)
+            let session = makeSession(pairs: 4, charsPerTurn: 4_000)
+            #expect(session.usesOrchestratorContextPolicy)
+            let engine = ImmediateAnswerChatEngine()
+            session.chatEngineFactory = { _ in engine }
+            let turnCountBefore = session.turns.count
+
+            session.input = "one more question"
+            session.sendCurrent()
+
+            try await waitUntil(timeout: Self.asyncTimeout) {
+                session.turns.count > turnCountBefore
+            }
+            #expect(session.showCompactionDialog == false)
+            #expect(session.hasPendingSendAfterCompaction == false)
+            #expect(session.compactionState == .idle)
+            #expect(session.conversationSummary == nil)
             #expect(session.turns[turnCountBefore].content == "one more question")
             try await waitUntil(timeout: Self.asyncTimeout) { !session.isSendActiveForComposer }
         }

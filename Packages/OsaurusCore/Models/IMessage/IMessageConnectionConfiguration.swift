@@ -49,7 +49,6 @@ struct IMessageConnectionConfiguration: Codable, Equatable, Sendable {
     /// SIP/Library-Validation security warning in the setup UI.
     var advancedActionsEnabled: Bool
     var enabledAdvancedActions: [AdvancedAction]
-    var inboundDispatch: AgentChannelInboundDispatchConfiguration
 
     enum CodingKeys: String, CodingKey {
         case readableChatIds
@@ -66,7 +65,6 @@ struct IMessageConnectionConfiguration: Codable, Equatable, Sendable {
         case maxAttachmentBytes
         case advancedActionsEnabled
         case enabledAdvancedActions
-        case inboundDispatch
     }
 
     static let defaultMaxAttachmentBytes = 25 * 1_024 * 1_024
@@ -74,10 +72,15 @@ struct IMessageConnectionConfiguration: Codable, Equatable, Sendable {
     /// Default attachment root: Messages stores inbound attachments under the
     /// user's Library. Ingestion stays off by default; when enabled, only
     /// files under an allowlisted root of this shape are readable.
-    static var defaultAttachmentRoots: [String] {
+    ///
+    /// Resolved once per process: every `IMessageConnectionConfiguration()`
+    /// reaches this, including from MainActor prompt-preview composition, and
+    /// re-resolving the home directory on each call showed up as a
+    /// multi-second main-thread hang (Sentry APPLE-MACOS-3C5).
+    static let defaultAttachmentRoots: [String] = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         return ["\(home)/Library/Messages/Attachments"]
-    }
+    }()
 
     init(
         readableChatIds: [String] = [],
@@ -93,10 +96,7 @@ struct IMessageConnectionConfiguration: Codable, Equatable, Sendable {
         allowedAttachmentRoots: [String]? = nil,
         maxAttachmentBytes: Int = IMessageConnectionConfiguration.defaultMaxAttachmentBytes,
         advancedActionsEnabled: Bool = false,
-        enabledAdvancedActions: [AdvancedAction] = [],
-        inboundDispatch: AgentChannelInboundDispatchConfiguration = AgentChannelInboundDispatchConfiguration(
-            requireMention: false
-        )
+        enabledAdvancedActions: [AdvancedAction] = []
     ) {
         self.readableChatIds = Self.normalizedIds(readableChatIds)
         self.writableChatIds = Self.normalizedIds(writableChatIds)
@@ -114,7 +114,6 @@ struct IMessageConnectionConfiguration: Codable, Equatable, Sendable {
         self.maxAttachmentBytes = Self.clampAttachmentBytes(maxAttachmentBytes)
         self.advancedActionsEnabled = advancedActionsEnabled
         self.enabledAdvancedActions = Self.normalizedAdvancedActions(enabledAdvancedActions)
-        self.inboundDispatch = inboundDispatch
     }
 
     init(from decoder: Decoder) throws {
@@ -154,11 +153,7 @@ struct IMessageConnectionConfiguration: Codable, Equatable, Sendable {
             enabledAdvancedActions: try container.decodeIfPresent(
                 [AdvancedAction].self,
                 forKey: .enabledAdvancedActions
-            ) ?? [],
-            inboundDispatch: try container.decodeIfPresent(
-                AgentChannelInboundDispatchConfiguration.self,
-                forKey: .inboundDispatch
-            ) ?? AgentChannelInboundDispatchConfiguration(requireMention: false)
+            ) ?? []
         )
     }
 
@@ -177,8 +172,7 @@ struct IMessageConnectionConfiguration: Codable, Equatable, Sendable {
             allowedAttachmentRoots: allowedAttachmentRoots,
             maxAttachmentBytes: maxAttachmentBytes,
             advancedActionsEnabled: advancedActionsEnabled,
-            enabledAdvancedActions: enabledAdvancedActions,
-            inboundDispatch: inboundDispatch
+            enabledAdvancedActions: enabledAdvancedActions
         )
     }
 
@@ -276,12 +270,27 @@ struct IMessageConnectionConfiguration: Codable, Equatable, Sendable {
 }
 
 enum IMessageConnectionConfigurationStore {
-    nonisolated(unsafe) static var overrideDirectory: URL?
+    nonisolated(unsafe) static var overrideDirectory: URL? {
+        didSet { cache.reset() }
+    }
 
     private static let fileName = "imessage.json"
 
+    /// In-memory copy of the last loaded/saved configuration. See
+    /// `ConnectionConfigurationCache` (Sentry APPLE-MACOS-3C5).
+    private static let cache = ConnectionConfigurationCache<IMessageConnectionConfiguration>()
+
+    /// Drop the in-memory copy so the next `load()` reads from disk.
+    static func resetCache() {
+        cache.reset()
+    }
+
     static func load() -> IMessageConnectionConfiguration {
         let url = configurationFileURL()
+        return cache.value(for: url) { loadFromDisk(at: url) }
+    }
+
+    private static func loadFromDisk(at url: URL) -> IMessageConnectionConfiguration {
         guard FileManager.default.fileExists(atPath: url.path) else {
             return IMessageConnectionConfiguration()
         }
@@ -300,13 +309,16 @@ enum IMessageConnectionConfigurationStore {
         OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(configuration.normalized).write(to: url, options: [.atomic])
+        let normalized = configuration.normalized
+        let data = try encoder.encode(normalized)
+        try LegacyInboundDispatchCarryOver.platformFile(data, replacing: url).write(to: url, options: [.atomic])
+        cache.store(normalized, for: url)
     }
 
     static func configurationFileURL() -> URL {
         if let overrideDirectory {
-            return overrideDirectory.appendingPathComponent(fileName)
+            return overrideDirectory.appendingPathComponent(fileName, isDirectory: false)
         }
-        return OsaurusPaths.config().appendingPathComponent(fileName)
+        return OsaurusPaths.config().appendingPathComponent(fileName, isDirectory: false)
     }
 }

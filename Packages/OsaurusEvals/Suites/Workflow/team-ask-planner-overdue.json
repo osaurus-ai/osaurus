@@ -1,0 +1,50 @@
+{
+  "id": "workflow.team-ask-planner-overdue",
+  "domain": "workflow",
+  "label": "workflow • prepared ask: what is overdue",
+  "query": "prepared ask: what is overdue",
+  "notes": "Runs the shipped file. Every tool step returns its fixture under its teammate, so nothing on this Mac is read. Fixture dates and expected arguments are `{{date:…}}` tokens on this Mac's calendar at run time.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "bundled": "prepared-ask-planner-overdue",
+      "input": {},
+      "toolResults": {
+        "read": {
+          "reminders": [
+            {
+              "id": "reminder-read-1",
+              "title": "Call the landlord",
+              "dueDate": "{{date:today_start-3d}}",
+              "listTitle": "Home",
+              "isCompleted": false
+            }
+          ],
+          "count": 1
+        }
+      },
+      "toolArguments": {
+        "read": {
+          "status": "incomplete",
+          "due_before": "{{date:now}}"
+        }
+      },
+      "outputKeys": [
+        "answer"
+      ],
+      "outputContains": {
+        "answer": [
+          "landlord"
+        ]
+      },
+      "outputExcludes": {
+        "answer": [
+          "{",
+          "}",
+          "\": \"",
+          "\\n"
+        ]
+      }
+    }
+  }
+}

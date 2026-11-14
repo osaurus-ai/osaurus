@@ -14,6 +14,25 @@ enum GeneratedMediaToolArtifactBridge {
         toolNames.contains(name)
     }
 
+    /// Keep completed files visible when a later image fails. This does not
+    /// manufacture a successful tool result or put artifact bytes in the prompt.
+    static func preservePartialImages(_ images: [GeneratedImage], sessionID: String) {
+        for image in images {
+            let outcome = SharedArtifact.processTrustedLocalFileResult(
+                fileURL: image.url, filename: image.url.lastPathComponent,
+                mimeType: SharedArtifact.mimeType(from: image.url.lastPathComponent),
+                description: "Completed image from an interrupted batch",
+                contextId: sessionID, contextType: .chat)
+            switch outcome {
+            case .success(let processed):
+                SpawnArtifactCollector.deposit(processed.artifact, sessionId: sessionID)
+            case .failure(let reason):
+                NSLog("[NativeImageToolArtifactBridge] partial image preservation failed: %@",
+                    String(describing: reason))
+            }
+        }
+    }
+
     static func processFirstMediaArtifact(
         toolName: String,
         toolResult: String,
@@ -23,11 +42,35 @@ enum GeneratedMediaToolArtifactBridge {
         guard isGeneratedMediaTool(toolName),
             let payload = ToolEnvelope.successPayload(toolResult) as? [String: Any],
             let media = firstMediaPayload(in: payload),
-            let path = mediaPath(in: media)
+            mediaPath(in: media) != nil
         else {
             return nil
         }
 
+        return process(media, payload: payload, contextId: contextId, contextType: contextType)
+    }
+
+    static func processMediaArtifacts(
+        toolName: String, toolResult: String, contextId: String,
+        contextType: ArtifactContextType = .chat
+    ) -> [Result<SharedArtifact.ProcessingResult, SharedArtifact.ResolutionFailure>] {
+        guard isGeneratedMediaTool(toolName),
+            let payload = ToolEnvelope.successPayload(toolResult) as? [String: Any] else { return [] }
+        let items: [[String: Any]]
+        if let media = payload["media"] as? [String: Any] { items = [media] }
+        else { items = payload["images"] as? [[String: Any]] ?? [] }
+        return items.compactMap { media in
+            guard mediaPath(in: media) != nil else { return nil }
+            return process(media, payload: payload, contextId: contextId, contextType: contextType)
+        }
+    }
+
+    private static func process(
+        _ media: [String: Any], payload: [String: Any], contextId: String,
+        contextType: ArtifactContextType
+    ) -> Result<SharedArtifact.ProcessingResult, SharedArtifact.ResolutionFailure> {
+        // Callers validate the local path before entering the shared promotion.
+        let path = mediaPath(in: media)!
         // One `image` tool serves both modes; the payload's `mode` distinguishes
         // them for the filename + description.
         let isEdit = (payload["mode"] as? String) == "edit"

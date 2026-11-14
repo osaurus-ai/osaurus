@@ -202,6 +202,7 @@ struct ServerSettingsTabContent: View {
     @State private var successMessage: String?
     @State private var activeSection: ServerSettingsSection = .connection
 
+    @StateObject private var decimalEdits = OptionalDoubleFieldCommitter()
     @ObservedObject private var managementState = ManagementStateManager.shared
     /// Section that just received a settings-search landing, briefly glowing.
     @State private var landedSection: ServerSettingsSection?
@@ -244,7 +245,7 @@ struct ServerSettingsTabContent: View {
     }
 
     private var hasUnsavedChanges: Bool {
-        draft != server.runtimeSettings
+        decimalEdits.hasPendingChanges || draft != server.runtimeSettings
             || draftMetadataFallbackTokens != savedMetadataFallbackTokens
             || draftContextLengthCap != savedContextLengthCap
             || draftLegacy.modelEvictionPolicy != server.configuration.modelEvictionPolicy
@@ -289,8 +290,8 @@ struct ServerSettingsTabContent: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            VStack(spacing: 0) {
-                HStack(spacing: 0) {
+            VStack(spacing: theme.space.s0) {
+                HStack(spacing: theme.space.s0) {
                     ServerSettingsSidebarNav(selection: $activeSection)
                         .frame(width: 220)
 
@@ -300,7 +301,8 @@ struct ServerSettingsTabContent: View {
 
                 ServerSettingsActionBar(
                     hasUnsavedChanges: hasUnsavedChanges,
-                    hasBlockingIssues: hasBlockingIssues,
+                    hasBlockingIssues: decimalEdits.blocksSaveAttempt(
+                        hasBlockingIssues: hasBlockingIssues),
                     requiresRestart: requiresRestart,
                     requiresModelReload: requiresModelReload,
                     saving: saving,
@@ -312,11 +314,12 @@ struct ServerSettingsTabContent: View {
             if let message = successMessage {
                 ThemedToastView(message, type: .success)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
-                    .padding(.bottom, 70)
+                    .padding(.bottom, theme.space.s64)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(theme.primaryBackground)
+        .background(theme.surface.canvas)
+        .environment(\.optionalDoubleFieldCommitter, decimalEdits)
         .onAppear {
             // Defer a beat so the section scroll runs after first layout.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
@@ -358,7 +361,7 @@ struct ServerSettingsTabContent: View {
     // MARK: - Content pane
 
     private var contentPane: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             validationBanner
             sectionScroll
         }
@@ -382,12 +385,9 @@ struct ServerSettingsTabContent: View {
     private var sectionScroll: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 24) {
+                SettingsPageContent {
                     settingsSections
                 }
-                .padding(.horizontal, 24)
-                .padding(.vertical, 24)
-                .frame(maxWidth: .infinity)
             }
             // Gives `scrollTo(_:anchor: .top)` a breathing-room buffer so
             // anchored sections don't kiss the top edge of the scroll.
@@ -398,7 +398,7 @@ struct ServerSettingsTabContent: View {
                 renderedLandingAnchors = anchors
             }
             .onChange(of: activeSection) { _, new in
-                withAnimation(.smooth(duration: 0.45)) {
+                withAnimation(theme.motion.slow) {
                     if let controlLandingTarget {
                         proxy.scrollTo(controlLandingTarget, anchor: .center)
                     } else {
@@ -412,7 +412,7 @@ struct ServerSettingsTabContent: View {
                 // Cancellation prevents an earlier result stealing the scroll.
                 try? await Task.sleep(for: .milliseconds(100))
                 guard !Task.isCancelled else { return }
-                withAnimation(.smooth(duration: 0.45)) {
+                withAnimation(theme.motion.slow) {
                     proxy.scrollTo(target, anchor: .center)
                 }
             }
@@ -478,6 +478,7 @@ struct ServerSettingsTabContent: View {
     // MARK: - Actions
 
     private func resetToDefaults() {
+        decimalEdits.discard()
         draft = ServerRuntimeSettingsStore.resetDefaults(
             serverConfiguration: .default
         )
@@ -495,6 +496,8 @@ struct ServerSettingsTabContent: View {
     }
 
     private func save() async {
+        decimalEdits.commit()
+        guard !hasBlockingIssues else { return }
         // A same-section external edit must be resolved explicitly. Sending
         // this stale draft would overwrite a newer API/store value.
         guard runtimeConflictSections.isEmpty else { return }
@@ -545,11 +548,11 @@ struct ServerSettingsTabContent: View {
     }
 
     private func showSuccess(_ message: String) {
-        withAnimation(theme.springAnimation()) {
+        withAnimation(theme.motion.springAnimation) {
             successMessage = message
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {
-            withAnimation(theme.animationQuick()) {
+            withAnimation(theme.motion.quick) {
                 successMessage = nil
             }
         }

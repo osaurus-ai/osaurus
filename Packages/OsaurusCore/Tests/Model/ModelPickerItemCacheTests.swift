@@ -25,6 +25,12 @@ import Testing
 @MainActor
 struct ModelPickerItemCacheTests {
 
+    /// These ordering tests need a fixed catalog, not an in-progress scan of
+    /// this Mac's model folders or fixtures being changed by another suite.
+    private var stableItems: [ModelPickerItem] {
+        [ModelPickerItem(id: "fixture/stable-chat-model", displayName: "Stable Chat", source: .local)]
+    }
+
     /// Hammer the cache from many concurrent tasks. Because the underlying
     /// state (foundation availability, local models, remote providers) does
     /// not change during the test, every concurrent caller MUST observe the
@@ -34,35 +40,47 @@ struct ModelPickerItemCacheTests {
     /// order, so callers could disagree about whether remote models were
     /// present.
     @Test func concurrentCallers_returnIdenticalResults() async throws {
-        await RemoteProviderTestLock.shared.run {
-            // Establish a baseline so we know what to compare against, and so
-            // any work needed to populate the cache (e.g. local model
-            // discovery) doesn't perturb the concurrent run below.
-            let baselineItems = await ModelPickerItemCache.shared.buildModelPickerItems()
-            let baselineIds = baselineItems.map(\.id)
+        let fixedItems = stableItems
+        var activeLoads = 0
+        var peakLoads = 0
+        let cache = ModelPickerItemCache._makeForTesting(
+            loadChatAndCloudItems: {
+                activeLoads += 1
+                peakLoads = max(peakLoads, activeLoads)
+                await Task.yield()
+                activeLoads -= 1
+                return fixedItems
+            },
+            loadLocalMediaItems: { [] }
+        )
+        // Establish a baseline so we know what to compare against, and so
+        // any work needed to populate the cache (e.g. local model
+        // discovery) doesn't perturb the concurrent run below.
+        let baselineItems = await cache.buildModelPickerItems()
+        let baselineIds = baselineItems.map(\.id)
 
-            // Spawn many detached tasks that each call into the @MainActor
-            // cache. Detached tasks are deliberately used so the calls hop
-            // back into the MainActor at the await point and exercise the
-            // serialized rebuild path the way real callers do (notification
-            // observer Tasks, the AppDelegate prewarm Task, ChatView's
-            // refresh Task, and so on).
-            var tasks: [Task<[String], Never>] = []
-            for _ in 0 ..< 32 {
-                tasks.append(
-                    Task.detached {
-                        let items = await ModelPickerItemCache.shared.buildModelPickerItems()
-                        return items.map(\.id)
-                    }
-                )
-            }
-
-            for task in tasks {
-                let ids = await task.value
-                #expect(ids == baselineIds)
-            }
-            #expect(ModelPickerItemCache.shared.isLoaded)
+        // Spawn many detached tasks that each call into the @MainActor
+        // cache. Detached tasks are deliberately used so the calls hop
+        // back into the MainActor at the await point and exercise the
+        // serialized rebuild path the way real callers do (notification
+        // observer Tasks, the AppDelegate prewarm Task, ChatView's
+        // refresh Task, and so on).
+        var tasks: [Task<[String], Never>] = []
+        for _ in 0 ..< 32 {
+            tasks.append(
+                Task.detached {
+                    let items = await cache.buildModelPickerItems()
+                    return items.map(\.id)
+                }
+            )
         }
+
+        for task in tasks {
+            let ids = await task.value
+            #expect(ids == baselineIds)
+        }
+        #expect(cache.isLoaded)
+        #expect(peakLoads == 1, "catalog rebuilds must not execute concurrently")
     }
 
     /// Posting a burst of `.remoteProviderModelsChanged` notifications used
@@ -73,49 +91,53 @@ struct ModelPickerItemCacheTests {
     /// asserts the invariant that, once populated, `items` never goes
     /// empty across rebuilds.
     @Test func notificationBurst_doesNotTransientlyEmptyItems() async throws {
-        await RemoteProviderTestLock.shared.run {
-            let cache = ModelPickerItemCache.shared
+        let fixedItems = stableItems
+        let cache = ModelPickerItemCache._makeForTesting(
+            observeChanges: true,
+            loadChatAndCloudItems: {
+                await Task.yield()
+                return fixedItems
+            },
+            loadLocalMediaItems: { [] }
+        )
 
-            // Make sure we start populated. If this machine has no foundation
-            // model, no local MLX models, and no connected remote providers,
-            // the invariant is trivially satisfied - skip in that case so CI
-            // doesn't false-positive.
-            _ = await cache.buildModelPickerItems()
-            guard !cache.items.isEmpty else { return }
-            let initialCount = cache.items.count
+        // The fixed fixture guarantees this test exercises a populated
+        // list on CI as well as Macs with installed models.
+        _ = await cache.buildModelPickerItems()
+        try #require(!cache.items.isEmpty)
+        let initialCount = cache.items.count
 
-            // Spam many notifications. Each one schedules an observer Task
-            // that calls `buildModelPickerItems()`. Pre-fix, each Task would
-            // first set `items = []` and `isLoaded = false`.
-            for _ in 0 ..< 50 {
-                NotificationCenter.default.post(
-                    name: .remoteProviderModelsChanged,
-                    object: nil
-                )
-            }
-
-            // Drain the observer Tasks by repeatedly yielding the MainActor
-            // and sampling `items`. With the fix, every sample must be
-            // non-empty - the rebuild only assigns `items` when it has the
-            // full list.
-            var samples: [Int] = []
-            for _ in 0 ..< 200 {
-                samples.append(cache.items.count)
-                try? await Task.sleep(nanoseconds: 200_000)  // 0.2ms
-            }
-
-            #expect(
-                !samples.contains(0),
-                "items must remain populated during rebuilds; observed sample counts: \(samples)"
+        // Spam many notifications. Each one schedules an observer Task
+        // that calls `buildModelPickerItems()`. Pre-fix, each Task would
+        // first set `items = []` and `isLoaded = false`.
+        for _ in 0 ..< 50 {
+            NotificationCenter.default.post(
+                name: .remoteProviderModelsChanged,
+                object: nil
             )
-
-            // After the burst settles, the cache should still hold a
-            // populated list (state hasn't actually changed, so it should
-            // match the initial count).
-            let final = await cache.buildModelPickerItems()
-            #expect(!final.isEmpty)
-            #expect(final.count == initialCount)
         }
+
+        // Drain the observer Tasks by repeatedly yielding the MainActor
+        // and sampling `items`. With the fix, every sample must be
+        // non-empty - the rebuild only assigns `items` when it has the
+        // full list.
+        var samples: [Int] = []
+        for _ in 0 ..< 200 {
+            samples.append(cache.items.count)
+            try? await Task.sleep(nanoseconds: 200_000)  // 0.2ms
+        }
+
+        #expect(
+            !samples.contains(0),
+            "items must remain populated during rebuilds; observed sample counts: \(samples)"
+        )
+
+        // After the burst settles, the cache should still hold a
+        // populated list (state hasn't actually changed, so it should
+        // match the initial count).
+        let final = await cache.buildModelPickerItems()
+        #expect(!final.isEmpty)
+        #expect(final.count == initialCount)
     }
 
     /// Embedding/encoder-only bundles (e.g. potion-base-4M pulled into the
@@ -213,6 +235,46 @@ struct ModelPickerItemCacheTests {
     /// `/models` endpoint advertised (vLLM `max_model_len` etc.); models the
     /// server reported no window for keep a nil contextLength so resolution
     /// falls through to the configured fallback.
+    /// Gemini text models get their documented levels on routes that
+    /// forward the effort (native, Google OpenAI-compat, OpenRouter), and
+    /// nothing on an arbitrary proxy (#3108).
+    @Test func remoteModelItems_attachesGeminiReasoningOnlyOnHonoringRoutes() throws {
+        let providers = [
+            Self.providerEntry(
+                name: "OpenRouter",
+                type: .openaiLegacy,
+                host: "openrouter.ai",
+                models: ["openrouter/google/gemini-3.8-flash", "openrouter/google/gemini-3-pro-image-preview"]
+            ),
+            Self.providerEntry(
+                name: "Google",
+                type: .gemini,
+                host: "generativelanguage.googleapis.com",
+                models: ["google/gemini-3-pro-preview"]
+            ),
+            Self.providerEntry(
+                name: "Proxy",
+                type: .openaiLegacy,
+                host: "litellm.internal",
+                models: ["proxy/gemini-3.8-flash"]
+            ),
+        ]
+
+        let result = ModelPickerItemCache.remoteModelItems(
+            providers: providers,
+            codexMetadata: [:],
+            osaurusRouterProviderId: RemoteProviderManager.osaurusRouterProviderId,
+            routerMetadata: { _ in nil }
+        )
+
+        let flash = try #require(result.reasoningCapabilities["openrouter/google/gemini-3.8-flash"])
+        #expect(flash.levels.map(\.id) == ["low", "medium", "high"])
+        #expect(flash.defaultLevelId == "medium")
+        #expect(result.reasoningCapabilities["google/gemini-3-pro-preview"]?.levels.map(\.id) == ["low", "high"])
+        #expect(result.reasoningCapabilities["openrouter/google/gemini-3-pro-image-preview"] == nil)
+        #expect(result.reasoningCapabilities["proxy/gemini-3.8-flash"] == nil)
+    }
+
     @Test func remoteModelItems_attachesAdvertisedContextLengths() throws {
         let provider = Self.providerEntry(
             name: "vLLM",
@@ -311,7 +373,7 @@ struct ModelPickerItemCacheTests {
         #expect(sol.contextLength == 1_050_000)
 
         // Official API key route, GPT-6 Astra: documented `low`…`max` set
-        // (no `none` — Astra rejects it), 1.05M window from the family table.
+        // (no `none` — Astra rejects it), budgeted against the 922k max input.
         let astra = try #require(byId["openai/gpt-6-astra"])
         #expect(astra.displayName == "gpt-6-astra")
         #expect(astra.reasoningCapabilities == .officialOpenAIGPT6Astra)
@@ -319,7 +381,7 @@ struct ModelPickerItemCacheTests {
             astra.reasoningCapabilities?.levels.map(\.id) == ["low", "medium", "high", "xhigh", "max"]
         )
         #expect(astra.reasoningCapabilities?.defaultLevelId == "medium")
-        #expect(astra.contextLength == 1_050_000)
+        #expect(astra.contextLength == 922_000)
 
         // Official route, non-GPT-5.6/6 id: no documented profile.
         let gpt41 = try #require(byId["openai/gpt-4.1"])
@@ -344,6 +406,33 @@ struct ModelPickerItemCacheTests {
         )
     }
 
+    /// GPT-6 effort ranges differ per model on the official route: Astra and
+    /// 6.1 Sol start at `low`; 6 Sol, Terra and Luna also accept `none`.
+    @Test func officialOpenAIGPT6EffortTableIsPerModel() {
+        let withNone = ["none", "low", "medium", "high", "xhigh", "max"]
+        let lowFloored = ["low", "medium", "high", "xhigh", "max"]
+        let cases: [(String, [String])] = [
+            ("gpt-6-astra", lowFloored),
+            ("openai/gpt-6.1-sol", lowFloored),
+            ("gpt-6-sol", withNone),
+            ("gpt-6.1-terra", withNone),
+            ("gpt-6-luna-2026-10-01", withNone),
+            ("gpt-6.2-unknown", lowFloored),
+        ]
+        for (modelId, levels) in cases {
+            let capabilities = ModelPickerItem.officialOpenAIReasoningCapabilities(forModelId: modelId)
+            #expect(capabilities?.levels.map(\.id) == levels, "\(modelId)")
+            #expect(capabilities?.defaultLevelId == "medium", "\(modelId)")
+        }
+        #expect(ModelPickerItem.officialOpenAIAcceptsNoneEffort(modelId: "gpt-6.1-terra"))
+        #expect(ModelPickerItem.officialOpenAIAcceptsNoneEffort(modelId: "gpt-5.6-sol"))
+        #expect(!ModelPickerItem.officialOpenAIAcceptsNoneEffort(modelId: "gpt-6-astra"))
+        #expect(ModelPickerItem.officialOpenAIAcceptsNoneEffort(modelId: "gpt-5.5"))
+        #expect(ModelPickerItem.officialOpenAIAcceptsNoneEffort(modelId: "gpt-5.1"))
+        #expect(!ModelPickerItem.officialOpenAIAcceptsNoneEffort(modelId: "o3"))
+        #expect(!ModelPickerItem.officialOpenAIAcceptsNoneEffort(modelId: "gpt-5-mini"))
+    }
+
     /// A catalog refetch that changes metadata while model ids stay identical
     /// must still produce different items (so `ChatView.applyPickerItems`
     /// re-normalizes options) and an updated capability map.
@@ -352,7 +441,8 @@ struct ModelPickerItemCacheTests {
     /// nil (never a guessed number) so resolution defers to the configured
     /// fallback instead of asserting a wrong window.
     @Test func officialOpenAIContextWindow_resolvesByLongestPrefixMatch() {
-        #expect(ModelPickerItem.officialOpenAIContextWindow(forModelId: "gpt-6-astra") == 1_050_000)
+        #expect(ModelPickerItem.officialOpenAIContextWindow(forModelId: "gpt-6-astra") == 922_000)
+        #expect(ModelPickerItem.officialOpenAIContextWindow(forModelId: "gpt-6.1-terra") == 922_000)
         #expect(ModelPickerItem.officialOpenAIContextWindow(forModelId: "gpt-5.6-luna") == 1_050_000)
         #expect(ModelPickerItem.officialOpenAIContextWindow(forModelId: "gpt-5.5-2026-01-01") == 1_050_000)
         // "gpt-5.2" must not fall through to the shorter "gpt-5" entry.

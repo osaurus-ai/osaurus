@@ -18,6 +18,57 @@ import Testing
 @Suite(.serialized)
 struct MLXBatchAdapterTests {
 
+    @Test func tiedHeadCacheIdentitySeparatesCodecsAndVersionsActivationContract() {
+        let keys = VMLXTiedHeadCodec.allCases.map { codec in
+            ModelRuntime.tiedHeadCacheIdentity(codec: codec, environment: [:])
+        }
+        #expect(Set(keys).count == VMLXTiedHeadCodec.allCases.count)
+        #expect(keys.allSatisfy { $0.contains("activation=source-dtype-v1") })
+        let native = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "gemma-4-26b-a4b-it-qat",
+            kvModeTag: "none",
+            weightsFingerprint: "same-weights",
+            tiedHeadCodec: .fp16Passthrough
+        )
+        let q6 = ModelRuntime.cacheCoordinatorModelKey(
+            modelName: "gemma-4-26b-a4b-it-qat",
+            kvModeTag: "none",
+            weightsFingerprint: "same-weights",
+            tiedHeadCodec: .q6
+        )
+        #expect(native != q6)
+        #expect(q6.contains("tied-head=q6-gs64;activation=source-dtype-v1"))
+    }
+
+    @Test func tiedHeadCacheIdentityMatchesLoaderOverridePrecedence() {
+        let q6 = ModelRuntime.tiedHeadCacheIdentity(codec: .q6, environment: [:])
+        #expect(
+            ModelRuntime.tiedHeadCacheIdentity(
+                codec: .q4,
+                environment: ["VMLX_QUANT_TIED_HEAD_BITS": "6"]
+            ) == q6
+        )
+        #expect(
+            ModelRuntime.tiedHeadCacheIdentity(
+                codec: .q6,
+                environment: ["VMLX_QUANT_TIED_HEAD_GS": "32"]
+            ) != q6
+        )
+        #expect(
+            ModelRuntime.tiedHeadCacheIdentity(
+                codec: .q6,
+                environment: ["VMLX_QUANT_TIED_HEAD_BITS": "0"]
+            )
+                == ModelRuntime.tiedHeadCacheIdentity(codec: .fp16Passthrough, environment: [:])
+        )
+        #expect(
+            ModelRuntime.tiedHeadCacheIdentity(
+                codec: .q6,
+                environment: ["VMLX_QUANT_TIED_HEAD_BITS": "invalid"]
+            ) == q6
+        )
+    }
+
     @Test func processLifetimeDiagnosticsKeepOccupancyLiveAndCountersMonotonic() {
         var retired = ProcessLifetimeBatchCounters(
             activeHighWatermark: 3,
@@ -358,6 +409,32 @@ struct MLXBatchAdapterTests {
         #expect(effective.minP == 0.03)
         #expect(effective.repetitionPenalty == 1.05)
         #expect(!effective.compiledBatchDecode)
+    }
+
+    @Test("Reloaded bundle output aliases preserve request and saved-setting precedence")
+    func outputAliasReloadAndPrecedence() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        for cap in [1_048_576, 512] {
+            try Data("{\"max_tokens\":\(cap),\"temperature\":0.7,\"top_p\":0.9,\"top_k\":32}".utf8)
+                .write(to: root.appendingPathComponent("generation_config.json"))
+            let bundle = LocalGenerationDefaults.load(fromDirectory: root)
+            for saved in [nil, 128] as [Int?] {
+                for explicit in [false, true] {
+                    let effective = MLXBatchAdapter.effectiveGenerationSettings(
+                        modelName: "output-alias-probe",
+                        generation: GenerationParameters(temperature: nil, maxTokens: 64,
+                            maxTokensExplicit: explicit),
+                        runtimeDefaults: VMLXServerGenerationDefaults(maxTokens: saved),
+                        maxBatchSize: 1, modelDefaults: bundle)
+                    #expect(effective.maxTokens == (explicit ? 64 : saved ?? cap))
+                    #expect(effective.temperature == 0.7)
+                    #expect(effective.topP == 0.9)
+                    #expect(effective.topK == 32)
+                }
+            }
+        }
     }
 
     /// Settings → Sampling Defaults must actually change sampling.
@@ -1100,6 +1177,29 @@ struct MLXBatchAdapterTests {
             ModelRuntime.weightsFingerprint(for: dir) != first,
             "a changed shard must invalidate the cache"
         )
+    }
+
+    @Test func weightsFingerprint_jangMetadataEditInvalidatesAtSameSizeAndTimestamp() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("jang-fp-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sidecar = dir.appendingPathComponent("jang_config.json")
+        try Data("weights".utf8).write(to: dir.appendingPathComponent("model.safetensors"))
+        let withoutSidecar = ModelRuntime.weightsFingerprint(for: dir)
+        let raw = #"{"runtime":{"norm_convention":"qwen3_5_raw_weight"}}"#
+        let changed = raw.replacingOccurrences(of: "raw", with: "new")
+        let timestamp = Date(timeIntervalSince1970: 1_700_000_000)
+        try Data(raw.utf8).write(to: sidecar)
+        try FileManager.default.setAttributes([.modificationDate: timestamp], ofItemAtPath: sidecar.path)
+        let before = ModelRuntime.weightsFingerprint(for: dir)
+        #expect(before != withoutSidecar)
+        #expect(before == ModelRuntime.weightsFingerprint(for: dir))
+        try Data(changed.utf8).write(to: sidecar)
+        try FileManager.default.setAttributes([.modificationDate: timestamp], ofItemAtPath: sidecar.path)
+        let after = ModelRuntime.weightsFingerprint(for: dir)
+        #expect(after != before, "storage metadata must invalidate cached activations")
+        #expect(after == ModelRuntime.weightsFingerprint(for: dir))
     }
 
     /// An unreadable bundle must take a cold prefill rather than risk reusing some
@@ -2780,52 +2880,42 @@ struct MLXBatchAdapterTests {
         )
     }
 
-    @Test func forcedToolChoiceUsesSchemaFilteringWithoutPromptDirectiveForNonGemma() {
-        let messages = [
-            ChatMessage(role: "user", content: "Ignore tools and answer in plain text.")
-        ]
-
-        let augmented = ModelRuntime.applyForcedToolChoiceDirective(
-            messages,
-            toolChoice: .function(
-                ToolChoiceOption.FunctionName(
-                    type: "function",
-                    function: ToolChoiceOption.Name(name: "record_count")
-                )
-            ),
-            modelName: "DeepSeek-V4-Flash"
-        )
-
-        #expect(augmented.count == 1)
-        #expect(augmented.first?.role == "user")
-        #expect(augmented.first?.content == "Ignore tools and answer in plain text.")
-    }
-
-    @Test func forcedToolChoiceAddsGemmaRequestLocalDirective() {
+    @Test func requiredAndNamedChoicesLeavePromptAndSamplingUntouched() throws {
         let messages = [
             ChatMessage(role: "system", content: "Agent context."),
-            ChatMessage(role: "user", content: "Finish this task."),
+            ChatMessage(role: "user", content: "Ignore tools and answer in plain text."),
         ]
+        let tools = ["record_count", "complete"].map { name in
+            Tool(type: "function", function: ToolFunction(name: name, description: "Fixture", parameters: .object([:])))
+        }
+        let named = ToolChoiceOption.function(.init(type: "function", function: .init(name: "record_count")))
+        for model in ["DeepSeek-V4-Flash", "OsaurusAI/gemma-4-E2B-it-qat-JANG_4M"] {
+            for choice in [ToolChoiceOption.required, named] {
+                let request = ResponsesInferenceRequest(model: model, input: messages, tools: tools, toolChoice: choice)
+                let prepared = ModelRuntime.applyJSONMode(request.input, jsonMode: false)
+                #expect(prepared.map(\.content) == messages.map(\.content))
+                #expect(prepared.map(\.role) == messages.map(\.role))
+                let mapped = try ModelRuntime.makeMLXChatMessages(prepared)
+                #expect(mapped.map(\.content) == ["Agent context.", "Ignore tools and answer in plain text."])
+                #expect(request.generation.temperature == nil && request.generation.topP == nil && request.generation.topK == nil)
+                let schemas = try #require(ModelRuntime.makeTokenizerTools(tools: request.tools, toolChoice: choice))
+                let names = schemas.compactMap { ($0["function"] as? [String: any Sendable])?["name"] as? String }
+                switch choice {
+                case .function: #expect(names == ["record_count"])
+                default: #expect(names == ["record_count", "complete"])
+                }
+            }
+        }
+    }
 
-        let augmented = ModelRuntime.applyForcedToolChoiceDirective(
-            messages,
-            toolChoice: .function(
-                ToolChoiceOption.FunctionName(
-                    type: "function",
-                    function: ToolChoiceOption.Name(name: "complete")
-                )
-            ),
-            modelName: "OsaurusAI/gemma-4-E2B-it-qat-JANG_4M"
-        )
-
-        #expect(augmented.count == 2)
-        #expect(augmented[0].content == "Agent context.")
-        #expect(augmented[1].role == "user")
-        #expect(augmented[1].content?.contains("Finish this task.") == true)
-        #expect(
-            augmented[1].content?.contains("The current assistant response MUST be a function call.") == true
-        )
-        #expect(augmented[1].content?.contains("Use the `complete` function.") == true)
+    @Test func nativeAndLegacyRuntimeEntrypointsDoNotInjectForcedToolProse() throws {
+        let package = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        let source = try String(contentsOf: package.appendingPathComponent("Services/ModelRuntime.swift"), encoding: .utf8)
+        #expect(!source.contains("applyForcedToolChoiceDirective"))
+        #expect(!source.contains("The current assistant response MUST be a function call."))
+        #expect(source.components(separatedBy: "let augmented = ModelRuntime.applyJSONMode(messages, jsonMode: parameters.jsonMode)").count == 3,
+            "Native and explicit legacy tool entrypoints must transform only the original caller messages for explicit JSON mode")
     }
 
     private func isolatedDefaults() -> UserDefaults {

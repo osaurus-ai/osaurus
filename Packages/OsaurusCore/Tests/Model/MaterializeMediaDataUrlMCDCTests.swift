@@ -1,7 +1,7 @@
 // Copyright © 2026 osaurus.
 //
 // MC/DC tests for `ModelRuntime.materializeMediaDataUrl` (private,
-// exercised through `ModelRuntime.mapOpenAIChatToMLX` from the public
+// exercised through `ModelRuntime.makeMLXChatMessages` from the public
 // API surface — same observable behavior as direct call).
 //
 // Decision tree:
@@ -23,7 +23,7 @@
 //   * D6=F  with ext=mp4 → file ext "mp4" (video bypasses canonicalization)
 //          ← THIS IS THE BUG-FIX REGRESSION ROW
 //
-// We exercise the function through `mapOpenAIChatToMLX` so the test
+// We exercise the function through `makeMLXChatMessages` so the test
 // stays at the public API boundary. Private helpers stay private.
 
 import Foundation
@@ -32,7 +32,7 @@ import Testing
 
 @testable import OsaurusCore
 
-@Suite("materializeMediaDataUrl — MC/DC coverage (via mapOpenAIChatToMLX)")
+@Suite("materializeMediaDataUrl — MC/DC coverage (via makeMLXChatMessages)")
 struct MaterializeMediaDataUrlMCDCTests {
 
     // MARK: - Helper: build a single ChatMessage with a media data URL
@@ -44,7 +44,7 @@ struct MaterializeMediaDataUrlMCDCTests {
             ]}]
             """.data(using: .utf8)!
         let msgs = try! JSONDecoder().decode([ChatMessage].self, from: json)
-        let mapped = (try? ModelRuntime.mapOpenAIChatToMLX(msgs)) ?? []
+        let mapped = (try? ModelRuntime.makeMLXChatMessages(msgs)) ?? []
         guard let video = mapped.first?.videos.first,
             case .url(let u) = video
         else { return nil }
@@ -58,7 +58,7 @@ struct MaterializeMediaDataUrlMCDCTests {
             ]}]
             """.data(using: .utf8)!
         let msgs = try! JSONDecoder().decode([ChatMessage].self, from: json)
-        let mapped = (try? ModelRuntime.mapOpenAIChatToMLX(msgs)) ?? []
+        let mapped = (try? ModelRuntime.makeMLXChatMessages(msgs)) ?? []
         guard let audio = mapped.first?.audios.first,
             case .url(let u) = audio
         else { return nil }

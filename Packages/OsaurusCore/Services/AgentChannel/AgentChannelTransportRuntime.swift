@@ -109,7 +109,11 @@ actor AgentChannelTransportSupervisor {
     private let whatsappConfiguration: @Sendable () -> WhatsAppConnectionConfiguration
     private let whatsappHelperAvailable: @Sendable () -> Bool
     private let whatsappRuntime: any AgentChannelReceiveTransportRuntime
-    private var additionalSlackRuntimes: [String: SlackSocketModeTransportRuntime] = [:]
+    private let emailRuntime: EmailChannelTransportRuntime
+    private let extraAccounts: @Sendable (AgentChannelKind) -> [ChannelAccount]
+    /// Extra bots and workspaces, by connection id.
+    private var accountRuntimes: [String: AccountRuntime] = [:]
+    private var observingAccounts = false
     private var slackStarted = false
     private var telegramStarted = false
     private var discordStarted = false
@@ -157,7 +161,11 @@ actor AgentChannelTransportSupervisor {
         whatsappHelperAvailable: @escaping @Sendable () -> Bool = {
             WhatsAppConnectionService.shared.helperAvailable()
         },
-        whatsappRuntime: any AgentChannelReceiveTransportRuntime = WhatsAppWatchTransportRuntime()
+        whatsappRuntime: any AgentChannelReceiveTransportRuntime = WhatsAppWatchTransportRuntime(),
+        emailRuntime: EmailChannelTransportRuntime = .shared,
+        extraAccounts: @escaping @Sendable (AgentChannelKind) -> [ChannelAccount] = { kind in
+            ChannelAccounts.accounts(kind: kind).filter { !$0.isPrimary }
+        }
     ) {
         self.slackConfiguration = slackConfiguration
         self.slackHasBotToken = slackHasBotToken
@@ -176,14 +184,25 @@ actor AgentChannelTransportSupervisor {
         self.whatsappConfiguration = whatsappConfiguration
         self.whatsappHelperAvailable = whatsappHelperAvailable
         self.whatsappRuntime = whatsappRuntime
+        self.emailRuntime = emailRuntime
+        self.extraAccounts = extraAccounts
     }
 
     func startFromLaunch() async {
+        observeAccountChanges()
         await refreshSlackRuntime()
         await refreshTelegramRuntime()
         await refreshDiscordRuntime()
         await refreshIMessageRuntime()
         await refreshWhatsAppRuntime()
+        await emailRuntime.observeChanges()
+        await emailRuntime.refresh(atLaunch: true)
+    }
+
+    /// Mailbox checks follow `email.json`; saving it or editing an account
+    /// also refreshes on its own.
+    func refreshEmailRuntime() async {
+        await emailRuntime.refresh()
     }
 
     func refreshSlackRuntime(now: Date = Date()) async {
@@ -201,42 +220,66 @@ actor AgentChannelTransportSupervisor {
             await slackRuntime.stop(now: now)
         }
 
-        await refreshAdditionalSlackRuntimes(configuration: configuration, now: now)
+        await refreshAccountRuntimes(kind: .slack, now: now)
     }
 
-    private func refreshAdditionalSlackRuntimes(
-        configuration: SlackConnectionConfiguration,
-        now: Date
-    ) async {
-        let desired = Set<String>(configuration.workspaceAccounts.compactMap { account in
-            guard !account.readableChannelIds.isEmpty,
-                  !account.senderAllowlist.isEmpty,
-                  SlackConnectionService.shared.socketModeAppToken(teamId: account.teamId) != nil
-            else { return nil }
-            return account.teamId
-        })
-        for teamId in additionalSlackRuntimes.keys where !desired.contains(teamId) {
-            if let runtime = additionalSlackRuntimes.removeValue(forKey: teamId) {
-                await runtime.stop(now: now)
+    /// Re-checks every extra account when a bot session or an account's
+    /// settings change.
+    private func observeAccountChanges() {
+        guard !observingAccounts else { return }
+        observingAccounts = true
+        for name in [Notification.Name.signInSessionsDidChange, .channelAccountSettingsChanged] {
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: nil) { [weak self] _ in
+                Task { await self?.refreshAccountRuntimes() }
             }
         }
-        for teamId in desired where additionalSlackRuntimes[teamId] == nil {
-            let runtime = SlackSocketModeTransportRuntime(teamId: teamId)
-            additionalSlackRuntimes[teamId] = runtime
-            await runtime.start(pollInterval: 1)
+    }
+
+    /// Starts each extra account's listener that can run and stops the
+    /// rest, including those of removed accounts.
+    func refreshAccountRuntimes(now: Date = Date()) async {
+        for kind in [AgentChannelKind.discord, .telegram, .slack] {
+            await refreshAccountRuntimes(kind: kind, now: now)
+        }
+    }
+
+    private func refreshAccountRuntimes(kind: AgentChannelKind, now: Date) async {
+        let accounts = extraAccounts(kind)
+        let prefix = ChannelAccounts.extraPrefix(kind)
+        var desired: [String: AccountRuntime.Plan] = [:]
+        for account in accounts {
+            if let plan = AccountRuntime.plan(for: account) { desired[account.connectionId] = plan }
+        }
+        for (id, runtime) in accountRuntimes where id.hasPrefix(prefix) {
+            if let plan = desired[id], plan == runtime.plan { continue }
+            accountRuntimes[id] = nil
+            await runtime.stop(now: now)
+            if desired[id] == nil { ChannelAccountServices.forget(id) }
+        }
+        for (id, plan) in desired where accountRuntimes[id] == nil {
+            guard let runtime = AccountRuntime.make(connectionId: id, kind: kind, plan: plan) else { continue }
+            accountRuntimes[id] = runtime
+            await runtime.start()
         }
     }
 
     /// Temporarily stop the Telegram long-poll runtime so another consumer
     /// (settings discovery issuing its own getUpdates) does not conflict
     /// with it. Resume with `refreshTelegramRuntime()`.
-    func suspendTelegramRuntime(now: Date = Date()) async {
+    func suspendTelegramRuntime(
+        connectionId: String = TelegramConnectionService.nativeConnectionId, now: Date = Date()
+    ) async {
+        guard connectionId == TelegramConnectionService.nativeConnectionId else {
+            await accountRuntimes.removeValue(forKey: connectionId)?.stop(now: now)
+            return
+        }
         guard telegramStarted else { return }
         telegramStarted = false
         await telegramRuntime.stop(now: now)
     }
 
     func refreshTelegramRuntime(now: Date = Date()) async {
+        await refreshAccountRuntimes(kind: .telegram, now: now)
         let configuration = telegramConfiguration()
         if configuration.canStartLongPolling(hasBotToken: telegramHasBotToken()) {
             guard !telegramStarted else { return }
@@ -251,6 +294,7 @@ actor AgentChannelTransportSupervisor {
     }
 
     func refreshDiscordRuntime(now: Date = Date()) async {
+        await refreshAccountRuntimes(kind: .discord, now: now)
         let configuration = discordConfiguration()
         // Platform presence only needs the bot token — a send-only Discord
         // setup should still show the bot online while Osaurus runs.
@@ -338,9 +382,87 @@ actor AgentChannelTransportSupervisor {
             whatsappStarted = false
             await whatsappRuntime.stop(now: now)
         }
-        for runtime in additionalSlackRuntimes.values {
+        await emailRuntime.stop()
+        for runtime in accountRuntimes.values {
             await runtime.stop(now: now)
         }
-        additionalSlackRuntimes.removeAll()
+        accountRuntimes.removeAll()
+    }
+}
+
+/// The listeners of one extra bot or workspace.
+private struct AccountRuntime {
+    /// What the account can run; a change restarts its listeners.
+    struct Plan: Equatable {
+        var receive: Bool
+        var presence: Bool
+        var signature: String
+    }
+
+    let plan: Plan
+    let receive: (any AgentChannelReceiveTransportRuntime)?
+    let presence: DiscordGatewayPresenceRuntime?
+    let pollInterval: TimeInterval
+
+    static func plan(for account: ChannelAccount) -> Plan? {
+        let id = account.connectionId
+        switch account.kind {
+        case .discord:
+            guard let service = ChannelAccountServices.discord(id), let token = service.savedBotToken() else {
+                return nil
+            }
+            let config = service.configuration()
+            let receive = !config.readableChannelIds.isEmpty && !config.senderAllowlist.isEmpty
+            return Plan(receive: receive, presence: true, signature: String(token.hashValue))
+        case .telegram:
+            guard let service = ChannelAccountServices.telegram(id) else { return nil }
+            let hasToken = service.hasBotToken()
+            guard hasToken else { return nil }
+            let receive = service.configuration().canStartLongPolling(hasBotToken: true)
+            return receive ? Plan(receive: true, presence: false, signature: "") : nil
+        case .slack:
+            guard let service = ChannelAccountServices.slack(id), service.hasBotToken(), service.hasAppToken()
+            else { return nil }
+            let config = service.configuration()
+            guard !config.readableChannelIds.isEmpty, !config.senderAllowlist.isEmpty else { return nil }
+            return Plan(receive: true, presence: false, signature: "")
+        default:
+            return nil
+        }
+    }
+
+    static func make(connectionId: String, kind: AgentChannelKind, plan: Plan) -> AccountRuntime? {
+        switch kind {
+        case .discord:
+            guard let service = ChannelAccountServices.discord(connectionId) else { return nil }
+            return AccountRuntime(
+                plan: plan,
+                receive: plan.receive ? DiscordPollingTransportRuntime(service: service) : nil,
+                presence: plan.presence
+                    ? DiscordGatewayPresenceRuntime(tokenProvider: { service.savedBotToken() }) : nil,
+                pollInterval: 3)
+        case .telegram:
+            guard let service = ChannelAccountServices.telegram(connectionId) else { return nil }
+            return AccountRuntime(
+                plan: plan, receive: TelegramLongPollTransportRuntime(service: service), presence: nil,
+                pollInterval: 0)
+        case .slack:
+            guard let service = ChannelAccountServices.slack(connectionId) else { return nil }
+            return AccountRuntime(
+                plan: plan, receive: SlackSocketModeTransportRuntime(service: service), presence: nil,
+                pollInterval: 1)
+        default:
+            return nil
+        }
+    }
+
+    func start() async {
+        await presence?.start()
+        await receive?.start(pollInterval: pollInterval)
+    }
+
+    func stop(now: Date) async {
+        await receive?.stop(now: now)
+        await presence?.stop()
     }
 }

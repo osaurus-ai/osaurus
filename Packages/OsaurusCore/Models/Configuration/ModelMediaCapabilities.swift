@@ -143,8 +143,16 @@ public enum ModelMediaCapabilities {
         fallbackSupportsImages: Bool,
         localModelType: String? = nil,
         localHasAudioTensors: Bool = false,
-        localCapabilities: Capabilities? = nil
+        localCapabilities: Capabilities? = nil,
+        harnessKind: HarnessKind? = nil
     ) -> Capabilities {
+        if let harnessKind {
+            // Both existing adapters forward HarnessUserMessage.images.
+            // An inactive built-in model must not gate that image channel.
+            switch harnessKind {
+            case .claudeCode, .piRPC: return .imageOnly
+            }
+        }
         if let localCapabilities { return localCapabilities }
         if localModelType != nil { return .textOnly }
         return Capabilities(supportsImage: fallbackSupportsImages, supportsVideo: false,
@@ -164,7 +172,9 @@ public enum ModelMediaCapabilities {
         fallbackSupportsImages: Bool,
         localModelType: String? = nil,
         localHasAudioTensors: Bool = false,
-        localCapabilities: Capabilities? = nil
+        localCapabilities: Capabilities? = nil,
+        localImageEvidenceReason: String? = nil,
+        harnessKind: HarnessKind? = nil
     ) -> Descriptor {
         let normalized = modelId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let displayId = normalized.isEmpty ? "unspecified model" : normalized
@@ -173,14 +183,30 @@ public enum ModelMediaCapabilities {
             fallbackSupportsImages: fallbackSupportsImages,
             localModelType: localModelType,
             localHasAudioTensors: localHasAudioTensors,
-            localCapabilities: localCapabilities
+            localCapabilities: localCapabilities,
+            harnessKind: harnessKind
         )
-        let source = localCapabilities != nil || localModelType != nil
-            ? "installed bundle evidence" : "provider capability metadata"
-        return buildDescriptor(
+        let source = harnessKind != nil ? "external runtime image channel"
+            : localCapabilities != nil || localModelType != nil
+                ? "installed bundle evidence" : "provider capability metadata"
+        let built = buildDescriptor(
             modelId: displayId,
             capabilities: capabilities,
             source: source
+        )
+        // The installed bundle's evidence says WHY images are unavailable
+        // ("no readable processor configuration", "no registered local
+        // processor", ...). The generic "not advertised" line hid that from
+        // the user, who then saw a vision-tagged model ignore images (#3021).
+        guard !capabilities.supportsImage, let reason = localImageEvidenceReason, !reason.isEmpty else {
+            return built
+        }
+        return Descriptor(
+            modelId: built.modelId,
+            capabilities: built.capabilities,
+            image: ModalityDescriptor(modality: .image, status: .unsupported, reason: reason),
+            video: built.video,
+            audio: built.audio
         )
     }
 
@@ -249,14 +275,15 @@ public enum ModelMediaCapabilities {
         "qwen3_5", "qwen3_5_moe", "qwen4_exp",
         "qwen3_6", "qwen3_6_moe",
         "smolvlm",
-        "nemotron_h_omni",
-        "NemotronH_Nano_Omni_Reasoning_V3".lowercased(),
         // Muse Glimmer's vision tower carries `patch_temporal: 2`, i.e. it
         // consumes frames in temporal pairs, and the chat template has a
         // dedicated `<|video|>` placeholder alongside `<|patch|>`. Without this
         // entry the bundle's own `has_video: true` is overruled here and video
         // requests are rejected as unsupported.
         "muse_glimmer",
+        // LFM3-VL / LFM3-Omni: Qwen-VL temporal patching (temporal_patch_size 2) with
+        // timestamped frame groups; verified end to end on a clip and its reverse.
+        "lfm3_vl", "lfm3_omni",
     ]
 
     private static func buildDescriptor(

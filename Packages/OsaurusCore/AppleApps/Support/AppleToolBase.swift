@@ -134,6 +134,8 @@ class AppleToolBase: OsaurusTool, PermissionedTool, CapabilityToolGroupDeclaring
         self.requirementOverride = requirements
     }
 
+    var outputSchema: JSONValue? { AppleToolOutputSchemas.byTool[name] }
+
     /// The `SystemPermission`s this tool needs at execution time.
     var systemPermissions: [SystemPermission] { requirementOverride ?? app.systemPermissions }
 

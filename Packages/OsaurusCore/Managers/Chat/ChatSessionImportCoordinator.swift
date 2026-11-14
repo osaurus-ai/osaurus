@@ -32,17 +32,16 @@ private struct ImportProgressContent: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        HStack(spacing: 10) {
-            ProgressView()
-                .controlSize(.small)
+        HStack(spacing: theme.space.s10) {
+            SettingsSpinner()
 
             Text(state.message)
-                .font(.system(size: 12))
-                .foregroundColor(theme.secondaryText)
+                .font(SettingsFont.caption)
+                .foregroundColor(theme.text.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
-        .padding(.top, 2)
+        .padding(.top, theme.space.s2)
         .frame(width: 300)
     }
 }
@@ -107,6 +106,7 @@ enum ChatSessionImportCoordinator {
     enum EntryPoint: String {
         case sidebar
         case onboardingPrompt = "onboarding_prompt"
+        case discovery
     }
 
     /// Presents the open panel, parses the chosen export files and saves
@@ -276,7 +276,9 @@ enum ChatSessionImportCoordinator {
                 : L("\(summary.imported) conversations imported")
         ]
         if summary.skippedDuplicates > 0 {
-            parts.append(L("\(summary.skippedDuplicates) duplicates skipped"))
+            parts.append(
+                summary.skippedDuplicates == 1
+                    ? L("1 duplicate skipped") : L("\(summary.skippedDuplicates) duplicates skipped"))
         }
         if summary.unreadable > 0 {
             parts.append(

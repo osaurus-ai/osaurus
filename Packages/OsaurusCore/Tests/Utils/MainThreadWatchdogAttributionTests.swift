@@ -8,14 +8,12 @@
 //  names that operation. This is the contract that turns a field "app
 //  hang" report into an actionable subsystem/operation pair.
 //
-//  Robustness under the full parallel suite: other suites block the main
-//  thread too (every MainActor test does), so this watchdog instance also
-//  breaches on stalls that are not ours and overwrites the record file with
-//  snapshots that don't contain our operation. Two countermeasures:
-//  - each test injects a PRIVATE diagnostics directory, so parallel suites
-//    that re-point `OsaurusPaths.overrideRoot` can't move the file; and
-//  - the assertion polls for *any* persisted record naming our operation
-//    rather than trusting the first (or last) record it happens to read.
+//  Keep the fault active until the background watchdog has persisted its
+//  record. A fixed-duration fault can finish before a cold/contended timer
+//  gets its first callback; polling afterward cannot recover a record that
+//  was never written. Reading while the fault is still active also avoids
+//  another stall overwriting the last-record file before the assertion runs.
+//  Each test uses a private directory, independent of OsaurusPaths overrides.
 //
 
 import Foundation
@@ -26,8 +24,8 @@ import Testing
 @Suite(.serialized)
 struct MainThreadWatchdogAttributionTests {
 
-    private struct StallRecord: Decodable {
-        struct Entry: Decodable {
+    private struct StallRecord: Decodable, Sendable {
+        struct Entry: Decodable, Sendable {
             let subsystem: String
             let operation: String
         }
@@ -48,6 +46,24 @@ struct MainThreadWatchdogAttributionTests {
         return try? JSONDecoder().decode(StallRecord.self, from: data)
     }
 
+    /// The polling itself is the injected main-thread fault. Release it only
+    /// after observing the persisted record, with a bounded failure deadline.
+    private static func waitForRecordWhileMainIsBlocked(
+        in dir: URL,
+        matching predicate: (StallRecord) -> Bool
+    ) -> (matched: StallRecord?, lastSeen: StallRecord?) {
+        let deadline = ProcessInfo.processInfo.systemUptime + 5
+        var lastSeen: StallRecord?
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            if let record = readRecord(in: dir) {
+                lastSeen = record
+                if predicate(record) { return (record, record) }
+            }
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        return (nil, lastSeen)
+    }
+
     @Test
     func breachPersistsRecordNamingTheInstrumentedOperation() async throws {
         let dir = try Self.makePrivateDiagnosticsDir()
@@ -57,40 +73,24 @@ struct MainThreadWatchdogAttributionTests {
         watchdog.start()
         defer { watchdog.stop() }
 
-        // Inject the fault: hold the main thread hostage for ~1s with an
-        // instrumented operation active — the shape of a wedged Keychain
-        // read or database query on the UI thread. The watchdog ticks at
-        // 0.2s, so several breach snapshots land while our op is active.
-        await MainActor.run {
+        // Hold the actual main-thread fault until its attribution is on disk,
+        // rather than guessing when the background timer will be scheduled.
+        let observed = await MainActor.run {
             let token = MainThreadOperationLedger.shared.begin(
-                subsystem: "fault-injection", operation: "blocked-main"
+                subsystem: "fault-injection",
+                operation: "blocked-main"
             )
-            Thread.sleep(forTimeInterval: 1.0)
-            MainThreadOperationLedger.shared.end(token)
-        }
-
-        // Poll until we observe a record that names our operation. Records
-        // from foreign stalls (other suites blocking the main thread) may
-        // interleave and overwrite the file; only a record containing our
-        // fault-injection entry proves attribution, so keep sampling.
-        var matched: StallRecord?
-        var lastSeen: StallRecord?
-        for _ in 0..<160 {
-            if let record = Self.readRecord(in: dir) {
-                lastSeen = record
-                if record.operations.contains(where: {
+            defer { MainThreadOperationLedger.shared.end(token) }
+            return Self.waitForRecordWhileMainIsBlocked(in: dir) { record in
+                record.operations.contains(where: {
                     $0.subsystem == "fault-injection" && $0.operation == "blocked-main"
-                }) {
-                    matched = record
-                    break
-                }
+                })
             }
-            try await Task.sleep(nanoseconds: 50_000_000)
         }
 
         let stall = try #require(
-            matched,
-            "no persisted stall record named the instrumented operation; last record: \(String(describing: lastSeen?.operations))"
+            observed.matched,
+            "no persisted stall record named the instrumented operation; last record: \(String(describing: observed.lastSeen?.operations))"
         )
         #expect(stall.thresholdSeconds == 0.2)
     }
@@ -111,19 +111,10 @@ struct MainThreadWatchdogAttributionTests {
         // block, so the only portable assertion is that a record persists
         // (with whatever the ledger held at breach time), not that the
         // operations list is empty.
-        await MainActor.run {
-            Thread.sleep(forTimeInterval: 0.8)
+        let observed = await MainActor.run {
+            Self.waitForRecordWhileMainIsBlocked(in: dir) { _ in true }
         }
-
-        var record: StallRecord?
-        for _ in 0..<160 {
-            if let decoded = Self.readRecord(in: dir) {
-                record = decoded
-                break
-            }
-            try await Task.sleep(nanoseconds: 50_000_000)
-        }
-        let stall = try #require(record, "watchdog never persisted a stall record")
+        let stall = try #require(observed.matched, "watchdog never persisted a stall record")
         #expect(stall.thresholdSeconds == 0.2)
         #expect(
             !stall.operations.contains { $0.subsystem == "fault-injection" },

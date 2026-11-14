@@ -24,8 +24,8 @@ enum SpawnInputContract {
         + "instruction, input value, constraint, and the required output format here."
 
     static let backgroundParameterDescription =
-        "Default false. True returns immediately; the result arrives later as a follow-up "
-        + "message. Do not poll or re-send."
+        "Default false. True returns immediately with the worker's session_id; the result "
+        + "arrives later as a follow-up message. Do not poll or re-send."
 
     /// Enforce only the structural part of the standalone-input contract.
     ///
@@ -145,6 +145,8 @@ enum SpawnTargetState: Sendable, Equatable {
     case checking
     case disconnected
     case missing
+    /// Runs on an external harness, which `spawn_agent` can't drive.
+    case harness
 }
 
 struct SpawnAgentTarget: Sendable, Equatable {
@@ -202,6 +204,7 @@ public enum SpawnDescriptors {
         let modelId: String?
         /// The agent's sticky Working Folder path, nil when none is set.
         var workingFolderPath: String? = nil
+        var runsOnHarness = false
     }
 
     /// Durable roster view of one shared workspace agent, for the workspace
@@ -369,7 +372,7 @@ public enum SpawnDescriptors {
                     providerName: locality.providerName,
                     workingFolderPath: source.workingFolderPath
                 ),
-                state: modelState ?? .missing
+                state: source.runsOnHarness ? .harness : (modelState ?? .missing)
             )
         }
 
@@ -460,11 +463,22 @@ public enum SpawnDescriptors {
             return WorkspaceAgentSource(
                 ref: ref,
                 name: name,
-                description: listed?.description ?? paired?.description ?? "",
+                description: workspaceRoutingDescription(listed: listed?.description, paired: paired?.description),
                 workspaceName: workspaceRoster?.workspace.name,
                 ownerName: listed?.owner?.friendlyName
             )
         }
+    }
+
+    /// Prefer the public roster blurb; fall back to the paired host's
+    /// description. Both are optional, so an empty blurb must not hide a
+    /// description supplied by the host.
+    static func workspaceRoutingDescription(listed: String?, paired: String?) -> String {
+        for candidate in [listed, paired].compactMap({ $0 }) {
+            let normalized = AgentDescriptionPolicy.normalized(candidate)
+            if !normalized.isEmpty { return normalized }
+        }
+        return ""
     }
 
     /// Execution truth for one model id (an agent's effective model): is it
@@ -504,16 +518,25 @@ public enum SpawnDescriptors {
 
     @MainActor
     private static func liveAgentSources() -> [AgentSource] {
-        AgentManager.shared.agents.map { agent in
+        // Snapshot the @Published array once so the per-iteration calls to
+        // effectiveModel(for:) and workingFolder(for:) do not re-read the
+        // property (each read triggers swift_conformsToProtocol checks in the
+        // Swift runtime; with many agents this accumulates into a main-thread
+        // hang). The Agent-instance overloads accept the already-fetched value
+        // directly and bypass the internal agent(for:) lookup entirely.
+        let manager = AgentManager.shared
+        let agents = manager.agents
+        return agents.map { agent in
             AgentSource(
                 id: agent.id,
                 name: agent.name,
-                description: agent.description,
-                modelId: AgentManager.shared.effectiveModel(for: agent.id),
+                description: agent.routingDescription,
+                modelId: manager.effectiveModel(for: agent),
                 // Same source of truth as the dispatch-folder fallback
                 // (`BackgroundTaskManager.resolveDispatchFolder`), so the
                 // folder the prompt advertises is the folder the child runs in.
-                workingFolderPath: AgentManager.shared.workingFolder(for: agent.id)?.path
+                workingFolderPath: manager.workingFolder(for: agent)?.path,
+                runsOnHarness: manager.effectiveRuntime(for: agent.id).harnessId != nil
             )
         }
     }
@@ -552,11 +575,6 @@ public enum SpawnDescriptors {
         switch item.source {
         case .remote(let providerName, _):
             return (false, providerName)
-        case .claudeCode:
-            // Not local: the CLI runs on this Mac, but inference happens on
-            // Anthropic's servers, so the locality badge must not claim
-            // on-device.
-            return (false, ModelPickerItem.Source.claudeCode.displayName)
         case .local, .foundation, .imageGeneration:
             return (true, nil)
         }

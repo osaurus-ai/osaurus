@@ -22,15 +22,15 @@ Claude plugins live in the same **Plugins** management tab as Osaurus's native p
 
 | Plugin Artifact                       | Mapped To              | Osaurus Surface                          |
 | ------------------------------------- | ---------------------- | ---------------------------------------- |
-| `skills/<name>/SKILL.md`              | Skill                  | Management → Skills                      |
+| `skills/<name>/SKILL.md`              | Skill                  | Settings → Skills                        |
 | `skills/<name>/scripts/*`             | Skill reference/asset  | Attached to the owning skill             |
 | `skills/<name>/references/*`          | Skill reference        | Attached to the owning skill             |
 | `skills/<name>/assets/*`              | Skill asset            | Attached to the owning skill             |
 | `skills/<name>/templates/*`           | Skill asset            | Attached to the owning skill             |
 | `skills/<name>/*` (loose files)       | Skill reference/asset  | Attached to the owning skill             |
-| `agents/<name>.md`                    | Schedule (disabled)    | Management → Schedules                   |
+| `agents/<name>.md`                    | Schedule automation (disabled) | Settings → Automations           |
 | `commands/<name>.md`                  | Slash command          | Available in chat input                  |
-| `.mcp.json` (HTTP/SSE)                | MCP provider           | Management → Providers (MCP)             |
+| `.mcp.json` (HTTP/SSE)                | MCP provider           | Settings → Tools & MCP                   |
 | `.mcp.json` (OAuth)                   | OAuth MCP provider     | Disabled, needs sign-in                  |
 | `CLAUDE.md`                           | Reference file         | Attached to every imported skill         |
 | `CONNECTORS.md`, `README.md`          | Reference file         | Attached to every imported skill         |
@@ -160,8 +160,8 @@ After the plugin list loads, Osaurus fetches every agent body in the background,
 
 ## Importing
 
-1. Open Management (`⌘ Shift M`) → **Plugins**.
-2. Click **Import** in the header.
+1. Open Settings… (`⌘,`) → **Skills**.
+2. Click **Import Claude plugin from GitHub**.
 3. Enter the repository (`owner/repo` or full URL).
 4. Pick which plugins (and which artifacts within each plugin) to install.
 5. Click **Install Selected**.
@@ -176,8 +176,8 @@ After install, the sheet shows a per-plugin summary including:
 
 - **Imported counts** — skills, schedules, commands, MCP providers
 - **Schedules needing cron** — agent markdown files where no recurrence could be inferred. Click a row to deep-link into the schedule editor with the cron field focused.
-- **MCP providers with placeholder tokens** — when `.mcp.json` uses `${VAR}`, `$VAR`, or `<token>` style env references, the provider is created without a token. Paste a real one in Management → Providers before enabling.
-- **MCP servers needing OAuth sign-in** — `.mcp.json` entries with an `oauth` block (e.g. Slack, Notion in `anthropics/knowledge-work-plugins`) are imported with `authType: .oauth` and the declared `clientId` + `callbackPort` pre-populated. Open Management → Providers and click "Sign in" on each one before enabling.
+- **MCP providers with placeholder tokens** — when `.mcp.json` uses `${VAR}`, `$VAR`, or `<token>` style env references, the provider is created without a token. Paste a real one in Settings → Tools & MCP before enabling.
+- **MCP servers needing OAuth sign-in** — `.mcp.json` entries with an `oauth` block (e.g. Slack, Notion in `anthropics/knowledge-work-plugins`) are imported with `authType: .oauth` and the declared `clientId` + `callbackPort` pre-populated. Open Settings → Tools & MCP and click "Sign in" on each one before enabling.
 - **Skipped stdio / malformed MCP entries** — listed with names so the user can tell which components did not land.
 - **Errors** — any per-artifact failures (one bad skill does not abort the import).
 
@@ -223,7 +223,7 @@ Tapping a card opens **Claude Plugin Detail** with the full hero (icon, displayN
 - An **Import needs attention** banner persisted from the last install report, including skipped MCP names, OAuth sign-in needs, placeholder-token/env-var setup, install errors, and declared-but-not-imported component counts.
 - A "components declared but not yet honored" notice for unsupported manifest sections (hooks, output styles, monitors, themes, channels, LSP servers).
 
-Uninstalling a plugin removes the corresponding skills, schedules, slash commands, and MCP providers in one shot, including any Keychain-stored MCP tokens, the persisted manifest snapshot, the per-plugin userConfig file, the cache directory, and the per-plugin `${CLAUDE_PLUGIN_DATA}` directory.
+Uninstalling a plugin removes the corresponding skills, schedules, slash commands, and MCP providers in one shot, including the persisted manifest snapshot, the per-plugin userConfig file, the cache directory, and the per-plugin `${CLAUDE_PLUGIN_DATA}` directory. MCP tokens and env values it saved stay in General → Vault.
 
 Osaurus's own internal plugins (`PluginManager`, Wasm-based tool plugins) appear as the existing `PluginCard` style in the same grid — the only difference is the `Imported` badge that marks GitHub-sourced Claude plugins.
 
@@ -286,7 +286,7 @@ The installer reads `.mcp.json` and classifies each server entry:
 
 For OAuth providers, the declared `clientId` and a `http://127.0.0.1:<callbackPort>/callback` `redirectURI` are stashed on the provider so the existing MCP OAuth service can complete the discovery + Dynamic Client Registration + PKCE handshake when the user clicks "Sign in". The provider stays disabled until that completes.
 
-Providers are tagged with the plugin id, so uninstalling the plugin removes them and clears their Keychain secrets.
+Providers are tagged with the plugin id, so uninstalling the plugin removes them. Their env and token values are saved in General → Vault and stay there after uninstall (another server or agent may share them); delete them in the Vault.
 
 ---
 
@@ -317,9 +317,9 @@ The installer keeps going if any single file fails to download or parse. Failure
 | Skills              | `~/.osaurus/skills/<skill-name>/SKILL.md`                                 |
 | Skill references    | `~/.osaurus/skills/<skill-name>/references/<basename>`                    |
 | Skill assets        | `~/.osaurus/skills/<skill-name>/assets/<basename>`                        |
-| Schedules           | Persisted by `ScheduleManager`                                            |
+| Schedules           | Schedule automations persisted by `EventManager`                          |
 | Slash commands      | Persisted by `SlashCommandRegistry`                                       |
-| MCP providers       | `MCPProviderConfiguration` + secrets in macOS Keychain                    |
+| MCP providers       | `MCPProviderConfiguration` + secrets in the Vault (`MCPCredentials`)           |
 | `CLAUDE.md` / `CONNECTORS.md` / `README.md` | Attached as references inside each owning skill directory |
 | Per-plugin manifest snapshot | `~/.osaurus/claude-plugins/manifests/<safe-id>.json`              |
 | Per-plugin userConfig (non-sensitive) | `~/.osaurus/claude-plugins/userconfig/<safe-id>.json`    |
@@ -345,7 +345,7 @@ The installer keeps going if any single file fails to download or parse. Failure
 | Detail UI    | `Packages/OsaurusCore/Views/Plugin/ClaudePluginDetailView.swift`                     |
 | userConfig sheet | `Packages/OsaurusCore/Views/Plugin/ClaudePluginUserConfigSheet.swift`            |
 | Plugins-tab host | `Packages/OsaurusCore/Views/Plugin/PluginsView.swift`                            |
-| Schedule deep-link | `Packages/OsaurusCore/Managers/ManagementStateManager.swift`, `Views/Schedule/SchedulesView.swift` |
+| Schedule deep-link | `Packages/OsaurusCore/Managers/ManagementStateManager.swift`, `Views/Event/EventsView.swift` |
 | Tests        | `Packages/OsaurusCore/Tests/Skill/ClaudePluginInstallerTests.swift`, `Packages/OsaurusCore/Tests/Skill/ClaudePluginSpecTests.swift` |
 
 ---
@@ -354,5 +354,5 @@ The installer keeps going if any single file fails to download or parse. Failure
 
 - [Skills](SKILLS.md) — Skill format, RAG selection, and built-in skills
 - [Remote MCP Providers](REMOTE_MCP_PROVIDERS.md) — Manual MCP setup and HTTP/SSE transport details
-- [Schedules](FEATURES.md#schedules) — Recurring agent runs
+- [Automations](AUTOMATIONS.md) — Schedules and other triggers for agents and workflows
 - [Features Inventory](FEATURES.md#claude-plugin-import) — Canonical feature record

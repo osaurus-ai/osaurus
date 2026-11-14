@@ -226,7 +226,7 @@ struct ChatWindowSessionDetachTests {
 
             #expect(window.session === running, "reopening a live chat must show the in-memory session")
             #expect(window.activeTabId == runningTabId)
-            #expect(window.tabs.count == 2, "no duplicate tab for a chat that is already open")
+            #expect(window.tabs.count == 1, "no duplicate tab, and the blank New Chat left behind closes")
             #expect(running.windowState === window)
             #expect(mgr.liveTask(forSessionId: runningId) == nil, "tab-owned run: no registry task")
 

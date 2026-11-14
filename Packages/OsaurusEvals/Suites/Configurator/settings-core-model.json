@@ -1,0 +1,35 @@
+{
+  "id": "configurator.settings-core-model",
+  "domain": "configurator",
+  "label": "configurator • set the core model via model_defaults",
+  "query": "Use Apple's on-device Foundation model for background jobs like chat titles and memory.",
+  "notes": "`model_defaults.core_model: foundation`. Must not touch `default_agent.model` (that is the Orchestrator's own chat model). The runner restores ChatConfiguration after the case so the binding cannot leak.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "action": "apply",
+            "yaml": "core_model"
+          }
+        },
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "yaml": "foundation"
+          }
+        }
+      ],
+      "maxIterations": 8
+    }
+  }
+}

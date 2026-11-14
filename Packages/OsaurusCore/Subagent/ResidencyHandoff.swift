@@ -418,6 +418,7 @@ enum ResidencyHandoffFailure: Error, LocalizedError, Sendable, Equatable {
 /// pre-existing local/API/plugin resident does not acquire ownership, so later
 /// transitions and final cleanup remain fail-closed for unrelated models.
 struct ResidencyOwnershipHandoff: SubagentHandoff {
+    var requiresAdmissionForCleanup: Bool { wrapped.requiresAdmissionForCleanup }
     let wrapped: any SubagentHandoff
     let ownershipToken: ModelResidencyOwnershipToken
 

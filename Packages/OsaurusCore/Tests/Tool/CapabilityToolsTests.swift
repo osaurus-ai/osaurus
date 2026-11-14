@@ -1123,67 +1123,61 @@ struct CapabilitiesLoadToolTests {
         }
     }
 
-    /// Idempotency guard-ordering regression (W4): a tool already in the
-    /// session's schema must return success when re-loaded, EVEN IF it is
-    /// globally disabled now. Before the fix, the `isEnabled` guard fired
-    /// before the already-loaded check, so re-loading an already-callable
-    /// tool returned `{"ok":false,"kind":"rejected","… is disabled"}` —
-    /// telling the model a working capability failed, derailing the loop.
-    @Test @MainActor
-    func toolLoadIsIdempotentForAlreadyLoadedSessionToolEvenWhenDisabled() async throws {
-        try await DynamicCatalogTestLock.shared.run {
-            let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
-                "osaurus-capability-load-idempotent-\(UUID().uuidString)",
-                isDirectory: true
-            )
-            let previousOverride = ToolConfigurationStore.overrideDirectory
-            ToolConfigurationStore.overrideDirectory = tempDir
-            try? FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    @Test(arguments: ["granted", "globalDisabled", "agentRevoked", "regranted"])
+    @MainActor
+    func alreadyLoadedDynamicToolRequiresCurrentGrant(state: String) async throws {
+        try await DynamicToolProbeFixture.run { fixture in
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            let previousRoot = OsaurusPaths.overrideRoot
+            OsaurusPaths.overrideRoot = root
+            AgentManager.shared.refresh()
             defer {
-                ToolConfigurationStore.overrideDirectory = previousOverride
-                try? FileManager.default.removeItem(at: tempDir)
+                OsaurusPaths.overrideRoot = previousRoot
+                AgentManager.shared.refresh()
+                try? FileManager.default.removeItem(at: root)
             }
-
-            let toolName =
-                "lane_b_already_loaded_tool_\(UUID().uuidString.replacingOccurrences(of: "-", with: "_"))"
-            let fixture = CapabilityPolicyFixtureTool(
-                name: toolName,
-                description: "Search the web for current headlines and online results"
+            let probe = CapabilityPolicyFixtureTool(
+                name: "reload_grant_\(UUID().uuidString.replacingOccurrences(of: "-", with: "_"))",
+                description: "Return a fixed harmless marker"
             )
-            ToolRegistry.shared.registerPluginTool(fixture)
-            // Globally disabled: without the guard-ordering fix this would
-            // reject at the `isEnabled` guard even though the tool is already
-            // in the session's schema (and therefore already callable).
-            ToolRegistry.shared.setEnabled(false, for: fixture.name)
-            defer { ToolRegistry.shared.unregister(names: [fixture.name]) }
-
-            // Mirror a tool the model loaded on an earlier turn, now frozen
-            // into the session schema.
-            let sessionId = "idempotent-load-\(UUID().uuidString)"
+            try fixture.register(probe)
+            let agent = Agent(
+                name: "Reload grant proof",
+                agentAddress: "reload-grant-\(UUID().uuidString)",
+                autonomousExec: AutonomousExecConfig(enabled: false),
+                toolSelectionMode: .manual,
+                manualToolNames: [probe.name]
+            )
+            AgentManager.shared.add(agent)
+            AgentManager.shared.updateEnabledToolNames([probe.name], for: agent.id)
+            let sessionId = "reload-grant-\(UUID().uuidString)"
             await SessionToolStateStore.shared.appendLoadedTools(
-                sessionId,
-                names: [fixture.name],
-                fallbackAlwaysLoadedNames: nil
+                sessionId, names: [probe.name], fallbackAlwaysLoadedNames: nil
             )
-
+            if state == "globalDisabled" {
+                ToolRegistry.shared.setEnabled(false, for: probe.name)
+            }
+            if state == "agentRevoked" || state == "regranted" {
+                AgentManager.shared.updateEnabledToolNames([], for: agent.id)
+            }
+            if state == "regranted" {
+                AgentManager.shared.updateEnabledToolNames([probe.name], for: agent.id)
+            }
             _ = await CapabilityLoadBuffer.shared.drain()
-
-            let tool = CapabilitiesLoadTool()
             let result = try await ChatExecutionContext.$currentSessionId.withValue(sessionId) {
-                try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
-                    try await tool.execute(argumentsJSON: "{\"ids\": [\"tool/\(fixture.name)\"]}")
+                try await ChatExecutionContext.$currentAgentId.withValue(agent.id) {
+                    try await CapabilitiesLoadTool().execute(
+                        argumentsJSON: "{\"ids\": [\"tool/\(probe.name)\"]}"
+                    )
                 }
             }
-
-            // Idempotent SUCCESS, not a "disabled" rejection.
-            #expect(!ToolEnvelope.isError(result))
-            #expect(result.contains("already loaded and callable"))
-            #expect(!result.contains("is disabled"))
-            // And no re-buffering — an already-loaded tool must not re-enter
-            // the deferred-schema buffer.
+            let shouldSucceed = state == "granted" || state == "regranted"
+            #expect(ToolEnvelope.isError(result) != shouldSucceed)
+            #expect(result.contains("already loaded and callable") == shouldSucceed)
+            if !shouldSucceed { #expect(result.contains("not available in this conversation")) }
             let buffered = await CapabilityLoadBuffer.shared.drain()
-            #expect(!buffered.contains(where: { $0.function.name == fixture.name }))
-
+            #expect(!buffered.contains(where: { $0.function.name == probe.name }))
             await SessionToolStateStore.shared.invalidate(sessionId)
         }
     }

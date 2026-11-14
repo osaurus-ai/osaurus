@@ -31,10 +31,19 @@ import os.log
 private let batchAdapterLog = Logger(subsystem: "ai.osaurus", category: "BatchAdapter")
 
 struct MLXBatchAdapter {
-    /// Explicit depth buttons impose a ceiling. Auto may explore only the
-    /// existing adaptive range, further limited by the configured token cap.
-    /// Invalid limits are left invalid for the runtime validator, not repaired
-    /// into an apparently valid activation here.
+    /// "No request-level ceiling": the adaptive top rung is vmlx's runtime top rung for the loaded model (its
+    /// verifier capability, `NativeMTPDepthPolicy.runtimeTopRung`). Equal to vmlx-swift's
+    /// `NativeMTPDepthPolicy.adaptiveToRuntimeCeiling` (`.adaptive(maximumDepth: .max)`).
+    static let nativeMTPAdaptiveNoHostCeiling = Int.max
+
+    /// No hard draft depth: Adaptive governs the draft depth. An explicit depth button pins it
+    /// (`.fixed`, the user's own choice); every other selection is Adaptive up to the runtime's top rung, which
+    /// vmlx resolves per request from the loaded model. The app sets no ceiling of its own: the former
+    /// `min(draftTokenLimit ?? 5, 5)` capped every model at depth 5, including a LiLiCorr block drafter whose
+    /// blocks verify 7 drafts. `draftTokenLimit` is not a ceiling either: no product control sets it (the
+    /// composer, Settings, the admin API and import all clear it through
+    /// `NativeMTPSelectionDefault.adaptiveSelection`), so a value here is a stale default, and vmlx's launch
+    /// resolver already applies it to the START depth only (`resolvedMTPLaunch`), and validates it there.
     static func nativeMTPDepthPolicy(
         _ settings: VMLXServerMTPSettings
     ) -> NativeMTPDepthPolicy {
@@ -43,7 +52,7 @@ struct MLXBatchAdapter {
         {
             return .fixed
         }
-        return .adaptive(maximumDepth: min(settings.draftTokenLimit ?? 5, 5))
+        return .adaptive(maximumDepth: nativeMTPAdaptiveNoHostCeiling)
     }
 
     /// Native MTP is tuned for real chat prefixes, not tiny cold-start
@@ -91,10 +100,11 @@ struct MLXBatchAdapter {
     /// keyed by model. Completion-time (unlike `EffectiveGenerationSettings`,
     /// which is submit-time) so it can show what the ADAPTIVE controller
     /// actually settled on — e.g. a request that asked for depth 3 but ran
-    /// depth 1 because acceptance collapsed. Called only for turns that
-    /// produced native-MTP tokens; every other decode path leaves the readout
-    /// unchanged.
-    static func recordLastMTPStats(modelName: String, stats: MTPStatsSummary) async {
+    /// depth 1 because acceptance collapsed. Captured for turns that
+    /// produced native-MTP tokens. A failed/cancelled turn without stats clears
+    /// only its own model's stale readout. Successful non-MTP and background
+    /// turns leave it unchanged.
+    static func recordLastMTPStats(modelName: String, stats: MTPStatsSummary?) async {
         await Registry.shared.recordLastMTPStats(modelName: modelName, stats: stats)
     }
 
@@ -132,7 +142,7 @@ struct MLXBatchAdapter {
     struct EffectiveGenerationSettings: Equatable, Sendable {
         let stage: String
         let temperature: Float
-        let maxTokens: Int
+        var maxTokens: Int
         let topP: Float
         let topK: Int
         let minP: Float
@@ -171,8 +181,12 @@ struct MLXBatchAdapter {
         nativeMTPFallbackReason: String? = nil,
         nativeMTPRequestFallback: Bool = false,
         cacheTopology: ModelCacheTopologySnapshot? = nil,
+        thinkingEnabled: Bool? = nil,
         stage: String = "resolved"
     ) -> EffectiveGenerationSettings {
+        // INVARIANT: mode defaults come from the bundle and follow the same
+        // resolved thinking flag as the template. Explicit sampling still wins.
+        let modelDefaults = modelDefaults.resolvingThinking(thinkingEnabled)
         let defaultTemperature: Float? = {
             if modelDefaults.doSample == false {
                 return 0
@@ -260,6 +274,11 @@ struct MLXBatchAdapter {
             runtimeDefaults: runtimeDefaults,
             maxBatchSize: maxBatchSize,
             modelDefaults: modelDefaults,
+            thinkingEnabled: thinkingEnabledForSampling(
+                generation: generation,
+                modelName: modelName,
+                modelDefaults: modelDefaults
+            ),
             stage: "pending_preload"
         )
         await Registry.shared.recordEffectiveGenerationSettings(
@@ -432,8 +451,8 @@ struct MLXBatchAdapter {
         private var lastEffectiveGenerationSettings: [String: EffectiveGenerationSettings] = [:]
         /// Last native-MTP runtime stats per model, captured at completion.
         /// Populated only for turns the native-MTP iterator produced, so a
-        /// non-MTP family never appears here and the readout for an MTP model
-        /// reflects its most recent speculative turn.
+        /// non-MTP family never appears here. A failed/cancelled turn without
+        /// stats removes that model's previous value rather than misattributing it.
         private var lastMTPStats: [String: MTPStatsSummary] = [:]
         /// Cache restore of the most recent real request, across models.
         private var lastCacheRestore: CacheRestoreSummary?
@@ -561,7 +580,7 @@ struct MLXBatchAdapter {
             lastEffectiveGenerationSettings
         }
 
-        func recordLastMTPStats(modelName: String, stats: MTPStatsSummary) {
+        func recordLastMTPStats(modelName: String, stats: MTPStatsSummary?) {
             lastMTPStats[modelName] = stats
         }
 
@@ -949,6 +968,26 @@ struct MLXBatchAdapter {
         runtime: RuntimeConfig,
         maxBatchSize: Int
     ) async {
+        if case .uno(let adapterPath, _)? = draftStrategy {
+            await warmupUnoAtLoad(
+                modelName: modelName, container: container, adapterPath: adapterPath,
+                maxBatchSize: maxBatchSize)
+            return
+        }
+        // DeepSeek-V4.1 dSpark (`.dspark`) is deliberately not warmed here. Its head (~8.9 GB) is
+        // attached by vmlx on the first request that can use it and stays resident after, so a load
+        // warmup would only move that cost earlier, at the price of committing it before any request:
+        // a V4.1 JANG_2K bundle is ~206 GB resident on a 256 GB Mac, and the warmup generation also
+        // allocates its own KV and verify activations on top. Lazily, a session that never runs a
+        // dSpark-eligible request (media prefill, `VMLX_DSV41_DSPARK=0`, sampled with
+        // `VMLX_DSV41_DSPARK_SAMPLED=0`) never pays for the head. The first dSpark request therefore
+        // includes the head load.
+        if draftStrategy?.usesDFlash2 == true {
+            await warmupDFlash2AtLoad(
+                modelName: modelName, container: container, modelDefaults: modelDefaults,
+                draftStrategy: draftStrategy, runtime: runtime, maxBatchSize: maxBatchSize)
+            return
+        }
         guard draftStrategy?.usesNativeMTP == true else { return }
         guard !UserDefaults.standard.bool(forKey: mtpLoadWarmupDisabledKey) else { return }
         guard await !Registry.shared.isNativeMTPWarm(modelName: modelName) else { return }
@@ -995,6 +1034,120 @@ struct MLXBatchAdapter {
         }
     }
 
+    /// Whether a generation takes the model's solo lease before it is submitted.
+    ///
+    /// A drafted request whose speculation runs on the engine's exclusive solo path takes it even
+    /// under continuous batching (maxBatchSize > 1), so a second such request on the same model (a
+    /// spawned subagent, a parallel delegation) queues behind the first and drafts too, instead of
+    /// being cancelled (DFlash 2) or demoted to plain autoregressive decode (DeepSeek-V4.1 dSpark;
+    /// vmlx `BatchEngine.generate` drops `.dspark` when the solo path is busy). Ordinary batched
+    /// requests take no lease and still share the engine; the engine decodes a drafted request
+    /// autoregressively if it arrives while batched slots are active.
+    ///
+    /// Covers DFlash 2 (including MiniCPM's DSpark drafter, which runs on the DFlash 2 path) and
+    /// DeepSeek-V4.1's bundled dSpark head (`DraftStrategy.dspark`, a separate strategy).
+    static func requiresSoloLease(maxBatchSize: Int, draftStrategy: MLXLMCommon.DraftStrategy?) -> Bool {
+        maxBatchSize == 1 || draftStrategy?.usesDFlash2 == true || draftStrategy?.usesDSpark == true
+    }
+
+    /// DFlash 2 / DSpark: one short drafted generation right after load. The engine loads the
+    /// drafter lazily on the first drafted request and builds each verify width's graph on first use,
+    /// so without this the first chat paid it: MiniCPM-V 4.7 35B-A3B JANGH2, first image turn TTFT
+    /// 4.8 s and 16 tok/s against 0.7 s and 81 tok/s for AR; later turns are unaffected.
+    static let dflash2LoadWarmupTokens = 48
+
+    private static func warmupDFlash2AtLoad(
+        modelName: String,
+        container: ModelContainer,
+        modelDefaults: LocalGenerationDefaults.Defaults,
+        draftStrategy: MLXLMCommon.DraftStrategy?,
+        runtime: RuntimeConfig,
+        maxBatchSize: Int
+    ) async {
+        guard !UserDefaults.standard.bool(forKey: mtpLoadWarmupDisabledKey) else { return }
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        do {
+            let prepared = try await generate(
+                modelName: modelName,
+                container: container,
+                modelDefaults: modelDefaults,
+                buildChat: {
+                    [MLXLMCommon.Chat.Message(role: .user, content: nativeMTPLoadWarmupPrompt)]
+                },
+                buildToolsSpec: { nil },
+                generation: GenerationParameters(temperature: 0, maxTokens: dflash2LoadWarmupTokens),
+                toolChoice: nil,
+                stopSequences: [],
+                draftStrategy: draftStrategy,
+                runtime: runtime,
+                maxBatchSize: maxBatchSize
+            )
+            for await _ in prepared.stream {}
+            let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
+            batchAdapterLog.info(
+                "DFlash 2 load warmup: drafter loaded and verify graphs built for \(modelName, privacy: .public) in \(elapsedMs, privacy: .public)ms"
+            )
+            PrefillDebugLog.shared.log("==DFLASH2 WARMUP-DONE model=\(modelName) wallMs=\(elapsedMs)")
+        } catch {
+            batchAdapterLog.notice(
+                "DFlash 2 load warmup failed for \(modelName, privacy: .public): \(String(describing: error), privacy: .public) — the first request loads the drafter instead"
+            )
+        }
+    }
+
+    /// Uno (bundled self-speculation adapter): install the adapter and compile the speculative
+    /// shapes right after load, so chats never stall on a kernel compile (on K2 Horizon the first
+    /// 8+-row forward compiles the lane matmul, ~1.8 s on an M5 Max and longer on older chips; the
+    /// first long-context block compiles the multi-row attention's long variant). Runs in small
+    /// steps (`UnoWarmup.steps`), each under the same solo lease and exclusive Metal gate as a
+    /// generation, released between steps: a message sent during warm-up waits for at most one step
+    /// (~1 s), never the whole warm-up (all at once delayed the first message by 4.7 s). Steps not
+    /// reached before a request simply compile on use.
+    private static func warmupUnoAtLoad(
+        modelName: String,
+        container: ModelContainer,
+        adapterPath: URL,
+        maxBatchSize: Int
+    ) async {
+        guard !UserDefaults.standard.bool(forKey: mtpLoadWarmupDisabledKey) else { return }
+        let startedAt = CFAbsoluteTimeGetCurrent()
+        PrefillDebugLog.shared.log("==UNO WARMUP-START model=\(modelName) adapter=\(adapterPath.path)")
+        var done: [String] = []
+        for step in UnoWarmup.steps(adapterDirectory: adapterPath) {
+            if Task.isCancelled { break }
+            let lease = maxBatchSize == 1
+                ? await Registry.shared.acquireSoloLease(for: modelName) : nil
+            do {
+                try await MetalGate.shared.enterMediaPrep(model: modelName)
+            } catch {
+                await lease?.release()
+                break
+            }
+            do {
+                let ms = try await container.perform { context in
+                    try UnoWarmup.prepare(
+                        step: step, model: context.model, adapterDirectory: adapterPath)
+                }
+                done.append("\(step)=\(ms.map(String.init) ?? "skip")")
+            } catch {
+                batchAdapterLog.notice(
+                    "Uno load warmup step \(String(describing: step), privacy: .public) failed for \(modelName, privacy: .public): \(String(describing: error), privacy: .public) — compiles on use"
+                )
+                await MetalGate.shared.exitMediaPrep(model: modelName)
+                await lease?.release()
+                break
+            }
+            await MetalGate.shared.exitMediaPrep(model: modelName)
+            await lease?.release()
+        }
+        let wallMs = Int((CFAbsoluteTimeGetCurrent() - startedAt) * 1000)
+        PrefillDebugLog.shared.log(
+            "==UNO WARMUP-DONE model=\(modelName) steps=\(done.joined(separator: ",")) wallMs=\(wallMs)")
+        batchAdapterLog.info(
+            "Uno load warmup for \(modelName, privacy: .public): \(done.joined(separator: ","), privacy: .public) in \(wallMs, privacy: .public) ms"
+        )
+    }
+
     // MARK: - Image preprocessing
 
     private static let maxImageSize = CGSize(width: 1024, height: 1024)
@@ -1008,12 +1161,15 @@ struct MLXBatchAdapter {
     /// Downscale CIImage attachments to a sane upper bound before tokenization.
     /// Pre-existing `URL` / `array` cases pass through untouched.
     ///
-    /// Preserves media plus `reasoningContent`, `toolCalls`, and `toolCallId`
-    /// through the rebuild. Dropping any of these fields silently unwinds the
-    /// structured handoff set up by `ModelRuntime.mapOpenAIChatToMLX`: ZAYA,
-    /// Nemotron-H/Omni, MiniMax, and DSV4 templates read
+    /// Preserves media plus `reasoningContent`, `toolCalls`, `toolCallId`, and
+    /// `contentParts` through the rebuild. Dropping any of these fields silently
+    /// unwinds the structured handoff set up by `ModelRuntime.makeMLXChatMessages`:
+    /// ZAYA, Nemotron-H/Omni, MiniMax, and DSV4 templates read
     /// `message.reasoning_content`; MiniMax and other templates read
-    /// `message.tool_calls[i]`; omni/VL processors read media arrays.
+    /// `message.tool_calls[i]`; omni/VL processors read media arrays; the
+    /// DeepSeek-V4.1 vision prompt and MiMo V2.6 read `contentParts` to keep
+    /// text and media in the order the client sent them (without it they put
+    /// every image before the text).
     private static func preprocessImages(in chat: [MLXLMCommon.Chat.Message]) -> [MLXLMCommon.Chat.Message] {
         chat.map { message in
             let processedImages = message.images.map { userInputImage -> UserInput.Image in
@@ -1032,7 +1188,8 @@ struct MLXBatchAdapter {
                 audios: message.audios,
                 reasoningContent: message.reasoningContent,
                 toolCalls: message.toolCalls,
-                toolCallId: message.toolCallId
+                toolCallId: message.toolCallId,
+                contentParts: message.contentParts
             )
         }
     }
@@ -1146,13 +1303,32 @@ struct MLXBatchAdapter {
 
     // MARK: - Thinking template context
 
+    static func thinkingEnabledForSampling(
+        generation: GenerationParameters,
+        modelName: String,
+        modelDefaults: LocalGenerationDefaults.Defaults,
+        usesChatTemplate: Bool = true
+    ) -> Bool? {
+        guard usesChatTemplate else { return nil }
+        let context = additionalContext(for: generation, modelName: modelName)
+        if context.keys.contains("enable_thinking") {
+            return context["enable_thinking"] as? Bool
+        }
+        return modelDefaults.defaultThinkingEnabled
+    }
+
     static func additionalContext(
         for generation: GenerationParameters,
         modelName: String,
         toolChoice: ToolChoiceOption? = nil,
         toolChoiceName: String? = nil
     ) -> [String: any Sendable] {
-        var context: [String: any Sendable] = [:]
+        // Start with the complete request dictionary. Explicit typed reasoning
+        // and tool controls below win; omission leaves bundle defaults intact.
+        var context = generation.templateKwargs?.mapValues(\.templateContextValue) ?? [:]
+        if generation.templateKwargs?.isEmpty == false {
+            context[ChatTemplateParameters.explicitContextKey] = true
+        }
         if toolChoiceRequiresLocalCall(toolChoice) {
             context["tool_choice"] = "required"
         }
@@ -1198,6 +1374,15 @@ struct MLXBatchAdapter {
                     ontoLevels: levels,
                     defaultLevel: defaultLevel
                 ) ?? requested
+            case .modeKwargs:
+                // Mode bundles receive their declared kwargs below, including
+                // a native reasoning_effort transport when the bundle uses it.
+                return nil
+            case .fixedNativeEffort:
+                // The bundle exposes no picker, but its engine still owns a
+                // strict native effort contract. Preserve explicit input so
+                // incompatible requests are rejected there instead of ignored.
+                return requested
             case .noEffortControl:
                 return nil
             case nil:
@@ -1222,18 +1407,61 @@ struct MLXBatchAdapter {
             return context
         }
 
-        if DSV4ReasoningProfile.matches(modelId: modelName) {
+        // Declared reasoning modes (Nemotron 3.5): send exactly the kwargs the
+        // bundle declares for the selected mode. Off = the declared `off` mode
+        // (else `enable_thinking: false`); an effort snaps onto the declared
+        // levels (high = on, medium = medium); the plain toggle selects the
+        // declared default when thinking is on.
+        if case .modeKwargs(let levels, let defaultLevel, let kwargs)? =
+            DeclaredReasoningEffort.control(forModelId: modelName)
+        {
+            let level: String?
+            if disableThinking == true || directRailReasoningEffort {
+                level = "none"
+            } else if let requested = normalizedReasoningEffort, hasPositiveReasoningEffort {
+                level = DeclaredReasoningEffort.mode(
+                    forNativeEffort: requested,
+                    control: .modeKwargs(levels, defaultLevel: defaultLevel, kwargs: kwargs))
+                    ?? DeclaredReasoningEffort.snapped(
+                        requested, ontoLevels: levels, defaultLevel: defaultLevel)
+            } else {
+                level = defaultLevel ?? levels.last
+            }
+            if let level, let declared = kwargs[level] {
+                for (key, value) in declared { context[key] = value.sendable }
+            } else if level == "none" {
+                context["enable_thinking"] = false
+            }
+            return context
+        }
+
+        // V4.1 from the bundle's `model_type` (as prompt rendering decides), so a
+        // renamed V4.1 bundle still gets V4.1 controls; the name is the fallback.
+        let isDSV41 = DSV41ModelDetection.isDSV41(modelId: modelName)
+        if DSV4ReasoningProfile.matches(modelId: modelName) || isDSV41 {
             guard normalizedReasoningEffort != nil || disableThinking != nil else {
                 return context
             }
+            // DeepSeek-V4.1: an explicit thinking-off request selects the chat rail
+            // even when an effort is also present (a profile default or a stale
+            // option must not reopen thinking). DSV4-0731 keeps effort precedence.
+            if disableThinking == true, isDSV41 {
+                context["enable_thinking"] = false
+                return context
+            }
             if let normalizedReasoningEffort {
-                if let effort = DSV4ReasoningProfile.normalizedEffort(normalizedReasoningEffort) {
+                // V4.1 accepts the full low/medium/high/xhigh/max ladder; 0731 only low/high/max.
+                let effort =
+                    isDSV41
+                    ? DSV41ReasoningProfile.normalizedEffort(normalizedReasoningEffort)
+                    : DSV4ReasoningProfile.normalizedEffort(normalizedReasoningEffort)
+                if let effort {
                     switch effort {
-                    case "low", "high", "max":
+                    case "instruct":
+                        context["enable_thinking"] = false
+                    default:
                         context["enable_thinking"] = true
                         context["reasoning_effort"] = effort
-                    default:
-                        context["enable_thinking"] = false
                     }
                 } else {
                     // Preserve invalid explicit values so vmlx's DSV4 policy
@@ -1354,13 +1582,7 @@ struct MLXBatchAdapter {
     }
 
     private static func isDirectRailReasoningEffort(_ value: String?) -> Bool {
-        guard let value else { return false }
-        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
-        case "instruct", "chat", "none", "no_think", "nothink", "off", "disabled", "false":
-            return true
-        default:
-            return false
-        }
+        DeclaredReasoningEffort.isOffEffort(value)
     }
 
     /// Compiled B=1 decode eligibility. Architecture-driven when the REAL
@@ -1447,7 +1669,7 @@ struct MLXBatchAdapter {
             "==GEN GENERATE-ENTER model=\(modelName) maxBatch=\(maxBatchSize)"
         )
         let soloLease: SoloGenerationGate.Lease?
-        if maxBatchSize == 1 {
+        if Self.requiresSoloLease(maxBatchSize: maxBatchSize, draftStrategy: draftStrategy) {
             soloLease = await Registry.shared.acquireSoloLease(for: modelName)
         } else {
             soloLease = nil
@@ -1570,7 +1792,7 @@ struct MLXBatchAdapter {
         // shape (hybrid companion slots deny compile) rather than only the
         // name matcher; also reused for the KV-mode resolution below.
         let cacheTopology = await container.cacheTopologySnapshot()
-        let effective = Self.effectiveGenerationSettings(
+        var effective = Self.effectiveGenerationSettings(
             modelName: modelName,
             generation: generation,
             runtimeDefaults: runtime.generation,
@@ -1580,13 +1802,21 @@ struct MLXBatchAdapter {
             nativeMTPFallbackReason: nativeMTPFallbackReason,
             nativeMTPRequestFallback: nativeMTPRequestFallback,
             cacheTopology: cacheTopology,
+            thinkingEnabled: Self.thinkingEnabledForSampling(
+                generation: generation,
+                modelName: modelName,
+                modelDefaults: modelDefaults,
+                usesChatTemplate: buildRawPrompt == nil
+            ),
             stage: "submitted_to_batch_engine"
         )
         do {
-            try AdmissionPositionLimit.validate(
+            effective.maxTokens = try AdmissionPositionLimit.resolveOutputTokens(
                 promptTokens: prepared.promptTokens.count,
                 outputTokens: effective.maxTokens,
-                limit: generation.admissionPositionLimit
+                limit: generation.admissionPositionLimit,
+                isExplicit: (generation.maxTokensExplicit && !generation.admissionOutputTokensAreImplicit)
+                    || runtime.generation.maxTokens != nil
             )
         } catch {
             if let soloLease { await soloLease.release() }
@@ -1604,18 +1834,12 @@ struct MLXBatchAdapter {
             topP: effective.topP,
             topK: effective.topK,
             minP: effective.minP,
+            suppressTokens: effective.modelDefaults.suppressTokens ?? [],
             repetitionPenalty: effective.repetitionPenalty,
-            // Per-request wins, then the bundle's shipped default — the same
-            // order the other sampling fields use. Before this, a bundle
-            // declaring `presence_penalty` had it adopted by vmlx's
-            // `GenerateParameters(generationConfig:fallback:)` and dropped here,
-            // because `LocalGenerationDefaults` (which osaurus uses instead of
-            // that initializer) did not read the key at all.
-            //
-            // A declared `0.0` stays inert: `makeGenerateParameters` treats 0 as
-            // "unset" per the OpenAI default.
-            presencePenalty: generation.presencePenalty ?? modelDefaults.presencePenalty,
-            frequencyPenalty: generation.frequencyPenalty ?? modelDefaults.frequencyPenalty,
+            // Use the same resolved mode and request precedence as the other
+            // sampler fields; never re-read the unselected bundle snapshot.
+            presencePenalty: effective.presencePenalty,
+            frequencyPenalty: effective.frequencyPenalty,
             randomSeed: generation.seed,
             stopSequences: stopSequences,
             draftStrategy: effectiveDraftStrategy,
@@ -1624,9 +1848,11 @@ struct MLXBatchAdapter {
             // 4× spread was measured between a small dense model and a 35B
             // MoE on the same machine), so a per-model measured value from
             // `osaurus bench --tune-prefill` beats the server-wide setting;
-            // the setting remains the fallback, then vmlx's default.
+            // the setting remains the fallback, then the architecture's own
+            // measured recommendation, then vmlx's default.
             prefillStepSize: ModelPrefillTuningStore.tunedStepSize(for: modelName)
-                ?? runtime.concurrency.prefillStepSize,
+                ?? runtime.concurrency.prefillStepSize
+                ?? container.recommendedPrefillStepSize,
             modelName: modelName
         )
         mlxParams.nativeMTPDepthPolicy = Self.nativeMTPDepthPolicy(runtime.mtp)
@@ -1709,7 +1935,7 @@ struct MLXBatchAdapter {
                     + "tokenizedPrompt=\(prepared.promptTokens.count) "
                     + "lcpVsPrev=\(lcp)/\(prevCount) "
                     + "toolsInSpec=\(toolsCount) toolChoice=\(String(describing: toolChoice)) "
-                    + "lastMsgRole=\(lastRole) \(cacheStr)"
+                    + "lastMsgRole=\(lastRole) prefillStep=\(mlxParams.prefillStepSize) \(cacheStr)"
             )
         }
 
@@ -1744,6 +1970,7 @@ struct MLXBatchAdapter {
             if let soloLease { await soloLease.release() }
             throw error
         }
+        mlxParams.jsonSchema = generation.jsonSchema
         let upstream = await engine.generate(
             input: prepared.input,
             parameters: mlxParams
@@ -1858,7 +2085,7 @@ struct MLXBatchAdapter {
         }
 
         batchAdapterLog.info(
-            "submit: model=\(modelName, privacy: .public) promptTokens=\(prepared.promptTokens.count, privacy: .public) temperature=\(effective.temperature, privacy: .public) topP=\(effective.topP, privacy: .public) topK=\(effective.topK, privacy: .public) minP=\(effective.minP, privacy: .public) maxTokens=\(effective.maxTokens, privacy: .public) draftStrategy=\(effectiveDraftStrategy?.kindName ?? "none", privacy: .public) nativeMTPFallback=\(nativeMTPFallbackReason ?? "none", privacy: .public) compiledBatchDecode=\(effective.compiledBatchDecode, privacy: .public)"
+            "submit: model=\(modelName, privacy: .public) promptTokens=\(prepared.promptTokens.count, privacy: .public) temperature=\(effective.temperature, privacy: .public) topP=\(effective.topP, privacy: .public) topK=\(effective.topK, privacy: .public) minP=\(effective.minP, privacy: .public) maxTokens=\(effective.maxTokens, privacy: .public) draftStrategy=\(effectiveDraftStrategy?.kindName ?? "none", privacy: .public) nativeMTPFallback=\(nativeMTPFallbackReason ?? "none", privacy: .public) compiledBatchDecodeRequested=\(effective.compiledBatchDecode, privacy: .public)"
         )
 
         return PreparedStream(
@@ -2187,6 +2414,20 @@ struct MLXBatchAdapter {
         }
     }
 
+    /// Preserve typed request refusals for HTTP and streaming error mapping.
+    /// Other preparation failures retain their existing diagnostic wrapper.
+    static func templatePreparationError(_ error: Error) -> Error {
+        if error is K2HorizonTemplateContract.ContractError { return error }
+        let detail =
+            (error as? LocalizedError)?.errorDescription
+            ?? String(describing: error)
+        return NSError(
+            domain: "MLXBatchAdapter",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "Chat template error: \(detail)"]
+        )
+    }
+
     private static func prepareInput(
         modelName: String,
         container: ModelContainer,
@@ -2198,6 +2439,7 @@ struct MLXBatchAdapter {
         cacheStableSystemPrefix: String?,
         trace: TTFTTrace?
     ) async throws -> PreparedInput {
+        try DeclaredReasoningEffort.validateModeRequest(modelId: modelName, options: generation.modelOptions)
         // Heap-allocated outbox so the throwing closure can hand a value back
         // across the actor boundary.
         final class OutBox: @unchecked Sendable {
@@ -2316,14 +2558,7 @@ struct MLXBatchAdapter {
                         }
                     }
                 } catch {
-                    let detail =
-                        (error as? LocalizedError)?.errorDescription
-                        ?? String(describing: error)
-                    throw NSError(
-                        domain: "MLXBatchAdapter",
-                        code: 1,
-                        userInfo: [NSLocalizedDescriptionKey: "Chat template error: \(detail)"]
-                    )
+                    throw Self.templatePreparationError(error)
                 }
                 box.processorDoneAt = CFAbsoluteTimeGetCurrent()
                 trace?.mark("batch_tokenization_done")
@@ -2355,6 +2590,16 @@ struct MLXBatchAdapter {
                 )
             }
 
+            if let schema = generation.jsonSchema {
+                var schemaParameters = MLXLMCommon.GenerateParameters()
+                schemaParameters.jsonSchema = schema
+                do {
+                    try MLXLMCommon.validateStructuredOutputRequest(
+                        input: lmInput, parameters: schemaParameters, context: context)
+                } catch {
+                    throw ChatEngine.EngineError(kind: .invalidStructuredOutput(error.localizedDescription))
+                }
+            }
             box.result = PreparedInput(input: lmInput, promptTokens: tokens)
         }
 
@@ -2391,6 +2636,7 @@ struct MLXBatchAdapter {
             guard
                 key == "enable_thinking" || key == "reasoning_effort" || key == "tool_choice"
                     || key == "tool_choice_name" || key == "preserve_thinking"
+                    || key == "medium_effort"
             else {
                 return nil
             }

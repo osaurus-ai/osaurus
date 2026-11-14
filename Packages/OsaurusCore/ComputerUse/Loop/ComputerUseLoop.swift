@@ -167,6 +167,11 @@ public struct AgentStepInput: Sendable {
 public typealias AgentStepProvider =
     @Sendable (_ input: AgentStepInput) async throws -> ModelActionCall?
 
+/// Image-processing dependency for cloud attachment, like the injected driver
+/// and model-step provider. A successful value must come from FrameScrubber.
+public typealias CloudFrameScrubOperation =
+    @Sendable (CUImage, ScrubMode) async throws -> ScrubbedFrame
+
 public enum ComputerUseLoop {
 
     /// Upper bound on a single `wait` so a model can't park the run against the
@@ -223,6 +228,14 @@ public enum ComputerUseLoop {
         sessionId: String,
         enableThinking: Bool? = nil,
         reasoningEffort: String? = nil,
+        scrubFrame: @escaping CloudFrameScrubOperation = { image, mode in
+            try await FrameScrubber.scrub(
+                image,
+                mode: mode,
+                honorUserRules: true,
+                useModelDetection: mode == .pii
+            )
+        },
         nextAction: AgentStepProvider? = nil
     ) async -> ComputerUseRunResult {
         // The wall clock measures the RUN, not the user. Time spent inside a
@@ -250,8 +263,15 @@ public enum ComputerUseLoop {
         // Auto-scrub: the user is watching the app being driven, not the
         // chat window, so a Privacy Filter review sheet per step would go
         // unanswered until the step timeout failed the run.
+        // Residency follows the run that invoked the tool (chat / HTTP /
+        // channel / schedule…); Insights shows every helper step as Agent.
         let engine: ChatEngine? =
-            nextAction == nil ? ChatEngine(source: .chatUI, privacyReviewMode: .autoScrub) : nil
+            nextAction == nil
+            ? ChatEngine(
+                source: ChatExecutionContext.currentSessionSource?.inferenceSource ?? .chatUI,
+                activitySource: .agent,
+                privacyReviewMode: .autoScrub
+            ) : nil
 
         // Capture availability once: it gates the escalation ladder (som/vision
         // need Screen Recording) for the whole run.
@@ -327,18 +347,23 @@ public enum ComputerUseLoop {
         )
         appendAppGuidance(app: currentApp, into: &messages, hinted: &hintedApps)
         if let frame = initialFrame {
-            await attachFrame(
-                image: frame,
-                vision: vision,
-                consent: &runConsent,
-                requestConsent: timedCloudVisionConsent,
-                availability: availability,
-                messages: &messages,
-                imageTokensInContext: &imageTokensInContext,
-                metrics: &metrics,
-                feed: feed,
-                step: 0
-            )
+            do {
+                try await attachFrame(
+                    image: frame,
+                    vision: vision,
+                    consent: &runConsent,
+                    requestConsent: timedCloudVisionConsent,
+                    availability: availability,
+                    messages: &messages,
+                    imageTokensInContext: &imageTokensInContext,
+                    metrics: &metrics,
+                    feed: feed,
+                    step: 0,
+                    scrubFrame: scrubFrame
+                )
+            } catch {
+                return frameScrubFailureResult(error, step: 0, completedSteps: 0, metrics: metrics, feed: feed)
+            }
         }
 
         var step = 0
@@ -410,6 +435,7 @@ public enum ComputerUseLoop {
             // repeatedly without re-deriving the (fixed) iteration messages.
             let stepMessages = input.messages
             let stepIndex = step
+            let responseAttempt = nextAction == nil ? DesktopResponsesAttempt() : nil
             let produce: @Sendable () async throws -> ModelStepResult = {
                 if let nextAction {
                     let stepInput = AgentStepInput(
@@ -424,20 +450,26 @@ public enum ComputerUseLoop {
                         sessionId: sessionId,
                         messages: stepMessages,
                         enableThinking: enableThinking,
-                        reasoningEffort: reasoningEffort
+                        reasoningEffort: reasoningEffort,
+                        attempt: responseAttempt
                     )
                 }
             }
             let parsed: ModelActionCall?
+            var completedAssistant: ChatMessage?
             do {
                 let stepResult = try await runModelStep(
                     produce,
                     timeout: limits.modelStepTimeoutSeconds,
                     maxRetries: limits.maxInferenceRetries,
                     feed: feed,
-                    step: step
+                    step: step,
+                    shouldRetry: { error in
+                        responseAttempt?.permitsRetry(error, isTimeout: error is ModelStepTimeout) ?? true
+                    }
                 )
-                metrics.modelTokens += stepResult.tokens
+                if let tokens = stepResult.tokens { metrics.modelTokens += tokens }
+                completedAssistant = stepResult.assistantMessage
                 metrics.recordDecodeTokensPerSecond(stepResult.tokensPerSecond)
                 parsed = stepResult.call
             } catch where isMissingRequiredAgentActionError(error) {
@@ -471,7 +503,7 @@ public enum ComputerUseLoop {
                 continue
             }
             let callId = call.id
-            let assistantMessage = ChatMessage(
+            let assistantMessage = completedAssistant ?? ChatMessage(
                 role: "assistant",
                 content: nil,
                 tool_calls: [
@@ -914,18 +946,26 @@ public enum ComputerUseLoop {
             // Attach any escalated-capture frame as a trailing user turn (subject to
             // the VisionContext), again after the tool result for the same reason.
             if let frame = pendingFrameImage {
-                await attachFrame(
-                    image: frame,
-                    vision: vision,
-                    consent: &runConsent,
-                    requestConsent: timedCloudVisionConsent,
-                    availability: availability,
-                    messages: &messages,
-                    imageTokensInContext: &imageTokensInContext,
-                    metrics: &metrics,
-                    feed: feed,
-                    step: step + 1
-                )
+                do {
+                    try await attachFrame(
+                        image: frame,
+                        vision: vision,
+                        consent: &runConsent,
+                        requestConsent: timedCloudVisionConsent,
+                        availability: availability,
+                        messages: &messages,
+                        imageTokensInContext: &imageTokensInContext,
+                        metrics: &metrics,
+                        feed: feed,
+                        step: step + 1,
+                        scrubFrame: scrubFrame
+                    )
+                } catch {
+                    return frameScrubFailureResult(
+                        error, step: step + 1, completedSteps: step + (advancedStep ? 1 : 0),
+                        metrics: metrics, feed: feed
+                    )
+                }
             }
             if advancedStep { step += 1 }
         }
@@ -1622,73 +1662,53 @@ public enum ComputerUseLoop {
 
     // MARK: - Model step
 
-    /// One model step's result: the proposed call (nil when the model emitted
-    /// no usable tool call) plus the token usage that step cost. `Sendable` so
-    /// it can cross the timeout/retry task group; `tokens` is `0` for the
-    /// scripted seam, which makes no model call.
+    /// Sparse model usage and the exact assistant snapshot. Scripted providers
+    /// explicitly report zero tokens because they make no model call.
     struct ModelStepResult: Sendable {
         var call: ModelActionCall?
-        var tokens: Int = 0
-        /// Decode speed (tok/s) for this model step, read from the response
-        /// `usage.tokens_per_second`. `nil` for the scripted seam (no model
-        /// call) and for providers that don't report a rate. The loop folds
-        /// these into `metrics` so a model-driven CU run records real decode
-        /// telemetry (eval harness + diagnostics), not just a token count.
-        var tokensPerSecond: Double?
+        var tokens: Int? = nil
+        var tokensPerSecond: Double? = nil
+        var assistantMessage: ChatMessage? = nil
+        var inputTokenCount: Int? = nil
+        var outputTokenCount: Int? = nil
     }
 
-    /// One forced agent_action call. Returns the first matching tool call (or
-    /// nil when the model emitted no usable tool call) and the step's token
-    /// usage so the run can accumulate a real token total.
-    private static func modelStep(
-        engine: ChatEngine,
+    static func modelStep(
+        engine: any ResponsesEngineProtocol,
         modelId: String,
         sessionId: String,
         messages: [ChatMessage],
         enableThinking: Bool?,
-        reasoningEffort: String?
+        reasoningEffort: String?,
+        attempt: DesktopResponsesAttempt? = nil
     ) async throws -> ModelStepResult {
-        var req = ChatCompletionRequest(
-            model: modelId,
-            messages: messages,
-            temperature: nil,
-            max_tokens: nil,
-            stream: false,
-            top_p: nil,
-            frequency_penalty: nil,
-            presence_penalty: nil,
-            stop: nil,
-            n: nil,
-            tools: [AgentAction.toolSpec],
-            tool_choice: AgentAction.forcedToolChoice,
-            session_id: sessionId
-        )
-        req.samplingParametersAreImplicit = true
-        req.isAgentRequest = true
-        req.enable_thinking = enableThinking
-        req.reasoning_effort = reasoningEffort
+        var request = ResponsesInferenceRequest(model: modelId, input: messages)
+        request.tools = [AgentAction.toolSpec]
+        request.toolChoice = AgentAction.forcedToolChoice
+        request.sessionID = sessionId
+        request.context.samplingParametersAreImplicit = true
+        request.context.isAgentRequest = true
+        request.generation.enableThinking = enableThinking
+        request.generation.reasoningEffort = reasoningEffort
         let generateStarted = Date()
-        let response = try await engine.completeChat(request: req)
+        let response = try await DesktopResponsesModelStep.completeResponse(
+            engine: engine, request: request, attempt: attempt
+        )
         ComputerUseTraceLog.record(
-            request: req,
-            response: response,
+            request: request, response: response,
             elapsedSeconds: Date().timeIntervalSince(generateStarted)
         )
-        let tokens = response.usage.total_tokens
-        let tps = response.usage.tokens_per_second
-        guard let message = response.choices.first?.message else {
-            return ModelStepResult(call: nil, tokens: tokens, tokensPerSecond: tps)
+        let call = try DesktopResponsesModelStep.actionCall(
+            from: response, expectedTool: AgentAction.toolName, required: true
+        )
+        let total = response.inputTokenCount.flatMap { input in
+            response.completion.tokenCount.map { input + $0 }
         }
-        if let calls = message.tool_calls,
-            let call = calls.first(where: { $0.function.name == AgentAction.toolName }) ?? calls.first
-        {
-            return ModelStepResult(
-                call: ModelActionCall(id: call.id, arguments: call.function.arguments),
-                tokens: tokens,
-                tokensPerSecond: tps
-            )
-        }
-        return ModelStepResult(call: nil, tokens: tokens, tokensPerSecond: tps)
+        return ModelStepResult(
+            call: call, tokens: total, tokensPerSecond: response.completion.tokensPerSecond,
+            assistantMessage: try response.completedAssistantInput(),
+            inputTokenCount: response.inputTokenCount, outputTokenCount: response.completion.tokenCount
+        )
     }
 
     /// Project the internal conversation into the public, redacted turns an
@@ -1714,16 +1734,16 @@ public enum ComputerUseLoop {
         return nsError.domain == "OsaurusToolChoice" && nsError.code == 422
     }
 
-    /// Run one model step with a per-step timeout and bounded retries. A throw
-    /// or timeout is retried (with a short backoff) up to `maxRetries` times
-    /// before propagating, so a single transient inference failure or hang
-    /// doesn't sink the whole run.
-    private static func runModelStep<T: Sendable>(
+    /// Run one step with its explicit deadline/retry budget. Production retries
+    /// require a transient transport failure before any typed output; scripted
+    /// providers retain their explicit fixture retry policy.
+    static func runModelStep<T: Sendable>(
         _ produce: @escaping @Sendable () async throws -> T,
         timeout: TimeInterval,
         maxRetries: Int,
         feed: SubagentFeed,
-        step: Int
+        step: Int,
+        shouldRetry: (@Sendable (Error) -> Bool)? = nil
     ) async throws -> T {
         var attempt = 0
         while true {
@@ -1735,7 +1755,7 @@ public enum ComputerUseLoop {
                 if isMissingRequiredAgentActionError(error) {
                     throw error
                 }
-                if attempt >= maxRetries { throw error }
+                if attempt >= maxRetries || shouldRetry?(error) == false { throw error }
                 attempt += 1
                 feed.emit(
                     SubagentActivityEvent(
@@ -1845,8 +1865,9 @@ public enum ComputerUseLoop {
         imageTokensInContext: inout Int,
         metrics: inout ComputerUseRunMetrics,
         feed: SubagentFeed,
-        step: Int
-    ) async {
+        step: Int,
+        scrubFrame: CloudFrameScrubOperation
+    ) async throws {
         let effective = vision.withConsent(consent.granted)
         switch VisionAttachment.decide(image: image, context: effective, availability: availability) {
         case .none:
@@ -1854,7 +1875,7 @@ public enum ComputerUseLoop {
             // cloud-vision consent (remote image model + Screen Recording on),
             // offer a just-in-time prompt once per run rather than silently
             // dropping to AX-only.
-            await offerJustInTimeCloudConsent(
+            try await offerJustInTimeCloudConsent(
                 image: image,
                 vision: vision,
                 consent: &consent,
@@ -1864,7 +1885,8 @@ public enum ComputerUseLoop {
                 imageTokensInContext: &imageTokensInContext,
                 metrics: &metrics,
                 feed: feed,
-                step: step
+                step: step,
+                scrubFrame: scrubFrame
             )
         case .localFrame(let img):
             appendImageMessage(
@@ -1884,7 +1906,7 @@ public enum ComputerUseLoop {
                 )
             )
         case .needsScrubForCloud(let img):
-            await attachScrubbedForCloud(
+            try await attachScrubbedForCloud(
                 img,
                 vision: vision,
                 availability: availability,
@@ -1892,7 +1914,8 @@ public enum ComputerUseLoop {
                 imageTokensInContext: &imageTokensInContext,
                 metrics: &metrics,
                 feed: feed,
-                step: step
+                step: step,
+                scrubFrame: scrubFrame
             )
         }
     }
@@ -1912,8 +1935,9 @@ public enum ComputerUseLoop {
         imageTokensInContext: inout Int,
         metrics: inout ComputerUseRunMetrics,
         feed: SubagentFeed,
-        step: Int
-    ) async {
+        step: Int,
+        scrubFrame: CloudFrameScrubOperation
+    ) async throws {
         let effective = vision.withConsent(consent.granted)
         guard
             !consent.asked,
@@ -1957,7 +1981,7 @@ public enum ComputerUseLoop {
                 availability: availability
             )
         else { return }
-        await attachScrubbedForCloud(
+        try await attachScrubbedForCloud(
             img,
             vision: vision,
             availability: availability,
@@ -1965,7 +1989,8 @@ public enum ComputerUseLoop {
             imageTokensInContext: &imageTokensInContext,
             metrics: &metrics,
             feed: feed,
-            step: step
+            step: step,
+            scrubFrame: scrubFrame
         )
     }
 
@@ -1973,7 +1998,7 @@ public enum ComputerUseLoop {
     /// consented cloud route. The route is the only way to reach `.cloudVision`
     /// and only accepts a `ScrubbedFrame`, so a raw or unconsented frame can
     /// never be attached here. Only called once consent is effectively granted.
-    private static func attachScrubbedForCloud(
+    static func attachScrubbedForCloud(
         _ img: CUImage,
         vision: VisionContext,
         availability: MacDriverAvailability,
@@ -1981,16 +2006,12 @@ public enum ComputerUseLoop {
         imageTokensInContext: inout Int,
         metrics: inout ComputerUseRunMetrics,
         feed: SubagentFeed,
-        step: Int
-    ) async {
+        step: Int,
+        scrubFrame: CloudFrameScrubOperation
+    ) async throws {
         let mode = vision.cloudScrubMode
+        let frame = try await scrubFrame(img, mode)
         guard
-            let frame = await FrameScrubber.scrub(
-                img,
-                mode: mode,
-                honorUserRules: true,
-                useModelDetection: mode == .pii
-            ),
             let route = CaptureRouter.cloudRoute(
                 scrubbed: frame,
                 consentGranted: true,
@@ -2013,6 +2034,42 @@ public enum ComputerUseLoop {
                 detail: cloudFrameFeedDetail(mode: mode, masked: frame.report.maskedRegions)
             )
         )
+    }
+
+    private static func frameScrubFailureResult(
+        _ error: Error,
+        step: Int,
+        completedSteps: Int,
+        metrics: ComputerUseRunMetrics,
+        feed: SubagentFeed
+    ) -> ComputerUseRunResult {
+        var metrics = metrics
+        metrics.steps = completedSteps
+        let outcome: RunOutcome
+        if error is CancellationError {
+            outcome = .interrupted
+        } else {
+            let reason = error.localizedDescription
+            feed.emit(
+                SubagentActivityEvent(
+                    step: step,
+                    kind: .error,
+                    title: "Screenshot could not be redacted",
+                    detail: reason
+                )
+            )
+            outcome = .failed(reason: reason)
+        }
+        feed.emit(
+            SubagentActivityEvent(
+                step: step,
+                kind: .outcome,
+                title: outcome.summary,
+                success: outcome.isSuccess
+            )
+        )
+        feed.finish(success: outcome.isSuccess, summary: outcome.summary)
+        return ComputerUseRunResult(outcome: outcome, metrics: metrics)
     }
 
     /// The note attached to a cloud-bound screenshot, honest about what the

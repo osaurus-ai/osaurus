@@ -244,6 +244,10 @@ struct RedactFileTool: OsaurusTool, PermissionedTool {
     var defaultPermissionPolicy: ToolPermissionPolicy { .auto }
     var mutatesHostFolder: Bool { true }
 
+    func declaredMutationTargets(argumentsJSON: String) -> [String]? {
+        FileChangeCapture.declaredPaths(argumentsJSON, keys: ["path"])
+    }
+
     /// Default placeholder per category, aligned with the wording users
     /// naturally ask for ("replace names with [REDACTED NAME]").
     static func defaultPlaceholder(for category: EntityCategory) -> String {
@@ -501,18 +505,11 @@ struct RedactFileTool: OsaurusTool, PermissionedTool {
             return ToolEnvelope.success(tool: name, result: preview.payload, warnings: warnings)
         }
 
+        try await FolderToolHelpers.confirmWorkflowReplace(fileURL, path: relativePath)
         try content.write(to: fileURL, atomically: true, encoding: .utf8)
-        if let sid = ChatExecutionContext.currentSessionId {
-            let operation = FileOperation(
-                type: .fileEdit,
-                path: relativePath,
-                previousContent: originalContent,
-                sessionId: sid,
-                batchId: ChatExecutionContext.currentBatchId,
-                rootPath: rootPath.standardizedFileURL.path
-            )
-            await FileOperationLog.shared.log(operation)
-            preview.payload["operation_id"] = operation.id.uuidString
+        await FolderToolHelpers.recordWorkflowHostWrite(fileURL, replaced: true)
+        if let setId = ChatExecutionContext.currentChangeSetId {
+            preview.payload["operation_id"] = setId.uuidString
         }
         preview.payload["written"] = true
         return ToolEnvelope.success(tool: name, result: preview.payload, warnings: warnings)
@@ -595,8 +592,12 @@ enum RedactionFileAccess {
         guard let rootPath = FolderToolHelpers.resolveRoot(fixed: fixedRoot) else {
             return .failureEnvelope(FolderToolHelpers.noActiveFolderEnvelope(tool: tool))
         }
-        guard let fileURL = try? FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath)
-        else {
+        let fileURL: URL
+        do {
+            fileURL = try FolderToolHelpers.resolvePath(relativePath, rootPath: rootPath, intent: .write)
+        } catch let error as FolderToolError where error.isWorkflowScope {
+            return .failureEnvelope(ToolEnvelope.fromError(error, tool: tool))
+        } catch {
             return .failureEnvelope(
                 ToolEnvelope.failure(
                     kind: .invalidArgs,

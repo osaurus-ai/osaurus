@@ -26,7 +26,7 @@ public struct MCPBearerChallenge: Sendable, Equatable {
     public let error: String?
     /// `error_description` parameter.
     public let errorDescription: String?
-    /// `resource_metadata` parameter from the MCP `2025-06-18` spec — the URL
+    /// `resource_metadata` parameter from the MCP authorization spec — the URL
     /// of the protected-resource metadata document. When present, the client
     /// should fetch it directly instead of probing `/.well-known/...`.
     public let resourceMetadataURL: URL?

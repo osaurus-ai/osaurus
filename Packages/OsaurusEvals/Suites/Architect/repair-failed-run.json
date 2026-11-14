@@ -1,0 +1,79 @@
+{
+  "id": "architect.repair-failed-run",
+  "domain": "architect",
+  "label": "architect \u2022 Fix with the Architect: read the failed run, fix the step, re-test from it",
+  "query": "",
+  "notes": "Hard case. The harness installs \"Order Status\", whose lookup calls the old /v1/order/<id> path, runs it once so it fails with a 404 that names the new path, and hands the failed run to the chat as Fix with the Architect does (the repair note plus the person's message). Pins that the Architect reads the run (`workflow_runs`), re-tests with `workflow_test` `from_run`, keeps the workflow it is fixing, and that the fixed workflow returns the order's status.",
+  "fixtures": {},
+  "expect": {
+    "architect": {
+      "maxIterations": 25,
+      "fixtureAPI": {
+        "routes": [
+          {
+            "path": "/v1/order/*",
+            "status": 404,
+            "body": { "error": "Not found. This endpoint moved to GET /v1/orders/{id}." }
+          },
+          {
+            "path": "/v1/orders/*",
+            "byKey": {
+              "A1": { "id": "A1", "status": "shipped", "carrier": "UPS" },
+              "B7": { "id": "B7", "status": "processing", "carrier": null }
+            }
+          }
+        ]
+      },
+      "seed": {
+        "name": "Order Status",
+        "failingInput": { "order_id": "A1" },
+        "definition": {
+          "edges": [],
+          "examples": [],
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "order_id": { "type": "string", "title": "Order ID", "description": "The order to look up, like A1." }
+            },
+            "required": ["order_id"],
+            "x-order": ["order_id"]
+          },
+          "model_slots": [],
+          "nodes": [
+            {
+              "id": "lookup",
+              "kind": "http",
+              "name": "Look Up Order",
+              "http": { "method": "GET", "url": "{{fixture.base_url}}/v1/order/{{input.order_id}}" },
+              "output_schema": {},
+              "timeout": 30,
+              "retry": { "max_attempts": 1, "backoff_seconds": 1 }
+            }
+          ],
+          "output": { "status": "{{nodes.lookup.output.body.status}}" },
+          "output_schema": {
+            "type": "object",
+            "properties": { "status": { "type": "string" } },
+            "required": ["status"]
+          },
+          "requirement_notes": {},
+          "secrets": []
+        }
+      },
+      "requiredCalls": ["workflow_runs", "workflow_test.from_run"],
+      "structure": {
+        "editsSeed": true,
+        "keepsNodes": ["lookup"]
+      },
+      "fixtureRequests": { "/v1/orders/*": 1 },
+      "testOutputValues": { "status": ["shipped"] },
+      "postRuns": [
+        { "input": { "order_id": "B7" }, "outputValues": { "status": ["processing"] } }
+      ],
+      "requireTestRun": true,
+      "requireProposeSave": true,
+      "maxToolCalls": 15,
+      "maxPromptTokens": 300000
+    }
+  }
+}

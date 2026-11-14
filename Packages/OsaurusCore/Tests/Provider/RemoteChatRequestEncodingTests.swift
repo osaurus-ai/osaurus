@@ -20,6 +20,34 @@ import Testing
 @Suite("RemoteChatRequest encoding")
 struct RemoteChatRequestEncodingTests {
 
+    @Test func wireProbeCapturesSelectedProtocolEndpointAtRequestConstruction() async throws {
+        let rows: [(RemoteProviderType, String)] = [
+            (.openResponses, "/v1/responses"),
+            (.openaiLegacy, "/v1/chat/completions"),
+            (.anthropic, "/v1/messages"),
+            (.gemini, "/v1/models/fixture-model:streamGenerateContent"),
+        ]
+        for (type, path) in rows {
+            let service = RemoteProviderService(
+                provider: RemoteProvider(
+                    name: "wire-fixture", host: "example.test", providerProtocol: .https,
+                    port: nil, basePath: "/v1", authType: .none, providerType: type
+                ),
+                models: ["fixture-model"], resolvedHeaders: [:]
+            )
+            let probe = WireTransportProbe()
+            let built = try await WireTransportProbe.$current.withValue(probe) {
+                try await service.buildURLRequest(for: Self.makeRequest(
+                    model: "fixture-model", maxTokens: nil, stream: true
+                ))
+            }
+            #expect(built.url?.path == path)
+            #expect(probe.requestEndpointURL?.path == path)
+            #expect(probe.requestEndpointURL?.query == nil)
+            #expect(probe.snapshot().request == built.httpBody)
+        }
+    }
+
     @Test func encode_nonReasoningModel_usesMaxTokens() throws {
         let request = Self.makeRequest(model: "mistral-large-latest", maxTokens: 1024)
         let payload = try Self.encodeAsDictionary(request)
@@ -186,6 +214,36 @@ struct RemoteChatRequestEncodingTests {
         #expect(config?["responseMimeType"] == nil)
     }
 
+    /// The picker's effort reaches native Gemini as `thinkingLevel` on
+    /// Gemini 3 and as a `thinkingBudget` on 2.5 (#3108).
+    @Test func geminiRequest_mapsReasoningEffortIntoThinkingConfig() throws {
+        let level = try Self.encodeAsDictionary(
+            Self.makeRequest(model: "gemini-3.8-flash", maxTokens: nil, reasoningEffort: "high").toGeminiRequest()
+        )
+        let levelThinking = (level["generationConfig"] as? [String: Any])?["thinkingConfig"] as? [String: Any]
+        #expect(levelThinking?["thinkingLevel"] as? String == "high")
+        #expect(levelThinking?["thinkingBudget"] == nil)
+
+        let budget = try Self.encodeAsDictionary(
+            Self.makeRequest(model: "gemini-2.5-flash", maxTokens: nil, reasoningEffort: "low").toGeminiRequest()
+        )
+        let budgetThinking = (budget["generationConfig"] as? [String: Any])?["thinkingConfig"] as? [String: Any]
+        #expect(budgetThinking?["thinkingBudget"] as? Int == 1024)
+        #expect(budgetThinking?["thinkingLevel"] == nil)
+    }
+
+    /// An effort the model does not document (3 Pro has no `medium`) and
+    /// models with no contract send no thinkingConfig at all.
+    @Test func geminiRequest_omitsThinkingConfig_whenEffortUnsupported() throws {
+        for (model, effort) in [("gemini-3-pro-preview", "medium"), ("gemini-2.0-flash", "high"), ("gemini-3.8-flash", nil)] {
+            let payload = try Self.encodeAsDictionary(
+                Self.makeRequest(model: model, maxTokens: 256, reasoningEffort: effort).toGeminiRequest()
+            )
+            let config = payload["generationConfig"] as? [String: Any]
+            #expect(config?["thinkingConfig"] == nil, "\(model) \(effort ?? "nil")")
+        }
+    }
+
     // MARK: - Dropped-media rejection (Anthropic/Gemini wire)
 
     /// Audio and video parts have no Anthropic/Gemini wire mapping and were
@@ -295,6 +353,19 @@ struct RemoteChatRequestEncodingTests {
                 parameters: params
             ) == 16_384
         )
+    }
+
+    @Test func anthropicImplicitMaxTokens_usesTheModelsOwnLimitWhereTheWindowHasRoom() {
+        let cap = { (modelMax: Int?, window: Int?, prompt: Int) in
+            RemoteProviderService.anthropicImplicitMaxTokens(
+                resolved: 16_384, modelMaxTokens: modelMax, contextWindow: window, estimatedPromptTokens: prompt)
+        }
+        #expect(cap(64_000, 200_000, 20_000) == 64_000)
+        #expect(cap(64_000, 200_000, 120_000) == 50_000, "room left in 85% of the window")
+        #expect(cap(64_000, 200_000, 190_000) == 16_384, "never below the chat-wide budget")
+        #expect(cap(8_192, 200_000, 0) == 16_384, "a smaller published limit is not a raise")
+        #expect(cap(nil, 200_000, 0) == 16_384)
+        #expect(cap(64_000, nil, 0) == 16_384, "no window, no way to check the room")
     }
 
     /// Adaptive-thinking Claude generations return HTTP 400 "`temperature` is
@@ -2011,6 +2082,24 @@ struct RemoteChatRequestEncodingTests {
         #expect(!extracted.contains("must be a string"))
     }
 
+    @Test func extractErrorMessage_surfacesOpenRouterUpstreamRaw() {
+        let body = Data(
+            #"{"error":{"message":"Provider returned error","code":400,"metadata":{"raw":"{\"message\":\"tool_choice: type \\\"tool\\\" and \\\"any\\\" are not supported for this model.\"}","provider_name":"Amazon Bedrock"}}}"#.utf8
+        )
+        let extracted = RemoteProviderService.extractErrorMessage(from: body, statusCode: 400)
+        #expect(extracted.contains("Provider returned error"))
+        #expect(extracted.contains("are not supported for this model"))
+        #expect(extracted.contains("(code: 400)"))
+    }
+
+    @Test func extractErrorMessage_plainTextOpenRouterRaw() {
+        let body = Data(
+            #"{"error":{"message":"Provider returned error","metadata":{"raw":"upstream exploded"}}}"#.utf8
+        )
+        let extracted = RemoteProviderService.extractErrorMessage(from: body, statusCode: 502)
+        #expect(extracted == "Provider returned error: upstream exploded")
+    }
+
     @Test func routerWireCompatibleMessages_includesEmptyStringForAssistantToolHistory() throws {
         let assistant = ChatMessage(
             role: "assistant",
@@ -3553,11 +3642,15 @@ struct RemoteChatRequestEncodingTests {
     @Test func dsv4RemoteEffort_stripsDirectRailAliasesForAllRemoteModels() throws {
         // Direct/off aliases are local runtime controls. Public remote schemas
         // reject them as `reasoning_effort` values, even when the model is not
-        // a local DSV4 bundle.
-        for effort in ["instruct", "none", "no_think", "off", "disabled", "false"] {
+        // a local DSV4 bundle. (`none` is a real OpenAI effort on GPT-5.1+,
+        // so it is checked against a model that rejects it.)
+        for (model, effort) in [
+            ("gpt-5.5", "instruct"), ("o3", "none"), ("gpt-5.5", "no_think"),
+            ("gpt-5.5", "off"), ("gpt-5.5", "disabled"), ("gpt-5.5", "false"),
+        ] {
             let nonDSV4 = RemoteProviderService.dsv4RemoteEffort(
                 host: "api.openai.com",
-                model: "gpt-5.5",
+                model: model,
                 effort: effort
             )
             #expect(nonDSV4.effort == nil)
@@ -4576,7 +4669,9 @@ struct RemoteChatRequestEncodingTests {
                         assertNonWhitespace(textBlock.text)
                     case .toolResult(let result):
                         assertNonWhitespace(result.content?.plainText ?? "")
-                    case .toolUse, .image:
+                    case .toolUse, .image, .thinking, .redactedThinking:
+                        // Opaque/signed reasoning is not a text/tool-result
+                        // payload. Its dedicated continuity tests own it.
                         break
                     }
                 }

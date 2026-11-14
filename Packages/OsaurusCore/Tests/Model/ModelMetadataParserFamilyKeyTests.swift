@@ -105,4 +105,16 @@ struct ModelMetadataParserFamilyKeyTests {
                 == "MiniMax M2.7"
         )
     }
+
+    @Test func familyDisplayNameIsStableAcrossRepeatedCalls() {
+        // Cached path must return exactly what the first (uncached) call computed.
+        let id = "OsaurusAI/Qwen3.6-35B-A3B-Instruct-4bit-mlx"
+        let first = ModelMetadataParser.familyDisplayName(from: id)
+        #expect(first == "Qwen 3.6 35B")
+        for _ in 0..<50 {
+            #expect(ModelMetadataParser.familyDisplayName(from: id) == first)
+        }
+        #expect(ModelMetadataParser.simpleName(from: "Llama3  8B  Chat  bf16") == "Llama 3 8B")
+        #expect(ModelMetadataParser.simpleName(from: "q4_0") == "q4_0")
+    }
 }

@@ -117,6 +117,7 @@ enum WorkspaceInspectPayload {
             return nil
         }
         let name = AgentTargetResolver.displayName(for: ref)
+        let description = AgentDescriptionPolicy.normalized(agent.description ?? "")
         var row: [String: Any] = [
             "name": name,
             // The spelling that works everywhere: `spawn_agent.agent`,
@@ -130,9 +131,7 @@ enum WorkspaceInspectPayload {
         ]
         if let workspace = AgentTargetResolver.workspaceName(for: ref) { row["workspace"] = workspace }
         if let owner = agent.owner?.friendlyName, !owner.isEmpty { row["owner"] = owner }
-        if let description = agent.description?.trimmingCharacters(in: .whitespacesAndNewlines),
-            !description.isEmpty
-        {
+        if !description.isEmpty {
             row["description"] = description
         }
         if let model = RemoteAgentManager.shared

@@ -69,7 +69,7 @@ struct MCPFeatureGapRemediationTests {
         defer { ToolRegistry.shared.unregister(names: [tool.name]) }
 
         await #expect(throws: (any Error).self) {
-            _ = try await MCPServerManager.executeToolAsExternalMCP(
+            _ = try await ExternalMCPToolPolicy.executeToolAsExternalMCP(
                 name: tool.name,
                 argumentsJSON: "{}"
             )
@@ -83,7 +83,7 @@ struct MCPFeatureGapRemediationTests {
         defer { ToolRegistry.shared.unregister(names: [tool.name]) }
 
         await #expect(throws: (any Error).self) {
-            _ = try await MCPServerManager.executeToolAsExternalMCP(
+            _ = try await ExternalMCPToolPolicy.executeToolAsExternalMCP(
                 name: tool.name,
                 argumentsJSON: #"{"text":"hi"}"#
             )

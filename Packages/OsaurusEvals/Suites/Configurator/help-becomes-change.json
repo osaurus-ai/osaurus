@@ -1,0 +1,29 @@
+{
+  "id": "configurator.help-becomes-change",
+  "domain": "configurator",
+  "label": "configurator • a question that turns into a change is explained, then applied",
+  "query": "How do I turn off the follow-up question suggestions under your answers? Actually, just turn them off for me.",
+  "notes": "Persona: a request that starts as a question and turns into a change is one request, explain then apply. The apply must land in the same handoff.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "action": "apply",
+            "yaml": "follow_up_suggestions"
+          }
+        }
+      ],
+      "rubric": [
+        "Says the follow-up suggestions are now off.",
+        "Does NOT ask the user to confirm first."
+      ],
+      "maxIterations": 8
+    }
+  }
+}

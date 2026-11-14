@@ -176,6 +176,19 @@
         }
 
         @Test
+        func remainingTotalSeconds_overlapsConcurrentSteps() {
+            let journey = ProvisioningJourney(
+                steps: [
+                    ProvisioningStepState(id: .downloadInitFS, label: "i", status: .inProgress, etaSeconds: 12),
+                    ProvisioningStepState(id: .createContainer, label: "c", status: .inProgress, etaSeconds: 30),
+                    ProvisioningStepState(id: .startContainer, label: "s", status: .pending, etaSeconds: 4),
+                ]
+            )
+            // Parallel downloads finish together: the longest one counts once.
+            #expect(journey.remainingTotalSeconds == 34)
+        }
+
+        @Test
         func remainingTotalSeconds_isNil_whenNothingKnown() {
             let journey = ProvisioningJourney(
                 steps: [

@@ -79,9 +79,9 @@ struct SpawnToolTests {
         #expect(webSearch.contains("search_and_extract"))
         #expect(webSearch.contains("read_file"))
 
-        // All capability toggles off → the manual allowlist plus the
-        // unconditional worker baseline (time + `share_artifact`, the
-        // worker's only artifact-delivery path).
+        // All capability toggles off → the manual allowlist plus the worker
+        // baseline (time + `share_artifact`, the worker's only artifact-delivery
+        // path); `calculate` follows the agent's Calculator switch.
         let plain = Set(
             TextSubagentKind.childToolNames(
                 manual: ["read_file"], capabilities: capabilities()
@@ -172,8 +172,8 @@ struct SpawnToolTests {
         // The child IS the target agent (a real chat session with that
         // agent's own tools and folder, inheriting the launcher's folder when
         // it has none); the story is short enough for small models.
-        #expect(description.contains("chat session of that agent"))
-        #expect(description.contains("its own tools and working folder"))
+        #expect(description.contains("Delegate a task to an agent"))
+        #expect(description.contains("using its tools and working folder"))
         #expect(description.contains("inherits yours if it has none"))
         #expect(description.contains("`session_id`"))
         #expect(!description.contains("cancellation-audited"))
@@ -333,6 +333,50 @@ struct SpawnToolTests {
                 elapsed: 1
             ) == nil
         )
+    }
+
+    /// Delegated usage reports the runtime's prefilled prompt (template + tool schemas + history), not the
+    /// message estimator. Final sweep 2026-10-07: a 4-tool child reported 92 prompt tokens for 1,455 prefilled.
+    @Test func childRunnerReportsRuntimePromptTokensOverEstimate() async throws {
+        let result = try await AgentSubagentRunner.run(
+            modelName: "scripted-usage-model",
+            seedMessages: [ChatMessage(role: "user", content: "Answer briefly.")],
+            maxTokens: 16,
+            maxIterations: 1,
+            deadline: Date().addingTimeInterval(10),
+            sessionId: "usage-prompt-tokens-regression",
+            streamProvider: { _ in
+                AsyncThrowingStream { continuation in
+                    continuation.yield(StreamingInputTokenHint.encode(1455))
+                    continuation.yield("Done.")
+                    continuation.yield(StreamingStatsHint.encode(tokenCount: 3, tokensPerSecond: 40))
+                    continuation.finish()
+                }
+            }
+        )
+        #expect(result.usage.promptTokens == 1455)
+        #expect(result.usage.completionTokens == 3)
+        #expect(result.digest == "Done.")
+    }
+
+    /// Without any runtime count the estimator remains the fallback (remote providers that send no hint).
+    @Test func childRunnerFallsBackToEstimateWithoutRuntimeCount() async throws {
+        let result = try await AgentSubagentRunner.run(
+            modelName: "scripted-usage-model",
+            seedMessages: [ChatMessage(role: "user", content: "Answer briefly.")],
+            maxTokens: 16,
+            maxIterations: 1,
+            deadline: Date().addingTimeInterval(10),
+            sessionId: "usage-prompt-tokens-fallback",
+            streamProvider: { _ in
+                AsyncThrowingStream { continuation in
+                    continuation.yield("Done.")
+                    continuation.finish()
+                }
+            }
+        )
+        #expect(result.usage.promptTokens > 0)
+        #expect(result.usage.promptTokens < 1455)
     }
 
     @Test func childRunnerPreservesInterleavedReasoningWithoutInlineThinkLeakage() async throws {

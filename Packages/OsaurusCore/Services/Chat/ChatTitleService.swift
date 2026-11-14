@@ -107,7 +107,8 @@ public actor ChatTitleService {
                 // no model is resident the call fails fast and the preview
                 // title stands.
                 intent: .background,
-                modelOptions: modelOptions
+                modelOptions: modelOptions,
+                purpose: "chat_title"
             )
             return Self.sanitize(raw)
         } catch {

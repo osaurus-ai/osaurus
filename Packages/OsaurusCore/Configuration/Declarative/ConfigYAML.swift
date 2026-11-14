@@ -75,6 +75,17 @@ public enum ConfigYAML {
         return try encoder.encode(doc)
     }
 
+    /// Sorted-key YAML for snapshots and diffs: equal documents are
+    /// byte-equal (the document's string maps have no stable order across
+    /// processes). User-facing export keeps `encode`'s order.
+    public static func canonical(_ document: OsaurusConfigDocument) throws -> String {
+        let encoder = YAMLEncoder()
+        encoder.options = YAMLEncoder.Options(sortKeys: true, newLineScalarStyle: .literal)
+        var doc = document
+        if doc.version == nil { doc.version = 1 }
+        return try encoder.encode(doc)
+    }
+
     // MARK: - Decode
 
     /// Strict decode: schema-validates the raw tree first, then decodes.
@@ -85,7 +96,7 @@ public enum ConfigYAML {
         }
         let tree: Any?
         do {
-            tree = try Yams.load(yaml: yaml)
+            tree = try YAMLLoading.load(yaml)
         } catch {
             throw ConfigYAMLError.malformed(String(describing: error))
         }
@@ -135,6 +146,10 @@ public enum ConfigYAML {
             guard let raw = root[name] else { continue }
             walk(raw, spec: section.value, path: name, displayPath: name, issues: &issues)
         }
+        for section in ConfigManifest.legacySections {
+            guard let raw = root[section.name] else { continue }
+            walk(raw, spec: section.value, path: section.name, displayPath: section.name, issues: &issues)
+        }
 
         if let version = root["version"], let n = version as? Int, n != 1 {
             issues.append("Unsupported `version: \(n)`. This build supports version 1.")
@@ -150,7 +165,7 @@ public enum ConfigYAML {
         issues: inout [String]
     ) {
         switch spec {
-        case .scalar, .scalarList:
+        case .scalar, .scalarList, .nullableScalarList:
             return
 
         case .freeformMap(_, let allowedValues, _, _):
@@ -163,6 +178,14 @@ public enum ConfigYAML {
                 }
             }
 
+        case .jsonObject(let nullable):
+            if nullable, raw is NSNull { return }
+            if !(raw is [AnyHashable: Any]) {
+                issues.append("`\(displayPath)` must be a JSON object. Got \(typeName(of: raw)).")
+            }
+        case .nullableMapping(let keys):
+            if raw is NSNull { return }
+            walk(raw, spec: .mapping(keys), path: path, displayPath: displayPath, issues: &issues)
         case .mapping(let keys):
             guard let mapping = raw as? [AnyHashable: Any] else {
                 issues.append("`\(displayPath)` must be a YAML mapping. Got \(typeName(of: raw)).")
@@ -232,13 +255,13 @@ public enum ConfigYAML {
             }
             if !known.contains(keyString) {
                 var message = "Unknown key `\(keyString)` at \(display)."
-                if path.isEmpty, ["server", "chat", "app"].contains(keyString) {
-                    // Scope reduction 2: these sections are Settings-UI-only.
+                if path.isEmpty, keyString == "server" {
+                    // Scope reduction 2: server runtime is Settings-UI-only.
                     // Without this teach, models loop on the removed path.
                     message +=
-                        " Server runtime, chat behavior, and app settings are managed in "
-                        + "the Settings UI, not declaratively — remove this section and "
-                        + "point the user to Settings."
+                        " Server runtime settings are managed in the Settings UI, not "
+                        + "declaratively — remove this section and point the user to "
+                        + "Settings → Server."
                 } else if keyString == "prune", path.isEmpty {
                     // Small models put `prune: true` inside the document —
                     // the delete flow then dead-ends on this decode error

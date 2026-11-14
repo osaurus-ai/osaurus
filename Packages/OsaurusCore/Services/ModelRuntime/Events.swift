@@ -7,11 +7,23 @@
 
 import Foundation
 
+/// The event iterator can finish before the runtime's lease-owning cleanup
+/// task. Consumers needing a drained boundary must await both.
+struct ModelRuntimeEventStream: Sendable {
+    let events: AsyncThrowingStream<ModelRuntimeEvent, Error>
+    let waitForProducerDrain: @Sendable () async -> Void
+}
+
 enum ModelRuntimeEvent: Sendable {
     /// Token count from the prepared runtime input, including its template and
     /// media token positions. Available before output or immediate tool dispatch;
     /// it does not imply generation has completed or that tokens were cached.
     case inputTokenCount(Int)
+    /// Prompt tokens the runtime restored from its prefix cache (memory, paged
+    /// or SSD tier) instead of prefilling, from vmlx's `.cacheRestore` progress.
+    /// Emitted once, just before `.completionInfo`, and only when non-zero; it
+    /// becomes `usage.prompt_tokens_details.cached_tokens`.
+    case cachedInputTokenCount(Int)
     case tokens(String)
     /// Reasoning text (thinking / chain-of-thought). Translated by
     /// `GenerationEventMapper` from vmlx-swift's `Generation.reasoning(String)`

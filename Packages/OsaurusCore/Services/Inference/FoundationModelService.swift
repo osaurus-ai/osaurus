@@ -275,6 +275,7 @@ actor FoundationModelService: ToolCapableService {
     /// and `CoreModelService` should hand the call to the chat model.
     static let firstTokenDeadlineSeconds: TimeInterval = 5
     nonisolated var firstTokenDeadline: TimeInterval? { Self.firstTokenDeadlineSeconds }
+    nonisolated var streamsResponseSchema: Bool { false }
 
     nonisolated func handles(requestedModel: String?) -> Bool {
         let t = (requestedModel ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -396,11 +397,53 @@ actor FoundationModelService: ToolCapableService {
             throw FoundationModelServiceError.visionUnsupported
         }
         let prompt = OpenAIPromptBuilder.buildPrompt(from: messages)
+        if let schema = parameters.responseSchema {
+            return try await generateStructured(prompt: prompt, schema: schema, parameters: parameters)
+        }
         return try await Self.generateOneShot(
             prompt: prompt,
             temperature: parameters.temperature,
             maxTokens: parameters.maxTokens
         )
+    }
+
+    /// Guided generation against a JSON Schema via `GenerationSchema`, so
+    /// the framework constrains decoding to the schema. Returns the
+    /// generated content as JSON text.
+    private func generateStructured(
+        prompt: String,
+        schema: JSONValue,
+        parameters: GenerationParameters
+    ) async throws -> String {
+        try Self.requireAvailable()
+        #if canImport(FoundationModels)
+            if #available(macOS 26.0, *) {
+                guard let root = dynamicSchema(from: schema, name: StructuredOutputSchema.defaultName),
+                    let generationSchema = try? GenerationSchema(root: root, dependencies: [])
+                else {
+                    throw StructuredOutputError.unsupportedModel(
+                        model: "foundation",
+                        reason: "the schema uses constructs Apple Foundation Models cannot express.")
+                }
+                let options = GenerationOptions(
+                    sampling: nil,
+                    temperature: parameters.temperature.map(Double.init),
+                    maximumResponseTokens: parameters.maxTokens
+                )
+                do {
+                    let session = LanguageModelSession()
+                    let response = try await session.respond(
+                        to: prompt, schema: generationSchema, includeSchemaInPrompt: true, options: options)
+                    return response.content.jsonString
+                } catch {
+                    throw Self.mapFrameworkError(error)
+                }
+            } else {
+                throw FoundationModelServiceError.notAvailable(.osTooOld)
+            }
+        #else
+            throw FoundationModelServiceError.notAvailable(.frameworkMissing)
+        #endif
     }
 
     // MARK: - Tool calling bridge (OpenAI tools -> FoundationModels)

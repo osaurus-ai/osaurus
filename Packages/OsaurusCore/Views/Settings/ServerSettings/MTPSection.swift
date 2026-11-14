@@ -61,58 +61,65 @@ struct MTPSection: View {
             blurb:
                 "Draft tokens with a fast helper model and verify with the main model in a single step. Engaged per request when the model supports it."
         ) {
-            SettingsField(
-                label: "Mode",
-                hint:
-                    "Native MTP starts Off. Off disables the model's native MTP head. Auto requires verified bundle tuning. Force On requires verified tuning unless you select an eligible manual depth in Chat. A refused request reports the reason. A selected DFlash 2 drafter drafts regardless of Mode — remove it below to stop."
+            SettingsRow(
+                title: "Mode",
+                description:
+                    "Default follows the model’s adaptive policy, including compatible bundled DFlash 2 or DSpark. Off disables speculation. On requests a compatible drafter or supported adaptive native MTP. Speed depends on the model and workload."
             ) {
-                Picker("", selection: $draft.mtp.mode) {
-                    ForEach(VMLXMTPServerMode.allCases, id: \.self) { mode in
-                        Text(mode.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)
-                            .tag(mode)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
+                AssignedBaseSegmentedPicker(
+                    selection: Binding(
+                        get: {
+                            switch draft.mtp.mode {
+                            case .off: VMLXMTPServerMode.off
+                            case .familyDefault: VMLXMTPServerMode.familyDefault
+                            default: VMLXMTPServerMode.auto
+                            }
+                        },
+                        set: { mode in
+                            var selection = draft.mtp
+                            selection.mode = mode
+                            draft.mtp = NativeMTPSelectionDefault.adaptiveSelection(selection)
+                        }
+                    ),
+                    options: [
+                        .init(VMLXMTPServerMode.off, "Off (AR)"), .init(VMLXMTPServerMode.familyDefault, "Default"),
+                        .init(VMLXMTPServerMode.auto, "On (Adaptive)"),
+                    ]
+                )
+                .fixedSize()
+                .accessibilityLabel(Text("Mode", bundle: .module))
             }
 
-            OptionalIntField(
-                label: "Draft Tokens Per Step",
-                placeholder: "Blank = engine recommendation",
-                help: "How many tokens the draft model proposes before the main model verifies.",
-                value: $draft.mtp.draftTokenLimit
-            )
-
             SettingsToggle(
-                title: L("Keep Draft Cache Separate"),
+                title: "Keep Draft Cache Separate",
                 description: "Engine invariant. Disabling produces a validation error.",
                 isOn: $draft.mtp.keepDraftCacheSeparate
             )
 
             SettingsToggle(
-                title: L("Only Accepted Tokens Enter Base Cache"),
+                title: "Only Accepted Tokens Enter Base Cache",
                 description: "Engine invariant. Disabling produces a validation error.",
                 isOn: $draft.mtp.acceptedTokensOnlyEnterBaseCache
             )
 
-            SettingsField(
+            SettingsFieldRow(
                 label: "DFlash 2 Drafter",
                 hint:
-                    "A downloaded block-diffusion drafter drafts a whole block per step instead of one token. Applies to Qwen 3.8 only — the drafter is trained against that target's hidden states, so a mismatched bundle is ignored and every other model keeps its own decode path. When it does fit, it REPLACES the native MTP head."
+                    "The drafter must match the target model. A compatible selected or bundled DFlash 2 or DSpark drafter takes priority over native MTP. Incompatible folders are ignored; the resolved model state is shown below."
             ) {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
+                    HStack(spacing: theme.space.s8) {
                         Button(drafterInfo == nil ? L("Choose Folder…") : L("Change…")) {
                             chooseDrafterFolder()
                         }
-                        .buttonStyle(.bordered)
+                        .assignedSettingsButtonStyle(.secondary)
 
                         if drafterInfo == nil {
                             Link(
-                                L("Download drafter…"),
+                                L("Qwen 27B drafter…"),
                                 destination: Self.drafterDownloadURL
                             )
-                            .font(.system(size: 11))
+                            .textStyle(.footnote)
                         }
 
                         if draft.mtp.dflash2DrafterPath?.isEmpty == false {
@@ -120,44 +127,43 @@ struct MTPSection: View {
                                 draft.mtp.dflash2DrafterPath = nil
                                 draft.mtp.dflash2BlockSize = nil
                             }
-                            .buttonStyle(.bordered)
+                            .assignedSettingsButtonStyle(.secondary)
                         }
                     }
 
                     if let path = draft.mtp.dflash2DrafterPath, !path.isEmpty {
                         Text(URL(fileURLWithPath: path).lastPathComponent)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(theme.secondaryText)
+                            .font(SettingsFont.smallLabel)
+                            .foregroundColor(theme.text.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
                     }
 
                     if let problem = drafterProblem {
-                        HStack(spacing: 4) {
+                        HStack(spacing: theme.space.s4) {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .font(.system(size: 10))
-                            Text(problem).font(.system(size: 11))
+                                .glyphSize(.micro)
+                            Text(problem).font(SettingsFont.rowDescription)
                         }
-                        .foregroundColor(theme.errorColor)
+                        .foregroundColor(theme.status.error.foreground)
                     } else if let info = drafterInfo {
                         Text(info.summary)
-                            .font(.system(size: 11))
-                            .foregroundColor(theme.tertiaryText)
+                            .font(SettingsFont.rowDescription)
+                            .foregroundColor(theme.text.tertiary)
                     } else {
                         Text(
                             L(
-                                "None selected — speculation falls back to the model's own MTP head, per Mode above."
+                                "No external folder selected. Compatible bundled drafters and the model’s native MTP policy still apply. Off (AR) disables speculation."
                             )
                         )
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
+                        .textStyle(.footnote)
+                        .foregroundColor(theme.text.tertiary)
                     }
                 }
             }
 
-            SettingsDivider()
 
-            SettingsSubsection(label: "Resolved Per Loaded Model") {
+            SettingsFieldRow(label: "Resolved Per Loaded Model") {
                 resolvedStateRows
             }
         }
@@ -183,7 +189,7 @@ struct MTPSection: View {
                 // only target-family loads surface early.
                 let resolvedNames = Set(loadedModels.map(\.name))
                 loadingMTP = inspected.filter {
-                    $0.isTargetMTPFamily && !resolvedNames.contains($0.name)
+                    $0.speculationAvailable && !resolvedNames.contains($0.name)
                 }
                 try? await Task.sleep(for: .seconds(2))
             }
@@ -192,28 +198,17 @@ struct MTPSection: View {
 
     // MARK: - What the engine actually resolved
 
-    /// Mode is a REQUEST, not a result. A bundle whose tuning artifact never
-    /// asserted `output_equivalent` cannot run speculative decoding even on
-    /// Force-On — correctly, since that assertion IS the output-equivalence
-    /// proof — and a Draft-Tokens limit can only lower the artifact's depth,
-    /// never raise it. Both are right, and both were previously invisible: the
-    /// picker looked inert and the reason, already computed at load and
-    /// already written to the log, reached nobody.
+    /// On is a request, not proof of activation. Show the engine's resolved
+    /// strategy and reason rather than inferring activation from the picker.
     private var resolvedStateRows: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             // Models still warming: by-WEIGHT detection shown NOW, so the
             // section is never blank for the whole multi-minute load. The
             // resolved row replaces this the moment the engine reports it.
             ForEach(loadingMTP, id: \.name) { model in
                 resolvedRow(
                     label: model.name,
-                    value: model.bundleHasMTP
-                        ? (model.isBlocked
-                            ? "MTP head detected · blocked by tuning"
-                            : (model.measuredFamilyAutoDepth.map {
-                                "MTP head detected · auto depth \($0)"
-                            } ?? "MTP head detected"))
-                        : "No MTP head",
+                    value: model.speculationCapabilityDescription,
                     detail: "Warming up — \(model.statusLine)"
                 )
             }
@@ -264,29 +259,26 @@ struct MTPSection: View {
     }
 
     private func resolvedRow(label: String, value: String, detail: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
+            HStack(alignment: .firstTextBaseline, spacing: theme.space.s12) {
                 Text(label)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .font(SettingsFont.smallLabel)
+                    .foregroundStyle(theme.text.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
                 Spacer()
                 Text(value)
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .font(SettingsFont.monoSmall)
                     .textSelection(.enabled)
             }
             Text(detail)
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
+                .font(SettingsFont.footnote)
+                .foregroundStyle(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.primary.opacity(0.04))
-        )
+        .padding(theme.space.s8)
+        .settingsChrome(.inset)
     }
 
     /// AppKit `NSOpenPanel` rather than SwiftUI `.fileImporter`, matching

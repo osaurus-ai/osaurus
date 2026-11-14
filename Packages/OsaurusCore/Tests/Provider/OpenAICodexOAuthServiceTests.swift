@@ -109,7 +109,11 @@ struct OpenAICodexOAuthServiceTests {
     @Test func supportedModels_containsCurrentCatalog() {
         let models = OpenAICodexOAuthService.supportedModels
         let expected = [
+            "gpt-6.1-sol",
             "gpt-6-astra",
+            "gpt-6.1-terra",
+            "gpt-6-sol",
+            "gpt-6-luna",
             "gpt-5.6",
             "gpt-5.6-terra",
             "gpt-5.6-luna",
@@ -123,6 +127,10 @@ struct OpenAICodexOAuthServiceTests {
         ]
         for slug in expected {
             #expect(models.contains(slug), "static fallback is missing \(slug)")
+        }
+        // Shut down on the OpenAI API 2026-07-23.
+        for retired in ["gpt-5.2-codex", "gpt-5.1-codex-max", "gpt-5.1-codex", "gpt-5.1-codex-mini"] {
+            #expect(!models.contains(retired), "static fallback still lists retired \(retired)")
         }
         #expect(Set(models).count == models.count, "static fallback has duplicate slugs")
     }
@@ -308,6 +316,23 @@ struct OpenAICodexOAuthServiceTests {
         let legacy = try #require(summary.modelMetadata["gpt-5.5"])
         #expect(legacy.inputModalities == nil)
         #expect(legacy.supportsImageInput)
+    }
+
+    @Test func decodeModelCatalog_preservesReasoningSummarySupport() throws {
+        let payload = """
+            {"models":[
+                {"slug":"gpt-6.1-terra","visibility":"list","priority":1,
+                 "shell_type":"shell_command","supports_reasoning_summaries":true},
+                {"slug":"gpt-5.2-codex-mini","visibility":"list","priority":2,
+                 "shell_type":"shell_command","supports_reasoning_summaries":false},
+                {"slug":"gpt-5.5","visibility":"list","priority":3,"shell_type":"shell_command"}
+            ]}
+            """
+        let (_, summary) = try OpenAICodexOAuthService.decodeModelCatalog(Data(payload.utf8))
+
+        #expect(summary.modelMetadata["gpt-6.1-terra"]?.supportsReasoningSummaries == true)
+        #expect(summary.modelMetadata["gpt-5.2-codex-mini"]?.supportsReasoningSummaries == false)
+        #expect(summary.modelMetadata["gpt-5.5"]?.supportsReasoningSummaries == nil)
     }
 
     @Test func decodeModelCatalog_throwsTypedErrorForUnreadablePayload() {

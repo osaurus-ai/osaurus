@@ -1,8 +1,11 @@
 # Agent Channel Security Foundation
 
-This document covers the policy-only foundation for future Discord, Slack,
-Telegram, and JSON Agent Channel receive flows. It does not implement adapter
-routing, an inbox UI, a remote command center, or computer-use triggers.
+This document covers the shared inbound policy layer (identity, allowlists,
+replay and trust checks) that every Agent Channel receive path runs through:
+the native Discord, Slack, Telegram, iMessage, WhatsApp and Email adapters and
+the n8n / custom JSON receivers. Routing a message to an agent is covered in
+`docs/AGENT_CHANNELS.md` ("Inbound routing is automations"); this document is
+only the policy that runs before it.
 
 ## Identity Model
 
@@ -164,7 +167,7 @@ connections may declare provider-side idempotency in their action config;
 Discord/Slack/Telegram bot sends have no server-side dedupe key, which is
 exactly why the ambiguous class exists.
 
-The prompt payload is redacted by design: the dynamic "Channel Destinations"
+The prompt payload is redacted by design: the dynamic "Where It Can Post"
 section lists only the current agent's usable bindings for the current run
 source — stable binding ids, labels, connection/room display ids, modes, and
 operator guidance. It never includes secrets, sender identities, other agents'

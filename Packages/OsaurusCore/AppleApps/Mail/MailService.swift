@@ -77,6 +77,8 @@ struct MailQuery: Sendable, Equatable {
     var mailboxPath: String?
     var unreadOnly: Bool = false
     var since: Date?
+    /// Received at or before; pages back through more mail than `limit`.
+    var until: Date?
     var limit: Int = 25
 }
 
@@ -627,6 +629,9 @@ final class AppleScriptMailService: MailServicing, @unchecked Sendable {
         var conditions: [String] = []
         if query.unreadOnly { conditions.append("read status is false") }
         if let since = query.since { conditions.append("date received > \(AppleScriptBridge.dateExpression(since))") }
+        if let until = query.until {
+            conditions.append("date received is less than or equal to \(AppleScriptBridge.dateExpression(until))")
+        }
         let out = try await run(
             """
             tell application "Mail"

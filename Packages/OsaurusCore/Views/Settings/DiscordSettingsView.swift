@@ -15,6 +15,22 @@ struct DiscordSettingsView: View {
     /// Set when this sheet is hosted inside the unified Add Channel picker;
     /// shows a back chevron that returns to the catalog.
     var onBack: (() -> Void)? = nil
+    /// The bot's connection: `discord`, or `discord-<session>` for an extra
+    /// bot. Empty for a new bot until its token checks out.
+    @State private var connectionId: String
+
+    init(
+        onBack: (() -> Void)? = nil, connectionId: String = DiscordConnectionService.nativeConnectionId,
+        newAccount: Bool = false
+    ) {
+        self.onBack = onBack
+        _connectionId = State(initialValue: newAccount ? "" : connectionId)
+    }
+
+    private var isPendingAccount: Bool { connectionId.isEmpty }
+
+    private var service: DiscordConnectionService { ChannelAccountServices.discord(connectionId) ?? .shared }
+    @State private var isConnectingAccount = false
 
     @State private var botToken: String = ""
     @State private var guildIdsText: String = ""
@@ -33,12 +49,15 @@ struct DiscordSettingsView: View {
     @State private var selectedGuildId: String = ""
     @State private var channelSearch = ""
     @State private var memberSearch = ""
-    @State private var inboundDispatchEnabled = false
-    @State private var inboundTarget: AgentDispatchTarget?
-    @State private var inboundRoutes: [AgentChannelDispatchRoute] = []
-    @State private var inboundRequireMention = true
-    @State private var inboundContinueThreads = true
-    @State private var inboundAutoReplyEnabled = false
+    /// Incoming messages are handled by the events that listen to this
+    /// channel; these read them so readiness checks stay honest.
+    private var channelEvents: [OsaurusEvent] {
+        EventManager.shared.events(kind: .discord, connectionId: connectionId).filter(\.isEnabled)
+    }
+    private var inboundDispatchEnabled: Bool { !channelEvents.isEmpty }
+    private var inboundAutoReplyEnabled: Bool {
+        channelEvents.contains { $0.reply.replies(for: $0.action.kind) }
+    }
     @State private var healthRefreshToken = 0
     @State private var isSaving = false
     @State private var isVerifying = false
@@ -60,12 +79,6 @@ struct DiscordSettingsView: View {
         var senderAllowlistText: String
         var writeEnabled: Bool
         var defaultReadLimit: String
-        var inboundDispatchEnabled: Bool
-        var inboundTarget: AgentDispatchTarget?
-        var inboundRoutes: [AgentChannelDispatchRoute]
-        var inboundRequireMention: Bool
-        var inboundContinueThreads: Bool
-        var inboundAutoReplyEnabled: Bool
     }
 
     private var currentDraft: DraftSnapshot {
@@ -75,49 +88,39 @@ struct DiscordSettingsView: View {
             writableChannelIdsText: writableChannelIdsText,
             senderAllowlistText: senderAllowlistText,
             writeEnabled: writeEnabled,
-            defaultReadLimit: defaultReadLimit,
-            inboundDispatchEnabled: inboundDispatchEnabled,
-            inboundTarget: inboundTarget,
-            inboundRoutes: inboundRoutes,
-            inboundRequireMention: inboundRequireMention,
-            inboundContinueThreads: inboundContinueThreads,
-            inboundAutoReplyEnabled: inboundAutoReplyEnabled
+            defaultReadLimit: defaultReadLimit
         )
     }
 
-    /// Discovered channels across every server, mapped into the shared
-    /// routing editor's room shape.
-    private var routableRooms: [AgentChannelRoutableRoom] {
-        guard let discovery else { return [] }
-        return discovery.guilds.flatMap { guild in
-            (discovery.channelsByGuildId[guild.id] ?? []).map { channel in
-                AgentChannelRoutableRoom(
-                    id: channel.id,
-                    name: "#\(channel.name ?? channel.id) (\(guild.name))"
-                )
-            }
-        }
-    }
 
     var body: some View {
         AgentChannelSetupScaffold(
             icon: AgentChannelKind.discord.icon,
             gradient: AgentChannelKind.discord.brandGradient,
-            title: AgentChannelKind.discord.displayName,
+            title: isPendingAccount
+                ? ChannelAccounts.newTitle(.discord)
+                : ChannelAccounts.displayName(connectionId: connectionId) ?? AgentChannelKind.discord.displayName,
             subtitle: L("Read and reply in allowlisted servers"),
             sections: AgentChannelProviderSetupSection.sections,
             selection: $selectedSectionId,
             sectionStatus: sectionStatus(for:),
-            onBack: onBack
+            onBack: onBack,
+            pendingAccount: isPendingAccount
+                ? AgentChannelPendingAccount(
+                    actionTitle: L("Connect"), isWorking: isConnectingAccount, canConnect: hasPendingToken,
+                    connect: connectNewAccount)
+                : nil
         ) { sectionId in
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: theme.space.s20) {
                 switch AgentChannelProviderSetupSection(rawValue: sectionId) {
                 case .connect:
                     connectSectionContent
-                case .access:
+                case .receiving:
                     accessSectionContent
-                case .behavior:
-                    behaviorSectionContent
+                case .routing:
+                    routingSectionContent
+                case .sending:
+                    sendingSectionContent
                 case .verify, nil:
                     verifySectionContent
                 }
@@ -150,6 +153,7 @@ struct DiscordSettingsView: View {
             .disabled(isSaving)
         }
         .onAppear {
+            guard !isPendingAccount else { return }
             loadConfiguration()
             selectedSectionId = AgentChannelSetupFlow.initialSection(
                 in: AgentChannelProviderSetupSection.sections,
@@ -190,8 +194,10 @@ struct DiscordSettingsView: View {
 
     private func autosaveNow() {
         guard lastSavedDraft != nil, currentDraft != lastSavedDraft else { return }
+        // A removed account stays removed.
+        guard ChannelAccounts.account(connectionId: connectionId) != nil else { return }
         guard validationFailure() == nil else { return }
-        guard (try? DiscordConnectionService.shared.saveConfiguration(currentConfiguration())) != nil
+        guard (try? service.saveConfiguration(currentConfiguration())) != nil
         else { return }
         lastSavedDraft = currentDraft
         Task {
@@ -206,10 +212,12 @@ struct DiscordSettingsView: View {
         switch AgentChannelProviderSetupSection(rawValue: sectionId) {
         case .connect:
             return tokenSaved
-        case .access:
+        case .receiving:
             return !parseIds(readableChannelIdsText).isEmpty && !parseIds(senderAllowlistText).isEmpty
-        case .behavior:
-            return (inboundDispatchEnabled && (inboundTarget != nil || !inboundRoutes.isEmpty)) || writeEnabled
+        case .routing:
+            return inboundDispatchEnabled
+        case .sending:
+            return writeEnabled
         case .verify:
             return verifySucceeded
         case nil:
@@ -225,36 +233,66 @@ struct DiscordSettingsView: View {
     // MARK: - Connect section
 
     private var connectSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
+            if !isPendingAccount {
+                ChannelAccountNameField(connectionId: connectionId, kind: .discord)
+            }
+
             Text(
                 "Osaurus polls Discord for new messages — no webhook or public URL is needed.",
                 bundle: .module
             )
-            .font(.system(size: 12))
-            .foregroundColor(theme.secondaryText)
+            .font(SettingsFont.caption)
+            .foregroundColor(theme.text.secondary)
             .fixedSize(horizontal: false, vertical: true)
 
             stepCreateBotSection
-            SettingsDivider()
             stepTokenSection
-            SettingsDivider()
-            stepInviteSection
+            if !isPendingAccount {
+                stepInviteSection
+                ChannelAccountRemoveSection(connectionId: connectionId, kind: .discord) { dismiss() }
+            }
+        }
+    }
+
+    /// Checks the pasted token with Discord, then keeps the bot as its own
+    /// connection and opens the rest of its setup.
+    private func connectNewAccount() {
+        isConnectingAccount = true
+        clearStatus()
+        Task {
+            do {
+                let id = try await ChannelAccountCreation.addBot(kind: .discord, token: botToken)
+                botToken = ""
+                connectionId = id
+                loadConfiguration()
+                isConnectingAccount = false
+                withAnimation(theme.motion.quick) {
+                    selectedSectionId = AgentChannelProviderSetupSection.receiving.rawValue
+                }
+                refreshDiscovery(showStatus: false)
+            } catch {
+                isConnectingAccount = false
+                showStatus(error.localizedDescription, isError: true)
+            }
         }
     }
 
     private var accessSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             stepAccessSection
-            SettingsDivider()
             advancedSection
         }
     }
 
-    private var behaviorSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            stepDispatchSection
-            SettingsDivider()
+    private var routingSectionContent: some View {
+        ChannelRoutingSection(kind: .discord, connectionId: connectionId)
+    }
+
+    private var sendingSectionContent: some View {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             sendingSection
+            ChannelPostingSection(kind: .discord, connectionId: connectionId)
         }
     }
 
@@ -265,7 +303,7 @@ struct DiscordSettingsView: View {
     // MARK: - Guided setup steps
 
     private var stepCreateBotSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             AgentChannelSectionHeading(L("Create the bot app"))
 
             AgentChannelSetupLink(
@@ -277,22 +315,22 @@ struct DiscordSettingsView: View {
                 "In the app, open the Bot page and turn on both privileged intents under “Privileged Gateway Intents”: Message Content Intent (required to read messages) and Server Members Intent (used to list senders).",
                 bundle: .module
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
+            .font(SettingsFont.rowDescription)
+            .foregroundColor(theme.text.tertiary)
             .fixedSize(horizontal: false, vertical: true)
         }
     }
 
     private var stepTokenSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             AgentChannelSectionHeading(L("Paste the bot token"))
 
             Text(
                 "On the same Bot page, press “Reset Token” and copy the token it shows.",
                 bundle: .module
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
+            .font(SettingsFont.rowDescription)
+            .foregroundColor(theme.text.tertiary)
             .fixedSize(horizontal: false, vertical: true)
 
             AgentChannelSecretField(
@@ -308,13 +346,13 @@ struct DiscordSettingsView: View {
                 "Saved to the macOS Keychain when you press “Load from Discord”, Test Connection, or Done.",
                 bundle: .module
             )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+            .font(SettingsFont.rowDescription)
+            .foregroundColor(theme.text.tertiary)
         }
     }
 
     private var stepInviteSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             AgentChannelSectionHeading(L("Invite the bot to your server"))
 
             if let inviteURL = botInviteURL {
@@ -325,11 +363,11 @@ struct DiscordSettingsView: View {
                 )
             } else {
                 Text(
-                    "Paste the bot token above and press “Load from Discord” in the Access section, then an invite URL appears here. (You can also use OAuth2 → URL Generator in the Developer Portal with the bot scope.)",
+                    "Paste the bot token above and press “Load from Discord” in the Receiving step, then an invite URL appears here. (You can also use OAuth2 → URL Generator in the Developer Portal with the bot scope.)",
                     bundle: .module
                 )
-                .font(.system(size: 11))
-                .foregroundColor(theme.tertiaryText)
+                .font(SettingsFont.rowDescription)
+                .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -344,19 +382,15 @@ struct DiscordSettingsView: View {
     }
 
     private var stepAccessSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(L("Choose channels and senders"))
 
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(discovery == nil ? L("Connect to load servers and channels") : L("Discord choices loaded"))
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundColor(theme.primaryText)
-                    Text("Mark channels as Read and people as Allow — no copying numeric IDs.", bundle: .module)
-                        .font(.system(size: 11))
-                        .foregroundColor(theme.tertiaryText)
-                }
-                Spacer()
+            SettingsRow(
+                title: discovery == nil ? L("Connect to load servers and channels") : L("Discord choices loaded"),
+                description: L("Mark channels as Read and people as Allow — no copying numeric IDs."),
+                verbatimTitle: true,
+                verbatimDescription: true
+            ) {
                 AgentChannelSheetActionButton(
                     title: discovery == nil ? L("Load from Discord") : L("Refresh"),
                     busyTitle: L("Loading..."),
@@ -367,17 +401,19 @@ struct DiscordSettingsView: View {
             }
 
             if let discovery {
-                Picker(L("discord.guild.picker"), selection: $selectedGuildId) {
-                    ForEach(discovery.guilds, id: \.id) { guild in
-                        Text(guild.name).tag(guild.id)
+                SettingsRow(title: L("discord.guild.picker"), description: "", verbatimTitle: true) {
+                    SettingsMenuPicker(selection: $selectedGuildId) {
+                        ForEach(discovery.guilds, id: \.id) { guild in
+                            Text(guild.name).tag(guild.id)
+                        }
                     }
                 }
                 discordChannelSelector(discovery)
                 discordMemberSelector(discovery)
                 ForEach(discovery.warnings, id: \.self) { warning in
                     Label(warning, systemImage: "exclamationmark.triangle.fill")
-                        .font(.system(size: 10))
-                        .foregroundColor(theme.warningColor)
+                        .textStyle(.micro)
+                        .foregroundColor(theme.status.warning.foreground)
                 }
             }
 
@@ -385,27 +421,27 @@ struct DiscordSettingsView: View {
                 "Manual ID fields are under Advanced for entries discovery cannot see.",
                 bundle: .module
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
+            .font(SettingsFont.rowDescription)
+            .foregroundColor(theme.text.tertiary)
         }
     }
 
     private var sendingSection: some View {
-        SettingsSubsection(label: L("Sending")) {
-            VStack(alignment: .leading, spacing: 12) {
+        SettingsFieldRow(label: "Sending") {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 SettingsToggle(
-                    title: L("Allow Sending on Discord"),
-                    description: L("Let agents post to write-allowlisted Discord destinations. The global Sending switch in Channels must also be on."),
-                    isOn: $writeEnabled.animation(.easeOut(duration: 0.2))
+                    title: "Allow Sending on Discord",
+                    description: "Let agents post to write-allowlisted Discord destinations. The global Sending switch in Channels must also be on.",
+                    isOn: $writeEnabled.animation(theme.motion.quick)
                 )
 
                 if writeEnabled, parseIds(writableChannelIdsText).isEmpty {
                     Text(
-                        "No channels are marked Write yet. Mark them in the Access section or add IDs under its Advanced options.",
+                        "No channels are marked Write yet. Mark them in the Receiving step or add IDs under its Advanced options.",
                         bundle: .module
                     )
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.warningColor)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.status.warning.foreground)
                     .fixedSize(horizontal: false, vertical: true)
                     .transition(.opacity.combined(with: .move(edge: .top)))
                 }
@@ -413,61 +449,23 @@ struct DiscordSettingsView: View {
         }
     }
 
-    private var stepDispatchSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            AgentChannelSectionHeading(L("Reply to incoming messages"))
-
-            SettingsToggle(
-                title: L("Reply with an Agent"),
-                description: L("Choose which agent answers verified messages from allowed channels and senders."),
-                isOn: $inboundDispatchEnabled.animation(.easeOut(duration: 0.2))
-            )
-            if inboundDispatchEnabled {
-                AgentChannelDispatchRoutingEditor(
-                    roomNoun: L("channel"),
-                    rooms: routableRooms,
-                    defaultTarget: $inboundTarget,
-                    routes: $inboundRoutes
-                )
-                AgentChannelPluginPreloadOverflowNotice(agentId: inboundTarget?.localId)
-                SettingsToggle(
-                    title: L("Require an @mention"),
-                    description: L("Start new conversations only when the bot is mentioned."),
-                    isOn: $inboundRequireMention
-                )
-                SettingsToggle(
-                    title: L("Continue Participating Threads"),
-                    description: L("Accept follow-ups after Osaurus has replied in a channel or thread."),
-                    isOn: $inboundContinueThreads
-                )
-                SettingsToggle(
-                    title: L("Reply Automatically"),
-                    description: L("Post sanitized agent responses back to Discord when write gates allow it."),
-                    isOn: $inboundAutoReplyEnabled
-                )
-                if !inboundAutoReplyEnabled {
-                    AgentChannelAutoReplyOffNotice()
-                }
-            }
-        }
-    }
 
     private var stepVerifySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(L("Verify an incoming message"))
 
             Text(
-                "Changes save automatically, and receive polling starts once Connect and Access are complete. The first poll only arms the cursor — it does not replay old messages. Send a fresh message mentioning the bot in a readable channel, then watch each stage appear here.",
+                "Changes save automatically, and receive polling starts once Connect and Receiving are complete. The first poll only arms the cursor — it does not replay old messages. Send a fresh message mentioning the bot in a readable channel, then watch each stage appear here.",
                 bundle: .module
             )
-            .font(.system(size: 11))
-            .foregroundColor(theme.tertiaryText)
+            .font(SettingsFont.rowDescription)
+            .foregroundColor(theme.text.tertiary)
             .fixedSize(horizontal: false, vertical: true)
 
             testPromptRow
 
             AgentChannelTransportHealthView(
-                connectionId: DiscordConnectionService.nativeConnectionId,
+                connectionId: connectionId,
                 transportId: DiscordPollingTransportRuntime.transportId,
                 title: L("Discord receive polling"),
                 notRunningHint: L("Polling is not running. Add a bot token, readable channels, and authorized sender IDs to start it."),
@@ -475,7 +473,7 @@ struct DiscordSettingsView: View {
             )
 
             AgentChannelInboundActivityListView(
-                connectionId: DiscordConnectionService.nativeConnectionId,
+                connectionId: connectionId,
                 emptyHint: L(
                     "No incoming Discord messages yet this session. Send the test message and press “Verify incoming message”."
                 ),
@@ -507,7 +505,7 @@ struct DiscordSettingsView: View {
 
     private var advancedSection: some View {
         AgentChannelAdvancedSection {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 AgentChannelMultilineSettingsField(
                     title: L("Server IDs"),
                     text: $guildIdsText,
@@ -532,11 +530,11 @@ struct DiscordSettingsView: View {
                     placeholder: L("123456789012345678 — one per line"),
                     help: L("Required before an agent can reply. Use Discord user IDs.")
                 )
-                StyledSettingsTextField(
-                    label: L("Default Read Limit"),
+                SettingsTextFieldRow(
+                    label: "Default Read Limit",
                     text: $defaultReadLimit,
                     placeholder: "50",
-                    help: L("Default recent-message count for channel/thread reads. Clamped to 1-100.")
+                    help: "Default recent-message count for channel/thread reads. Clamped to 1-100."
                 )
             }
         }
@@ -558,23 +556,23 @@ struct DiscordSettingsView: View {
             },
             isSelected: { $0.isSelected }
         )
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: theme.space.s8) {
             HStack {
                 Text("Channels", bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                 Spacer()
                 Text("\(channels.count) found", bundle: .module)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
             }
 
             Text(
                 "Read lets agents see a channel, Write lets them post there.",
                 bundle: .module
             )
-            .font(.system(size: 10))
-            .foregroundColor(theme.tertiaryText)
+            .font(SettingsFont.footnote)
+            .foregroundColor(theme.text.tertiary)
             .fixedSize(horizontal: false, vertical: true)
 
             AgentChannelSelectorSearchField(
@@ -595,17 +593,17 @@ struct DiscordSettingsView: View {
         _ channel: DiscordChannel,
         access: AgentChannelReadWriteSelection
     ) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: "number")
-                .foregroundColor(theme.secondaryText)
-            VStack(alignment: .leading, spacing: 2) {
+                .foregroundColor(theme.text.secondary)
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(channel.displayName)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.smallLabel)
+                    .foregroundColor(theme.text.primary)
                     .lineLimit(1)
                 Text(channel.id)
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.tertiary)
             }
             Spacer()
             AgentChannelSelectorToggle(title: L("Read"), selected: access.read) {
@@ -615,8 +613,8 @@ struct DiscordSettingsView: View {
                 toggleChannel(channel.id, in: &writableChannelIdsText)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .padding(.horizontal, theme.space.s8)
+        .padding(.vertical, theme.space.s8)
     }
 
     private func discordMemberSelector(_ discovery: DiscordConnectionDiscovery) -> some View {
@@ -630,15 +628,15 @@ struct DiscordSettingsView: View {
             state: { allowedIds.contains($0.id) },
             isSelected: { $0 }
         )
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: theme.space.s8) {
             HStack {
                 Text("Authorized Senders", bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundColor(theme.primaryText)
+                    .font(SettingsFont.compactLabel)
+                    .foregroundColor(theme.text.primary)
                 Spacer()
                 Text("\(allowedCount) allowed · \(members.count) people", bundle: .module)
-                    .font(.system(size: 10))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.footnote)
+                    .foregroundColor(theme.text.tertiary)
             }
 
             AgentChannelSelectorSearchField(
@@ -658,21 +656,21 @@ struct DiscordSettingsView: View {
 
     private func discordMemberRow(_ member: DiscordGuildMember, allowed: Bool) -> some View {
         HStack {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(member.displayName)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(SettingsFont.smallLabel)
                     .lineLimit(1)
                 Text(member.id)
-                    .font(.system(size: 9, design: .monospaced))
-                    .foregroundColor(theme.tertiaryText)
+                    .font(SettingsFont.monoSmall)
+                    .foregroundColor(theme.text.tertiary)
             }
             Spacer()
             AgentChannelSelectorToggle(title: L("Allow"), selected: allowed) {
                 senderAllowlistText = toggledIdText(senderAllowlistText, id: member.id)
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.horizontal, theme.space.s8)
+        .padding(.vertical, theme.space.s6)
     }
 
     private func toggleChannel(_ id: String, in text: inout String) {
@@ -703,20 +701,14 @@ struct DiscordSettingsView: View {
     }
 
     private func loadConfiguration() {
-        let configuration = DiscordConnectionConfigurationStore.load()
+        let configuration = DiscordConnectionConfigurationStore.load(connectionId: connectionId)
         guildIdsText = configuration.configuredGuildIds.joined(separator: "\n")
         readableChannelIdsText = configuration.readableChannelIds.joined(separator: "\n")
         writableChannelIdsText = configuration.writableChannelIds.joined(separator: "\n")
         senderAllowlistText = configuration.senderAllowlist.joined(separator: "\n")
         writeEnabled = configuration.writeEnabled
         defaultReadLimit = "\(configuration.defaultReadLimit)"
-        inboundDispatchEnabled = configuration.inboundDispatch.enabled
-        inboundTarget = configuration.inboundDispatch.target
-        inboundRoutes = configuration.inboundDispatch.routes
-        inboundRequireMention = configuration.inboundDispatch.requireMention
-        inboundContinueThreads = configuration.inboundDispatch.continueThreads
-        inboundAutoReplyEnabled = configuration.inboundDispatch.autoReplyEnabled
-        Task { tokenSaved = await DiscordConnectionService.shared.hasBotTokenOffMain() }
+        Task { tokenSaved = await service.hasBotTokenOffMain() }
         // Arm autosave only after the stored configuration has hydrated the
         // draft, so hydration itself is never mistaken for an edit.
         lastSavedDraft = currentDraft
@@ -732,7 +724,7 @@ struct DiscordSettingsView: View {
     private func persistPendingSecrets() async -> Bool {
         guard hasPendingToken else { return true }
         do {
-            try await DiscordConnectionService.shared.saveBotTokenOffMain(botToken)
+            try await service.saveBotTokenOffMain(botToken)
             botToken = ""
             tokenSaved = true
             return true
@@ -745,7 +737,7 @@ struct DiscordSettingsView: View {
     private func removeToken() {
         botToken = ""
         tokenSaved = false
-        Task { await DiscordConnectionService.shared.deleteBotTokenOffMain() }
+        Task { await service.deleteBotTokenOffMain() }
         showStatus(L("Discord bot token removed"), isError: false)
     }
 
@@ -753,22 +745,16 @@ struct DiscordSettingsView: View {
     /// draft is persistable. Shared by autosave (skip silently) and the
     /// explicit save (show and navigate to the section).
     private func validationFailure() -> (message: String, section: AgentChannelProviderSetupSection)? {
-        if inboundDispatchEnabled && inboundTarget == nil && inboundRoutes.isEmpty {
-            return (
-                L("Choose an agent to reply, or add a rule for incoming Discord messages."),
-                .behavior
-            )
-        }
         if inboundDispatchEnabled && parseIds(senderAllowlistText).isEmpty {
             return (
                 L("Add at least one authorized Discord sender before an agent can reply."),
-                .access
+                .receiving
             )
         }
         if inboundAutoReplyEnabled && (!writeEnabled || parseIds(writableChannelIdsText).isEmpty) {
             return (
                 L("Automatic replies require Discord sending and a writable channel."),
-                .behavior
+                .sending
             )
         }
         return nil
@@ -781,15 +767,7 @@ struct DiscordSettingsView: View {
             writableChannelIds: parseIds(writableChannelIdsText),
             senderAllowlist: parseIds(senderAllowlistText),
             writeEnabled: writeEnabled,
-            defaultReadLimit: Int(defaultReadLimit) ?? 50,
-            inboundDispatch: AgentChannelInboundDispatchConfiguration(
-                enabled: inboundDispatchEnabled,
-                target: inboundTarget,
-                routes: inboundRoutes,
-                requireMention: inboundRequireMention,
-                continueThreads: inboundContinueThreads,
-                autoReplyEnabled: inboundAutoReplyEnabled
-            )
+            defaultReadLimit: Int(defaultReadLimit) ?? 50
         )
     }
 
@@ -800,7 +778,7 @@ struct DiscordSettingsView: View {
             return false
         }
         do {
-            try DiscordConnectionService.shared.saveConfiguration(currentConfiguration())
+            try service.saveConfiguration(currentConfiguration())
             lastSavedDraft = currentDraft
             return true
         } catch {
@@ -831,7 +809,7 @@ struct DiscordSettingsView: View {
                 }
                 return
             }
-            let diagnostics = await DiscordConnectionService.shared.diagnostics()
+            let diagnostics = await service.diagnostics()
             let report = AgentChannelLiveProofReadiness.discord(diagnostics)
             await MainActor.run {
                 isSaving = false
@@ -862,7 +840,7 @@ struct DiscordSettingsView: View {
                 return
             }
             await AgentChannelTransportSupervisor.shared.refreshDiscordRuntime()
-            let diagnostics = await DiscordConnectionService.shared.diagnostics()
+            let diagnostics = await service.diagnostics()
             await MainActor.run {
                 isTesting = false
                 healthRefreshToken += 1
@@ -886,9 +864,10 @@ struct DiscordSettingsView: View {
                 return
             }
             do {
-                let loaded = try await DiscordConnectionService.shared.discoverConfigurationOptions()
+                let loaded = try await service.discoverConfigurationOptions()
                 await MainActor.run {
                     discovery = loaded
+                    ChannelAccountNaming.adopt(ChannelAccountNaming.botName(loaded.bot), connectionId: connectionId)
                     if selectedGuildId.isEmpty || !loaded.guilds.contains(where: { $0.id == selectedGuildId }) {
                         selectedGuildId = loaded.guilds.first?.id ?? ""
                     }
@@ -918,7 +897,7 @@ struct DiscordSettingsView: View {
         let autoReply = inboundAutoReplyEnabled
         Task {
             let outcome = await AgentChannelInboundVerifier.waitForTerminalEvent(
-                connectionId: DiscordConnectionService.nativeConnectionId,
+                connectionId: connectionId,
                 since: start,
                 autoReplyEnabled: autoReply,
                 onActivity: {
@@ -1002,7 +981,7 @@ struct DiscordSettingsView: View {
         statusIsError = isError
         if isError, let section {
             attentionSectionId = section.rawValue
-            withAnimation(.easeOut(duration: 0.15)) {
+            withAnimation(theme.motion.quick) {
                 selectedSectionId = section.rawValue
             }
         } else if !isError {

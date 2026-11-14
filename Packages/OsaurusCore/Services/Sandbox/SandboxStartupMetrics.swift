@@ -65,6 +65,21 @@ import Foundation
             self.totalToRunning = totalToRunning
             self.firstAgentReady = firstAgentReady
         }
+
+        /// Every value `dominantPhase` can return.
+        public static let dominantPhases = ["asset", "create", "vm_boot", "configure", "unknown"]
+
+        /// The longest measured phase, so a slow boot can be attributed to
+        /// downloads, unpack, VM boot, or in-guest setup without shipping
+        /// raw durations.
+        public var dominantPhase: String {
+            let phases: [(String, Double?)] = [
+                ("asset", assetResolution), ("create", containerCreate),
+                ("vm_boot", vmBoot), ("configure", configure),
+            ]
+            let measured = phases.compactMap { name, seconds in seconds.map { (name, $0) } }
+            return measured.max { $0.1 < $1.1 }?.0 ?? "unknown"
+        }
     }
 
     /// Sanitized startup/provisioning failure record. These closed enum-like
@@ -84,6 +99,13 @@ import Foundation
         /// `true` when the attempt was a first-run cold provision
         /// (`setupComplete == false`), `false` for a warm restart.
         public let coldStart: Bool?
+        /// `vmnet_in_use` only: closed `SandboxVMOwnershipLease.OwnerState`.
+        public let ownerState: String?
+        /// Failed bootstrap-script step: closed `SandboxProvisionStepError.BootstrapStep`.
+        public let bootstrapStep: String?
+        /// `vmnet_in_use` only, local-only: `"<pid> <path>"` for each process
+        /// holding the lease file open. Never sent.
+        public let lockHolders: [String]?
 
         public init(
             recordedAt: Date = Date(),
@@ -92,7 +114,10 @@ import Foundation
             phase: String,
             errorClass: String? = nil,
             trigger: String? = nil,
-            coldStart: Bool? = nil
+            coldStart: Bool? = nil,
+            ownerState: String? = nil,
+            bootstrapStep: String? = nil,
+            lockHolders: [String]? = nil
         ) {
             self.recordedAt = recordedAt
             self.category = category
@@ -101,6 +126,9 @@ import Foundation
             self.errorClass = errorClass
             self.trigger = trigger
             self.coldStart = coldStart
+            self.ownerState = ownerState
+            self.bootstrapStep = bootstrapStep
+            self.lockHolders = lockHolders
         }
     }
 
@@ -182,6 +210,8 @@ import Foundation
             now: Date = Date()
         ) -> String {
             var parts: [String] = [sample.category, sample.phase]
+            if let bootstrapStep = sample.bootstrapStep { parts.append(bootstrapStep) }
+            if let ownerState = sample.ownerState { parts.append(ownerState) }
             if let errorClass = sample.errorClass { parts.append(errorClass) }
             if let trigger = sample.trigger { parts.append(trigger) }
             if let coldStart = sample.coldStart { parts.append(coldStart ? "cold" : "warm") }

@@ -248,6 +248,16 @@ struct SubagentSessionTests {
         #expect(!timings.contains { $0.phase == "running" })
     }
 
+    @Test("a phase that recurs adds up instead of trapping on a duplicate key")
+    func repeatedPhaseTotals() {
+        let totals = SubagentSession.phaseTotals([
+            (phase: "waiting for local GPU", seconds: 1.234),
+            (phase: "coexisting", seconds: 2),
+            (phase: "waiting for local GPU", seconds: 0.5),
+        ])
+        #expect(totals == ["waiting for local GPU": 1.73, "coexisting": 2])
+    }
+
     @Test("a handoff-wrapped run reports residency phases in its payload")
     func residencyPayloadFromScriptedHandoff() async {
         let kind = ScriptedKind(needsHandoff: true)

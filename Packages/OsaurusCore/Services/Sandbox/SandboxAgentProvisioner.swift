@@ -84,6 +84,22 @@ public struct SandboxProvisionStepError: Error, LocalizedError, Sendable {
         case bootstrapTimeout = "bootstrap_timeout"
     }
 
+    /// Which line of the bootstrap script failed. The script sets `STEP`
+    /// before each line and prints `bootstrapStepMarker` + `STEP` to stderr
+    /// when it exits non-zero.
+    public enum BootstrapStep: String, Sendable, Equatable, CaseIterable {
+        case adduser
+        case chmodHome = "chmod_home"
+        case pluginsDir = "plugins_dir"
+        case tokenDir = "token_dir"
+        case tokenWrite = "token_write"
+        case tokenChown = "token_chown"
+        case soulSeed = "soul_seed"
+        case unknown
+    }
+
+    public static let bootstrapStepMarker = "osaurus-bootstrap-step="
+
     public let step: Step
     public let underlying: Error
 
@@ -92,7 +108,21 @@ public struct SandboxProvisionStepError: Error, LocalizedError, Sendable {
         self.underlying = underlying
     }
 
-    public var errorDescription: String? { underlying.localizedDescription }
+    /// The failed script line, for `bootstrapScript` failures only.
+    public var bootstrapStep: BootstrapStep? {
+        guard step == .bootstrapScript else { return nil }
+        guard case .userCreationFailed(let message)? = underlying as? SandboxError,
+            let line = message.split(separator: "\n").last(where: { $0.hasPrefix(Self.bootstrapStepMarker) })
+        else { return .unknown }
+        return BootstrapStep(rawValue: String(line.dropFirst(Self.bootstrapStepMarker.count))) ?? .unknown
+    }
+
+    public var errorDescription: String? {
+        underlying.localizedDescription
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.hasPrefix(Self.bootstrapStepMarker) }
+            .joined(separator: "\n")
+    }
 
     /// Classify a throw from `SandboxManager.bootstrapAgent` into a step.
     /// Pure so tests can pin the mapping without a container.
@@ -122,7 +152,12 @@ public final class SandboxAgentProvisioner {
 
     private init() {}
 
+    /// A built-in worker is named after itself (`worker-code`); every other
+    /// agent after its id.
     public static func linuxName(for agentId: String) -> String {
+        if let id = UUID(uuidString: agentId), let worker = BuiltInWorker.worker(for: id) {
+            return "worker-\(worker.rawValue)"
+        }
         let name =
             agentId
             .lowercased()
@@ -144,6 +179,7 @@ public final class SandboxAgentProvisioner {
             let agentName = Self.linuxName(for: agentId)
             let linuxName = "agent-\(agentName)"
             Self.ensureHostWorkspace(for: agentName)
+            await SandboxManager.shared.requestMembership(agentName: agentName)
             do {
                 try await SandboxManager.shared.startContainer()
             } catch {

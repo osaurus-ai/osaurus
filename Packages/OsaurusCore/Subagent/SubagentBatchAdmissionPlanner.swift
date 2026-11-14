@@ -205,6 +205,24 @@ struct SubagentBatchMemoryFacts: Sendable, Equatable {
         requestBoundedChildHeadroomBytes ?? perActiveChildHeadroomBytes
     }
 
+    /// Reprice a stricter execution contract without taking another host
+    /// sample or changing allocator, pressure, residency or load-budget facts.
+    func pricingChildHeadroom(_ bytes: UInt64) -> Self {
+        Self(
+            canonicalModelKey: canonicalModelKey,
+            targetAlreadyResident: targetAlreadyResident,
+            targetLoadFootprintBytes: targetLoadFootprintBytes,
+            perActiveChildHeadroomBytes: perActiveChildHeadroomBytes,
+            requestBoundedChildHeadroomBytes: bytes,
+            reclaimableBytes: reclaimableBytes,
+            releasableParentBytes: releasableParentBytes,
+            resolvedLoadBudgetBytes: resolvedLoadBudgetBytes,
+            osHeadroomBytes: osHeadroomBytes,
+            memoryPressure: memoryPressure,
+            allocatorCacheAllowanceBytes: allocatorCacheAllowanceBytes
+        )
+    }
+
     /// A bounded request reusing a resident model allocates child state, not
     /// another OS/app working set. The host sample already excludes resident
     /// anonymous, wired and compressed pages; the child estimate includes KV,
@@ -290,6 +308,16 @@ struct SubagentBatchAdmissionPlan: Sendable, Equatable {
     /// The policy used for THIS decision, not a later settings snapshot.
     /// With safety off, ramSlots is diagnostic only and cannot veto a child.
     var ramSafetyEnabled = true
+    var memoryFittedContextPositions: Int? = nil
+
+    mutating func serializeMemoryFittedContext(jobCount: Int, positions: Int) {
+        memoryFittedContextPositions = positions
+        localCapacity = min(localCapacity, 1)
+        localParallelism = min(localParallelism, 1)
+        localSubwaveSizes = SubagentBatchAdmissionPlanner.subwaveSizes(
+            jobCount: jobCount, slots: localParallelism
+        )
+    }
 
     var memoryDiagnostics: [String: Any] {
         var result: [String: Any] = [
@@ -298,6 +326,9 @@ struct SubagentBatchAdmissionPlan: Sendable, Equatable {
             "ram_slots": ramSlots ?? NSNull(),
             "limited_by": limitingFactors.map(\.rawValue).sorted(),
         ]
+        if let positions = memoryFittedContextPositions {
+            result["memory_fitted_context_positions"] = positions
+        }
         guard let m = memoryFacts else { return result }
         result["canonical_model"] = m.canonicalModelKey
         result["target_already_resident"] = m.targetAlreadyResident
@@ -317,6 +348,36 @@ struct SubagentBatchAdmissionPlan: Sendable, Equatable {
 }
 
 enum SubagentBatchAdmissionPlanner {
+    /// The lifetime output/tool budget need not all remain in KV at once:
+    /// delegated history already compacts at its enforced context window.
+    /// Find the largest stricter window that fits ONE resident child. Never
+    /// shrink a window to manufacture extra fan-out; normal slot accounting
+    /// still serializes siblings and the post-lease check samples again.
+    static func affordablePositionCeiling(
+        requested: Int,
+        minimum: Int,
+        memory: SubagentBatchMemoryFacts,
+        headroomForPositions: (Int) -> UInt64?
+    ) -> Int? {
+        guard minimum > 0, requested > minimum,
+            memory.usesIncrementalResidentAdmission,
+            resolveMemoryCapacity(memory)?.slots == 0
+        else { return nil }
+
+        func fits(_ positions: Int) -> Bool {
+            guard let bytes = headroomForPositions(positions), bytes > 0 else { return false }
+            return (resolveMemoryCapacity(memory.pricingChildHeadroom(bytes))?.slots ?? 0) > 0
+        }
+        guard fits(minimum) else { return nil }
+        var lower = minimum
+        var upper = requested - 1
+        while lower < upper {
+            let midpoint = lower + (upper - lower + 1) / 2
+            if fits(midpoint) { lower = midpoint } else { upper = midpoint - 1 }
+        }
+        return lower
+    }
+
     /// Resolve live facts at the single-child floor before a caller chooses
     /// its wave width. Both direct spawns and batches use this boundary.
     static func memoryFactsAfterReclaimingIfNeeded(

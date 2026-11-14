@@ -102,4 +102,20 @@ struct NotesToolsTests {
         #expect(AppleScriptNotesService.isObjectId("x-coredata://ABC/ICNote/p1"))
         #expect(!AppleScriptNotesService.isObjectId("Notes"))
     }
+
+    @Test("folder handlers target Notes at runtime, not just at compile time (-1708 regression)")
+    func folderHandlersTargetNotes() {
+        // `using terms from` only resolves terminology while compiling; a bare
+        // `accounts` inside such a handler is sent to the script object at
+        // runtime and fails with `every «class acct» of «script» doesn't
+        // understand the "count" message (-1708)`. Both handlers must run
+        // inside a real `tell application "Notes"` block.
+        let source = AppleScriptNotesService.folderHandlers
+        #expect(!source.contains("using terms from"))
+        let tellCount = source.components(separatedBy: "tell application \"Notes\"").count - 1
+        let endTellCount = source.components(separatedBy: "end tell").count - 1
+        #expect(tellCount == 2)
+        #expect(endTellCount == 2)
+        #expect(source.contains("repeat with a in accounts"))
+    }
 }

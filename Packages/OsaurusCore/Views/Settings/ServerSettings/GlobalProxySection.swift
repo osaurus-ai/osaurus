@@ -24,12 +24,13 @@ struct GlobalProxySection: View {
             status: .engineReady,
             blurb: "Outbound provider, plugin, and model-download sessions use this endpoint when they are created."
         ) {
-            StyledSettingsTextField(
+            SettingsTextFieldRow(
                 label: "Proxy URL",
                 text: $proxyText,
                 placeholder: "http://proxy.example.com:8080",
                 help:
-                    "Supports http, https, socks, and socks5 URLs with an explicit host and port. Credentials are not accepted here."
+                    "Supports http, https, socks, and socks5 URLs with an explicit host and port. Credentials are not accepted here.",
+                monospaced: true
             )
             .onChange(of: proxyText) { _, _ in commitProxy() }
 
@@ -37,8 +38,8 @@ struct GlobalProxySection: View {
 
             if let validationMessage {
                 Text(LocalizedStringKey(validationMessage), bundle: .module)
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.errorColor)
+                    .font(SettingsFont.rowDescription)
+                    .foregroundColor(theme.status.error.foreground)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -81,27 +82,27 @@ struct GlobalProxySection: View {
 
     private var proxyStatusColor: Color {
         switch proxyStatus {
-        case .disabled: return theme.secondaryText
-        case .configured: return theme.successColor
-        case .invalid: return theme.errorColor
+        case .disabled: return theme.text.secondary
+        case .configured: return theme.status.success.foreground
+        case .invalid: return theme.status.error.foreground
         }
     }
 
     private var proxyStatusRow: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: theme.space.s10) {
             Circle()
                 .fill(proxyStatusColor)
                 .frame(width: 8, height: 8)
-                .padding(.top, 5)
+                .padding(.top, theme.space.s6)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(LocalizedStringKey(proxyStatus.titleKey), bundle: .module)
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(SettingsFont.compactLabel)
                     .foregroundColor(proxyStatusColor)
 
                 proxyStatusDetail
-                    .font(.system(size: 11))
-                    .foregroundColor(theme.secondaryText)
+                    .textStyle(.footnote)
+                    .foregroundColor(theme.text.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }

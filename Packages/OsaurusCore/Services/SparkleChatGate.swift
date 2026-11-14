@@ -7,7 +7,7 @@
 
 import Foundation
 
-/// Written from `ChatWindowManager.showWindow` / `focusAllWindows` so the
+/// Written from `ChatWindowManager.showWindow` so the
 /// launch Sparkle check can wait for chat to be on screen. Does not import
 /// Sparkle or mention `UpdaterViewModel` — first-touch of the lazy
 /// controller stays in AppDelegate's delayed Task.

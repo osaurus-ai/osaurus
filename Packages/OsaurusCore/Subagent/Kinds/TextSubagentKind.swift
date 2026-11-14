@@ -28,7 +28,7 @@
 import Foundation
 
 final class TextSubagentKind:
-    SubagentKind, SubagentPostAdmissionResidencyPlanning, @unchecked Sendable
+    SubagentKind, SubagentPostAdmissionResidencyPlanning, SubagentContextAdmission, @unchecked Sendable
 {
     let capability = SubagentCapabilityRegistry.spawn
 
@@ -50,6 +50,11 @@ final class TextSubagentKind:
     /// (returned as `session_id` by an earlier call) instead of starting a
     /// fresh one, so the worker keeps its context for a follow-up.
     private let continueSessionId: UUID?
+    /// The persisted worker session a fresh delegated run will be created
+    /// under (a `continue` reuses `continueSessionId` instead). Allocated
+    /// here, before dispatch, so a background acknowledgment can name the
+    /// `session_id` the parent will `continue` with or open.
+    private let freshSessionId = UUID()
     /// Eval seam (nil in production): force the run model and keep residency
     /// passthrough, so a live spawn lane is a real cross-model column in the
     /// local-vs-frontier matrix without depending on GPU residency. The agent
@@ -151,6 +156,24 @@ final class TextSubagentKind:
     /// prices it. Internal (not private) so regression tests can inject a
     /// contract and assert the estimator prices exactly its ceiling.
     var delegatedContract: DelegatedRunContract?
+    /// Keep enough room for the actual composed seed and one full tool round.
+    /// Further rounds may compact history, as they do at the model window.
+    var minimumAdmissionContextPositions: Int?
+    private(set) var admissionContextWasMemoryFitted = false
+
+    func tightenAdmissionContextPositions(to limit: Int) -> Bool {
+        guard let contract = delegatedContract,
+            let minimum = minimumAdmissionContextPositions,
+            limit >= minimum, limit < contract.contextPositions
+        else { return false }
+        delegatedContract = DelegatedRunContract(
+            responseTokens: contract.responseTokens,
+            assistantTurns: contract.assistantTurns,
+            contextPositions: limit
+        )
+        admissionContextWasMemoryFitted = true
+        return true
+    }
     private var systemPrompt: String = ""
     private var budgets = SubagentBudgets()
 
@@ -213,6 +236,8 @@ final class TextSubagentKind:
     /// The target agent's user-set temperature override (agent mode only;
     /// `nil` keeps the model bundle's own generation defaults).
     private var temperature: Float?
+    private var targetMaxTokens: Int?
+    private var generationSettings: AgentGenerationSettings?
     /// The residency plan resolved at `resolveModel` time (reject-before-evict),
     /// consumed by `makeHandoff()`. `.none` when no swap is needed.
     private var residencyPlan: ResidencyPlan = .none
@@ -325,7 +350,7 @@ final class TextSubagentKind:
         case .agent:
             return
                 "Delegating to a different local agent requires \"Swap local models for subagents\" "
-                + "enabled in Settings → Subagents (so the chat model can unload to make room)."
+                + "enabled in Settings → Agents → Delegation (so the chat model can unload to make room)."
         case .workspaceAgent:
             // Never thrown: a workspace run touches no local residency.
             return "Workspace agent runs do not use local model residency."
@@ -353,6 +378,16 @@ final class TextSubagentKind:
     /// A teammate's shared workspace agent: always a dispatched (Mode 2)
     /// session on the host — there is no in-memory runner path for it.
     var isWorkspaceTarget: Bool { workspaceTargetRef != nil }
+
+    /// The worker session this run will resume or create — the same value
+    /// `runDelegated` / `runWorkspaceDelegated` hand the dispatcher, so the
+    /// background ack's `session_id` equals the eventual result's. Nil for
+    /// the in-memory (eval model-override) path, which has no persisted
+    /// session.
+    var plannedSessionId: UUID? {
+        guard isDelegatedAgentTarget || isWorkspaceTarget else { return nil }
+        return continueSessionId ?? freshSessionId
+    }
 
     /// The permission kind that gates this target: `spawn` for a local
     /// agent, `spawn_workspace` for a teammate's shared agent (separate
@@ -506,8 +541,12 @@ final class TextSubagentKind:
         self.systemPrompt = ""
         self.agentToolSpecs = []
         self.temperature = nil
+        self.targetMaxTokens = nil
+        self.generationSettings = nil
         self.residencyPlan = .none
         self.delegatedContract = nil
+        self.minimumAdmissionContextPositions = nil
+        self.admissionContextWasMemoryFitted = false
         return ResolvedModel(
             name: (pinnedModel?.isEmpty == false ? pinnedModel : nil) ?? Self.workspaceHostModelLabel,
             id: nil,
@@ -522,7 +561,8 @@ final class TextSubagentKind:
     /// `spawn_agent`: gate the agent allow-list, resolve the agent (its
     /// system prompt becomes the seed system message), and resolve its model
     /// through the shared precedence (eval seam → per-agent override → the
-    /// target agent's own model) + live residency decision.
+    /// target agent's own model) + live residency decision. A target locked
+    /// to its model skips the per-agent override.
     private func resolveAgentTarget(
         _ agentID: UUID,
         scope: SubagentScope,
@@ -578,9 +618,13 @@ final class TextSubagentKind:
         guard let agent else {
             throw SubagentError.unavailable("Agent '\(agentID.uuidString)' not found.")
         }
-
         self.resolvedAgentName = agent.name
         self.resolvedAgentId = agent.id
+        // These values belong to one target-agent snapshot, taken by the
+        // main-actor lookup above rather than re-read across later awaits.
+        self.temperature = agent.temperature
+        self.targetMaxTokens = agent.maxTokens
+        self.generationSettings = agent.generationSettings
         // The persona's tool policy rides along with its prompt + model
         // (the design contract: a subagent IS the agent, bounded). Tool
         // EXECUTION still flows through `ToolRegistry.execute`, so per-tool
@@ -610,19 +654,15 @@ final class TextSubagentKind:
             persona: agent.systemPrompt,
             knowledgeSection: knowledgeSection
         )
-        // The target agent's own sampling override rides along (a user-set
-        // value, consistent with "defaults come from the model bundle unless
-        // the user explicitly overrides").
-        self.temperature = await MainActor.run {
-            AgentManager.shared.effectiveTemperature(for: agent.id)
-        }
-
         // One shared path for precedence (eval seam → per-agent `spawn` override
         // → the target agent's own model), fail-closed override availability,
         // and the live residency decision (reject-before-evict). The override
         // is read from the LAUNCHING agent (`scope.agentId`); the default is
         // used only when no override is configured.
         let targetAgentId = agent.id
+        let targetIsLocked = await MainActor.run {
+            AgentManager.shared.lockedModel(for: targetAgentId) != nil
+        }
         let resolved = try await SubagentModelResolution.resolve(
             capabilityId: capability.id,
             agentId: scope.agentId,
@@ -631,6 +671,8 @@ final class TextSubagentKind:
             idleWaitSeconds: self.budgets.maxElapsedSeconds,
             deniedMessage: residencyDeniedMessage,
             unavailableMessage: "Agent '\(agent.name)' has no available model configured.",
+            // A target locked to its model ignores the launcher's override.
+            honorConfiguredOverride: !targetIsLocked,
             // Carry this exact model into the child so admission and execution
             // both honor the launcher's configured agent-target override.
             defaultModel: { AgentManager.shared.effectiveModel(for: targetAgentId) }
@@ -665,6 +707,17 @@ final class TextSubagentKind:
                 toolEnabled: !composed.tools.isEmpty,
                 resolvedContextWindow: window
             )
+            self.admissionContextWasMemoryFitted = false
+            var firstRoundBudgets = budgets
+            firstRoundBudgets.maxDelegateTurns = 1
+            self.minimumAdmissionContextPositions = DelegatedRunContract.derive(
+                seedCharacters: dispatchedPrompt.count,
+                systemPromptCharacters: composed.prompt.count,
+                toolSchemaTokens: composed.toolTokens,
+                budgets: firstRoundBudgets,
+                toolEnabled: !composed.tools.isEmpty,
+                resolvedContextWindow: window
+            )?.contextPositions
         }
         return ResolvedModel(
             name: resolved.model,
@@ -1017,6 +1070,8 @@ final class TextSubagentKind:
                 deadline: deadline,
                 sessionId: sessionId,
                 temperature: temperature,
+                agentMaxTokens: targetMaxTokens,
+                generationSettings: generationSettings,
                 enableThinking: scope.enableThinking(forDelegatedModel: resolved.name),
                     reasoningEffort: scope.reasoningEffort(forDelegatedModel: resolved.name),
                     isInterrupted: { interrupt.isInterrupted },
@@ -1149,12 +1204,6 @@ final class TextSubagentKind:
                 message: "Subagent '\(targetLabel)' reached its output-token limit before producing a result.",
                 retryable: false
             )
-        case .oversizedToolCallExhausted:
-            throw SubagentError.executionFailed(
-                message:
-                    "Subagent '\(targetLabel)' repeatedly produced an oversized tool call.",
-                retryable: false
-            )
         case .truncatedToolCallExhausted:
             throw SubagentError.executionFailed(
                 message:
@@ -1225,7 +1274,8 @@ final class TextSubagentKind:
             interrupt: interrupt,
             parentSessionId: parentSessionId,
             launcherWorkingFolder: launcherFolder,
-            continueSessionId: continueSessionId
+            continueSessionId: continueSessionId,
+            freshSessionId: freshSessionId
         )
         let digest = outcome.finalText
         let capped =
@@ -1255,6 +1305,24 @@ final class TextSubagentKind:
         // `SpawnArtifactCollector`, never through this model-visible payload.
         if outcome.artifactsShared > 0 {
             payload["artifacts_shared"] = outcome.artifactsShared
+        }
+        // `NEEDS INPUT:` is a prefix contract. A marker buried mid-text keeps
+        // `needs_input` false but is flagged so the flag/text mismatch is
+        // visible in the payload and the log instead of silently dropped.
+        if AgentDelegationDispatcher.hasOffPrefixNeedsInputMarker(digest) {
+            payload["needs_input_marker_off_prefix"] = true
+            print(
+                "[TextSubagentKind] worker \(resolvedAgentName) (\(outcome.sessionId.uuidString)) "
+                    + "used NEEDS INPUT off-prefix; needs_input stays false")
+        }
+        // Deliverables: the files the child's session wrote (its file-change
+        // journal, net of reverts), as paths the parent can `file_read` when
+        // it needs the content instead of asking for it in the digest.
+        let artifactPaths = await SpawnResultCompaction.artifactPaths(
+            forWorkerSession: outcome.sessionId
+        )
+        if !artifactPaths.isEmpty {
+            payload["artifact_paths"] = artifactPaths
         }
         // Usage parity with the ephemeral path: measured completion tokens +
         // throughput from the child's persisted turns, and the context-saved
@@ -1309,7 +1377,8 @@ final class TextSubagentKind:
             feed: feed,
             interrupt: interrupt,
             parentSessionId: parentSessionId,
-            continueSessionId: continueSessionId
+            continueSessionId: continueSessionId,
+            freshSessionId: freshSessionId
         )
         let digest = outcome.finalText
         let capped =
@@ -1364,7 +1433,7 @@ final class TextSubagentKind:
         return SubagentResult(payload: payload, summary: capped)
     }
 
-    /// Honest exit mapping for a `.cancelled` runner exit: the three cancel
+    /// Honest exit mapping for a `.cancelled` runner exit: the cancel
     /// causes get DISTINCT copy (a user stop is not a "time budget" failure).
     /// Pure — unit-testable without a live runner.
     static func cancelError(
@@ -1378,6 +1447,11 @@ final class TextSubagentKind:
         case .parentTask:
             return .executionFailed(
                 message: "Subagent '\(label)' was cancelled with the parent run.",
+                retryable: false
+            )
+        case .upstream:
+            return .executionFailed(
+                message: "Subagent '\(label)' was cancelled by its model or provider.",
                 retryable: false
             )
         case .deadline, .none:
@@ -1400,7 +1474,10 @@ final class TextSubagentKind:
     ///   instead (`AgentDelegationDispatcher.delegatedPrompt`).
     static func isExcludedChildTool(_ name: String) -> Bool {
         if SubagentCapabilityRegistry.spawn.toolNames.contains(name) { return true }
-        return name == "clarify"
+        // `prompt_working_folder` is excluded for the same reason: it opens a
+        // picker on the LAUNCHING chat's window and re-roots that chat, which
+        // a bounded worker must never do on its own.
+        return name == "clarify" || name == PromptWorkingFolderTool.toolName
     }
 
     /// The target agent's cancellation-safe enabled tools, as the child's
@@ -1429,7 +1506,11 @@ final class TextSubagentKind:
             names = autoChildToolNames(capabilities: caps)
         }
         guard !names.isEmpty else { return [] }
-        return ToolRegistry.shared.specsForSpawnedOperations(forTools: names)
+        return ToolRegistry.shared.specsForSpawnedOperations(
+            forTools: names.filter {
+                ToolRegistry.shared.isDynamicToolGranted($0, agentId: agentId)
+            }
+        )
     }
 
     /// The tool NAMES an auto-surface (nil-allowlist) agent's child may
@@ -1448,6 +1529,8 @@ final class TextSubagentKind:
         // grounding plus `share_artifact`, the worker's only path for
         // delivering generated files to the user.
         var names: Set<String> = ToolRegistry.spawnedWorkerBaselineToolNames
+        if !caps.calculatorEnabled { names.remove(CalculatorTool.toolName) }
+        if !caps.artifactsEnabled { names.remove("share_artifact") }
         if caps.webSearchEnabled {
             names.formUnion(["web_search", "search_and_extract"])
         }
@@ -1649,8 +1732,8 @@ final class TextSubagentKind:
         isDefault: Bool
     ) -> String {
         isDefault
-            ? "\(kind) '\(name)' is not spawnable. Add it in Settings → Orchestrator → Allowed subagents."
-            : "\(kind) '\(name)' is not spawnable from this agent. Add it in the agent's Subagents tab."
+            ? "\(kind) '\(name)' is not spawnable. Add it in Settings → Agents → Delegation → Allowed subagents."
+            : "\(kind) '\(name)' is not spawnable from this agent. Add it in the agent's Abilities → Subagents → Allowed subagents."
     }
 
     private func seedMessages(

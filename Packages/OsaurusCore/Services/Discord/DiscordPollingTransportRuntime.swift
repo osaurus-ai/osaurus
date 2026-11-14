@@ -48,7 +48,7 @@ actor DiscordPollingTransportRuntime: AgentChannelReceiveTransportRuntime {
         consecutiveFailures = 0
         await healthCenter.update(
             AgentChannelTransportHealthState(
-                connectionId: DiscordConnectionService.nativeConnectionId,
+                connectionId: service.connectionId,
                 transportId: Self.transportId,
                 provider: .discord,
                 status: .disabled,
@@ -67,7 +67,7 @@ actor DiscordPollingTransportRuntime: AgentChannelReceiveTransportRuntime {
             let batch = try await service.pollInboundMessages()
             consecutiveFailures = 0
             let health = AgentChannelTransportHealthState(
-                connectionId: DiscordConnectionService.nativeConnectionId,
+                connectionId: service.connectionId,
                 transportId: Self.transportId,
                 provider: .discord,
                 status: .healthy,
@@ -94,7 +94,7 @@ actor DiscordPollingTransportRuntime: AgentChannelReceiveTransportRuntime {
         } catch {
             consecutiveFailures += 1
             let health = AgentChannelTransportHealthState(
-                connectionId: DiscordConnectionService.nativeConnectionId,
+                connectionId: service.connectionId,
                 transportId: Self.transportId,
                 provider: .discord,
                 status: consecutiveFailures >= 3 ? .failed : .degraded,

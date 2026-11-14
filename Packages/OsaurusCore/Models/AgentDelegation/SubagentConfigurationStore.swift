@@ -366,6 +366,22 @@ enum SubagentConfigurationStore {
     @discardableResult
     nonisolated static func reconcile(with agents: [Agent]) -> SubagentConfiguration {
         mutate { current in
+            // A load that yields NO custom agents while the pool has members
+            // is a failed or partial agent load, not fourteen deletions:
+            // deletions prune one id at a time (`pruneSpawnableAgentID`).
+            // Pruning here would empty the pool for good (seeding never
+            // re-runs), which is how a seeded pool ends up silently empty.
+            // Keep the ids; the next load with agents present prunes the
+            // truly stale ones.
+            let hasCustomAgents = agents.contains { !$0.isBuiltIn }
+            if !hasCustomAgents, !current.spawnableAgentIDs.isEmpty {
+                print(
+                    "[SubagentConfigurationStore] reconcile: no custom agents loaded but the spawn pool has "
+                        + "\(current.spawnableAgentIDs.count) member(s) — keeping the pool, prune deferred."
+                )
+                current = current.migratingLegacyDefaults()
+                return
+            }
             current = current.pruningMissingAgents(using: agents).migratingLegacyDefaults()
         }
     }

@@ -1,0 +1,50 @@
+{
+  "id": "configurator.schedule-enable",
+  "domain": "configurator",
+  "label": "configurator • pause (disable) a schedule",
+  "query": "Pause my schedule named \"Inbox Check\" for now.",
+  "notes": "\"Pause\" maps to an automations entry (schedule source) carrying `enabled: false` (merge semantics patch the existing schedule by name). A REAL enabled schedule is seeded under the referenced name (owned by a seeded custom agent) so the case tests the actual pause flow: with an empty store an honest model that inspects first correctly reports \"no such schedule\" — the same read-first behavior the delete rubrics reward — and the case punished exactly that pattern.",
+  "fixtures": {
+    "seedAgents": [
+      {
+        "id": "5b8e2d4f-9c17-4a63-8e05-3d2b7f9a1c68",
+        "name": "Eval Inbox Agent"
+      }
+    ],
+    "seedSchedules": [
+      {
+        "name": "Inbox Check",
+        "agentId": "5b8e2d4f-9c17-4a63-8e05-3d2b7f9a1c68",
+        "instructions": "Check the inbox and summarize anything new.",
+        "timeOfDay": "09:00",
+        "enabled": true
+      }
+    ]
+  },
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "yaml": "Inbox Check"
+          }
+        },
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "yaml": "false"
+          }
+        }
+      ],
+      "maxIterations": 8
+    }
+  }
+}

@@ -65,6 +65,26 @@ actor OsaurusRouterAPIClient {
         try ensureOK(data: data, response: response)
     }
 
+    /// `GET /announcements?app_version=…` — the live community announcements.
+    /// Unauthenticated (onboarding users have no wallet yet) and IP
+    /// rate-limited; a 429 surfaces as `.rateLimited(retryAfter:)` so the
+    /// caller can back off. `appVersion` lets operators bound an
+    /// announcement to a build range, so always send it.
+    func announcements(appVersion: String?) async throws -> OsaurusRouterAnnouncementsResponse {
+        var queryItems: [URLQueryItem] = []
+        if let appVersion, !appVersion.isEmpty {
+            queryItems.append(URLQueryItem(name: "app_version", value: appVersion))
+        }
+        let url = try url(path: "/announcements", queryItems: queryItems)
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.timeoutInterval = 10
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let (data, response) = try await perform(request)
+        try ensureOK(data: data, response: response)
+        return try decoder.decode(OsaurusRouterAnnouncementsResponse.self, from: data)
+    }
+
     /// `timeout` bounds the request for callers that must answer quickly (the
     /// local `GET /credits/balance` endpoint); nil keeps the session default.
     func balance(timeout: TimeInterval? = nil) async throws -> OsaurusRouterBalanceResponse {
@@ -157,13 +177,30 @@ actor OsaurusRouterAPIClient {
         _ = try await idData(method: "DELETE", path: "/id/sessions/\(try routerPathComponent(id))")
     }
 
+    /// `POST /id/lookup` — claimed Osaurus IDs for 1–25 wallets, keyed by
+    /// lowercased wallet. Wallets without a claimed ID are absent.
+    func osaurusIDLookup(wallets: [String], timeout: TimeInterval = 3) async throws -> [String: String] {
+        struct Body: Encodable { let wallets: [String] }
+        struct Person: Decodable {
+            let wallet: String
+            let osaurus_id: String
+        }
+        struct Response: Decodable { let people: [Person] }
+        let body = try JSONEncoder.osaurusCanonical(prettyPrinted: false).encode(Body(wallets: wallets))
+        let response: Response = try await idRequest(
+            method: "POST", path: "/id/lookup", bodyData: body, timeout: timeout)
+        return Dictionary(response.people.map { ($0.wallet.lowercased(), $0.osaurus_id) }, uniquingKeysWith: { a, _ in a })
+    }
+
     private func idRequest<T: Decodable>(
         method: String,
         path: String,
         queryItems: [URLQueryItem] = [],
-        bodyData: Data? = nil
+        bodyData: Data? = nil,
+        timeout: TimeInterval? = nil
     ) async throws -> T {
-        let data = try await idData(method: method, path: path, queryItems: queryItems, bodyData: bodyData)
+        let data = try await idData(
+            method: method, path: path, queryItems: queryItems, bodyData: bodyData, timeout: timeout)
         return try decoder.decode(T.self, from: data)
     }
 
@@ -173,12 +210,14 @@ actor OsaurusRouterAPIClient {
         method: String,
         path: String,
         queryItems: [URLQueryItem] = [],
-        bodyData: Data? = nil
+        bodyData: Data? = nil,
+        timeout: TimeInterval? = nil
     ) async throws -> Data {
         let url = try url(path: path, queryItems: queryItems)
         func makeRequest() -> URLRequest {
             var request = URLRequest(url: url)
             request.httpMethod = method
+            if let timeout { request.timeoutInterval = timeout }
             request.setValue("application/json", forHTTPHeaderField: "Accept")
             if bodyData != nil {
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -629,6 +668,45 @@ actor OsaurusRouterAPIClient {
         return try await get("/credits/web-usage", queryItems: queryItems)
     }
 
+    // MARK: - Help (`/support/*`)
+    //
+    // Bug reports and the two-way thread behind each one. Wallet-signed like
+    // `/credits/*`; the router deliberately does not count these as the
+    // wallet's first signed action, so they are also allowed while the
+    // welcome-credit choice is pending (see
+    // `RouterCreditAcquisitionCoordinator.allowsSignedRequest`).
+
+    /// `GET /support/threads` — the user's reports, newest first, plus the
+    /// unread count for the Help badge.
+    func supportThreads() async throws -> OsaurusRouterSupportThreadsResponse {
+        try await get("/support/threads", timeout: 15)
+    }
+
+    /// `POST /support/threads` — send a new report. `body.consent` must be
+    /// true; the router refuses anything else.
+    func createSupportThread(_ body: OsaurusRouterSupportReportBody) async throws -> OsaurusRouterSupportThread {
+        try await post("/support/threads", body: body)
+    }
+
+    /// `GET /support/threads/:id` — one report with its messages.
+    func supportThread(id: String) async throws -> OsaurusRouterSupportThread {
+        try await get("/support/threads/\(try routerPathComponent(id))", timeout: 15)
+    }
+
+    /// `POST /support/threads/:id/messages` — the user answers. Moves the
+    /// thread back to `open`, including from `closed`.
+    func replyToSupportThread(id: String, body: String) async throws -> OsaurusRouterSupportThread {
+        struct Body: Encodable { let body: String }
+        return try await post(
+            "/support/threads/\(try routerPathComponent(id))/messages", body: Body(body: body))
+    }
+
+    /// `POST /support/threads/:id/read` — clear the unread flag. Reading the
+    /// detail does not do this on its own.
+    func markSupportThreadRead(id: String) async throws -> OsaurusRouterSupportThread {
+        try await postEmpty("/support/threads/\(try routerPathComponent(id))/read")
+    }
+
     func signedJSONRequest(method: String, path: String, body: Data? = nil) async throws -> URLRequest {
         let url = try url(path: path)
         return try await signedJSONRequest(method: method, url: url, body: body)
@@ -720,11 +798,93 @@ actor OsaurusRouterAPIClient {
         _ request: URLRequest,
         session overrideSession: URLSession? = nil
     ) async throws -> (Data, URLResponse) {
+        // Activity log: every signed control-plane call (account, credits,
+        // workspaces, media, pairing) is cloud egress. Hosted search and
+        // contents are excluded here because `SearchActivityLogger` records
+        // them as web-search / URL-extract rows with the query and URLs.
+        let logged = Self.shouldLogControlPlaneCall(path: request.url?.path)
+        let attribution = logged ? InsightsService.ActivityAttribution.current() : .none
+        let started = Date()
         do {
-            return try await (overrideSession ?? session).data(for: request)
+            let result = try await (overrideSession ?? session).data(for: request)
+            if logged {
+                Self.logControlPlaneCall(
+                    request: request, response: result.1 as? HTTPURLResponse,
+                    responseBytes: result.0.count, error: nil,
+                    durationMs: Date().timeIntervalSince(started) * 1000, attribution: attribution)
+            }
+            return result
         } catch {
+            if logged {
+                Self.logControlPlaneCall(
+                    request: request, response: nil, responseBytes: nil, error: error.localizedDescription,
+                    durationMs: Date().timeIntervalSince(started) * 1000, attribution: attribution)
+            }
             throw OsaurusRouterAPIError.transport(error.localizedDescription)
         }
+    }
+
+    /// Hosted search/contents are logged by the search layer with richer
+    /// facts; everything else on the Router is a control-plane call. The
+    /// unauthenticated announcements feed and health probe carry no account
+    /// data (no wallet headers, no body) and are excluded like theme fetches
+    /// and the appcast.
+    nonisolated static func shouldLogControlPlaneCall(path: String?) -> Bool {
+        guard let path else { return true }
+        return path != "/v1/search" && path != "/v1/contents"
+            && path != "/announcements" && path != "/health"
+    }
+
+    /// Plain-language purpose for a Router path, so the activity row reads
+    /// "Credits balance" rather than a bare URL.
+    nonisolated static func controlPlanePurpose(path: String) -> String {
+        let p = path.lowercased()
+        if p.hasPrefix("/support") { return L("Help & feedback") }
+        if p.contains("/workspace") { return L("Workspaces") }
+        if p.contains("/credit") || p.contains("/balance") || p.contains("/billing") { return L("Credits") }
+        if p.contains("/media") { return L("Media generation") }
+        if p.contains("/pair") || p.contains("/relay") { return L("Secure channel pairing") }
+        if p.contains("/account") || p.contains("/identity") || p.contains("/me") { return L("Account") }
+        if p.contains("/models") { return L("Model catalog") }
+        return L("Router control plane")
+    }
+
+    nonisolated static func logControlPlaneCall(
+        request: URLRequest,
+        response: HTTPURLResponse?,
+        responseBytes: Int?,
+        error: String?,
+        durationMs: Double,
+        attribution: InsightsService.ActivityAttribution
+    ) {
+        let path = request.url?.path ?? "/"
+        let host = request.url?.host
+        let status = response?.statusCode ?? (error == nil ? 200 : 0)
+        let isError = error != nil || !(200 ..< 300).contains(status)
+        var details: [String: String] = [
+            "purpose": controlPlanePurpose(path: path),
+            "method": request.httpMethod ?? "GET",
+        ]
+        if let query = request.url?.query, !query.isEmpty { details["query_string"] = query }
+        if let error { details["error"] = error }
+        InsightsService.logEgress(
+            category: .routerControl,
+            source: .system,
+            method: request.httpMethod ?? "GET",
+            path: path,
+            statusCode: status,
+            durationMs: durationMs,
+            egress: EgressInfo(
+                destinationLabel: L("Osaurus Router"),
+                destinationHost: host,
+                bytesSent: request.httpBody?.count ?? 0,
+                bytesReceived: responseBytes,
+                dataClasses: ["account"],
+                details: details
+            ),
+            errorMessage: isError ? (error ?? "HTTP \(status)") : nil,
+            attribution: attribution
+        )
     }
 
     private func sign(request: inout URLRequest, body: Data?) async throws {

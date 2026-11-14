@@ -94,6 +94,7 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
         AgentChannelConnection.nativeTelegramConnectionId,
         AgentChannelConnection.nativeIMessageConnectionId,
         AgentChannelConnection.nativeWhatsAppConnectionId,
+        AgentChannelConnection.nativeEmailConnectionId,
     ])
     private static let supportedHTTPMethods = Set(["GET", "POST", "PUT", "PATCH", "DELETE"])
 
@@ -119,6 +120,46 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
 
     func loadConfiguration() -> AgentChannelConfiguration {
         AgentChannelConfigurationStore.load()
+    }
+
+    // MARK: - Configured
+
+    /// iMessage has no remote credential; "configured" means a verified
+    /// helper is present AND allowlisted chats exist. Without the helper
+    /// check, a machine that lost its helper (failed download, tampered
+    /// digest) would still show Configured/Connected while every action
+    /// fails.
+    static func isIMessageConfigured() -> Bool {
+        let config = IMessageConnectionService.shared.configuration()
+        return IMessageConnectionService.shared.helperAvailable()
+            && (!config.readableChatIds.isEmpty || !config.writableChatIds.isEmpty)
+    }
+
+    /// WhatsApp mirrors iMessage: a verified helper plus allowlisted chats.
+    static func isWhatsAppConfigured() -> Bool {
+        let config = WhatsAppConnectionService.shared.configuration()
+        return WhatsAppConnectionService.shared.helperAvailable()
+            && (!config.readableChatIds.isEmpty || !config.writableChatIds.isEmpty)
+    }
+
+    /// Accounts added beyond each multi-account provider's primary one.
+    static func extraAccounts() -> [ChannelAccount] {
+        ChannelAccounts.multiAccountKinds.flatMap { ChannelAccounts.accounts(kind: $0) }.filter { !$0.isPrimary }
+    }
+
+    /// Whether any channel is set up, counted as the Channels screen counts
+    /// it, plus custom connections. Credentials are read off the main thread.
+    func anyChannelConfigured() async -> Bool {
+        if !editableConnections().isEmpty || Self.isIMessageConfigured() || Self.isWhatsAppConfigured()
+            || EmailChannelService.shared.configuration()
+                .account(channelConnectionId: AgentChannelConnection.nativeEmailConnectionId) != nil
+            || !Self.extraAccounts().isEmpty
+        {
+            return true
+        }
+        if await DiscordConnectionService.shared.hasBotTokenOffMain() { return true }
+        if await TelegramConnectionService.shared.hasBotTokenOffMain() { return true }
+        return await SlackConnectionService.shared.credentialPresenceOffMain().botToken
     }
 
     func editableConnections() -> [AgentChannelConnection] {
@@ -245,6 +286,21 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
         try AgentChannelConfigurationStore.save(configuration)
     }
 
+    /// Disables the bindings of a removed channel account, as
+    /// `deleteConnection` does for a custom one.
+    func disableBindings(connectionId: String) throws {
+        let normalizedId = AgentChannelConnection.normalizedId(connectionId)
+        var configuration = loadConfiguration()
+        guard configuration.bindings.contains(where: { $0.connectionId == normalizedId && $0.enabled }) else { return }
+        configuration.bindings = configuration.bindings.map { binding in
+            guard binding.connectionId == normalizedId else { return binding }
+            var disabled = binding
+            disabled.enabled = false
+            return disabled
+        }
+        try AgentChannelConfigurationStore.save(configuration)
+    }
+
     // MARK: - Proactive outbound bindings
 
     func bindings() -> [AgentChannelBinding] {
@@ -323,7 +379,7 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
     ) -> Bool {
         let normalized = AgentChannelConnection.normalizedId(connectionId)
         if reservedConnectionIds.contains(normalized.lowercased()) { return true }
-        return configuration.connection(id: normalized) != nil
+        return configuration.connection(id: normalized) != nil || ChannelAccounts.isNative(normalized)
     }
 
     private func validatedBinding(_ binding: AgentChannelBinding) throws -> AgentChannelBinding {
@@ -420,7 +476,12 @@ final class AgentChannelConnectionManager: @unchecked Sendable {
         guard !normalized.id.isEmpty else {
             throw AgentChannelConnectionManagerError.emptyConnectionId
         }
-        guard !Self.reservedConnectionIds.contains(normalized.id.lowercased()) else {
+        // Extra channel accounts own `<kind>-...` ids; a custom connection
+        // saved under one before that keeps it.
+        let keepsLegacyId =
+            !Self.reservedConnectionIds.contains(normalized.id.lowercased())
+            && loadConfiguration().connection(id: normalized.id) != nil
+        guard !ChannelAccounts.isReserved(normalized.id) || keepsLegacyId else {
             throw AgentChannelConnectionManagerError.reservedConnectionId(normalized.id)
         }
         guard !normalized.name.isEmpty else {

@@ -12,6 +12,8 @@
 import SwiftUI
 
 struct CacheSection: View {
+    @Environment(\.theme) private var theme
+
     @Binding var draft: VMLXServerRuntimeSettings
     @Binding var metadataFallbackTokens: Int?
     @Binding var contextLengthCap: Int?
@@ -31,26 +33,24 @@ struct CacheSection: View {
             blurb:
                 "One place for conversation limits, live KV retention, paged RAM, and SSD-backed prefix reuse. Model maximum and conversation budget are not KV-cache capacity."
         ) {
-            SettingsSubsection(label: "Context & KV Policy") {
+            SettingsFieldRow(label: "Context & KV Policy") {
                 contextAndKVPolicyControls
             }
 
-            SettingsDivider()
 
             SettingsToggle(
-                title: L("Prefix Cache"),
+                title: "Prefix Cache",
                 description:
                     "Reuse cached prompt prefixes across requests for faster TTFT. When off, GPU and disk reuse are also disabled.",
                 isOn: $draft.cache.prefix.enabled
             )
             .settingsLandingAnchor("settings.server.prefixCache")
 
-            SettingsDivider()
 
-            SettingsSubsection(label: "GPU Cache (Paged KV)") {
-                VStack(alignment: .leading, spacing: 12) {
+            SettingsFieldRow(label: "GPU Cache (Paged KV)") {
+                VStack(alignment: .leading, spacing: theme.space.s12) {
                     SettingsToggle(
-                        title: L("Enable GPU Cache"),
+                        title: "Enable GPU Cache",
                         description:
                             "Optional hot tier held in GPU memory. SSD cache can still restore prefixes across requests when this is off.",
                         isOn: $draft.cache.pagedKV.enabled
@@ -75,31 +75,27 @@ struct CacheSection: View {
                 }
             }
 
-            SettingsDivider()
 
-            SettingsSubsection(label: "SSD Cache (L2)") {
+            SettingsFieldRow(label: "SSD Cache (L2)") {
                 diskCacheControls
             }
 
-            SettingsDivider()
 
-            SettingsSubsection(label: "On-the-fly Compression") {
+            SettingsFieldRow(label: "On-the-fly Compression") {
                 liveKVCodecControls
             }
 
-            SettingsDivider()
 
             SettingsToggle(
-                title: L("Re-derive SSM State After Generation"),
+                title: "Re-derive SSM State After Generation",
                 description:
                     "Hybrid Mamba models only. On by default so SSM companion state can be restored with prefix/L2 cache hits.",
                 isOn: $draft.cache.enableSSMReDerive
             )
             .settingsLandingAnchor("settings.server.ssmReDerive")
 
-            SettingsDivider()
 
-            SettingsSubsection(label: "Planned Cache Controls") {
+            SettingsFieldRow(label: "Planned Cache Controls") {
                 plannedControls
             }
         }
@@ -129,7 +125,7 @@ struct CacheSection: View {
     // MARK: - Subviews
 
     private var contextAndKVPolicyControls: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             policyRow(
                 label: "Model maximum",
                 value: "Per selected model",
@@ -185,7 +181,6 @@ struct CacheSection: View {
                 format: "%.2f"
             )
 
-            SettingsDivider()
 
             policyRow(
                 label: "Saved metadata fallback",
@@ -245,7 +240,6 @@ struct CacheSection: View {
     private var resolvedDiskCacheLabel: String {
         guard let result = diskCacheResolution else { return "—" }
         let effective = DiskCacheUsage.format(bytes: Int(clamping: result.capBytes))
-        let requested = DiskCacheUsage.format(bytes: Int(clamping: result.requestedBytes))
         let label: String
         switch result.rule {
         case .automatic:
@@ -257,10 +251,19 @@ struct CacheSection: View {
         case .unknownVolume:
             label = String(format: L("Disk measurement unavailable: %@ fallback"), effective)
         }
-        let limit = result.limitedByHost
-            ? String(format: L("Requested %@; limited to 25%% of free space plus this cache."), requested) : ""
-        let warning = result.lowFreeSpace && ModelRuntime.cacheDiskDirectoryOverride(for: draft.cache) != nil ? L("Disk space is low. SSD caching remains enabled.") : ""
-        return [label, limit, warning].filter { !$0.isEmpty }.joined(separator: "\n")
+        let warning: String
+        if result.exceedsAvailableSpace {
+            warning = L("The cache limit exceeds currently available space. Other files may prevent the cache from reaching this size.")
+        } else if result.lowFreeSpace {
+            warning = L("Disk space is low. SSD caching remains enabled.")
+        } else {
+            warning = ""
+        }
+        return [label, warning].filter { !$0.isEmpty }.joined(separator: "\n")
+    }
+
+    private var hasDiskSpaceWarning: Bool {
+        diskCacheResolution.map { $0.exceedsAvailableSpace || $0.lowFreeSpace } ?? false
     }
 
     private var diskCachePercentBinding: Binding<Double?> {
@@ -275,10 +278,21 @@ struct CacheSection: View {
         )
     }
 
+    nonisolated static func hasUnsavedDiskCacheDirectory(
+        draft: VMLXServerCacheSettings, saved: VMLXServerCacheSettings
+    ) -> Bool {
+        ModelRuntime.diskCacheDirectoryForDisplay(for: draft).standardizedFileURL
+            != ModelRuntime.diskCacheDirectoryForDisplay(for: saved).standardizedFileURL
+    }
+
+    private var hasUnsavedDiskCacheDirectory: Bool {
+        Self.hasUnsavedDiskCacheDirectory(draft: draft.cache, saved: savedSettings.cache)
+    }
+
     private var diskCacheControls: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             SettingsToggle(
-                title: L("Disk Cache"),
+                title: "Disk Cache",
                 description:
                     "Persist content-addressed prompt checkpoints on SSD. Works with paged RAM cache off and restores the longest matching prefix after restart; turn off to disable disk reuse.",
                 isOn: $draft.cache.blockDisk.enabled
@@ -287,7 +301,7 @@ struct CacheSection: View {
             OptionalDoubleField(
                 label: "Disk Cache Size (% of disk)",
                 placeholder: "Blank = Automatic (30% of available space)",
-                help: "Automatic uses 30% of free space plus this cache's own bytes. An explicit percentage uses total disk size, bounded by 25% of free space plus this cache. Saving a size change updates loaded models without unloading them; a lower cap is enforced on the next cache write.",
+                help: "Automatic uses 30% of free space plus this cache's own bytes. An explicit percentage uses total disk size without a free-space cap. This is a maximum cache size, not reserved space. Saving updates loaded models without unloading them; a lower cap applies on the next cache write.",
                 value: diskCachePercentBinding,
                 format: "%g"
             )
@@ -303,11 +317,12 @@ struct CacheSection: View {
                 && draft.cache.blockDisk.maxSizeGB == nil && draft.cache.legacyDisk.maxSizeGB == nil)
             .settingsLandingAnchor("settings.server.diskCacheAutomatic")
             Text(verbatim: resolvedDiskCacheLabel)
-                .font(.system(size: 10))
-                .foregroundColor(.secondary)
-            HStack(spacing: 10) {
+                .font(SettingsFont.footnote)
+                .foregroundColor(hasDiskSpaceWarning ? theme.status.error.foreground : .secondary)
+            HStack(spacing: theme.space.s10) {
                 Button {
                     Task {
+                        guard !hasUnsavedDiskCacheDirectory else { return }
                         isClearingDiskCache = true
                         let result = await ModelRuntime.shared.clearDiskCaches()
                         clearedCacheSummary =
@@ -322,26 +337,31 @@ struct CacheSection: View {
                     }
                 } label: {
                     if isClearingDiskCache {
-                        ProgressView().controlSize(.small)
+                        SettingsSpinner()
                     } else {
                         Text("Clear SSD Cache", bundle: .module)
                     }
                 }
-                .disabled(isClearingDiskCache)
+                .disabled(isClearingDiskCache || hasUnsavedDiskCacheDirectory)
                 .accessibilityLabel(Text("Clear SSD Cache", bundle: .module))
                 .settingsLandingAnchor("settings.server.clearDiskCache")
                 if let clearedCacheSummary {
                     Text(verbatim: clearedCacheSummary)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .textStyle(.micro)
+                        .foregroundStyle(theme.text.secondary)
                 }
+            }
+            if hasUnsavedDiskCacheDirectory {
+                Text("Save directory changes before clearing the SSD cache.", bundle: .module)
+                    .textStyle(.micro)
+                    .foregroundStyle(theme.text.secondary)
             }
             Text(
                 "Clears indexed conversation cache files. Chats and models are not deleted. Unrecognized files are left untouched; future replies may rebuild a cold cache.",
                 bundle: .module
             )
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            .textStyle(.micro)
+            .foregroundStyle(theme.text.secondary)
             .fixedSize(horizontal: false, vertical: true)
 
             OptionalStringField(
@@ -356,20 +376,18 @@ struct CacheSection: View {
 
     @ViewBuilder
     private var liveKVCodecControls: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            SettingsField(
-                label: "Codec",
-                hint:
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            SettingsRow(
+                title: "Codec",
+                description:
                     "Compress KV cache entries in memory. TurboQuant trades quality for footprint and needs explicit bit widths."
             ) {
-                Picker("", selection: $draft.cache.liveKVCodec) {
+                SettingsMenuPicker(selection: $draft.cache.liveKVCodec) {
                     ForEach(VMLXKVCacheCodec.allCases, id: \.self) { codec in
                         Text(codec.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)
                             .tag(codec)
                     }
                 }
-                .pickerStyle(.menu)
-                .labelsHidden()
             }
 
             if draft.cache.liveKVCodec == .turboQuant {
@@ -394,30 +412,28 @@ struct CacheSection: View {
 
     @ViewBuilder
     private var plannedControls: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             ServerSettingsPlannedBanner(
                 blurb:
                     "Persisted today; the cache coordinator does not yet consume these. Ships in a follow-up."
             )
 
             SettingsToggle(
-                title: L("Legacy Entry-Count Cache"),
+                title: "Legacy Entry-Count Cache",
                 description:
                     "Use the older entry-count prefix cache instead of the new heap-based one.",
                 isOn: $draft.cache.prefix.legacyEntryCountCache
             )
 
-            SettingsField(
-                label: "Stored KV Codec",
-                hint: "Codec used when serializing KV blocks to disk."
+            SettingsRow(
+                title: "Stored KV Codec",
+                description: "Codec used when serializing KV blocks to disk."
             ) {
-                Picker("", selection: $draft.cache.storedKVCodec) {
+                SettingsMenuPicker(selection: $draft.cache.storedKVCodec) {
                     ForEach(VMLXStoredKVCacheCodec.allCases, id: \.self) { codec in
                         Text(codec.rawValue.capitalized).tag(codec)
                     }
                 }
-                .pickerStyle(.menu)
-                .labelsHidden()
             }
         }
     }
@@ -458,26 +474,23 @@ struct CacheSection: View {
     }
 
     private func policyRow(label: String, value: String, detail: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
+            HStack(alignment: .firstTextBaseline, spacing: theme.space.s12) {
                 Text(LocalizedStringKey(label), bundle: .module)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(.secondary)
+                    .font(SettingsFont.smallLabel)
+                    .foregroundStyle(theme.text.secondary)
                 Spacer()
                 Text(value)
-                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .font(SettingsFont.monoSmall)
                     .multilineTextAlignment(.trailing)
                     .textSelection(.enabled)
             }
             Text(LocalizedStringKey(detail), bundle: .module)
-                .font(.system(size: 10))
-                .foregroundStyle(.tertiary)
+                .font(SettingsFont.footnote)
+                .foregroundStyle(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(Color.primary.opacity(0.04))
-        )
+        .padding(theme.space.s8)
+        .settingsChrome(.inset)
     }
 }

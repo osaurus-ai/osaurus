@@ -31,10 +31,10 @@ public enum EvalJudgeModel {
     /// in-process from the matching `<PREFIX>_API_KEY` (see the file's
     /// `_comment` for the Gemini `google/` prefix gotcha).
     static let builtInJudgeCandidates: [(envKey: String, modelId: String)] = [
-        ("XAI_API_KEY", "xai/grok-4.3"),
-        ("ANTHROPIC_API_KEY", "anthropic/claude-sonnet-4-5"),
-        ("OPENAI_API_KEY", "openai/gpt-5.1"),
-        ("GEMINI_API_KEY", "google/gemini-2.5-pro"),
+        ("XAI_API_KEY", "xai/grok-4.7"),
+        ("ANTHROPIC_API_KEY", "anthropic/claude-sonnet-5-5"),
+        ("OPENAI_API_KEY", "openai/gpt-6.1-sol"),
+        ("GEMINI_API_KEY", "google/gemini-4-argon"),
     ]
 
     /// Strong-judge candidates in priority order: (API-key env var, model

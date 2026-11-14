@@ -222,7 +222,7 @@ enum ProviderCatalog {
         let local = entries.filter { $0.placement == .local }
         let custom = entries.filter { $0.placement == .custom }
         return [
-            Section(id: "apiKey", title: "API key", entries: keyVendors),
+            Section(id: "apiKey", title: "API Key", entries: keyVendors),
             Section(id: "local", title: "Local", entries: local),
             Section(id: "custom", title: "Custom", entries: custom),
         ].filter { !$0.entries.isEmpty }

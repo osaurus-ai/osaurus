@@ -101,24 +101,59 @@ private struct LineIterator: IteratorProtocol {
     mutating func next() -> Substring? {
         guard currentIndex < endIndex else { return nil }
 
-        // Find the next newline or end of string
+        // Find the next newline or end of string by scanning UTF-8 bytes.
+        // Walking `Character`s here ran grapheme segmentation on every step,
+        // which made splitting large (e.g. reasoning) text slow enough to hang
+        // the main thread. LF (0x0A) never appears inside a multi-byte UTF-8
+        // sequence and is always its own grapheme (CRLF is normalized before
+        // we get here), so the byte position is a valid Character boundary.
         let lineStart = currentIndex
-        while currentIndex < endIndex && string[currentIndex] != "\n" {
-            currentIndex = string.index(after: currentIndex)
-        }
-
-        let lineEnd = currentIndex
+        let utf8 = string.utf8
+        let lineEnd = utf8[currentIndex ..< endIndex].firstIndex(of: UInt8(ascii: "\n")) ?? endIndex
 
         // Skip past the newline for next iteration
-        if currentIndex < endIndex {
-            currentIndex = string.index(after: currentIndex)
-        }
+        currentIndex = lineEnd < endIndex ? utf8.index(after: lineEnd) : endIndex
 
         return string[lineStart ..< lineEnd]
     }
 }
 
-func parseBlocks(_ input: String) -> [MessageBlock] {
+func parseBlocks(_ input: String, preserveBlockquoteHardBreaks: Bool = false) -> [MessageBlock] {
+    var resume: MarkdownResumePoint?
+    return parseBlocks(
+        input,
+        preserveBlockquoteHardBreaks: preserveBlockquoteHardBreaks,
+        resume: &resume,
+        recordResume: false
+    )
+}
+
+/// A line where `parseBlocks` starts from a clean state and nothing before
+/// it reads past it.
+struct MarkdownResumePoint: Equatable {
+    /// UTF-8 offset of the start of the line.
+    let utf8Offset: Int
+    /// UTF-8 offset just past the line's newline.
+    let lineEndUTF8Offset: Int
+    /// Blocks emitted before the line.
+    let blockCount: Int
+}
+
+/// `parseBlocks`, plus the last resume point. Any text that matches `input`
+/// through `lineEndUTF8Offset` parses to the first `blockCount` blocks
+/// followed by `parseBlocks` of the text from `utf8Offset`.
+func parseBlocksWithResumePoint(_ input: String) -> (blocks: [MessageBlock], resume: MarkdownResumePoint?) {
+    var resume: MarkdownResumePoint?
+    let blocks = parseBlocks(input, preserveBlockquoteHardBreaks: false, resume: &resume, recordResume: true)
+    return (blocks, resume)
+}
+
+private func parseBlocks(
+    _ input: String,
+    preserveBlockquoteHardBreaks: Bool,
+    resume: inout MarkdownResumePoint?,
+    recordResume: Bool
+) -> [MessageBlock] {
     var blocks: [MessageBlock] = []
     var currentParagraphLines: [Substring] = []
     var currentBlockquoteLines: [Substring] = []
@@ -128,7 +163,10 @@ func parseBlocks(_ input: String) -> [MessageBlock] {
     var blockIndex = 0
 
     // Normalize line endings once
-    let normalizedInput = input.contains("\r\n") ? input.replacingOccurrences(of: "\r\n", with: "\n") : input
+    let hasCRLF = input.contains("\r\n")
+    let normalizedInput = hasCRLF ? input.replacingOccurrences(of: "\r\n", with: "\n") : input
+    // Resume offsets are reported against `input`, so normalizing rules them out.
+    var resumeBlocked = !recordResume || hasCRLF
 
     // Collect lines into array for index-based access (needed for code blocks)
     // Use lazy evaluation for better memory efficiency
@@ -198,8 +236,30 @@ func parseBlocks(_ input: String) -> [MessageBlock] {
         let line = lines[i]
         let trimmed = line.trimmingWhitespace()
 
+        // A complete line right after an empty one, with nothing pending:
+        // every lookahead before it stops here, so the blocks so far are final.
+        if !resumeBlocked, i > 0, i < lines.count - 1, lines[i - 1].isEmpty, !trimmed.isEmpty,
+            currentParagraphLines.isEmpty, currentBlockquoteLines.isEmpty, currentListItems.isEmpty
+        {
+            let utf8 = normalizedInput.utf8
+            resume = MarkdownResumePoint(
+                utf8Offset: utf8.distance(from: utf8.startIndex, to: line.startIndex),
+                lineEndUTF8Offset: utf8.distance(from: utf8.startIndex, to: lines[i + 1].startIndex),
+                blockCount: blocks.count
+            )
+        }
+
         // Block math: $$ ... $$ or \[ ... \]
-        if let result = tryParseBlockMath(trimmed, lines: lines, from: i) {
+        // An unclosed opener scans to the end of the text, so later text can
+        // still turn everything after it into math. A math block holding a
+        // fence line reads as a fence to `StreamingMarkdownBalancer`. Either
+        // way, no later line is a resume point.
+        var mathUnclosed = false
+        var mathHidesFence = false
+        let math = tryParseBlockMath(
+            trimmed, lines: lines, from: i, unclosed: &mathUnclosed, hidesFence: &mathHidesFence)
+        if mathUnclosed || mathHidesFence { resumeBlocked = true }
+        if let result = math {
             flushParagraph()
             flushBlockquote()
             flushList()
@@ -210,21 +270,19 @@ func parseBlocks(_ input: String) -> [MessageBlock] {
         }
 
         // Fenced code block
-        if trimmed.hasPrefix("```") {
+        if let fence = parseCodeFenceOpener(line) {
             flushParagraph()
             flushBlockquote()
             flushList()
 
-            let langPart = trimmed.dropFirst(3)
-            let lang = langPart.trimmingWhitespace()
-            let langStr = lang.isEmpty ? nil : String(lang)
+            let langStr = fence.info.isEmpty ? nil : fence.info
 
             i += 1
             var codeLines: [Substring] = []
             while i < lines.count {
                 let l = lines[i]
-                if l.trimmingWhitespace().hasPrefix("```") { break }
-                codeLines.append(l)
+                if fence.isClosedBy(l) { break }
+                codeLines.append(fence.strippingIndent(l))
                 i += 1
             }
             let codeText = codeLines.map { String($0) }.joined(separator: "\n")
@@ -326,7 +384,11 @@ func parseBlocks(_ input: String) -> [MessageBlock] {
         if trimmed.hasPrefix(">") {
             flushParagraph()
             flushList()
-            let quoteContent = trimmed.dropFirst().trimmingWhitespace()
+            // Static documents need the original trailing spaces to distinguish
+            // an explicit Markdown hard break from a source-only soft wrap.
+            let quoteContent = preserveBlockquoteHardBreaks
+                ? line.drop(while: { $0 == " " || $0 == "\t" }).dropFirst().drop(while: { $0 == " " || $0 == "\t" })
+                : trimmed.dropFirst().trimmingWhitespace()
             currentBlockquoteLines.append(quoteContent)
             i += 1
             continue
@@ -436,7 +498,13 @@ private struct BlockMathResult {
 /// Try to parse a block math expression starting at the current line.
 /// Supports `$$...$$` and `\[...\]` delimiters, both single-line and multi-line.
 /// Returns nil if the line doesn't start a block math expression or the delimiter is unclosed.
-private func tryParseBlockMath(_ trimmed: Substring, lines: [Substring], from i: Int) -> BlockMathResult? {
+private func tryParseBlockMath(
+    _ trimmed: Substring,
+    lines: [Substring],
+    from i: Int,
+    unclosed: inout Bool,
+    hidesFence: inout Bool
+) -> BlockMathResult? {
     struct Delimiter {
         let open: String
         let close: String
@@ -471,12 +539,14 @@ private func tryParseBlockMath(_ trimmed: Substring, lines: [Substring], from i:
                 if !before.isEmpty { mathLines.append(before) }
                 let latex = mathLines.map { String($0) }.joined(separator: "\n")
                 guard looksLikeLatex(latex) else { return nil }
+                hidesFence = lines[i ... j].contains { parseCodeFenceOpener($0) != nil }
                 return BlockMathResult(latex: latex, nextIndex: j + 1)
             }
             mathLines.append(lines[j])
             j += 1
         }
         // Unclosed delimiter during streaming — fall through
+        unclosed = true
         return nil
     }
     return nil
@@ -560,6 +630,67 @@ private func parseTableRow(_ line: Substring) -> [String] {
     }
 
     return cells
+}
+
+// MARK: - Code Fences
+
+/// An opening code fence per CommonMark: a run of at least three backticks or
+/// tildes, then an optional info string. Unlike CommonMark, any indent is
+/// accepted, since models indent fences inside list items.
+/// Longer runs let a block contain shorter fences, so the run length matters
+/// for closing.
+struct CodeFence {
+    let marker: Character
+    let length: Int
+    let indent: Int
+    let info: String
+
+    /// A closing fence uses the same marker, is at least as long as the opener,
+    /// and carries nothing but whitespace after the run.
+    func isClosedBy(_ line: Substring) -> Bool {
+        guard let run = fenceRun(in: line), run.marker == marker, run.length >= length else { return false }
+        return run.rest.allSatisfy(\.isWhitespace)
+    }
+
+    /// Content lines lose up to the opener's indent, matching CommonMark.
+    func strippingIndent(_ line: Substring) -> Substring {
+        var start = line.startIndex
+        var removed = 0
+        while removed < indent, start < line.endIndex, line[start] == " " {
+            start = line.index(after: start)
+            removed += 1
+        }
+        return line[start...]
+    }
+}
+
+/// Returns the fence a line opens, or nil when it is not a fence opener.
+func parseCodeFenceOpener(_ line: Substring) -> CodeFence? {
+    guard let run = fenceRun(in: line) else { return nil }
+    // A backtick info string cannot contain backticks, or inline code like
+    // ```a``` would read as a fence.
+    if run.marker == "`", run.rest.contains("`") { return nil }
+    let info = run.rest.trimmingWhitespace()
+    return CodeFence(marker: run.marker, length: run.length, indent: run.indent, info: String(info))
+}
+
+private func fenceRun(in line: Substring) -> (marker: Character, length: Int, indent: Int, rest: Substring)? {
+    var idx = line.startIndex
+    var indent = 0
+    while idx < line.endIndex, line[idx] == " " {
+        indent += 1
+        idx = line.index(after: idx)
+    }
+    guard idx < line.endIndex else { return nil }
+    let marker = line[idx]
+    guard marker == "`" || marker == "~" else { return nil }
+    var length = 0
+    while idx < line.endIndex, line[idx] == marker {
+        length += 1
+        idx = line.index(after: idx)
+    }
+    guard length >= 3 else { return nil }
+    return (marker, length, indent, line[idx...])
 }
 
 // MARK: - Substring Extension for Efficient Trimming

@@ -33,7 +33,9 @@ final class MTPOffStaysOffTests: XCTestCase {
         root = FileManager.default.temporaryDirectory
             .appendingPathComponent("mtp-off-\(UUID().uuidString)")
         try FileManager.default.createDirectory(
-            at: root.appendingPathComponent("config"), withIntermediateDirectories: true)
+            at: root.appendingPathComponent("config"),
+            withIntermediateDirectories: true
+        )
         setenv("OSAURUS_TEST_ROOT", root.path, 1)
     }
 
@@ -64,8 +66,10 @@ final class MTPOffStaysOffTests: XCTestCase {
         let loaded = try XCTUnwrap(ServerRuntimeSettingsStore.load())
 
         XCTAssertEqual(
-            loaded.mtp.mode, .off,
-            "load() flipped the user's explicit MTP off back to auto")
+            loaded.mtp.mode,
+            .off,
+            "load() flipped the user's explicit MTP off back to auto"
+        )
     }
 
     /// And it must survive REPEATED reloads — the failure mode is a repair
@@ -73,12 +77,28 @@ final class MTPOffStaysOffTests: XCTestCase {
     func testOffSurvivesRepeatedReloads() throws {
         try writeUserTurnedMTPOff()
 
-        for attempt in 1...3 {
+        for attempt in 1 ... 3 {
             let loaded = try XCTUnwrap(ServerRuntimeSettingsStore.load())
             XCTAssertEqual(
-                loaded.mtp.mode, .off,
-                "MTP mode was rewritten to auto on reload #\(attempt)")
+                loaded.mtp.mode,
+                .off,
+                "MTP mode was rewritten to auto on reload #\(attempt)"
+            )
         }
+    }
+
+    @MainActor
+    func testResetPickerPersistsFamilyDefaultAfterExplicitOff() async throws {
+        try writeUserTurnedMTPOff()
+        ServerRuntimeSettingsStore.invalidateSnapshot()
+        defer { ServerRuntimeSettingsStore.invalidateSnapshot() }
+        try await ModelOptionsSnapshot.applyNativeMTP(
+            nil,
+            nativeMTP: .init(blocked: false, familyDefaultOn: true)
+        )
+        XCTAssertEqual(try XCTUnwrap(ServerRuntimeSettingsStore.load()).mtp.mode, .familyDefault)
+        ServerRuntimeSettingsStore.invalidateSnapshot()
+        XCTAssertEqual(ServerRuntimeSettingsStore.snapshot().mtp.mode, .familyDefault)
     }
 
     /// Legacy settings also remain opt-in; schema migration must not activate MTP.
@@ -87,7 +107,7 @@ final class MTPOffStaysOffTests: XCTestCase {
         settings.schemaVersion = nil
         settings.mtp.mode = .off
         try JSONEncoder().encode(settings).write(to: settingsFileURL())
-        for _ in 0..<3 {
+        for _ in 0 ..< 3 {
             XCTAssertEqual(try XCTUnwrap(ServerRuntimeSettingsStore.load()).mtp.mode, .off)
         }
     }

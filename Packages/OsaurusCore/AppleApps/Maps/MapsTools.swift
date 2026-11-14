@@ -327,7 +327,7 @@ final class MapsOpenTool: AppleToolBase, @unchecked Sendable {
     }
     override func run(args: [String: Any]) async throws -> AppleToolPayload {
         let url = try Self.buildURL(args)
-        let opened = await MainActor.run { NSWorkspace.shared.open(url) }
+        let opened = await AppleURLOpener.open(url)
         guard opened else { throw AppleToolError.unavailable("Maps could not be opened.", retryable: true) }
         return AppleToolPayload(["opened": true, "url": url.absoluteString])
     }

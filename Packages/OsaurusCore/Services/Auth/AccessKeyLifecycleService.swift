@@ -53,11 +53,13 @@ public final class AccessKeyLifecycleService: @unchecked Sendable {
         agentKeyPath: AgentKeyPath? = nil
     ) throws -> (fullKey: String, info: AccessKeyInfo) {
         let cleanLabel = try Self.validatedLabel(label)
-        return try manager.generate(
+        let created = try manager.generate(
             label: cleanLabel,
             expiration: expiration,
             agentKeyPath: agentKeyPath
         )
+        Task { @MainActor in FeatureTelemetry.accessKeyCreated() }
+        return created
     }
 
     @discardableResult
@@ -73,6 +75,7 @@ public final class AccessKeyLifecycleService: @unchecked Sendable {
             throw AccessKeyLifecycleError.removalDidNotPersist
         }
 
+        Task { @MainActor in FeatureTelemetry.accessKeyRevoked() }
         return existing
     }
 

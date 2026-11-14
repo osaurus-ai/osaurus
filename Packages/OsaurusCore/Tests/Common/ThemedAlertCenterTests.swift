@@ -151,7 +151,7 @@ struct ThemedAlertCenterTests {
     // MARK: - Cross-scope occupancy
 
     /// `hasAnyActiveAlert` is the read-only "is anything showing anywhere"
-    /// signal the Product Hunt launch dialog uses to avoid stacking. It must
+    /// signal the router announcement dialog uses to avoid stacking. It must
     /// flip on for an alert in ANY scope and off again once every scope is
     /// clear.
     @Test func hasAnyActiveAlert_reflects_occupancy_across_scopes() {
@@ -191,15 +191,15 @@ struct ThemedAlertCenterTests {
         let artwork = ThemedAlertRequest(
             title: "Launch",
             message: "Body",
-            headerImageNames: ["osaurus-thanks", "ph-cat"],
-            headerImageAccessibilityLabel: "Osaurus dinosaur and the Product Hunt kitty saying thank you",
+            headerImageNames: ["artwork-left", "artwork-right"],
+            headerImageAccessibilityLabel: "Two illustrations side by side",
             buttons: [],
             onDismiss: {}
         )
-        #expect(artwork.headerImageNames == ["osaurus-thanks", "ph-cat"])
+        #expect(artwork.headerImageNames == ["artwork-left", "artwork-right"])
 
         center.present(artwork, scope: scope)
-        #expect(center.active(for: scope)?.headerImageNames == ["osaurus-thanks", "ph-cat"])
+        #expect(center.active(for: scope)?.headerImageNames == ["artwork-left", "artwork-right"])
         center.dismiss(scope: scope, id: artwork.id)
         #expect(center.active(for: scope) == nil)
     }

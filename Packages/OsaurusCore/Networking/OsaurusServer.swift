@@ -189,7 +189,7 @@ public actor OsaurusServer: Sendable {
             let masterAddress = try deriveOsaurusId(from: masterKeyData)
 
             // Accept tokens scoped to ANY of the user's agents so that
-            // agent-scoped keys minted by `/pair` and `/pair-invite` (whose
+            // agent-scoped keys minted by `/pair-invite` or the retired LAN `/pair` (whose
             // `aud` is the agent's address, not the master's) validate. The
             // agent addresses come from the thread-safe `AgentIdentityRegistry`
             // (mirrored from `AgentManager`), so no extra key derivation is

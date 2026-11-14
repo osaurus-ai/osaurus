@@ -44,6 +44,9 @@ struct FileDiff: Equatable {
     let truncated: Bool
     /// The raw unified-diff text, used for the card's copy action.
     let rawDiff: String
+    /// File history change set the write produced (the result's
+    /// `operation_id`); backs the card's Revert / View actions.
+    var operationId: UUID?
     /// True for the live card rendered while the tool call's arguments are
     /// still streaming — content is a partial prefix of the file, so the
     /// renderer skips syntax highlighting and shows a "writing" badge.
@@ -69,17 +72,19 @@ struct FileDiff: Equatable {
             !diffText.isEmpty
         else { return nil }
 
-        return fromUnifiedDiff(
+        var diff = fromUnifiedDiff(
             diffText,
             path: (payload["path"] as? String) ?? "",
             isPreview: (payload["dry_run"] as? Bool) ?? false,
             truncated: (payload["diff_truncated"] as? Bool) ?? false
         )
+        diff.operationId = (payload["operation_id"] as? String).flatMap(UUID.init(uuidString:))
+        return diff
     }
 
     /// Builds a `FileDiff` from raw unified-diff text (the format produced by
     /// `WorkspaceWriteSafety.unifiedDiffText`). Shared by the tool-result card
-    /// and the sandbox Changes sheet, which diffs baseline vs. live files.
+    /// and the File Changes panel, which diffs recorded before/after states.
     static func fromUnifiedDiff(
         _ diffText: String,
         path: String,

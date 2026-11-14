@@ -1,0 +1,252 @@
+{
+  "id": "workflow.starter-social-post",
+  "domain": "workflow",
+  "label": "workflow • built-in starter 'Social Post Writer' runs its own example",
+  "query": "built-in starter Social Post Writer runs its example",
+  "notes": "Definition and input are copied from Resources/Templates/workflow-template-social-post.json (the example a new user runs from the starter preview). Pins every step finishing and every titled output field being filled.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "definition": {
+        "input_schema": {
+          "type": "object",
+          "properties": {
+            "topic": {
+              "type": "string",
+              "title": "Topic",
+              "description": "What the post is about, in a sentence or two.",
+              "maxLength": 2000
+            },
+            "platform": {
+              "type": "string",
+              "title": "Platform",
+              "description": "Where it will be posted.",
+              "enum": [
+                "LinkedIn",
+                "X",
+                "Instagram"
+              ],
+              "default": "LinkedIn"
+            },
+            "tone": {
+              "type": "string",
+              "title": "Tone",
+              "enum": [
+                "Friendly",
+                "Professional",
+                "Playful"
+              ],
+              "default": "Friendly"
+            },
+            "audience": {
+              "type": "string",
+              "title": "Audience",
+              "description": "Who you want to reach. Leave empty for a general audience."
+            }
+          },
+          "required": [
+            "topic",
+            "platform",
+            "tone"
+          ],
+          "x-order": [
+            "topic",
+            "platform",
+            "tone",
+            "audience"
+          ]
+        },
+        "output_schema": {
+          "type": "object",
+          "properties": {
+            "post": {
+              "type": "string",
+              "title": "Post"
+            },
+            "hashtags": {
+              "type": "array",
+              "title": "Hashtags",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "post",
+            "hashtags"
+          ]
+        },
+        "nodes": [
+          {
+            "id": "angle",
+            "name": "Pick an angle",
+            "kind": "inference",
+            "inference": {
+              "model_slot": "writer",
+              "mode": "generate",
+              "temperature": 0.7,
+              "instructions": "Choose one strong angle for a social post about the topic for the audience. Return an attention-grabbing opening line as hook and two to four short key points the post should make. Stay faithful to the topic; do not invent facts, numbers, or quotes."
+            },
+            "input": {
+              "topic": "{{input.topic}}",
+              "audience": "{{input.audience}}",
+              "platform": "{{input.platform}}"
+            },
+            "output_schema": {
+              "type": "object",
+              "properties": {
+                "hook": {
+                  "type": "string",
+                  "title": "Hook"
+                },
+                "points": {
+                  "type": "array",
+                  "title": "Key points",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "hook",
+                "points"
+              ]
+            },
+            "timeout": 120,
+            "retry": {
+              "max_attempts": 2,
+              "backoff_seconds": 1
+            }
+          },
+          {
+            "id": "write",
+            "name": "Write the post",
+            "kind": "inference",
+            "inference": {
+              "model_slot": "writer",
+              "mode": "generate",
+              "temperature": 0.7,
+              "instructions": "Write one post for the platform in the given tone, opening with the hook and covering the key points. Respect the platform: X posts stay under 280 characters; LinkedIn may use short paragraphs; Instagram reads like a caption. Leave out hashtags."
+            },
+            "input": {
+              "platform": "{{input.platform}}",
+              "tone": "{{input.tone}}",
+              "hook": "{{nodes.angle.output.hook}}",
+              "points": "{{nodes.angle.output.points}}"
+            },
+            "output_schema": {
+              "type": "object",
+              "properties": {
+                "post": {
+                  "type": "string",
+                  "title": "Post"
+                }
+              },
+              "required": [
+                "post"
+              ]
+            },
+            "timeout": 120,
+            "retry": {
+              "max_attempts": 2,
+              "backoff_seconds": 1
+            }
+          },
+          {
+            "id": "tags",
+            "name": "Pick the hashtags",
+            "kind": "inference",
+            "inference": {
+              "model_slot": "writer",
+              "mode": "generate",
+              "temperature": 0.2,
+              "instructions": "Give three to five hashtags that fit this post on the platform. Each starts with # and has no spaces."
+            },
+            "input": {
+              "platform": "{{input.platform}}",
+              "post": "{{nodes.write.output.post}}"
+            },
+            "output_schema": {
+              "type": "object",
+              "properties": {
+                "hashtags": {
+                  "type": "array",
+                  "title": "Hashtags",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "hashtags"
+              ]
+            },
+            "timeout": 120,
+            "retry": {
+              "max_attempts": 2,
+              "backoff_seconds": 1
+            }
+          }
+        ],
+        "edges": [
+          {
+            "from": "angle",
+            "to": "write"
+          },
+          {
+            "from": "write",
+            "to": "tags"
+          }
+        ],
+        "output": {
+          "post": "{{nodes.write.output.post}}",
+          "hashtags": "{{nodes.tags.output.hashtags}}"
+        },
+        "model_slots": [
+          {
+            "slot": "writer",
+            "preferred": "foundation",
+            "strictness": "preferred",
+            "locality": "cloud_allowed"
+          }
+        ],
+        "secrets": [],
+        "requirement_notes": {},
+        "examples": [
+          {
+            "name": "Product launch",
+            "input": {
+              "topic": "We just launched offline mode in our notes app: everything syncs once you're back online.",
+              "platform": "LinkedIn",
+              "tone": "Friendly",
+              "audience": "Busy professionals who travel"
+            }
+          }
+        ]
+      },
+      "input": {
+        "topic": "We just launched offline mode in our notes app: everything syncs once you're back online.",
+        "platform": "LinkedIn",
+        "tone": "Friendly",
+        "audience": "Busy professionals who travel"
+      },
+      "nodeStatuses": {
+        "angle": "done",
+        "write": "done",
+        "tags": "done"
+      },
+      "outputKeys": [
+        "post",
+        "hashtags"
+      ],
+      "outputExcludes": {
+        "post": [
+          "{",
+          "}",
+          "\": \"",
+          "\\n"
+        ]
+      }
+    }
+  }
+}

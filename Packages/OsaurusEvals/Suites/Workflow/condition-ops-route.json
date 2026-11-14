@@ -1,0 +1,179 @@
+{
+  "id": "workflow.condition-ops-route",
+  "domain": "workflow",
+  "label": "workflow • edge conditions with greater_than, contains, and an all-group pick the branch",
+  "query": "edge conditions with greater_than, contains, and an all-group pick the branch",
+  "notes": "No model, no helper. Edge conditions are evaluated against the source step's output. The start step is a `state set` whose value is the whole input (a single reference keeps its type), so its output is `{value: {subject, amount}}`. Three edges from it carry conditions: `all` of (`value.amount` greater_than 100, `value.subject` contains \"urgent\") goes to the escalate branch; `value.amount` less_or_equal 100 to the routine branch; `all` of (greater_than 100, not_contains \"urgent\") to the review branch. The input makes exactly the escalate branch run; the join-any step after reads the recorded route.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "definition": {
+        "edges": [
+          {
+            "from": "start",
+            "to": "escalate",
+            "when": {
+              "all": [
+                {
+                  "path": "value.amount",
+                  "op": "greater_than",
+                  "value": 100
+                },
+                {
+                  "path": "value.subject",
+                  "op": "contains",
+                  "value": "urgent"
+                }
+              ]
+            }
+          },
+          {
+            "from": "start",
+            "to": "routine",
+            "when": {
+              "path": "value.amount",
+              "op": "less_or_equal",
+              "value": 100
+            }
+          },
+          {
+            "from": "start",
+            "to": "review",
+            "when": {
+              "all": [
+                {
+                  "path": "value.amount",
+                  "op": "greater_than",
+                  "value": 100
+                },
+                {
+                  "path": "value.subject",
+                  "op": "not_contains",
+                  "value": "urgent"
+                }
+              ]
+            }
+          },
+          {
+            "from": "escalate",
+            "to": "done"
+          },
+          {
+            "from": "routine",
+            "to": "done"
+          },
+          {
+            "from": "review",
+            "to": "done"
+          }
+        ],
+        "examples": [],
+        "input_schema": {
+          "properties": {
+            "subject": {
+              "type": "string"
+            },
+            "amount": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "subject",
+            "amount"
+          ],
+          "type": "object"
+        },
+        "model_slots": [],
+        "nodes": [
+          {
+            "id": "start",
+            "kind": "state",
+            "name": "Store Input",
+            "state": {
+              "action": "set",
+              "key": "last_input",
+              "value": "{{input}}"
+            },
+            "output_schema": {}
+          },
+          {
+            "id": "escalate",
+            "kind": "state",
+            "name": "Escalate",
+            "state": {
+              "action": "set",
+              "key": "route",
+              "value": "escalate"
+            },
+            "output_schema": {}
+          },
+          {
+            "id": "routine",
+            "kind": "state",
+            "name": "Routine",
+            "state": {
+              "action": "set",
+              "key": "route",
+              "value": "routine"
+            },
+            "output_schema": {}
+          },
+          {
+            "id": "review",
+            "kind": "state",
+            "name": "Review",
+            "state": {
+              "action": "set",
+              "key": "route",
+              "value": "review"
+            },
+            "output_schema": {}
+          },
+          {
+            "id": "done",
+            "kind": "state",
+            "name": "Read Route",
+            "state": {
+              "action": "get",
+              "key": "route"
+            },
+            "output_schema": {}
+          }
+        ],
+        "output": {
+          "route": "{{nodes.done.output.value}}"
+        },
+        "output_schema": {
+          "properties": {
+            "route": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "route"
+          ],
+          "type": "object"
+        },
+        "requirement_notes": {},
+        "secrets": []
+      },
+      "input": {
+        "subject": "urgent: refund for order 4411",
+        "amount": 250
+      },
+      "status": "completed",
+      "nodeStatuses": {
+        "start": "done",
+        "escalate": "done",
+        "routine": "skipped",
+        "review": "skipped",
+        "done": "done"
+      },
+      "outputValues": {
+        "route": [
+          "escalate"
+        ]
+      }
+    }
+  }
+}

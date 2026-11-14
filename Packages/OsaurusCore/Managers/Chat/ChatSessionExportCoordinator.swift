@@ -12,6 +12,19 @@ import UniformTypeIdentifiers
 
 @MainActor
 enum ChatSessionExportCoordinator {
+    /// History lists and restored tabs hold metadata with empty turns. Resolve
+    /// availability before the chooser treats those rows as having no metrics.
+    static func hasTimingData(
+        metadataSession: ChatSessionData,
+        load: @MainActor (UUID) async -> ChatSessionData? = { id in
+            await ChatSessionStore.loadAsync(id: id)
+                ?? ChatSessionsManager.shared.session(for: id)
+        }
+    ) async -> Bool {
+        if metadataSession.hasAnyTimingData { return true }
+        return await load(metadataSession.id)?.hasAnyTimingData ?? false
+    }
+
     static func run(
         metadataSession: ChatSessionData,
         format: ChatSessionSidebar.ExportFormat,
@@ -157,10 +170,10 @@ enum ChatSessionExportCoordinator {
 /// Indeterminate spinner used as the themed-alert accessory while an
 /// export is in flight.
 private struct ExportProgressIndicator: View {
+    @Environment(\.theme) private var theme
     var body: some View {
-        HStack(spacing: 8) {
-            ProgressView()
-                .scaleEffect(0.8)
+        HStack(spacing: theme.space.s8) {
+            SettingsSpinner(size: .large)
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity)

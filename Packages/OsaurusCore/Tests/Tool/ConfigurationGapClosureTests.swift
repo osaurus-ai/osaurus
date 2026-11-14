@@ -5,7 +5,7 @@
 //  Functional coverage for the configuration-agent READ surfaces:
 //
 //   * osaurus_inspect list / describe — read scopes (skills, watchers,
-//     knowledge, themes, commands, channels, search) return well-formed
+//     knowledge, commands, channels, search) return well-formed
 //     payloads from live state.
 //   * osaurus_inspect status — the enriched snapshot carries the server /
 //     memory / sandbox / channels / watchers / skills / knowledge rollups.
@@ -30,11 +30,11 @@ private func parseEnvelope(_ envelope: String) throws -> [String: Any] {
     return try #require(obj as? [String: Any])
 }
 
-/// Run a configure tool as the Default agent and parse its envelope.
+/// Run a configure tool as the Configurator and parse its envelope.
 private func runAsDefaultAgent(
     _ tool: any OsaurusTool, _ argumentsJSON: String
 ) async throws -> [String: Any] {
-    let envelope = try await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+    let envelope = try await ChatExecutionContext.$currentAgentId.withValue(Agent.configuratorId) {
         try await tool.execute(argumentsJSON: argumentsJSON)
     }
     return try parseEnvelope(envelope)
@@ -72,22 +72,8 @@ struct ConfigurationReadScopeFunctionalTests {
     }
 
     @Test
-    func list_themesScope_marksTheActiveTheme() async throws {
-        let dict = try await runAsDefaultAgent(OsaurusInspectTool(), #"{"action": "list", "scope": "themes"}"#)
-        #expect(dict["ok"] as? Bool == true)
-        let result = try #require(dict["result"] as? [String: Any])
-        let items = try #require(result["items"] as? [[String: Any]])
-        // Built-in presets are installed on first list.
-        #expect(!items.isEmpty)
-        for item in items {
-            #expect(item["active"] as? Bool != nil)
-            #expect(item["built_in"] as? Bool != nil)
-        }
-    }
-
-    @Test
     func list_knowledgeWatchersChannels_returnWellFormedPayloads() async throws {
-        for scope in ["knowledge", "watchers", "channels"] {
+        for scope in ["knowledge", "automations", "watchers", "channels"] {
             let dict = try await runAsDefaultAgent(
                 OsaurusInspectTool(), "{\"action\": \"list\", \"scope\": \"\(scope)\"}"
             )
@@ -103,11 +89,16 @@ struct ConfigurationReadScopeFunctionalTests {
     @Test
     func list_declarativeScope_embedsTheSectionYamlShape() async throws {
         let dict = try await runAsDefaultAgent(
-            OsaurusInspectTool(), #"{"action": "list", "scope": "schedules"}"#)
+            OsaurusInspectTool(), #"{"action": "list", "scope": "automations"}"#)
         #expect(dict["ok"] as? Bool == true)
         let result = try #require(dict["result"] as? [String: Any])
         let shape = try #require(result["yaml_shape"] as? String)
-        #expect(shape.contains("schedules:"))
+        #expect(shape.contains("automations:"))
+        // A legacy scope teaches the section that replaced it.
+        let legacy = try await runAsDefaultAgent(
+            OsaurusInspectTool(), #"{"action": "list", "scope": "schedules"}"#)
+        let legacyResult = try #require(legacy["result"] as? [String: Any])
+        #expect((legacyResult["yaml_shape"] as? String)?.contains("automations:") == true)
         // The shape-aware hint replaces the generic one: no schema call needed.
         let nextStep = try #require(result["next_step"] as? String)
         #expect(nextStep.contains("yaml_shape"))
@@ -125,13 +116,19 @@ struct ConfigurationReadScopeFunctionalTests {
         // read must teach both sections.
         #expect(shape.contains("agents:"))
         #expect(shape.contains("new_chat_agent:"))
+        let items = try #require(result["items"] as? [[String: Any]])
+        #expect(!items.isEmpty)
+        for agent in items {
+            #expect(agent["description"] as? String != nil)
+            #expect(agent["generated_description"] as? String != nil)
+        }
     }
 
     @Test
     func list_nonDeclarativeScope_keepsThePlainHintWithoutShape() async throws {
-        // Skills and themes have no declarative writer — embedding a shape
-        // would teach a write that doesn't exist.
-        for scope in ["skills", "themes"] {
+        // Skills have no declarative writer — embedding a shape would teach
+        // a write that doesn't exist.
+        for scope in ["skills"] {
             let dict = try await runAsDefaultAgent(
                 OsaurusInspectTool(), "{\"action\": \"list\", \"scope\": \"\(scope)\"}")
             let result = try #require(dict["result"] as? [String: Any])
@@ -176,6 +173,39 @@ struct ConfigurationReadScopeFunctionalTests {
         #expect(result["yaml_shape"] == nil)
     }
 
+    /// The status read names the Orchestrator's spawn pool state so an empty
+    /// pool (agents exist, none allowed → no `spawn_agent`) is visible from
+    /// the first read instead of surfacing as a `tool_not_found` later.
+    @Test
+    func status_reportsTheSpawnPoolState() async throws {
+        let lease = await acquireSubagentStoreSandbox("gap-closure-status-pool")
+        defer { lease.release() }
+        let dict = try await runAsDefaultAgent(OsaurusInspectTool(), #"{"action": "status"}"#)
+        let result = try #require(dict["result"] as? [String: Any])
+        let pool = try #require(result["spawn_pool"] as? [String: Any])
+        let state = try #require(pool["state"] as? String)
+        #expect(["ready", "empty", "no_agents"].contains(state), Comment(rawValue: state))
+        #expect(pool["local_agents"] is Int)
+        #expect(pool["custom_agents_total"] is Int)
+        #expect((pool["max_parallel_local"] as? Int ?? 0) >= 1)
+        let suggestions = result["suggestions"] as? [String] ?? []
+        let namesEmptyPool = suggestions.contains { $0.contains("Spawn pool is EMPTY") }
+        #expect(namesEmptyPool == (state == "empty"), "\(suggestions)")
+    }
+
+    /// Settings document sections read through describe carry their
+    /// `yaml_shape`, so a `delegation` read teaches the replace-list rule.
+    @Test
+    func describe_delegationSection_embedsShapeWithReplaceSemantics() async throws {
+        let dict = try await runAsDefaultAgent(
+            OsaurusInspectTool(), #"{"action": "describe", "scope": "delegation"}"#)
+        let result = try #require(dict["result"] as? [String: Any])
+        #expect(result["kind"] as? String == "document_section")
+        let shape = try #require(result["yaml_shape"] as? String)
+        #expect(shape.contains("delegation:"))
+        #expect(shape.contains("REPLACES the whole pool"))
+    }
+
     @Test
     func describe_declarativeScope_embedsTheSectionYamlShape() async throws {
         // Describe a built-in command by name: commands are declarative, so
@@ -213,10 +243,10 @@ struct ConfigurationReadScopeFunctionalTests {
 
     @Test
     func removedScopes_getTheSettingsUIRedirect() async throws {
-        // Scope reduction 2: `server`, `chat`, `app` are Settings-UI-only.
-        // Guessing them as inspect scopes must return the honest redirect —
-        // not the export redirect the model would loop on.
-        for scope in ["server", "chat", "app"] {
+        // Scope reduction 2: `server` is Settings-UI-only. Guessing it as an
+        // inspect scope must return the honest redirect — not the export
+        // redirect the model would loop on.
+        for scope in ["server"] {
             let dict = try await runAsDefaultAgent(
                 OsaurusInspectTool(), "{\"action\": \"list\", \"scope\": \"\(scope)\"}")
             #expect(dict["ok"] as? Bool == false, "scope \(scope) must not list")
@@ -276,7 +306,7 @@ struct ConfigurationReadScopeFunctionalTests {
 
     @Test
     func describe_unknownIdInNewScopes_failsCleanly() async throws {
-        for scope in ["skills", "watchers", "knowledge", "themes", "commands", "channels", "search"] {
+        for scope in ["skills", "watchers", "knowledge", "commands", "channels", "search"] {
             let dict = try await runAsDefaultAgent(
                 OsaurusInspectTool(),
                 "{\"action\": \"describe\", \"scope\": \"\(scope)\", \"id\": \"definitely-not-a-real-id\"}"
@@ -291,7 +321,7 @@ struct ConfigurationReadScopeFunctionalTests {
         let agent = await MainActor.run {
             AgentManager.shared.create(
                 name: "GapClosure Describe Probe",
-                description: "",
+                description: "Exercises agent configuration in this isolated test.",
                 systemPrompt: "",
                 defaultModel: nil,
                 temperature: nil,
@@ -324,7 +354,7 @@ struct ConfigurationReadScopeFunctionalTests {
         let agent = await MainActor.run {
             AgentManager.shared.create(
                 name: "GapClosure Name Probe",
-                description: "",
+                description: "Exercises agent configuration in this isolated test.",
                 systemPrompt: "",
                 defaultModel: "provider/some-model",
                 temperature: nil,
@@ -390,8 +420,8 @@ struct ConfigurationReadScopeFunctionalTests {
         let channels = try #require(result["channels"] as? [String: Any])
         #expect(channels["configured"] as? Int != nil)
 
-        let watchers = try #require(result["watchers"] as? [String: Any])
-        #expect(watchers["total"] as? Int != nil)
+        let automations = try #require(result["automations"] as? [String: Any])
+        #expect(automations["total"] as? Int != nil)
 
         let skills = try #require(result["skills"] as? [String: Any])
         #expect(skills["installed"] as? Int != nil)

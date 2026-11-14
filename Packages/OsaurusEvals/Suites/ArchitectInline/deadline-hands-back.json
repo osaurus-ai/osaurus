@@ -1,0 +1,16 @@
+{
+  "id": "architect_inline.deadline-hands-back",
+  "domain": "architect_inline",
+  "label": "architect_inline • no first step in time: the request goes back to the Orchestrator",
+  "notes": "Deterministic: the deadline is moved to 10 ms and the draft is held past it. The result is a timeout failure that tells the Orchestrator to use run_workflow with a worker or ask, and nothing is offered to keep.",
+  "query": "Find what changed in the latest Swift release, then write me a summary I can share with the team.",
+  "fixtures": {},
+  "expect": {
+    "architectInline": {
+      "result": "handed_back",
+      "keepOffer": false,
+      "deadline": 0.01, "fallbackPhase": "draft",
+      "holdDraft": true
+    }
+  }
+}

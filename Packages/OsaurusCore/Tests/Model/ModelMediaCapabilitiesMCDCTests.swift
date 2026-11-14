@@ -4,6 +4,106 @@ import Testing
 
 @Suite("ModelMediaCapabilities — config and weight evidence")
 struct ModelMediaCapabilitiesMCDCTests {
+    @Test func deepseekV41InBundleVisionTowerGrantsImagesOnly() throws {
+        let root = try VisionBundleFixture.makeDeepseekV41()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for alias in ["neutral", "DeepSeek-V4.1-Flash-1017-JANG-Q2Q3-IMATRIX"] {
+            let caps = ModelMediaCapabilities.from(directory: root, modelId: alias)
+            #expect(caps.supportsImage)
+            #expect(!caps.supportsVideo)
+            #expect(!caps.supportsAudio)
+        }
+        #expect(LocalVisionEvidence.inspect(root, refresh: true).hasVision)
+    }
+
+    @Test(arguments: ["vision.patch_embed", "vision.blocks.1.attn", "vision.blocks.0.mlp",
+                      "vision.norm", "aligner.w2", "image_start", "image_newline"])
+    func deepseekV41MissingVisionComponentIsTextOnly(component: String) throws {
+        let root = try VisionBundleFixture.makeDeepseekV41(omit: component)
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(!LocalVisionEvidence.inspect(root, refresh: true).hasVision)
+        #expect(ModelMediaCapabilities.from(directory: root, modelId: "neutral") == .textOnly)
+    }
+
+    @Test func deepseekV41RequiresDepthBlocksAndImageToken() throws {
+        let deeper = try VisionBundleFixture.makeDeepseekV41(depth: 3)
+        defer { try? FileManager.default.removeItem(at: deeper) }
+        #expect(!LocalVisionEvidence.inspect(deeper, refresh: true).hasVision)
+        let noToken = try VisionBundleFixture.makeDeepseekV41(imageTokenId: nil)
+        defer { try? FileManager.default.removeItem(at: noToken) }
+        #expect(!LocalVisionEvidence.inspect(noToken, refresh: true).hasVision)
+    }
+
+    @Test func miniMaxM3InBundleVisionStackGrantsImagesOnly() throws {
+        let root = try VisionBundleFixture.makeMiniMaxM3()
+        defer { try? FileManager.default.removeItem(at: root) }
+        for alias in ["neutral", "MiniMax-M3.1-Flash-JANGHT1.9"] {
+            let caps = ModelMediaCapabilities.from(directory: root, modelId: alias)
+            #expect(caps.supportsImage)
+            #expect(!caps.supportsVideo)
+            #expect(!caps.supportsAudio)
+        }
+        #expect(LocalVisionEvidence.inspect(root, refresh: true).hasVision)
+        #expect(VLMDetection.isVLM(at: root))
+    }
+
+    @Test(arguments: ["patch_embedding", "pre_layrnorm", "layers.1.self_attn.q_proj", "layers.0.mlp.fc2",
+                      "multi_modal_projector.linear_2", "patch_merge_mlp.linear_1"])
+    func miniMaxM3MissingVisionComponentIsTextOnly(component: String) throws {
+        let root = try VisionBundleFixture.makeMiniMaxM3(omit: component)
+        defer { try? FileManager.default.removeItem(at: root) }
+        #expect(!LocalVisionEvidence.inspect(root, refresh: true).hasVision)
+        #expect(ModelMediaCapabilities.from(directory: root, modelId: "neutral") == .textOnly)
+    }
+
+    /// Opt-in: OSAURUS_M31_BUNDLE=<the installed MiniMax-M3.1 bundle> (reads config files and safetensors headers only).
+    @Test func miniMaxM3RealBundleEvidence() throws {
+        guard let path = ProcessInfo.processInfo.environment["OSAURUS_M31_BUNDLE"] else { return }
+        let evidence = LocalVisionEvidence.inspect(URL(fileURLWithPath: path), refresh: true)
+        #expect(evidence.hasVision, "\(evidence.reason)")
+        let caps = ModelMediaCapabilities.from(directory: URL(fileURLWithPath: path), modelId: "OsaurusAI/MiniMax-M3.1-Flash-JANGHT1.9")
+        #expect(caps.supportsImage && !caps.supportsVideo && !caps.supportsAudio)
+        print("[m31-evidence] \(evidence.modelType): hasVision \(evidence.hasVision): \(evidence.reason)")
+    }
+
+    @Test func miniMaxM3RequiresDepthTokenAndProcessor() throws {
+        for root in [try VisionBundleFixture.makeMiniMaxM3(depth: 3),
+                     try VisionBundleFixture.makeMiniMaxM3(imageTokenId: nil),
+                     try VisionBundleFixture.makeMiniMaxM3(processor: false)] {
+            defer { try? FileManager.default.removeItem(at: root) }
+            #expect(!LocalVisionEvidence.inspect(root, refresh: true).hasVision)
+        }
+        #expect(LocalVisionEvidence.miniMaxM3VisionRuntimeAvailable)
+        #expect(VLMDetection.isVLM(modelType: "minimax_m3_vl"))
+        #expect(!VLMDetection.isVLM(modelType: "minimax_m3"))
+    }
+
+    @Test(arguments: [true, false], [true, false])
+    func nemotronVideoRequiresBundleTokenAndTemporalWeights(hasToken: Bool, hasTemporalWeights: Bool) throws {
+        let root = try VisionBundleFixture.make(type: "nemotron_h_omni")
+        defer { try? FileManager.default.removeItem(at: root) }
+        try VisionBundleFixture.writeJSON([
+            "model_type": "nemotron_h_omni",
+            "vision_config": ["patch_size": 16, "video_temporal_patch_size": 2],
+            "sound_config": NSNull(),
+            "video_context_token_id": hasToken ? 131081 : NSNull(),
+        ], to: root.appendingPathComponent("config_omni.json"))
+        try VisionBundleFixture.writeJSON(["processor_class": "NemotronHOmniProcessor"],
+            to: root.appendingPathComponent("processor_config.json"))
+        var names = ["vision_model.radio_model.model.patch_generator.embedder.weight",
+                     "vision_model.radio_model.model.blocks.0.attn.qkv.weight"]
+        if hasTemporalWeights {
+            names.append("vision_model.radio_model.model.patch_generator.video_embedder.weight")
+        }
+        try VisionBundleFixture.writeWeights(names, to: root.appendingPathComponent("model.safetensors"))
+        for alias in ["neutral", "Nemotron-3-Nano-Omni", "Nemotron-3.5-Super-VL"] {
+            let caps = ModelMediaCapabilities.from(directory: root, modelId: alias)
+            #expect(caps.supportsImage)
+            #expect(caps.supportsVideo == (hasToken && hasTemporalWeights))
+            #expect(!caps.supportsAudio)
+        }
+    }
+
     @Test func mimoNativeProcessorAndComponentEvidenceSurviveAliases() throws {
         let root = try VisionBundleFixture.makeMiMo()
         defer { try? FileManager.default.removeItem(at: root) }

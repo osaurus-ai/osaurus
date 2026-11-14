@@ -243,8 +243,8 @@ public enum KnowledgeWriteOperation: String, Sendable, Equatable, CaseIterable {
 /// realistically catch fabricated reference material by skimming a diff, but
 /// anyone can revert once `search_knowledge` starts returning nonsense. That
 /// only works if the record outlives the chat that produced it, so this lives
-/// in the knowledge database rather than in an in-memory per-session log like
-/// `FileOperationLog`.
+/// in the knowledge database rather than in the per-session file history
+/// (`FileChangeJournal`), which is purged with its chat.
 ///
 /// `priorContent` is the whole previous document, not a diff: reverting must
 /// not depend on the current file still being what the agent left behind.

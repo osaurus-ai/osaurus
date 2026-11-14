@@ -35,20 +35,34 @@ struct LocalInputTokenUsageTests {
         let stream = ModelRuntime.bridgeToolEventStream(events)
         var inputCount: Int?
         var terminalCount: Int?
+        var terminalFrames = 0
+        var order: [String] = []
         do {
             for try await delta in stream {
-                inputCount = StreamingInputTokenHint.decode(delta) ?? inputCount
-                terminalCount = StreamingStatsHint.decode(delta)?.tokenCount ?? terminalCount
+                if let prepared = StreamingInputTokenHint.decode(delta) {
+                    inputCount = prepared
+                    order.append("input:\(prepared)")
+                }
+                if let stats = StreamingStatsHint.decode(delta) {
+                    terminalCount = stats.tokenCount
+                    terminalFrames += 1
+                    order.append("stats:\(stats.tokenCount)")
+                }
             }
             Issue.record("Expected completed tool dispatch")
         } catch let call as ServiceToolInvocation {
+            order.append("dispatch:\(call.toolName)")
             #expect(call.toolName == "lookup_zone")
         }
         #expect(inputCount == count)
-        // The tool batch now waits for logical completion, so terminal
-        // accounting must arrive too. A clean EOF without engine info keeps
-        // the mapper's existing zero-text estimate (not measured tool tokens).
-        #expect(terminalCount == (terminalInfo ? 8 : 0))
+        // The explicit legacy tool boundary can dispatch a held batch at
+        // clean EOF, but EOF is not measured terminal metadata. Preserve
+        // the early prepared count without manufacturing zero output usage.
+        #expect(terminalCount == (terminalInfo ? Optional(8) : nil))
+        #expect(terminalFrames == (terminalInfo ? 1 : 0))
+        let expectedOrder = ["input:\(count)"]
+            + (terminalInfo ? ["stats:8"] : []) + ["dispatch:lookup_zone"]
+        #expect(order == expectedOrder)
     }
 
     @Test(arguments: [12, 257])

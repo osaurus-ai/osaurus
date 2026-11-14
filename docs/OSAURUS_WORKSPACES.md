@@ -342,15 +342,47 @@ against the new address.
 
 ## Per-agent pool billing preference
 
-Membership alone does not route an agent's calls to the pool. Each shared
-agent has a **Bill the workspace pool** toggle (`WorkspaceSharedAgentRow`)
-backed by `WorkspacesService.setBillingWorkspace(agentAddress:workspaceId:)` /
-`billingWorkspaceId(forAgentAddress:)` and persisted in `UserDefaults`. When
-set, the chat path attaches `workspace_context` so the router bills the pool
-and lists the call in the workspace's activity; when unset the call is billed
-to the user's own credits and stays personal. A `NOT_A_MEMBER` /
-`WORKSPACE_NOT_FOUND` chat failure schedules a reconcile that drops the dead
-preference so the next send bills personally.
+Teammates' runs of a shared agent always bill the pool: the host binds
+`ChatExecutionContext.workspaceBillingContext` from the redeemed workspace
+key. The owner's *own* chats with that agent are governed by the per-agent
+**Bill the workspace pool** toggle (`WorkspaceSharedAgentRow`, catalog id
+`workspaces.agents.billPool`) backed by
+`WorkspacesService.setBillingWorkspace(agentAddress:workspaceId:)` /
+`billingWorkspaceId(forAgentAddress:)` and persisted in `UserDefaults`
+(`ai.osaurus.teams.agentBilling`, `[agentUUID: {workspace_id, agent_address}]`).
+When set, the chat path attaches `workspace_context` so the router bills the
+pool and lists the call in the workspace's activity; when unset the call is
+billed to the user's own credits and stays personal.
+
+**Default: on.** Sharing an agent into a workspace is what makes it bill that
+pool — `WorkspacesService.applyDefaultBilling(localAgents:rosters:)` binds
+every agent hosted here that appears on a roster, has no entry yet, and has
+not been opted out, to the first roster (router order) that lists it. It runs
+right after `shareAgent` succeeds and, through
+`WorkspaceRosterStore.installDefaultPoolBilling()` (installed at launch in
+`AppDelegate`, nil in tests), after every *verified* roster apply — so an
+agent shared from a build before this default picks it up on the next roster
+load. An agent already bound to one workspace keeps that binding when shared
+into a second; turning the toggle on in the other workspace moves it.
+
+**Opt-out.** Turning the toggle off removes the entry *and* records the agent
+id in `ai.osaurus.teams.agentBillingOptOut` so the roster-driven default never
+re-enables it (same tombstone idea as
+`SubagentConfiguration.removedWorkspaceAgents`). Turning it back on clears the
+tombstone. `unshareAgent` uses `clearBillingPreference(agentAddress:)`, which
+drops the entry without a tombstone, so re-sharing later defaults back to the
+pool. Tombstones for agents deleted locally are pruned on the next apply.
+
+**Composer chip.** `ChatView.poolBillingWorkspaceId` resolves the chip's
+workspace from the tab's `workspaceContext` (teammate agent) or, for a local
+tab, from `WorkspacesService.workspaceContext(forAgentId:)` — the same lookup
+`RemoteProviderService` uses to attach `workspace_context` — so the pool chip
+(`FloatingWorkspacePoolChip`: name · pool · balance) replaces the personal
+credits chip exactly when the turn bills the pool.
+
+A `NOT_A_MEMBER` / `WORKSPACE_NOT_FOUND` chat failure schedules a reconcile
+that drops the dead preference so the next send bills personally.
+Regression: `defaultBilling_*` / `billingOptOut_*` in `OsaurusWorkspacesTests`.
 
 ## Error codes → copy
 
@@ -410,6 +442,41 @@ pieces the client observes directly:
   the web-purchase / activation-code path.
 - `WORKSPACES_ATTESTATION_KEY` is required for shared-agent access (unchanged
   by the single-plan cutover).
+
+## Release order for workspace workflow sharing
+
+Ship in this order: router, then workflows registry (API and store web app),
+then the app.
+
+1. **Router.** Membership attestations carry `workspace_status`;
+   `POST /id/lookup` resolves wallets to Osaurus IDs;
+   `GET /internal/workspaces/removals` lists member leaves, removals and
+   workspace deletions for the registry. The last two are gated by
+   `REGISTRY_INTERNAL_TOKEN`.
+2. **Registry.** Run `deno task db:migrate` for `0011_workspace_visibility.sql`
+   and `0012_workspace_removals.sql`. The runner tracks applied filenames, so
+   both apply even where `0013_featured.sql` already ran. This release also
+   adds format 4 (agent steps), `workspace` visibility,
+   `GET /workspaces/:id/workflows` and `DELETE /workspaces/:wid/workflows/:id`.
+   Set `ROUTER_URL` and `REGISTRY_INTERNAL_TOKEN` to turn on the removal
+   sweep. Without them, the sweep is off. Deploy the store web app with the
+   registry so workspace listing pages show the members-only page instead of
+   breaking.
+3. **App.**
+
+If a release lands out of order:
+
+| Mismatch | What happens |
+| --- | --- |
+| App ahead of registry | Sharing a workflow that has agent steps fails with "The store doesn't accept agent steps yet." A workspace share publishes the page unlisted, then reports "The store doesn't support workspace sharing yet." The Workspaces tab shows the same message. Other shares work. |
+| App or registry ahead of router | Attestations without `workspace_status` read as active. A failed `/id/lookup` shows the short wallet. The registry's removal sweep logs `workspace_removals.failed` on each tick and removes nothing until the router ships. |
+
+Client coverage is in `WorkflowShareServiceTests`
+(`anOlderRegistrysFormatRejectionSaysTheStoreIsBehind`,
+`aWorkspaceShareAgainstAnOlderRegistryLeavesThePageUnlistedAndSaysWhy`,
+`anOlderRegistryWithoutWorkspaceRoutesSaysTheStoreIsBehind`) and
+`WorkspaceAgentAccessTests` (`workspaceStatus_onlySuspendedReadsAsSuspended`,
+`aRouterWithoutIDLookupLeavesTheShortWallet`).
 
 ## Regression coverage
 

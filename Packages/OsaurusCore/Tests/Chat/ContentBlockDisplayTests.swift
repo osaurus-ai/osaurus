@@ -16,6 +16,14 @@ struct ContentBlockDisplayTests {
     }
 
     @Test
+    func assistantVisibleContent_hidesCallEndMarker() {
+        let assistant = ChatTurn(role: .assistant, content: "Have a great day! [end call]")
+        #expect(assistant.visibleContent == "Have a great day!")
+        let user = ChatTurn(role: .user, content: "what does [end call] do?")
+        #expect(user.visibleContent == "what does [end call] do?")
+    }
+
+    @Test
     func assistantParagraphs_useVisibleContent() {
         let assistant = ChatTurn(
             role: .assistant,
@@ -180,7 +188,7 @@ struct ContentBlockDisplayTests {
         )
 
         let userText = blocks.compactMap { block -> String? in
-            guard case let .userMessage(text, _, _, _, _) = block.kind else { return nil }
+            guard case let .userMessage(text, _, _, _, _, _) = block.kind else { return nil }
             return text
         }.first
 
@@ -416,7 +424,7 @@ struct ContentBlockDisplayTests {
 
     private func userMessageBlock(_ blocks: [ContentBlock]) -> (text: String, envelope: DispatchEnvelope?, block: ContentBlock)? {
         for block in blocks {
-            if case let .userMessage(text, _, _, _, envelope) = block.kind {
+            if case let .userMessage(text, _, _, _, envelope, _) = block.kind {
                 return (text, envelope, block)
             }
         }

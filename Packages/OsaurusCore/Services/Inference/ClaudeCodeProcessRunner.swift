@@ -2,11 +2,8 @@
 //  ClaudeCodeProcessRunner.swift
 //  osaurus
 //
-//  Spawns one `claude --print --output-format stream-json` turn and streams
-//  its decoded events. One runner == one turn == one child process.
-//
-//  Shaped after `MCPStdioHostRunner` (spawn slot, SIGTERM → grace → SIGKILL)
-//  and `ShellRunTool` (readabilityHandler pumping without a Task per chunk).
+//  Bounded one-shot `claude` control commands (`--version`, `auth status`,
+//  `auth login`). Chat turns run through `HarnessProcess`.
 //
 
 import Foundation
@@ -15,122 +12,63 @@ import Foundation
     import Darwin
 #endif
 
-/// Tracks live Claude Code children so app quit can't orphan them.
-///
-/// Deliberately *not* `LiveExecRegistry`: that registry drives the sandbox
-/// shell tool's live terminal card, and every inference turn does not want a
-/// terminal pane in the chat. This only needs kill-on-quit.
-actor ClaudeCodeProcessRegistry {
-    static let shared = ClaudeCodeProcessRegistry()
-
-    private var live: [UUID: ProcessTerminator] = [:]
-
-    func register(_ id: UUID, terminator: ProcessTerminator) {
-        live[id] = terminator
-    }
-
-    func unregister(_ id: UUID) {
-        live[id] = nil
-    }
-
-    /// Called from the app-quit teardown. Terminates every live child.
-    func terminateAll() async {
-        let terminators = Array(live.values)
-        live.removeAll()
-        for terminator in terminators { terminator.terminate() }
-        // App teardown must not depend on a detached escalation firing after
-        // the app process is already gone. Give SIGTERM a short grace period,
-        // then synchronously issue SIGKILL to any stubborn child.
-        try? await Task.sleep(nanoseconds: 500_000_000)
-        for terminator in terminators { terminator.forceKillIfRunning() }
-    }
-
-    func liveCount() -> Int { live.count }
-}
-
-/// Lock-guarded decoder + stderr tail shared between Foundation's IO queue
-/// (which fires `readabilityHandler`) and the awaiting task.
-///
-/// `@unchecked Sendable` with an explicit lock rather than an actor, for the
-/// same reason `ShellRunOutputCollector` is: an actor would force a `Task { }`
-/// per pipe chunk, and on a chatty stream that swamps the cooperative pool.
-private final class ClaudeCodeStreamState: @unchecked Sendable {
-    private let lock = NSLock()
-    private var decoder = ClaudeCodeStreamDecoder()
-    private var lineParser = OpenAICompatibleStreamFramer.SSELineParser()
-    private var stderrTail = Data()
-    private var sawAnyEvent = false
-    private var reportedFailure: String?
-
-    /// Feed stdout bytes; returns the events they completed.
-    func ingestStdout(_ chunk: Data) -> [ClaudeCodeStreamEvent] {
-        lock.lock()
-        defer { lock.unlock() }
-        lineParser.append(chunk)
-        var events: [ClaudeCodeStreamEvent] = []
-        while let line = lineParser.nextLine() {
-            events.append(contentsOf: decoder.decode(line: line))
-        }
-        record(events)
-        return events
-    }
-
-    /// Flush a trailing line with no terminator (the CLI does not always end
-    /// its last frame with a newline).
-    func finishStdout() -> [ClaudeCodeStreamEvent] {
-        lock.lock()
-        defer { lock.unlock() }
-        lineParser.flushPending()
-        var events: [ClaudeCodeStreamEvent] = []
-        while let line = lineParser.nextLine() {
-            events.append(contentsOf: decoder.decode(line: line))
-        }
-        record(events)
-        return events
-    }
-
-    func appendStderr(_ chunk: Data) {
-        lock.lock()
-        defer { lock.unlock() }
-        stderrTail.append(chunk)
-        // Bounded tail — enough for an error message, never a transcript.
-        if stderrTail.count > 8192 {
-            stderrTail.removeFirst(stderrTail.count - 8192)
-        }
-    }
-
-    func stderrText() -> String {
-        lock.lock()
-        defer { lock.unlock() }
-        return String(decoding: stderrTail, as: UTF8.self)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    func producedOutput() -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return sawAnyEvent
-    }
-
-    func failureDetail() -> String? {
-        lock.lock()
-        defer { lock.unlock() }
-        return reportedFailure
-    }
-
-    private func record(_ events: [ClaudeCodeStreamEvent]) {
-        if !events.isEmpty { sawAnyEvent = true }
-        for case .failure(let detail) in events {
-            reportedFailure = detail
-        }
-    }
-}
-
 struct ClaudeCodeCommandResult: Sendable, Equatable {
     let exitCode: Int32
     let stdout: Data
     let stderr: String
     let timedOut: Bool
+}
+
+/// Owns pipe reads through delivery, including the final process-exit drain.
+/// Locking only the decoder is insufficient: a callback can already own bytes
+/// that the exit task can no longer read, but has not delivered them yet.
+final class ClaudeCodePipePump: @unchecked Sendable {
+    private let lock = NSLock()
+    private let handle: FileHandle
+    private let consume: @Sendable (Data) -> Void
+    private var finished = false
+
+    init(handle: FileHandle, consume: @escaping @Sendable (Data) -> Void) {
+        self.handle = handle
+        self.consume = consume
+    }
+
+    func start() {
+        handle.readabilityHandler = { [weak self] _ in self?.readAvailable() }
+    }
+
+    private func readAvailable() {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !finished else { return }
+        let chunk = handle.availableData
+        if chunk.isEmpty {
+            handle.readabilityHandler = nil
+        } else {
+            consume(chunk)
+        }
+    }
+
+    /// Call after child exit. Waits for any callback's read AND delivery before
+    /// claiming remaining bytes. Queued callbacks become harmless no-ops.
+    func finish() {
+        lock.lock()
+        if !finished {
+            let remaining = handle.availableData
+            if !remaining.isEmpty { consume(remaining) }
+            finished = true
+        }
+        lock.unlock()
+        handle.readabilityHandler = nil
+    }
+
+    /// Launch failure has no child output to drain.
+    func stop() {
+        lock.lock()
+        finished = true
+        lock.unlock()
+        handle.readabilityHandler = nil
+    }
 }
 
 /// Bounded output collector for short-lived CLI control commands.
@@ -203,35 +141,25 @@ public enum ClaudeCodeProcessRunner {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
-        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
-            let chunk = handle.availableData
-            guard !chunk.isEmpty else {
-                handle.readabilityHandler = nil
-                return
-            }
-            state.appendStdout(chunk)
+        let stdoutPump = ClaudeCodePipePump(handle: stdoutPipe.fileHandleForReading) {
+            state.appendStdout($0)
         }
-        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
-            let chunk = handle.availableData
-            guard !chunk.isEmpty else {
-                handle.readabilityHandler = nil
-                return
-            }
-            state.appendStderr(chunk)
+        let stderrPump = ClaudeCodePipePump(handle: stderrPipe.fileHandleForReading) {
+            state.appendStderr($0)
         }
+        stdoutPump.start()
+        stderrPump.start()
 
         let terminator = ProcessTerminator(process: process)
         do {
             try process.run()
         } catch {
-            stdoutPipe.fileHandleForReading.readabilityHandler = nil
-            stderrPipe.fileHandleForReading.readabilityHandler = nil
+            stdoutPump.stop()
+            stderrPump.stop()
             return nil
         }
-        await ClaudeCodeProcessRegistry.shared.register(runId, terminator: terminator)
-        defer {
-            Task { await ClaudeCodeProcessRegistry.shared.unregister(runId) }
-        }
+        HarnessProcessRegistry.shared.register(runId, terminator: terminator)
+        defer { HarnessProcessRegistry.shared.unregister(runId) }
 
         let timeoutTask = Task {
             let nanoseconds = UInt64(max(0, timeout) * 1_000_000_000)
@@ -248,178 +176,10 @@ public enum ClaudeCodeProcessRunner {
             terminator.terminate()
         }
 
-        let residualOut = stdoutPipe.fileHandleForReading.availableData
-        if !residualOut.isEmpty { state.appendStdout(residualOut) }
-        let residualErr = stderrPipe.fileHandleForReading.availableData
-        if !residualErr.isEmpty { state.appendStderr(residualErr) }
-        stdoutPipe.fileHandleForReading.readabilityHandler = nil
-        stderrPipe.fileHandleForReading.readabilityHandler = nil
+        stdoutPump.finish()
+        stderrPump.finish()
 
         return state.result(exitCode: process.terminationStatus)
-    }
-
-    /// Run one turn and stream its decoded events.
-    ///
-    /// - Parameters:
-    ///   - executable: absolute path from `ClaudeCodeConfiguration.resolveExecutable`.
-    ///   - arguments: from `ClaudeCodeConfiguration.arguments`.
-    ///   - prompt: the rendered conversation, sent over stdin so it never
-    ///     appears in the process list.
-    ///   - workingDirectory: the chat's working folder, or a temp dir.
-    static func stream(
-        executable: String,
-        arguments: [String],
-        prompt: String,
-        workingDirectory: URL,
-        environment: [String: String] = ProcessInfo.processInfo.environment
-    ) -> AsyncThrowingStream<ClaudeCodeStreamEvent, Error> {
-        let (stream, continuation) = AsyncThrowingStream<ClaudeCodeStreamEvent, Error>.makeStream()
-
-        let state = ClaudeCodeStreamState()
-        let process = Process()
-        let stdinPipe = Pipe()
-        let stdoutPipe = Pipe()
-        let stderrPipe = Pipe()
-        let runId = UUID()
-
-        process.executableURL = URL(fileURLWithPath: executable)
-        // Prompts can contain secrets and process argv is visible to other
-        // processes owned by the user. Feed the prompt over stdin instead.
-        process.arguments = arguments
-        process.environment = environment
-        process.currentDirectoryURL = workingDirectory
-        process.standardOutput = stdoutPipe
-        process.standardError = stderrPipe
-        process.standardInput = stdinPipe
-
-        // Non-blocking, synchronous pumps. `continuation.yield` is cheap and
-        // Sendable-safe, so no Task per chunk (see ShellRunTool's note).
-        stdoutPipe.fileHandleForReading.readabilityHandler = { handle in
-            let chunk = handle.availableData
-            guard !chunk.isEmpty else {
-                handle.readabilityHandler = nil
-                return
-            }
-            for event in state.ingestStdout(chunk) {
-                continuation.yield(event)
-            }
-        }
-        stderrPipe.fileHandleForReading.readabilityHandler = { handle in
-            let chunk = handle.availableData
-            guard !chunk.isEmpty else {
-                handle.readabilityHandler = nil
-                return
-            }
-            state.appendStderr(chunk)
-        }
-
-        let terminator = ProcessTerminator(process: process)
-
-        let producerTask = Task {
-            await ClaudeCodeProcessRegistry.shared.register(runId, terminator: terminator)
-            defer {
-                Task { await ClaudeCodeProcessRegistry.shared.unregister(runId) }
-            }
-
-            do {
-                try process.run()
-            } catch {
-                try? stdinPipe.fileHandleForWriting.close()
-                stdoutPipe.fileHandleForReading.readabilityHandler = nil
-                stderrPipe.fileHandleForReading.readabilityHandler = nil
-                continuation.finish(
-                    throwing: ClaudeCodeError.launchFailed(error.localizedDescription)
-                )
-                return
-            }
-
-            // A dedicated blocking queue handles pipe backpressure for large
-            // transcripts without tying up Swift's cooperative executor.
-            let promptData = Data(prompt.utf8)
-            DispatchQueue.global(qos: .userInitiated).async {
-                try? stdinPipe.fileHandleForWriting.write(contentsOf: promptData)
-                try? stdinPipe.fileHandleForWriting.close()
-            }
-
-            await withTaskCancellationHandler {
-                await terminator.waitUntilExit()
-            } onCancel: {
-                terminator.terminate()
-            }
-
-            // Drain whatever Foundation had buffered but not yet delivered,
-            // THEN detach the handlers — the other order loses the last frame
-            // and leaks the FileHandle.
-            let residualOut = stdoutPipe.fileHandleForReading.availableData
-            if !residualOut.isEmpty {
-                for event in state.ingestStdout(residualOut) { continuation.yield(event) }
-            }
-            let residualErr = stderrPipe.fileHandleForReading.availableData
-            if !residualErr.isEmpty { state.appendStderr(residualErr) }
-            stdoutPipe.fileHandleForReading.readabilityHandler = nil
-            stderrPipe.fileHandleForReading.readabilityHandler = nil
-            for event in state.finishStdout() { continuation.yield(event) }
-
-            if Task.isCancelled {
-                continuation.finish()
-                return
-            }
-
-            let status = terminator.terminationStatus()
-            if status != 0 {
-                let tail = state.stderrText()
-                continuation.finish(throwing: Self.error(forExitCode: status, stderrTail: tail))
-                return
-            }
-            if let detail = state.failureDetail() {
-                continuation.finish(throwing: Self.error(forFailureDetail: detail))
-                return
-            }
-            if !state.producedOutput() {
-                continuation.finish(
-                    throwing: ClaudeCodeError.exited(code: status, stderrTail: state.stderrText())
-                )
-                return
-            }
-            continuation.finish()
-        }
-
-        continuation.onTermination = { @Sendable _ in
-            producerTask.cancel()
-            // Cancelling the Task alone would leave the child running until it
-            // finished its own turn; the user pressing Stop must kill it.
-            terminator.terminate()
-        }
-
-        return stream
-    }
-
-    /// Map a non-zero exit onto a typed error, promoting the two failures a
-    /// user can actually act on.
-    private static func error(forExitCode code: Int32, stderrTail: String) -> ClaudeCodeError {
-        let lowered = stderrTail.lowercased()
-        if lowered.contains("not logged in") || lowered.contains("please run `claude login`")
-            || lowered.contains("authentication") || lowered.contains("unauthorized")
-        {
-            return .notAuthenticated(detail: stderrTail)
-        }
-        if lowered.contains("rate limit") || lowered.contains("usage limit") {
-            return .rateLimited(detail: stderrTail)
-        }
-        return .exited(code: code, stderrTail: stderrTail)
-    }
-
-    static func error(forFailureDetail detail: String) -> ClaudeCodeError {
-        let lowered = detail.lowercased()
-        if lowered.contains("not logged in") || lowered.contains("sign in")
-            || lowered.contains("authentication") || lowered.contains("unauthorized")
-        {
-            return .notAuthenticated(detail: detail)
-        }
-        if lowered.contains("rate limit") || lowered.contains("usage limit") {
-            return .rateLimited(detail: detail)
-        }
-        return .turnFailed(detail)
     }
 }
 

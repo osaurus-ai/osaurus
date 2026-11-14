@@ -109,6 +109,9 @@ public struct CodexModelMetadata: Sendable, Equatable, Hashable {
     /// Input modalities from the live Codex catalog. A missing field means
     /// legacy metadata; Codex itself defaults that case to text + image.
     public let inputModalities: [String]?
+    /// The catalog's `supports_reasoning_summaries`. Nil when the entry omits
+    /// it; callers then fall back to the reasoning-model profile.
+    public let supportsReasoningSummaries: Bool?
 
     /// Mirrors codex-rs's backward-compatible default: image input is allowed
     /// unless the catalog explicitly publishes a modality list without it.
@@ -124,7 +127,8 @@ public struct CodexModelMetadata: Sendable, Equatable, Hashable {
         supportedReasoningLevels: [CodexReasoningLevel] = [],
         usesResponsesLite: Bool = false,
         contextWindow: Int? = nil,
-        inputModalities: [String]? = nil
+        inputModalities: [String]? = nil,
+        supportsReasoningSummaries: Bool? = nil
     ) {
         self.slug = slug
         self.displayName = displayName
@@ -133,6 +137,7 @@ public struct CodexModelMetadata: Sendable, Equatable, Hashable {
         self.usesResponsesLite = usesResponsesLite
         self.contextWindow = contextWindow
         self.inputModalities = inputModalities
+        self.supportsReasoningSummaries = supportsReasoningSummaries
     }
 }
 
@@ -203,7 +208,11 @@ public enum OpenAICodexOAuthService {
     /// available, but this list keeps the UI usable before sign-in and when the
     /// `/models` endpoint cannot be reached.
     public static let supportedModels: [String] = [
+        "gpt-6.1-sol",
         "gpt-6-astra",
+        "gpt-6.1-terra",
+        "gpt-6-sol",
+        "gpt-6-luna",
         "gpt-5.6",
         "gpt-5.6-terra",
         "gpt-5.6-luna",
@@ -215,10 +224,6 @@ public enum OpenAICodexOAuthService {
         "gpt-5.3-codex",
         "gpt-5.3-codex-spark",
         "gpt-5.2",
-        "gpt-5.2-codex",
-        "gpt-5.1-codex-max",
-        "gpt-5.1-codex",
-        "gpt-5.1-codex-mini",
         "gpt-5.1",
     ]
 
@@ -587,6 +592,7 @@ public enum OpenAICodexOAuthService {
         let supported_reasoning_levels: [ReasoningLevelEntry]?
         let context_window: Int?
         let input_modalities: [String]?
+        let supports_reasoning_summaries: Bool?
 
         /// The publishable capability slice of this entry, preserving the
         /// catalog's level order and dropping malformed (effort-less) levels.
@@ -605,7 +611,8 @@ public enum OpenAICodexOAuthService {
                 },
                 usesResponsesLite: use_responses_lite == true,
                 contextWindow: context_window.flatMap { $0 > 0 ? $0 : nil },
-                inputModalities: input_modalities
+                inputModalities: input_modalities,
+                supportsReasoningSummaries: supports_reasoning_summaries
             )
         }
     }

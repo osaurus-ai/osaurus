@@ -36,6 +36,22 @@ public actor KnowledgeSearchService {
     /// rebuilt lazily on a map miss.
     private var chunkKeyMap: [String: (collectionId: String, relPath: String, chunkIndex: Int)] = [:]
 
+    private lazy var vectorIndexer = KnowledgeVectorIndexer(
+        load: { try KnowledgeDatabase.shared.pendingVectorChunks(collectionId: $0, limit: $1) },
+        complete: { try KnowledgeDatabase.shared.markVectorIndexed($0) },
+        embed: { [weak self] hit in
+            guard let self else { throw CancellationError() }
+            try await self.indexChunk(hit)
+        },
+        enabled: { id in
+            guard let uuid = UUID(uuidString: id) else { return false }
+            await KnowledgeManager.shared.ensureLoaded()
+            return await MainActor.run { KnowledgeManager.shared.collection(for: uuid)?.isEnabled == true }
+        },
+        allowed: { [weak self] in await self?.vectorWorkAllowed("pending vectors", logSkipped: false) ?? false },
+        failure: { error in KnowledgeLogger.search.error("Knowledge vector retry deferred: \(error)") }
+    )
+
     private init() {}
 
     // MARK: - Vector identity
@@ -46,16 +62,27 @@ public actor KnowledgeSearchService {
         TextSimilarity.deterministicUUID(from: "knowledge:\(collectionId):\(relPath):\(chunkIndex)")
     }
 
-    private static func storageDir(for collectionId: String) -> URL {
+    private static func storageDir(
+        for collectionId: String,
+        indexDirectoryName: String = EmbeddingService.indexDirectoryName
+    ) -> URL {
         guard let uuid = UUID(uuidString: collectionId) else {
             return OsaurusPaths.knowledge()
-                .appendingPathComponent("vectura", isDirectory: true)
+                .appendingPathComponent(indexDirectoryName, isDirectory: true)
                 .appendingPathComponent(collectionId, isDirectory: true)
         }
-        return OsaurusPaths.knowledgeVecturaDirectory(for: uuid)
+        return OsaurusPaths.knowledgeVecturaDirectory(for: uuid, indexDirectoryName: indexDirectoryName)
+    }
+
+    /// A collection's index directory under every embedding profile used on this Mac.
+    private static func allProfileStorageDirs(for collectionId: String) -> [URL] {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: OsaurusPaths.knowledge().path)) ?? []
+        return names.filter { $0 == "vectura" || $0.hasPrefix("vectura-") }
+            .map { storageDir(for: collectionId, indexDirectoryName: $0) }
     }
 
     private func ensureVectorDB(for collectionId: String) async -> VecturaKit? {
+        guard EmbeddingService.vectorIndexesAvailable else { return nil }
         if let existing = vectorDBs[collectionId] { return existing }
 
         let storageDir = Self.storageDir(for: collectionId)
@@ -85,6 +112,8 @@ public actor KnowledgeSearchService {
                     KnowledgeLogger.search.warning(
                         "VecturaKit init failed for \(collectionId), deleting + retrying: \(error)"
                     )
+                    // A recreated vector store no longer satisfies prior receipts.
+                    try? KnowledgeDatabase.shared.invalidateChunkVectors(collectionId: collectionId)
                     try? FileManager.default.removeItem(at: storageDir)
                 } else {
                     KnowledgeLogger.search.error(
@@ -98,21 +127,32 @@ public actor KnowledgeSearchService {
 
     /// Same residency guard as memory: never compete with a resident MLX
     /// model for GPU memory; the FTS path still serves search meanwhile.
-    private func vectorWorkAllowed(_ operation: String) async -> Bool {
+    private func vectorWorkAllowed(_ operation: String, logSkipped: Bool = true) async -> Bool {
         let env = ProcessInfo.processInfo.environment
         if env["OSAURUS_DISABLE_KNOWLEDGE_VECTOR_SEARCH"] == "1"
             || env["OSAURUS_DISABLE_KNOWLEDGE_VECTOR_SEARCH"]?.lowercased() == "true"
         {
-            KnowledgeLogger.search.warning("Skipping VecturaKit \(operation); disabled by environment")
+            if logSkipped {
+                KnowledgeLogger.search.warning("Skipping VecturaKit \(operation); disabled by environment")
+            }
+            return false
+        }
+        guard EmbeddingService.vectorIndexesAvailable else {
+            if logSkipped {
+                KnowledgeLogger.search.warning(
+                    "Skipping VecturaKit \(operation); embedding model unavailable, using FTS fallback")
+            }
             return false
         }
 
         let residentModels = await ModelRuntime.shared.cachedModelSummaries()
         guard residentModels.isEmpty else {
             let names = residentModels.map(\.name).joined(separator: ",")
-            KnowledgeLogger.search.warning(
-                "Skipping VecturaKit \(operation) while MLX model resident (\(names)); using FTS fallback"
-            )
+            if logSkipped {
+                KnowledgeLogger.search.warning(
+                    "Skipping VecturaKit \(operation) while MLX model resident (\(names)); using FTS fallback"
+                )
+            }
             return false
         }
         return true
@@ -122,22 +162,32 @@ public actor KnowledgeSearchService {
 
     /// Index (or overwrite) the vectors for a document's chunks.
     public func indexChunks(_ hits: [KnowledgeChunkHit]) async {
-        guard !hits.isEmpty, await vectorWorkAllowed("indexChunks") else { return }
-        for hit in hits {
-            guard let db = await ensureVectorDB(for: hit.collectionId) else { return }
-            let id = Self.vectorId(
-                collectionId: hit.collectionId,
-                relPath: hit.relPath,
-                chunkIndex: hit.chunkIndex
-            )
-            do {
-                let text = hit.headingPath.isEmpty ? hit.content : hit.headingPath + "\n" + hit.content
-                _ = try await db.addDocument(text: text, id: id)
-                chunkKeyMap[id.uuidString] = (hit.collectionId, hit.relPath, hit.chunkIndex)
-            } catch {
-                KnowledgeLogger.search.error("indexChunks failed for \(hit.compositeKey): \(error)")
-            }
+        for collectionId in Set(hits.map(\.collectionId)) {
+            await indexPendingChunks(collectionId: collectionId)
         }
+    }
+
+    /// Unchanged document hashes must still drain missing vectors, including
+    /// work deferred during inference and failures from a previous process.
+    public func indexPendingChunks(collectionId: String) async {
+        let directory = Self.storageDir(for: collectionId)
+        if !FileManager.default.fileExists(atPath: directory.path) {
+            vectorDBs.removeValue(forKey: collectionId)
+            try? KnowledgeDatabase.shared.invalidateChunkVectors(collectionId: collectionId)
+        }
+        await vectorIndexer.request(collectionId: collectionId)
+    }
+
+    private func indexChunk(_ hit: KnowledgeChunkHit) async throws {
+        guard let db = await ensureVectorDB(for: hit.collectionId) else {
+            throw KnowledgeDatabaseError.failedToExecute("Knowledge vector store unavailable")
+        }
+        let id = Self.vectorId(collectionId: hit.collectionId, relPath: hit.relPath, chunkIndex: hit.chunkIndex)
+        let text = hit.headingPath.isEmpty ? hit.content : hit.headingPath + "\n" + hit.content
+        _ = try await MediaActivityLogger.withEmbedding(purpose: "knowledge_index", role: .document) {
+            try await db.addDocument(text: text, id: id)
+        }
+        chunkKeyMap[id.uuidString] = (hit.collectionId, hit.relPath, hit.chunkIndex)
     }
 
     /// Remove the vectors of a deleted or shrunk document. `chunkCount`
@@ -156,23 +206,23 @@ public actor KnowledgeSearchService {
 
     /// Drop a collection's vector index entirely (registry delete).
     public func removeCollection(collectionId: String) async {
+        await vectorIndexer.cancel(collectionId: collectionId)
+        try? KnowledgeDatabase.shared.invalidateChunkVectors(collectionId: collectionId)
         if let db = vectorDBs.removeValue(forKey: collectionId) {
             try? await db.reset()
         }
         chunkKeyMap = chunkKeyMap.filter { $0.value.collectionId != collectionId }
-        try? FileManager.default.removeItem(at: Self.storageDir(for: collectionId))
+        for directory in Self.allProfileStorageDirs(for: collectionId) {
+            try? FileManager.default.removeItem(at: directory)
+        }
     }
 
     /// Discard and regenerate a collection's vectors from the SQLite
     /// index rows (e.g. after a storage key rotation or index failure).
     public func rebuildCollection(collectionId: String) async {
         await removeCollection(collectionId: collectionId)
-        guard await vectorWorkAllowed("rebuildCollection") else { return }
-        let chunks = (try? KnowledgeDatabase.shared.allChunks(collectionId: collectionId)) ?? []
-        await indexChunks(chunks)
-        KnowledgeLogger.search.info(
-            "Rebuilt knowledge vectors for collection=\(collectionId): \(chunks.count) chunks"
-        )
+        await indexPendingChunks(collectionId: collectionId)
+        KnowledgeLogger.search.info("Queued knowledge vector rebuild for collection=\(collectionId)")
     }
 
     // MARK: - Search
@@ -211,11 +261,13 @@ public actor KnowledgeSearchService {
                 do {
                     KnowledgeDebugLog.log("service.search", "db.search START (embeds query + ANN) collection=\(collectionId)")
                     let tVec = KnowledgeDebugLog.now()
-                    let results = try await db.search(
-                        query: .text(query),
-                        numResults: fetchCount,
-                        threshold: Self.defaultSearchThreshold
-                    )
+                    let results = try await MediaActivityLogger.withEmbedding(purpose: "knowledge_search", role: .query) {
+                        try await db.search(
+                            query: .text(query),
+                            numResults: fetchCount,
+                            threshold: Self.defaultSearchThreshold
+                        )
+                    }
                     KnowledgeDebugLog.log(
                         "service.search",
                         "db.search DONE \(results.count) result(s) in \(KnowledgeDebugLog.ms(since: tVec))ms"

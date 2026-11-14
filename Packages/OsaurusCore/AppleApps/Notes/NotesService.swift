@@ -87,9 +87,15 @@ final class AppleScriptNotesService: NotesServicing, @unchecked Sendable {
     /// Depth-first folder walk (accounts → folders → subfolders) so nested
     /// folders are reachable; the application-level `folders` element is
     /// not guaranteed to include them.
-    private static let folderHandlers = """
+    ///
+    /// The handlers run inside `tell application "Notes"`, not `using terms
+    /// from`: the latter only resolves terminology at compile time, so the
+    /// bare `accounts` element would be sent to the script object itself
+    /// at runtime and fail with `every «class acct» of «script» doesn't
+    /// understand the "count" message (-1708)`.
+    static let folderHandlers = """
         on collectFolders(parentObj, acctName, depth, acc)
-            using terms from application "Notes"
+            tell application "Notes"
                 if depth > 10 then return acc
                 repeat with f in folders of parentObj
                     set fname to name of f
@@ -99,16 +105,16 @@ final class AppleScriptNotesService: NotesServicing, @unchecked Sendable {
                     end if
                 end repeat
                 return acc
-            end using terms from
+            end tell
         end collectFolders
         on allFolders()
-            using terms from application "Notes"
+            tell application "Notes"
                 set acc to {}
                 repeat with a in accounts
                     set acc to my collectFolders(a, name of a, 0, acc)
                 end repeat
                 return acc
-            end using terms from
+            end tell
         end allFolders
         """
 

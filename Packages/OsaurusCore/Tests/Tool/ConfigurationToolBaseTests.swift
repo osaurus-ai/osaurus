@@ -39,12 +39,52 @@ struct ConfigurationToolBaseGateTests {
     }
 
     @Test
-    func gate_passesForDefaultAgent() async {
-        let result = await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+    func gate_passesForConfigurator() async {
+        let result = await ChatExecutionContext.$currentAgentId.withValue(Agent.configuratorId) {
             ConfigurationToolBase.defaultAgentGateFailure(tool: "osaurus_probe")
         }
         // nil means "no gate, proceed".
         #expect(result == nil)
+    }
+
+    /// The Default agent's chat turns hand off to the Configurator; the
+    /// runtime refuses even if a schema leak hands the model the tool.
+    @Test
+    func gate_refusesDefaultAgentChatTurn() async throws {
+        let result = await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+            ConfigurationToolBase.defaultAgentGateFailure(tool: "osaurus_config")
+        }
+        let envelope = try #require(result)
+        #expect(ToolEnvelope.isError(envelope))
+        #expect(envelope.contains("configurator_handoff"))
+    }
+
+    /// The Default agent's own external harness (live Default-agent token on
+    /// the MCP bridge) keeps every configure tool.
+    @Test
+    func gate_passesForDefaultAgentHarness() async {
+        let result = await ChatExecutionContext.$currentAgentId.withValue(Agent.defaultId) {
+            await ChatExecutionContext.$harnessTokenAgentId.withValue(Agent.defaultId) {
+                ConfigurationToolBase.defaultAgentGateFailure(tool: "osaurus_config")
+            }
+        }
+        #expect(result == nil)
+    }
+
+    /// A custom agent's harness gets the read-only tools, never writes.
+    @Test
+    func gate_customAgentHarnessReadsOnly() async {
+        let agentId = UUID()
+        let (read, write) = await ChatExecutionContext.$currentAgentId.withValue(agentId) {
+            await ChatExecutionContext.$harnessTokenAgentId.withValue(agentId) {
+                (
+                    ConfigurationToolBase.defaultAgentGateFailure(tool: "osaurus_inspect"),
+                    ConfigurationToolBase.defaultAgentGateFailure(tool: "osaurus_config")
+                )
+            }
+        }
+        #expect(read == nil)
+        #expect(write.map(ToolEnvelope.isError) == true)
     }
 
     @Test

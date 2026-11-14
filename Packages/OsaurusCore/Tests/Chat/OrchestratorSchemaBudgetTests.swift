@@ -2,10 +2,10 @@
 //  OrchestratorSchemaBudgetTests.swift
 //
 //  Pins the token weight of the Orchestrator's turn-1 tool schema — the
-//  consolidated configure surface (`osaurus_config` / `osaurus_inspect` /
-//  `osaurus_help`), the agent-loop tools, the quick-lookup web pair and
-//  `spawn_agent` constrained to one configured worker — with the SAME
-//  `ToolSpecTokenEstimator` heuristic the budget pipeline uses.
+//  routing surface (`status`, `state`, the Configurator and Architect
+//  handoffs, `run_workflow`, `clarify`) — with the SAME
+//  `ToolSpecTokenEstimator` heuristic the budget pipeline uses, and the
+//  `spawn_agent` spec custom agents receive.
 //
 //  Why a hard bound: `ContextSizeResolver` auto-disables tools below the
 //  `.tiny` ceiling (4096) and auto-enables them from `.small` (8192). The
@@ -23,25 +23,21 @@ import Testing
 @MainActor
 struct OrchestratorSchemaBudgetTests {
 
-    /// Upper bound for the whole turn-1 Orchestrator schema (composed
-    /// tools + `spawn_agent`). Measured ≈ 1.5K after the 2026 description
-    /// trims (≈1.7K with `spawn_agent`); the bound leaves slack for legitimate schema additions while
-    /// still failing loudly on a runaway description.
-    static let orchestratorSchemaTokenBound = 1_900
+    /// Upper bound for the whole turn-1 Orchestrator schema. Measured ≈ 670
+    /// with `run_workflow` (a runnable workflow); the bound leaves slack for
+    /// legitimate schema additions while still failing loudly on a runaway
+    /// description.
+    static let orchestratorSchemaTokenBound = 800
 
     /// Per-tool bounds for the tools the Orchestrator carries every turn. A
     /// single tool past its bound is the usual culprit when the total drifts.
     static let perToolTokenBounds: [String: Int] = [
-        "osaurus_config": 260,
-        "osaurus_inspect": 220,
-        "osaurus_help": 160,
-        "spawn_agent": 360,
+        "status": 80,
+        "state": 220,
+        "configurator_handoff": 120,
         "clarify": 220,
-        "complete": 160,
-        "todo": 120,
-        "web_search": 160,
-        "search_and_extract": 380,
-        "get_current_time": 80,
+        "architect_handoff": 110,
+        "run_workflow": 90,
     ]
 
     private struct Measurement {
@@ -59,11 +55,9 @@ struct OrchestratorSchemaBudgetTests {
         )
     }
 
-    /// The tools the composer resolves for the Default agent plus the
-    /// `spawn_agent` spec constrained to one worker (UUID + display name in
-    /// the enum, exactly as `resolveTools` publishes it). The worker is added
-    /// explicitly because the SwiftPM harness has no runnable model, so the
-    /// composer's availability filter would otherwise hide the tool.
+    /// The tools the composer resolves for the Default agent. `run_workflow`
+    /// is counted in its compact baseline shape whether or not
+    /// a runnable workflow happens to be installed: anyone with one pays it.
     private func measure(model: String) async -> Measurement {
         ConfigurationDomainBootstrap.registerBuiltIns()
         return await DynamicCatalogTestLock.shared.run {
@@ -72,21 +66,9 @@ struct OrchestratorSchemaBudgetTests {
                 executionMode: .none,
                 model: model
             )
-            var tools = ctx.tools.filter {
-                $0.function.name != SubagentCapabilityRegistry.spawnAgentToolName
-            }
-            let workerID = UUID(uuidString: "7A7A0000-0000-4000-8000-000000000001")!
-            if let base = ToolRegistry.shared.specs(
-                forTools: [SubagentCapabilityRegistry.spawnAgentToolName]
-            ).first {
-                tools.append(
-                    SpawnAgentTool.constrainedSpec(
-                        base,
-                        allowedAgentIDs: [workerID],
-                        allowedAgentNames: ["Coder"]
-                    )
-                )
-            }
+            var tools = ctx.tools.filter { $0.function.name != RunWorkflowTool.toolName }
+            tools += ToolRegistry.shared.specs(forTools: [RunWorkflowTool.toolName])
+                .map(SystemPromptComposer.compactBootstrapSpec)
             let perTool = tools.map { (name: $0.function.name, tokens: tokens($0)) }
                 .sorted { $0.tokens > $1.tokens }
             return Measurement(
@@ -109,10 +91,15 @@ struct OrchestratorSchemaBudgetTests {
                 + "\(measured.perTool.count) tools\n\(measured.table)"
         )
 
-        #expect(measured.names.contains("spawn_agent"))
-        #expect(measured.names.contains("osaurus_config"))
-        #expect(measured.names.contains("osaurus_inspect"))
-        #expect(measured.names.contains("osaurus_help"))
+        #expect(!measured.names.contains("spawn_agent"))
+        for name in DefaultAgentSystemPromptBuilder.orchestratorRequiredToolNames {
+            #expect(measured.names.contains(name), "`\(name)` missing from the Orchestrator schema")
+        }
+        for name in ["osaurus_config", "osaurus_inspect", "osaurus_help"] {
+            #expect(!measured.names.contains(name), "`\(name)` belongs to the Configurator")
+        }
+        #expect(measured.names.contains(RunWorkflowTool.toolName))
+        #expect(measured.names.contains(ArchitectHandoffTool.toolName))
         // The Orchestrator never carries the removed delegation spellings or
         // media tools — their schemas must not be paid for.
         for gone in ["spawn_model", "spawn_batch", "image", "applescript", "mac_query"] {
@@ -131,10 +118,22 @@ struct OrchestratorSchemaBudgetTests {
         }
     }
 
-    /// The `spawn_agent` enum grows with the pool. Ten workers (a large but
-    /// realistic pool) must still keep the tool under a few hundred tokens —
-    /// the names, not the UUIDs, are what a small model reads.
-    @Test("spawn_agent schema stays bounded with a ten-agent pool")
+    /// `architect_handoff` carries the verbatim message and `keep_draft`;
+    /// the routing surface still fits the bound.
+    @Test("The inline architect_handoff schema stays bounded")
+    func inlineArchitectHandoffSchemaBounded() async {
+        guard let inline = ToolRegistry.shared.specs(forTools: [ArchitectHandoffTool.toolName]).first else {
+            Issue.record("architect_handoff is not registered")
+            return
+        }
+        let properties = inline.function.parameters?.objectValue?["properties"]?.objectValue
+        #expect(properties?["keep_draft"] != nil)
+        #expect(tokens(inline) <= 150, "inline `architect_handoff` schema is \(tokens(inline)) tokens (bound 150)")
+    }
+
+    /// Keep the historical identity-only bound; routing descriptions have
+    /// their own measured payload below and must never disappear to fit it.
+    @Test("spawn_agent identity schema stays bounded with a ten-agent pool")
     func spawnAgentSchemaBoundedWithLargePool() {
         guard
             let base = ToolRegistry.shared.specs(
@@ -150,5 +149,37 @@ struct OrchestratorSchemaBudgetTests {
         let cost = tokens(spec)
         print("[Orchestrator schema] spawn_agent with 10 workers ≈ \(cost) tokens")
         #expect(cost <= 600, "spawn_agent with ten workers costs \(cost) tokens")
+    }
+
+    @Test("ten-agent routing metadata survives repeated composition without duplication")
+    func largePoolRetainsEveryDescription() throws {
+        let agents = (1...10).map { index in
+            SpawnAgentDescriptor(
+                id: UUID(), name: "Worker \(index)",
+                description: "Reviews task \(index): " + String(repeating: "x", count: 143),
+                modelId: nil, isLocal: nil, providerName: nil
+            )
+        }
+        let base = SpawnAgentTool().asOpenAITool()
+        let first = SpawnAgentTool.constrainedSpec(
+            base, allowedAgentIDs: agents.map(\.id), allowedAgentNames: agents.map(\.name), agents: agents
+        )
+        let repeated = SpawnAgentTool.constrainedSpec(
+            first, allowedAgentIDs: agents.map(\.id), allowedAgentNames: agents.map(\.name), agents: agents
+        )
+        #expect(tokens(first) == tokens(repeated))
+        let text = try #require(repeated.function.description)
+        let sections = text.components(separatedBy: SpawnAgentTool.routingMetadataMarker)
+        #expect(sections.count == 2)
+        let payload = try #require(sections.last)
+        let rows = try payload.split(separator: "\n").map {
+            try #require(JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: String])
+        }
+        #expect(rows.count == agents.count)
+        for agent in agents {
+            #expect(!(try #require(agent.description)).isEmpty)
+            #expect(rows.contains { $0["id"] == agent.id.uuidString && $0["description"] == agent.description })
+        }
+        print("[Orchestrator schema] ten described workers ≈ \(tokens(first)) tokens; routing payload \(payload.utf8.count) bytes")
     }
 }

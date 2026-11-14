@@ -99,7 +99,11 @@ public struct MasterKey: Sendable {
     /// `delete()` queries carry no group, so a Reset removes every copy.
     static func addGenericPassword(service: String, account: String, label: String, data: Data) -> Bool {
         var wroteAny = false
-        for attempts in OsaurusKeychainGroup.writeAttemptGroups(sharedGroup: OsaurusKeychainGroup.shared) {
+        let groups = OsaurusKeychainGroup.writeAttemptGroups(
+            sharedGroup: OsaurusKeychainGroup.shared,
+            allowsSynced: SpaceKeychainScope.allowsSharedAndSyncedItems
+        )
+        for attempts in groups {
             for target in attempts {
                 let status = addToKeychain(
                     service: service,
@@ -129,7 +133,7 @@ public struct MasterKey: Sendable {
     ) -> OSStatus {
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: SpaceKeychainScope.service(service),
             kSecAttrAccount as String: account,
             kSecValueData as String: data,
             kSecAttrLabel as String: label,
@@ -193,9 +197,10 @@ public struct MasterKey: Sendable {
         data: Data,
         sharedGroup: String
     ) {
+        guard SpaceKeychainScope.allowsSharedAndSyncedItems else { return }
         let listQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: SpaceKeychainScope.service(service),
             kSecAttrAccount as String: account,
             kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
             kSecMatchLimit as String: kSecMatchLimitAll,
@@ -252,7 +257,7 @@ public struct MasterKey: Sendable {
         guard let accessGroup else { return }
         let verify: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: SpaceKeychainScope.service(service),
             kSecAttrAccount as String: account,
             kSecAttrSynchronizable as String: true,
             kSecAttrAccessGroup as String: accessGroup,
@@ -283,7 +288,7 @@ public struct MasterKey: Sendable {
         if KeychainQueryHelpers.disablesKeychainForProcess { return false }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: SpaceKeychainScope.service(service),
             kSecAttrAccount as String: account,
             kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
             kSecReturnData as String: false,
@@ -402,7 +407,7 @@ public struct MasterKey: Sendable {
         }
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: SpaceKeychainScope.service(service),
             kSecAttrAccount as String: account,
             kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
             kSecReturnData as String: true,
@@ -443,7 +448,7 @@ public struct MasterKey: Sendable {
         }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: SpaceKeychainScope.service(service),
             kSecAttrAccount as String: account,
             kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
         ]

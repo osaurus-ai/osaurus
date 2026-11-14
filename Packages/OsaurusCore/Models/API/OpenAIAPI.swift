@@ -334,6 +334,9 @@ struct ChatMessage: Codable, Sendable {
     /// replayed verbatim on later Responses turns so item ids, assistant phase,
     /// encrypted reasoning, and future typed fields survive.
     var responses_output_items: [JSONValue]? = nil
+    /// In-process provider-tagged signed/opaque thinking blocks. Never encoded
+    /// on the OpenAI Chat Completions wire or replayed as Responses Items.
+    var anthropic_thinking_blocks: [JSONValue]? = nil
 
     /// Extract image URLs from content parts (supports both data URLs and http URLs)
     var imageUrls: [String] {
@@ -485,7 +488,8 @@ extension ChatMessage {
         reasoning_content: String? = nil,
         reasoning_item_id: String? = nil,
         reasoning_encrypted: String? = nil,
-        responses_output_items: [JSONValue]? = nil
+        responses_output_items: [JSONValue]? = nil,
+        anthropic_thinking_blocks: [JSONValue]? = nil
     ) {
         self.role = role
         self.content = content
@@ -497,6 +501,7 @@ extension ChatMessage {
         self.reasoning_item_id = reasoning_item_id
         self.reasoning_encrypted = reasoning_encrypted
         self.responses_output_items = responses_output_items
+        self.anthropic_thinking_blocks = anthropic_thinking_blocks
     }
 
     /// Initialize from a route adapter that already normalized OpenAI-style
@@ -546,7 +551,7 @@ extension ChatMessage {
     /// modality. Audio bytes encode as `input_audio` with explicit
     /// format hint; video bytes encode as `video_url` with
     /// `data:video/<container>` URL. All three flow into the
-    /// OpenAI-compatible JSON shape that `mapOpenAIChatToMLX` lowers through
+    /// OpenAI-compatible JSON shape that `makeMLXChatMessages` lowers through
     /// `extractAudioSources` / `extractVideoSources`.
     init(
         role: String,
@@ -701,20 +706,22 @@ struct CompletionRequest: Decodable, Sendable {
 struct ChatCompletionRequest: Codable, Sendable {
     let model: String
     var messages: [ChatMessage]
-    let temperature: Float?
+    var temperature: Float?
     let max_tokens: Int?
     /// OpenAI newer alias for max_tokens; accepted on inbound requests alongside max_tokens.
     var max_completion_tokens: Int? = nil
     let stream: Bool?
-    let top_p: Float?
+    var top_p: Float?
     var top_k: Int? = nil
     /// Extension sampling knob (mlx/llama.cpp ecosystems): minimum
     /// probability cutoff relative to the top token. Mapped to
     /// `GenerationParameters.minPOverride`.
     var min_p: Float? = nil
-    let frequency_penalty: Float?
-    let presence_penalty: Float?
-    let stop: [String]?
+    /// Explicit multiplicative repetition penalty; absent preserves the model default.
+    var repetition_penalty: Float? = nil
+    var frequency_penalty: Float?
+    var presence_penalty: Float?
+    var stop: [String]?
     let n: Int?
     /// OpenAI tools/function-calling definitions
     let tools: [Tool]?
@@ -724,11 +731,43 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// vmlx-swift's `CacheCoordinator` is content-addressed and discovers
     /// reusable prefixes autonomously.
     var session_id: String? = nil
+    /// Osaurus Connect: continue one of the Mac's own chat sessions — its
+    /// turns become the model context and the new turns are appended back
+    /// (docs/MOBILE_PROTOCOL.md §14.5). Owner callers only.
+    var osaurus_session_id: String? = nil
+    /// Osaurus Connect: `osaurus_session_id` names a chat the phone starts
+    /// with this run; the Mac creates it when it has no such chat
+    /// (docs/MOBILE_PROTOCOL.md §14.5). The owner's paired phone only.
+    var osaurus_create_session: Bool? = nil
+    /// Osaurus Connect: the phone's name for this run. The owner's phone run
+    /// keeps going when its connection drops, and the phone rejoins it by
+    /// this id (docs/MOBILE_PROTOCOL.md §6.4). Owner callers only.
+    var osaurus_run_id: String? = nil
+    /// Osaurus Connect: this run is a turn of a voice call on the phone. It
+    /// keeps the call's turns lean (no web search for local models, the
+    /// call's warm model kept). The phone sends its own spoken-reply note as
+    /// a system message; the Mac adds none (docs/MOBILE_PROTOCOL.md §6.5).
+    /// Owner callers only.
+    var osaurus_voice_call: Bool? = nil
+    /// Osaurus Connect: how the Privacy Filter treats this voice-call turn,
+    /// as the user chose when the call started: `off` sends it as written,
+    /// `auto` redacts every detection without a review. Honoured only from
+    /// the owner on the Secure Channel
+    /// (docs/MOBILE_PROTOCOL.md §6.5).
+    var osaurus_privacy: String? = nil
+    /// Shared-agent runs: `"host"` means the caller sends only its new
+    /// message with `session_id`, and the host's transcript of that
+    /// conversation is the history (docs/MOBILE_PROTOCOL.md §21.3). Absent:
+    /// the caller replays the conversation, as before.
+    var osaurus_history: String? = nil
+    /// Shared-agent runs: a colleague's agent identifying itself, signed by
+    /// its agent key (docs/MOBILE_PROTOCOL.md §21.5).
+    var osaurus_caller: OsaurusCallerDeclaration? = nil
     /// Deterministic-sampling seed (OpenAI v1.x). When set, identical
     /// requests should yield identical completions on the same backend.
     var seed: Int? = nil
-    /// `{"type":"json_object"}` for OpenAI JSON mode. Other shapes
-    /// (`text`, `json_schema`) are rejected at request validation.
+    /// OpenAI JSON mode or an explicit JSON schema for constrained output.
+    /// Unsupported schema features are rejected at request validation.
     var response_format: ResponseFormat? = nil
     /// `{"include_usage": true}` instructs the SSE producer to emit a
     /// final chunk carrying `usage` (prompt/completion/total tokens).
@@ -739,15 +778,28 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// typed 400 instead of being silently dropped.
     var logprobs: Bool? = nil
     var top_logprobs: Int? = nil
+    /// Host execution state is independent of the public chat/Responses wire body.
+    /// Copy it as one value across adapters so new controls cannot be dropped.
+    var inferenceContext = InferenceRequestContext()
+
     /// Model-specific options from the active ModelProfile (not serialized to JSON).
-    var modelOptions: [String: ModelOptionValue]? = nil
+    var modelOptions: [String: ModelOptionValue]? {
+        get { inferenceContext.modelOptions }
+        set { inferenceContext.modelOptions = newValue }
+    }
     /// Optional TTFT trace for diagnostic timing (not serialized to JSON).
-    var ttftTrace: TTFTTrace? = nil
+    var ttftTrace: TTFTTrace? {
+        get { inferenceContext.ttftTrace }
+        set { inferenceContext.ttftTrace = newValue }
+    }
     /// Local-only correlation id tying this request to the chat assistant
     /// turn that produced it, so the Insights tab can be opened focused on a
     /// specific response. Not decoded from OpenAI JSON, not forwarded to
     /// remote providers.
-    var turnId: UUID? = nil
+    var turnId: UUID? {
+        get { inferenceContext.turnId }
+        set { inferenceContext.turnId = newValue }
+    }
     /// Per-request thinking toggle. Translated to `modelOptions["disableThinking"]`
     /// at request entry; absent preserves server defaults.
     var enable_thinking: Bool? = nil
@@ -755,20 +807,31 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// `reasoning_effort` chat-template kwarg; remote providers forward it
     /// natively where supported.
     var reasoning_effort: String? = nil
+    /// Request-local variables rendered by the active bundle's chat template.
+    var chat_template_kwargs: [String: JSONValue]? = nil
     /// Local-only marker for app/UI requests whose sampling values came from
     /// profile defaults. Not decoded from OpenAI JSON and not forwarded to
     /// remote providers.
-    var samplingParametersAreImplicit: Bool = false
+    var samplingParametersAreImplicit: Bool {
+        get { inferenceContext.samplingParametersAreImplicit }
+        set { inferenceContext.samplingParametersAreImplicit = newValue }
+    }
     /// Local-only marker set by agent-driven surfaces (the `/agents/{id}/run`
     /// endpoint, dispatch, and agent-bound Chat sessions) so `message_sent`
     /// telemetry can label the turn `is_agent`. Not decoded from OpenAI JSON
     /// and not forwarded to remote providers.
-    var isAgentRequest: Bool = false
+    var isAgentRequest: Bool {
+        get { inferenceContext.isAgentRequest }
+        set { inferenceContext.isAgentRequest = newValue }
+    }
     /// Stable per-logical-step idempotency token. Set by the chat surface and
     /// reused across connect-phase and transient agent-loop retries so the
     /// Osaurus Router can dedupe billing on a re-POST. Not decoded from inbound
     /// OpenAI JSON; forwarded ONLY to the router (in the signed request body).
-    var idempotencyKey: String? = nil
+    var idempotencyKey: String? {
+        get { inferenceContext.idempotencyKey }
+        set { inferenceContext.idempotencyKey = newValue }
+    }
     /// Local-only marker set by a chat session that targets a paired/discovered
     /// remote Osaurus *agent* (Mode 2). When true the request is routed to the
     /// remote `/agents/{address}/run` endpoint so the agent runs fully
@@ -776,7 +839,10 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// stream back. When false an `.osaurus` provider is used as a plain
     /// OpenAI-compatible inference backend (`/chat/completions`, Mode 1). Not
     /// decoded from OpenAI JSON and not forwarded to remote providers.
-    var runAsRemoteAgent: Bool = false
+    var runAsRemoteAgent: Bool {
+        get { inferenceContext.runAsRemoteAgent }
+        set { inferenceContext.runAsRemoteAgent = newValue }
+    }
     /// Local-only: the remote agent's live effective model (the model the peer
     /// will actually run), carried purely so the Insights log records *that*
     /// instead of the local prefixed fallback (e.g. `coco/foundation`) the
@@ -784,37 +850,61 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// Only meaningful for Mode 2 (`runAsRemoteAgent`); over the wire Mode 2
     /// omits `model` entirely (the peer resolves its own effective model).
     /// Not decoded from OpenAI JSON and not forwarded to remote providers.
-    var remoteAgentLogModel: String? = nil
+    var remoteAgentLogModel: String? {
+        get { inferenceContext.remoteAgentLogModel }
+        set { inferenceContext.remoteAgentLogModel = newValue }
+    }
     /// Local-only: the `RemoteProvider` id of the remote agent this Mode 2 run
     /// targets. With `runAsRemoteAgent`, `ChatEngine` routes directly to this
     /// provider's service instead of by model string, so a stale `selectedModel`
     /// (e.g. a leftover prefix like `fugu/...`) can't redirect an agent run to a
     /// different provider. Not decoded from OpenAI JSON, not sent to providers.
-    var remoteAgentProviderId: UUID? = nil
-    /// Local-only: per-agent behavior for the Claude Code subprocess backend
-    /// (mode + tool opt-ins + working directory). Set by the chat surface from
-    /// the active agent's `claudeCode` config; read only by `ClaudeCodeService`
-    /// and ignored by every other backend. Not decoded from OpenAI JSON and
-    /// never forwarded to a provider.
-    var claudeCodeOptions: ClaudeCodeRunOptions? = nil
+    var remoteAgentProviderId: UUID? {
+        get { inferenceContext.remoteAgentProviderId }
+        set { inferenceContext.remoteAgentProviderId = newValue }
+    }
+    /// Local-only, Mode 2: the local agent on whose behalf the remote agent
+    /// runs, so the request carries an `osaurus_caller` signed by that
+    /// agent. Not decoded from OpenAI JSON, not sent to providers.
+    var remoteAgentCallerId: UUID? {
+        get { inferenceContext.remoteAgentCallerId }
+        set { inferenceContext.remoteAgentCallerId = newValue }
+    }
     /// Local-only: when true, model-load and prefill progress are not surfaced
     /// through `InferenceProgressManager` (background warm-up requests).
-    var suppressProgressUI: Bool = false
+    var suppressProgressUI: Bool {
+        get { inferenceContext.suppressProgressUI }
+        set { inferenceContext.suppressProgressUI = newValue }
+    }
     /// Local-only: when true, the prompt is truncated to the processor's
     /// canonical history cache boundary (rendered without the generation
     /// prompt) before prefill. Background warm-up requests set this so the
     /// KV the engine stores is an exact token-prefix of the next real send —
     /// required for sliding-window models whose caches cannot be trimmed to
     /// a boundary at store time.
-    var warmupPrefill: Bool = false
+    var warmupPrefill: Bool {
+        get { inferenceContext.warmupPrefill }
+        set { inferenceContext.warmupPrefill = newValue }
+    }
     /// Local-only: byte-exact reusable leading system-prompt text from
     /// `SystemPromptComposer.staticPrefix`. vmlx uses this only as a
     /// tokenizer-validated SSD-prefix boundary hint after the full prompt has
     /// already been rendered; it is not decoded from OpenAI JSON and is not
     /// forwarded to remote providers.
-    var cacheStableSystemPrefix: String? = nil
+    var cacheStableSystemPrefix: String? {
+        get { inferenceContext.cacheStableSystemPrefix }
+        set { inferenceContext.cacheStableSystemPrefix = newValue }
+    }
     /// Local admission contract, checked against exact prepared tokens before prefill.
-    var admissionPositionLimit: Int? = nil
+    var admissionPositionLimit: Int? {
+        get { inferenceContext.admissionPositionLimit }
+        set { inferenceContext.admissionPositionLimit = newValue }
+    }
+    /// Internal delegation ceiling, not a user output reservation. Never decoded from API JSON.
+    var admissionOutputTokensAreImplicit: Bool {
+        get { inferenceContext.admissionOutputTokensAreImplicit }
+        set { inferenceContext.admissionOutputTokensAreImplicit = newValue }
+    }
     /// Local-only: when true, this request's model load must not disturb a model
     /// that is already resident or already loading — the runtime refuses the load
     /// instead of evicting. Set by housekeeping that nobody is waiting on
@@ -823,9 +913,15 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// entitled to the GPU.
     ///
     /// Not decoded from OpenAI JSON, not sent to providers.
-    var backgroundModelLoad: Bool = false
+    var backgroundModelLoad: Bool {
+        get { inferenceContext.backgroundModelLoad }
+        set { inferenceContext.backgroundModelLoad = newValue }
+    }
     /// Internal direct-Send capability, never decoded from or encoded to the wire.
-    var alignmentRepairModel: String? = nil
+    var alignmentRepairModel: String? {
+        get { inferenceContext.alignmentRepairModel }
+        set { inferenceContext.alignmentRepairModel = newValue }
+    }
     /// Local-only: a nested subagent may reuse a model that another surface
     /// already owns (for example an HTTP API model under manual multi-model
     /// residency). In that case the child request must not relabel the
@@ -834,19 +930,35 @@ struct ChatCompletionRequest: Codable, Sendable {
     /// models still acquire the normal Chat UI ownership marker.
     ///
     /// Not decoded from OpenAI JSON, not sent to providers.
-    var preserveExistingResidencyOwner: Bool = false
+    var preserveExistingResidencyOwner: Bool {
+        get { inferenceContext.preserveExistingResidencyOwner }
+        set { inferenceContext.preserveExistingResidencyOwner = newValue }
+    }
 
     /// Resolved max tokens, preferring max_tokens then max_completion_tokens.
     var resolvedMaxTokens: Int? { max_tokens ?? max_completion_tokens }
 
     private enum CodingKeys: String, CodingKey {
         case model, messages, temperature, max_tokens, max_completion_tokens, stream, top_p, top_k
-        case min_p
+        case min_p, repetition_penalty
         case frequency_penalty, presence_penalty, stop, n
         case tools, tool_choice, session_id
         case seed, response_format, stream_options
         case logprobs, top_logprobs
-        case enable_thinking, reasoning_effort
+        case enable_thinking, reasoning_effort, chat_template_kwargs
+    }
+
+    /// Osaurus Connect fields, decoded only: they belong to this Mac and are
+    /// never encoded into a request forwarded to a provider.
+    private enum OsaurusCodingKeys: String, CodingKey {
+        case osaurus_session_id, osaurus_create_session, osaurus_run_id, osaurus_voice_call, osaurus_privacy
+        case osaurus_history, osaurus_caller
+    }
+
+    /// vLLM / SGLang / vmlx-py carry template switches in `chat_template_kwargs`.
+    /// Legacy alias handling remains separate from preserving the complete dictionary.
+    private enum TemplateKwargsCodingKeys: String, CodingKey {
+        case chat_template_kwargs
     }
 
     func withModel(_ newModel: String) -> ChatCompletionRequest {
@@ -870,28 +982,13 @@ struct ChatCompletionRequest: Codable, Sendable {
             stream_options: stream_options
         )
         copy.max_completion_tokens = max_completion_tokens
+        // Preserve admission, residency, routing and attribution as one value.
+        copy.inferenceContext = inferenceContext
         copy.min_p = min_p
-        copy.modelOptions = modelOptions
-        copy.ttftTrace = ttftTrace
-        copy.turnId = turnId
+        copy.repetition_penalty = repetition_penalty
         copy.enable_thinking = enable_thinking
         copy.reasoning_effort = reasoning_effort
-        copy.samplingParametersAreImplicit = samplingParametersAreImplicit
-        copy.isAgentRequest = isAgentRequest
-        copy.idempotencyKey = idempotencyKey
-        copy.runAsRemoteAgent = runAsRemoteAgent
-        copy.remoteAgentLogModel = remoteAgentLogModel
-        copy.remoteAgentProviderId = remoteAgentProviderId
-        copy.claudeCodeOptions = claudeCodeOptions
-        copy.suppressProgressUI = suppressProgressUI
-        copy.warmupPrefill = warmupPrefill
-        copy.cacheStableSystemPrefix = cacheStableSystemPrefix
-        // Must be copied with the other local-only flags. Dropping it silently
-        // promotes a background request back to interactive — and an interactive
-        // request is allowed to evict the model someone is using.
-        copy.backgroundModelLoad = backgroundModelLoad
-        copy.alignmentRepairModel = alignmentRepairModel
-        copy.preserveExistingResidencyOwner = preserveExistingResidencyOwner
+        copy.chat_template_kwargs = chat_template_kwargs
         copy.logprobs = logprobs
         copy.top_logprobs = top_logprobs
         return copy
@@ -922,28 +1019,13 @@ struct ChatCompletionRequest: Codable, Sendable {
             stream_options: stream_options
         )
         copy.max_completion_tokens = max_completion_tokens
+        // Preserve admission, residency, routing and attribution as one value.
+        copy.inferenceContext = inferenceContext
         copy.min_p = min_p
-        copy.modelOptions = modelOptions
-        copy.ttftTrace = ttftTrace
-        copy.turnId = turnId
+        copy.repetition_penalty = repetition_penalty
         copy.enable_thinking = enable_thinking
         copy.reasoning_effort = reasoning_effort
-        copy.samplingParametersAreImplicit = samplingParametersAreImplicit
-        copy.isAgentRequest = isAgentRequest
-        copy.idempotencyKey = idempotencyKey
-        copy.runAsRemoteAgent = runAsRemoteAgent
-        copy.remoteAgentLogModel = remoteAgentLogModel
-        copy.remoteAgentProviderId = remoteAgentProviderId
-        copy.claudeCodeOptions = claudeCodeOptions
-        copy.suppressProgressUI = suppressProgressUI
-        copy.warmupPrefill = warmupPrefill
-        copy.cacheStableSystemPrefix = cacheStableSystemPrefix
-        // Must be copied with the other local-only flags. Dropping it silently
-        // promotes a background request back to interactive — and an interactive
-        // request is allowed to evict the model someone is using.
-        copy.backgroundModelLoad = backgroundModelLoad
-        copy.alignmentRepairModel = alignmentRepairModel
-        copy.preserveExistingResidencyOwner = preserveExistingResidencyOwner
+        copy.chat_template_kwargs = chat_template_kwargs
         copy.logprobs = logprobs
         copy.top_logprobs = top_logprobs
         return copy
@@ -970,6 +1052,11 @@ extension ChatCompletionRequest {
         top_p = try container.decodeIfPresent(Float.self, forKey: .top_p)
         top_k = try container.decodeIfPresent(Int.self, forKey: .top_k)
         min_p = try container.decodeIfPresent(Float.self, forKey: .min_p)
+        repetition_penalty = try container.decodeIfPresent(Float.self, forKey: .repetition_penalty)
+        if let reason = RequestValidator.repetitionPenaltyReason(repetition_penalty) {
+            throw DecodingError.dataCorruptedError(forKey: .repetition_penalty, in: container,
+                debugDescription: reason)
+        }
         frequency_penalty = try container.decodeIfPresent(Float.self, forKey: .frequency_penalty)
         presence_penalty = try container.decodeIfPresent(Float.self, forKey: .presence_penalty)
         if let singleStop = try? container.decode(String.self, forKey: .stop) {
@@ -988,14 +1075,76 @@ extension ChatCompletionRequest {
         top_logprobs = try container.decodeIfPresent(Int.self, forKey: .top_logprobs)
         enable_thinking = try container.decodeIfPresent(Bool.self, forKey: .enable_thinking)
         reasoning_effort = try container.decodeIfPresent(String.self, forKey: .reasoning_effort)
+        chat_template_kwargs = try? container.decodeIfPresent([String: JSONValue].self, forKey: .chat_template_kwargs)
+        try ChatTemplateParameters.validate(chat_template_kwargs)
+        // DeepSeek-V4.1: clients written for vmlx-py / vLLM switch thinking with
+        // `chat_template_kwargs.enable_thinking` (or DeepSeek's `thinking`) and
+        // the effort with `chat_template_kwargs.reasoning_effort`. Without this the
+        // kwargs were dropped and an explicit `false` still rendered the thinking
+        // rail. The top-level fields win when both are sent. Other families keep
+        // their request contract unchanged. V4.1 is detected from the installed
+        // bundle's `model_type` (name fallback), and only when the kwargs would
+        // change something, so other requests never touch the bundle lookup.
+        let kwargsContainer = try decoder.container(keyedBy: TemplateKwargsCodingKeys.self)
+        if let kwargs = try? kwargsContainer.decodeIfPresent(
+            [String: JSONValue].self, forKey: .chat_template_kwargs),
+            (enable_thinking == nil
+                && (kwargs["enable_thinking"] != nil || kwargs["thinking"] != nil))
+                || (reasoning_effort == nil && kwargs["reasoning_effort"] != nil),
+            DSV41ModelDetection.isDSV41(modelId: model)
+        {
+            if enable_thinking == nil {
+                if case .bool(let enabled)? = kwargs["enable_thinking"] {
+                    enable_thinking = enabled
+                } else if case .bool(let enabled)? = kwargs["thinking"] {
+                    enable_thinking = enabled
+                }
+            }
+            if reasoning_effort == nil, case .string(let effort)? = kwargs["reasoning_effort"] {
+                reasoning_effort = effort
+            }
+        }
+        let osaurus = try decoder.container(keyedBy: OsaurusCodingKeys.self)
+        osaurus_session_id = try osaurus.decodeIfPresent(String.self, forKey: .osaurus_session_id)
+        osaurus_create_session = try osaurus.decodeIfPresent(Bool.self, forKey: .osaurus_create_session)
+        osaurus_run_id = try osaurus.decodeIfPresent(String.self, forKey: .osaurus_run_id)
+        osaurus_voice_call = try osaurus.decodeIfPresent(Bool.self, forKey: .osaurus_voice_call)
+        osaurus_privacy = try osaurus.decodeIfPresent(String.self, forKey: .osaurus_privacy)
+        osaurus_history = try osaurus.decodeIfPresent(String.self, forKey: .osaurus_history)
+        osaurus_caller = try? osaurus.decodeIfPresent(OsaurusCallerDeclaration.self, forKey: .osaurus_caller)
     }
 }
 
-/// OpenAI `response_format`. We only act on `json_object`; other kinds
-/// (`text`, `json_schema`) flow through unchanged so the request
-/// validator can accept or reject them with a clear, specific error.
+/// OpenAI output-format envelope. Preserve the full schema for validation
+/// and request-local constrained decoding rather than dropping unknown fields.
 struct ResponseFormat: Codable, Sendable, Equatable {
     let type: String
+    /// Set only for `type == "json_schema"`: API callers asking the local
+    /// runtime for constrained decoding, and workflow inference nodes
+    /// forwarding their output schema to a cloud provider.
+    var json_schema: ResponseJSONSchema? = nil
+
+    /// The strict provider-wire form of a workflow node schema (see
+    /// `StructuredOutputSchema.strictWire`).
+    static func jsonSchema(_ schema: JSONValue, name: String = StructuredOutputSchema.defaultName) -> ResponseFormat {
+        ResponseFormat(
+            type: "json_schema",
+            json_schema: ResponseJSONSchema(name: name, schema: StructuredOutputSchema.strictWire(schema), strict: true))
+    }
+}
+
+/// OpenAI `response_format.json_schema` body.
+struct ResponseJSONSchema: Codable, Sendable, Equatable {
+    let name: String
+    var description: String? = nil
+    let schema: JSONValue
+    var strict: Bool? = nil
+
+    func encodedSchema() throws -> String {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return String(decoding: try encoder.encode(schema), as: UTF8.self)
+    }
 }
 
 /// OpenAI `stream_options` shape. Today we only honor `include_usage`.
@@ -1045,6 +1194,15 @@ struct Usage: Codable, Sendable {
         self.total_tokens = total_tokens
         self.tokens_per_second = tokens_per_second
         self.prompt_tokens_details = prompt_tokens_details
+    }
+
+    /// `prompt_tokens_details` for a local response whose prompt prefix was
+    /// restored from the runtime's prefix cache: `cached_tokens` clamped to
+    /// `[0, promptTokens]`. `nil` (field omitted, wire unchanged) for a cold
+    /// prompt.
+    static func cachedPromptDetails(_ cachedTokens: Int?, promptTokens: Int) -> PromptTokensDetails? {
+        guard let cachedTokens, cachedTokens > 0 else { return nil }
+        return PromptTokensDetails(cached_tokens: min(cachedTokens, max(0, promptTokens)))
     }
 
     /// Provider-reported prompt-cache hits, clamped to `[0, prompt_tokens]`.
@@ -1191,10 +1349,21 @@ struct ChatCompletionChunk: Codable, Sendable {
     /// Osaurus extension chunk for determinate local prefill progress. Emitted
     /// with empty choices before the first token when the runtime reports it.
     var osaurus_prefill: PrefillProgressState? = nil
+    /// Osaurus extension chunk on `/agents/{id}/run`: a step that has to load
+    /// its local model first says so (`loading`), then `ready` once it is
+    /// in memory, so a client can say why the reply hasn't started.
+    var osaurus_model_load: ModelLoadState? = nil
     /// Osaurus extension chunk on a hosted `/agents/{id}/run`: the small
     /// files the agent shared with `share_artifact`, emitted once with empty
     /// choices right before the finish chunk (see `RemoteRunArtifacts`).
     var osaurus_artifacts: [RemoteRunArtifact]? = nil
+}
+
+/// `osaurus_model_load` on an agent run's stream (MOBILE_PROTOCOL §6.5).
+struct ModelLoadState: Codable, Sendable, Equatable {
+    /// `loading` or `ready`.
+    let state: String
+    let model: String
 }
 
 // MARK: - Error Response
@@ -1241,12 +1410,12 @@ extension OpenAIModel {
 // MARK: - Tools: Request/Response Models
 
 /// Tool definition (currently only type=="function")
-struct Tool: Codable, Sendable {
+struct Tool: Codable, Sendable, Hashable {
     let type: String  // "function"
     let function: ToolFunction
 }
 
-struct ToolFunction: Codable, Sendable {
+struct ToolFunction: Codable, Sendable, Hashable {
     let name: String
     let description: String?
     let parameters: JSONValue?
@@ -1380,7 +1549,7 @@ struct DeltaToolCallFunction: Codable, Sendable {
 // MARK: - Generic JSON value for tool parameters
 
 /// Simple JSON value representation to carry arbitrary JSON schema/arguments
-public enum JSONValue: Codable, Sendable, Equatable {
+public enum JSONValue: Codable, Sendable, Hashable {
     case string(String)
     case number(Double)
     case bool(Bool)
@@ -1449,145 +1618,33 @@ extension JSONValue {
         }
     }
 
-    /// Convert JSON Schema into the shape expected by local chat templates.
-    ///
-    /// Some local templates, notably Gemma-4's native tool template, treat
-    /// schema `type` fields as scalars and run string filters over them.
-    /// OpenAI/MCP schemas commonly spell nullable fields as
-    /// `type: ["string", "null"]`. That is valid JSON Schema, but it is not
-    /// renderable by those templates. The transformation below rewrites only
-    /// schema-position dictionaries into template-renderable shapes while
-    /// preserving property maps whose keys may legitimately include "type".
-    var chatTemplateSchemaValue: JSONValue {
-        normalizedChatTemplateSchemaValue(inSchemaPosition: true)
-    }
-
-    private func normalizedChatTemplateSchemaValue(inSchemaPosition: Bool) -> JSONValue {
-        switch self {
-        case .object(let obj):
-            var normalized: [String: JSONValue] = [:]
-            for (key, value) in obj {
-                switch key {
-                case "properties":
-                    if case .object(let properties) = value {
-                        normalized[key] = .object(
-                            properties.mapValues {
-                                $0.normalizedChatTemplateSchemaValue(inSchemaPosition: true)
-                            }
-                        )
-                    } else {
-                        normalized[key] = value.normalizedChatTemplateSchemaValue(
-                            inSchemaPosition: false
-                        )
-                    }
-                case "items", "additionalProperties", "response":
-                    // Gemma-4's native template pipes a schema's boolean
-                    // `additionalProperties` through `| upper`, throwing "upper
-                    // filter requires string". Drop only that boolean form; the
-                    // schema-object form renders fine, and the original schema
-                    // still drives argument validation, so this is lossless.
-                    if key == "additionalProperties", case .bool = value { continue }
-                    normalized[key] = value.normalizedChatTemplateSchemaValue(
-                        inSchemaPosition: true
-                    )
-                case "oneOf", "anyOf", "allOf":
-                    if case .array(let branches) = value {
-                        normalized[key] = .array(
-                            branches.map {
-                                $0.normalizedChatTemplateSchemaValue(inSchemaPosition: true)
-                            }
-                        )
-                    } else {
-                        normalized[key] = value.normalizedChatTemplateSchemaValue(
-                            inSchemaPosition: false
-                        )
-                    }
-                default:
-                    normalized[key] = value.normalizedChatTemplateSchemaValue(
-                        inSchemaPosition: false
-                    )
-                }
-            }
-            if inSchemaPosition {
-                Self.normalizeTemplateRenderableSchemaType(&normalized)
-            }
-            return .object(normalized)
-        case .array(let arr):
-            return .array(
-                arr.map { $0.normalizedChatTemplateSchemaValue(inSchemaPosition: inSchemaPosition) }
-            )
-        case .null, .bool, .number, .string:
-            return self
-        }
-    }
-
-    private static func normalizeTemplateRenderableSchemaType(_ object: inout [String: JSONValue]) {
-        switch object["type"] {
-        case .some(.string):
-            return
-        case .some(.array(let entries)):
-            normalizeTypeUnion(entries, in: &object)
-        case .some(.null), .some(.bool), .some(.number), .some(.object):
-            object["type"] = inferredFallbackType(for: object)
-        case nil:
-            object["type"] = inferredFallbackType(for: object)
-        }
-    }
-
-    private static func normalizeTypeUnion(_ entries: [JSONValue], in object: inout [String: JSONValue]) {
-        var hasNull = false
-        var scalars: [String] = []
-        for entry in entries {
-            guard case .string(let typeName) = entry else {
-                object["type"] = inferredFallbackType(for: object)
-                return
-            }
-            if typeName == "null" {
-                hasNull = true
-            } else {
-                scalars.append(typeName)
-            }
-        }
-
-        guard let scalar = scalars.first else { return }
-        object["type"] = .string(scalar)
-        if hasNull {
-            object["nullable"] = .bool(true)
-        }
-        if scalars.count > 1 {
-            object["x-osaurus-original-type"] = .array(scalars.map { .string($0) })
-        }
-    }
-
-    private static func inferredFallbackType(for object: [String: JSONValue]) -> JSONValue {
-        if object["properties"] != nil { return .string("object") }
-        if object["items"] != nil { return .string("array") }
-        return .string("string")
-    }
-
-    /// Convert JSONValue to Sendable-compatible value for Jinja chat templates.
-    /// Null values are dropped from dictionaries because Jinja's `Value(any:)` cannot
-    /// handle `NSNull` and throws a runtime error. JSON Schema treats a missing key
-    /// the same as `null`, so this is semantically lossless for tool specs.
+    /// Existing generic bridge, which omits null object members.
     var sendableValue: any Sendable {
+        sendableValue(omittingNullMembers: true)
+    }
+
+    /// INVARIANT: model templates receive the complete schema. Null defaults,
+    /// enums, unions and boolean constraints must survive every host bridge;
+    /// Jinja owns value coercion, rather than callers rewriting model inputs.
+    var chatTemplateValue: any Sendable {
+        sendableValue(omittingNullMembers: false)
+    }
+
+    private func sendableValue(omittingNullMembers: Bool) -> any Sendable {
         switch self {
-        case .null:
-            return NSNull()
-        case .bool(let b):
-            return b
-        case .number(let n):
-            return n
-        case .string(let s):
-            return s
-        case .array(let arr):
-            return arr.map { $0.sendableValue }
-        case .object(let obj):
-            var dict: [String: any Sendable] = [:]
-            for (k, v) in obj {
-                if case .null = v { continue }
-                dict[k] = v.sendableValue
+        case .null: return NSNull()
+        case .bool(let value): return value
+        case .number(let value): return value
+        case .string(let value): return value
+        case .array(let values):
+            return values.map { $0.sendableValue(omittingNullMembers: omittingNullMembers) }
+        case .object(let values):
+            var result: [String: any Sendable] = [:]
+            for (key, value) in values {
+                if omittingNullMembers, case .null = value { continue }
+                result[key] = value.sendableValue(omittingNullMembers: omittingNullMembers)
             }
-            return dict
+            return result
         }
     }
 
@@ -1624,7 +1681,7 @@ extension ToolFunction {
             fn["description"] = description
         }
         if let parameters {
-            fn["parameters"] = parameters.chatTemplateSchemaValue.sendableValue
+            fn["parameters"] = parameters.chatTemplateValue
         }
         return fn
     }
@@ -1653,8 +1710,28 @@ extension Tool {
     /// compact bootstrap schemas from full tool schemas. This mirrors the
     /// tokenizer-tool shape so prefix evidence tracks the bytes handed to the
     /// chat template, not just the callable names.
+    ///
+    /// Memoized per tool value: the computation round-trips the schema through
+    /// `JSONSerialization` several times, and the chat preview recomputes the
+    /// prefix hash for the whole toolset on the main actor on every
+    /// prompt-shape signal. Re-serializing large MCP/plugin schemas each time
+    /// blocked the main thread past the app-hang watchdog (APPLE-MACOS-1QA).
+    /// The cache key is the full `Tool` value, so any schema edit misses and
+    /// recomputes; returned bytes are identical to the uncached path.
     func canonicalHashPayload() -> Data {
+        if let cached = ToolCanonicalPayloadCache.shared.payload(for: self) {
+            return cached
+        }
+        let data = computeCanonicalHashPayload()
+        ToolCanonicalPayloadCache.shared.store(data, for: self)
+        return data
+    }
+
+    /// Uncached canonical payload computation. Internal for tests.
+    func computeCanonicalHashPayload() -> Data {
         let spec = toTokenizerToolSpec()
+        // Keep the `isValidJSONObject` guard: `data(withJSONObject:)` raises an
+        // Objective-C exception (not a Swift error) on invalid input.
         if JSONSerialization.isValidJSONObject(spec),
             let data = try? JSONSerialization.data(withJSONObject: spec, options: .osaurusCanonical)
         {

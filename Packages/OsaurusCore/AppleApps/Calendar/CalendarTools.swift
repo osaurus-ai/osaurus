@@ -412,7 +412,7 @@ final class CalendarOpenEventTool: AppleToolBase, @unchecked Sendable {
         guard let url = URL(string: event.openURL) else {
             throw AppleToolError.execution("Could not build a Calendar link for `\(id)`.")
         }
-        let opened = await MainActor.run { NSWorkspace.shared.open(url) }
+        let opened = await AppleURLOpener.open(url)
         guard opened else {
             throw AppleToolError.unavailable("Calendar could not be opened for event `\(event.title)`.", retryable: true)
         }

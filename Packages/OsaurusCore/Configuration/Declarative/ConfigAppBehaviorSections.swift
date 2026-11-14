@@ -31,7 +31,6 @@ public struct DelegationSection: Codable, Equatable, Sendable {
     /// helper → run → unload helper → reload chat model) for every agent;
     /// OFF runs a different-model local helper without that sequence.
     public var localTextEnabled: Bool?
-    public var videoEnabled: Bool?
     /// One of: confirm_each, auto_run_with_warning (HIGH RISK).
     public var applescriptExecutionMode: String?
     /// Custom agent NAMES the Orchestrator may spawn. Replaces the pool.
@@ -69,6 +68,10 @@ public struct DelegationSection: Codable, Equatable, Sendable {
     /// (`agents[].capabilities.image`). Decoded so the applier can explain;
     /// never exported or applied.
     public var imageEnabled: Bool?
+    /// REMOVED: Video delegation moved to custom agents
+    /// (`agents[].capabilities.video`), matching `image`; the Orchestrator
+    /// never carries the `video` tool itself. Decoded for the hint only.
+    public var videoEnabled: Bool?
     /// REMOVED: AppleScript delegation moved to custom agents
     /// (`agents[].capabilities.applescript`). Decoded for the hint only.
     public var applescriptEnabled: Bool?
@@ -88,6 +91,11 @@ public struct DelegationSection: Codable, Equatable, Sendable {
             hints.append(
                 "delegation.image_enabled was removed: enable Image on a custom agent "
                     + "(agents[].capabilities.image_enabled) and delegate to it.")
+        }
+        if videoEnabled != nil {
+            hints.append(
+                "delegation.video_enabled was removed: enable Video on a custom agent "
+                    + "(agents[].capabilities.video_enabled) and delegate to it.")
         }
         if applescriptEnabled != nil {
             hints.append(
@@ -110,7 +118,6 @@ public struct DelegationSection: Codable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey {
         case localTextEnabled = "local_text_enabled"
-        case videoEnabled = "video_enabled"
         case applescriptExecutionMode = "applescript_execution_mode"
         case spawnableAgents = "spawnable_agents"
         case spawnableWorkspaceAgents = "spawnable_workspace_agents"
@@ -125,6 +132,7 @@ public struct DelegationSection: Codable, Equatable, Sendable {
         case coexistenceEnabled = "coexistence_enabled"
         // Removed keys — decoded, never encoded (see `encode(to:)`).
         case imageEnabled = "image_enabled"
+        case videoEnabled = "video_enabled"
         case applescriptEnabled = "applescript_enabled"
         case spawnableModels = "spawnable_models"
         case spawnToolAccess = "spawn_tool_access"
@@ -134,7 +142,6 @@ public struct DelegationSection: Codable, Equatable, Sendable {
     public func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encodeIfPresent(localTextEnabled, forKey: .localTextEnabled)
-        try c.encodeIfPresent(videoEnabled, forKey: .videoEnabled)
         try c.encodeIfPresent(applescriptExecutionMode, forKey: .applescriptExecutionMode)
         try c.encodeIfPresent(spawnableAgents, forKey: .spawnableAgents)
         try c.encodeIfPresent(spawnableWorkspaceAgents, forKey: .spawnableWorkspaceAgents)

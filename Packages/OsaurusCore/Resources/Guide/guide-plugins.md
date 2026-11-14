@@ -10,11 +10,11 @@ Plugins add new tools to Osaurus. There are two kinds: native plugins (compiled,
 
 ## Native plugins
 
-- Settings… (⌘,) → Tools → Native Plugins: browse the registry, install, update, uninstall.
+- Settings… (⌘,) → Tools & MCP → Plugins: browse the registry, install, update, uninstall.
 - Or ask the default Osaurus assistant to search and install a plugin for you.
 - Release plugins must be code-signed; unsigned plugins are refused.
-- Some plugins need secrets (API keys): open the plugin card and choose Configure Secrets — they go to the Keychain, never through chat.
-- Plugin activity (every host API call) is logged under Insights → Plugin Activity.
+- Some plugins need secrets (API keys): open the plugin card and choose Configure Secrets, or set them in General → Vault — never through chat. A value set there is shared by all agents; an agent can have its own value in the Vault.
+- Plugin activity (every host API call) is logged in Main window → Insights — pick the **Tools** scope tab (Plugin call rows); plugin console lines (**Plugin log**) appear there too, unless you turn off Filter → **Show plugin console logs**.
 
 ## Built into Osaurus (superseded plugins)
 
@@ -22,14 +22,14 @@ Web search, the browser, and the Apple app plugins (`osaurus.calendar`, `osaurus
 
 ## Claude plugins
 
-- Settings… (⌘,) → Skills → Import Claude plugin from GitHub → enter `owner/repo` or a GitHub URL → pick plugins → Install Selected.
-- What maps where: skills → Skills tab; scheduled agents → Schedules (often imported disabled until you confirm the cadence); slash commands → chat; HTTP/SSE MCP servers → Providers; `CLAUDE.md`-style context files attach as skill references.
+- Settings… (⌘,) → Skills → Import Claude plugin from GitHub → enter `owner/repo` or a GitHub URL → pick plugins → **Install N Plugins**.
+- What maps where: skills → Skills tab; scheduled agents → schedule automations in Automations (often imported disabled until you confirm the cadence); slash commands → chat; HTTP/SSE MCP servers → Tools & MCP → Services; `CLAUDE.md`-style context files attach as skill references.
 - After install, a Configure plugin settings sheet appears when the plugin declares user config; sensitive values go to the Keychain.
 - Cards show a version pill with Update, Needs setup, View Details, Configure Settings…, and Uninstall. Uninstall removes everything the import created in one shot.
 - Not run on import: hooks are ignored and skill-local scripts are attached as text only — nothing executes without you.
 
 ## Troubleshooting
 
-- Plugin failed to load? Check the card's error and Insights logs; Retry from the plugin detail page.
+- Plugin failed to load? Check the card's error and the Plugin log rows in Insights; Retry from the plugin detail page.
 - Plugin web UIs opened in a browser need the Open Web App button (it appends the agent id the plugin needs).
-- Developers: `osaurus tools create`, `osaurus tools dev` (hot reload), `osaurus tools list` — install the CLI from Settings… (⌘,) → General → Command Line Tool → Install CLI.
+- Developers: `osaurus tools create`, `osaurus tools dev` (hot reload), `osaurus tools list` — install the CLI from Settings… (⌘,) → Server → Overview → Command Line Tool → Install CLI.

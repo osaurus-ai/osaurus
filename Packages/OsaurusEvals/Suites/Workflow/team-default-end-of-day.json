@@ -1,0 +1,81 @@
+{
+  "id": "workflow.team-default-end-of-day",
+  "domain": "workflow",
+  "label": "workflow • End of Day reads today, what is due, and tomorrow's first event",
+  "query": "End of Day reads today, what is due, and tomorrow's first event",
+  "notes": "Runs the shipped file. Every tool step returns its fixture under its teammate, so nothing on this Mac is read. Fixture dates and expected arguments are `{{date:…}}` tokens on this Mac's calendar at run time.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "bundled": "default-workflow-end-of-day",
+      "input": {},
+      "toolResults": {
+        "today": {
+          "events": [
+            {
+              "id": "event-today-1",
+              "title": "Design review",
+              "start": "{{date:today_start+1140m}}",
+              "end": "{{date:today_start+1200m}}"
+            }
+          ],
+          "count": 1
+        },
+        "due": {
+          "reminders": [
+            {
+              "id": "reminder-due-1",
+              "title": "Send slides to Marco",
+              "dueDate": "{{date:today_start+1320m}}",
+              "isCompleted": false
+            }
+          ],
+          "count": 1
+        },
+        "tomorrow": {
+          "events": [
+            {
+              "id": "event-tomorrow-1",
+              "title": "Dentist",
+              "start": "{{date:tomorrow_start+960m}}",
+              "end": "{{date:tomorrow_start+1020m}}"
+            }
+          ],
+          "count": 1
+        }
+      },
+      "toolArguments": {
+        "today": {
+          "start": "{{date:today_start}}",
+          "end": "{{date:today_end}}"
+        },
+        "due": {
+          "status": "incomplete",
+          "due_before": "{{date:today_end}}"
+        },
+        "tomorrow": {
+          "start": "{{date:tomorrow_start}}",
+          "end": "{{date:tomorrow_end}}",
+          "include_all_day": false,
+          "limit": 1
+        }
+      },
+      "outputKeys": [
+        "wrap_up"
+      ],
+      "outputContains": {
+        "wrap_up": [
+          "Dentist"
+        ]
+      },
+      "outputExcludes": {
+        "wrap_up": [
+          "{",
+          "}",
+          "\": \"",
+          "\\n"
+        ]
+      }
+    }
+  }
+}

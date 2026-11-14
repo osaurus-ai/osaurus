@@ -12,6 +12,7 @@
 import AppKit
 import CoreGraphics
 import Foundation
+import PDFKit
 import Testing
 
 @testable import OsaurusCore
@@ -62,9 +63,20 @@ struct PDFAdapterTests {
         let secondRange = try #require(pages[1].anchor.textRange)
         let thirdRange = try #require(pages[2].anchor.textRange)
 
-        #expect(firstRange.startUTF16Offset == 0)
-        #expect(secondRange.startUTF16Offset == firstText.utf16.count + 2)
-        #expect(thirdRange.startUTF16Offset == secondRange.endUTF16Offset + 2)
+        let header1 = PDFAdapter.pageHeader(pageIndex: 0, pageCount: 3)
+        let header2 = PDFAdapter.pageHeader(pageIndex: 1, pageCount: 3)
+        let header3 = PDFAdapter.pageHeader(pageIndex: 2, pageCount: 3)
+        #expect(doc.textFallback.hasPrefix(header1))
+        #expect(firstRange.startUTF16Offset == header1.utf16.count)
+        #expect(secondRange.startUTF16Offset == firstRange.endUTF16Offset + 2 + header2.utf16.count)
+        #expect(thirdRange.startUTF16Offset == secondRange.endUTF16Offset + 2 + header3.utf16.count)
+        // Every page anchor slices the fallback to exactly that page's body.
+        let fallback = doc.textFallback as NSString
+        for (element, expected) in zip(pages, [firstText, secondText, pages[2].text ?? ""]) {
+            let range = try #require(element.anchor.textRange)
+            #expect(
+                fallback.substring(with: NSRange(location: range.startUTF16Offset, length: range.length)) == expected)
+        }
         #expect(pages.map { $0.anchor.sourceRange?.start.pageIndex ?? -1 } == [0, 1, 2])
         #expect(pages.map { $0.anchor.sourceRange?.end?.pageIndex ?? -1 } == [0, 1, 2])
         #expect(pages[0].anchor.sourceRange?.start.characterOffset == 0)
@@ -95,12 +107,17 @@ struct PDFAdapterTests {
             DocumentPageText(pageIndex: 1, text: "😀second"),
             DocumentPageText(pageIndex: 2, text: "third"),
         ]
-        let extracted = "first\n\n😀second\n\nthird"
-        let fallback = "first\n\n😀se"
+        let header1 = PDFAdapter.pageHeader(pageIndex: 0, pageCount: 3)
+        let header2 = PDFAdapter.pageHeader(pageIndex: 1, pageCount: 3)
+        let extracted = PDFAdapter.joinedText(pages: pages, pageCount: 3)
+        #expect(extracted == "\(header1)first\n\n\(header2)😀second\n\n--- Page 3 of 3 ---\nthird")
+        let fallback = String(extracted.prefix((header1 + "first\n\n" + header2 + "😀se").count))
+        #expect(fallback.hasSuffix("😀se"))
 
         let structure = PDFAdapter.structureForTextFallback(
             filename: "long.pdf",
             pages: pages,
+            pageCount: 3,
             extractedText: extracted,
             textFallback: fallback
         )
@@ -115,8 +132,9 @@ struct PDFAdapterTests {
         let secondRange = try #require(pageElements[1].anchor.textRange)
         let thirdRange = try #require(pageElements[2].anchor.textRange)
 
-        #expect(firstRange == DocumentTextRange(startUTF16Offset: 0, length: "first".utf16.count))
-        #expect(secondRange.startUTF16Offset == "first\n\n".utf16.count)
+        #expect(
+            firstRange == DocumentTextRange(startUTF16Offset: header1.utf16.count, length: "first".utf16.count))
+        #expect(secondRange.startUTF16Offset == (header1 + "first\n\n" + header2).utf16.count)
         #expect(secondRange.length == "😀se".utf16.count)
         #expect(thirdRange.startUTF16Offset == fallback.utf16.count)
         #expect(thirdRange.isEmpty)
@@ -195,7 +213,130 @@ struct PDFAdapterTests {
         #expect(doc.structure.elements(kind: .table).isEmpty)
     }
 
+    @Test func glyphs_preserveTextAndBoundsBeforeFlattenedRowReconciliation() throws {
+        let url = try Self.writeMixedProseAndTablePDF()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let document = try #require(PDFDocument(url: url))
+        let page = try #require(document.page(at: 0))
+        let text = try #require(page.string)
+        let glyphs = try PDFAdapter.glyphs(from: page, pageIndex: 0, text: text)
+
+        // Test the collector without the flattened page text. The old row
+        // reconciliation could hide wrong character/bounds pairings here.
+        let tables = try PDFTableDetector.detectTables(glyphs: glyphs)
+        #expect(tables.count == 1)
+        let table = try #require(tables.first)
+        #expect(table.rows.map { $0.cells.map(\.text) } == [
+            ["Metric", "Value"],
+            ["Revenue", "1200"],
+            ["Expenses", "800"],
+        ])
+        let nsText = text as NSString
+        for glyph in table.rows.flatMap(\.glyphs) {
+            let range = NSRange(location: glyph.characterRange.lowerBound, length: glyph.characterRange.count)
+            let selection = try #require(page.selection(for: range))
+            #expect(glyph.text.utf16.elementsEqual(nsText.substring(with: range).utf16))
+            #expect(glyph.text == selection.string)
+            #expect(glyph.bounds == selection.bounds(for: page))
+        }
+    }
+
+    @Test(arguments: [CellDrawingOrder.columnMajor, .reversed])
+    func parse_preservesVisualPairsAcrossCellDrawingOrders(order: CellDrawingOrder) async throws {
+        let rows = [["Line", "Value"], ["10", "101"], ["11", "202"]]
+        let url = try Self.writeTablePDF(rows: rows, drawingOrder: order)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let doc = try await PDFAdapter().parse(url: url, sizeLimit: 0)
+        let representation = try #require(doc.representation.underlying as? PDFDocumentRepresentation)
+        let page = try #require(representation.pages.first)
+        #expect(page.tables.count == 1)
+        let table = try #require(page.tables.first)
+        #expect(table.rows.map { $0.cells.map(\.text) } == rows)
+        #expect(table.columnCount == 2)
+        for row in table.rows {
+            try #require(row.cells.count == 2)
+            #expect(row.cells[0].bounds.x < row.cells[1].bounds.x)
+        }
+    }
+
+    @Test func glyphs_rejectTextThatDoesNotIdentifyNativeSelection() throws {
+        let url = try Self.writeTablePDF(rows: [["Quarter", "Revenue"], ["Q1", "1200"]])
+        defer { try? FileManager.default.removeItem(at: url) }
+        let document = try #require(PDFDocument(url: url))
+        let page = try #require(document.page(at: 0))
+        let text = try #require(page.string)
+        let original = try PDFAdapter.glyphs(from: page, pageIndex: 0, text: text)
+        let target = try #require(original.first { $0.text == "Q" })
+        let mismatched = NSMutableString(string: text)
+        mismatched.replaceCharacters(in: NSRange(location: target.characterIndex, length: 1), with: "Z")
+
+        let rejected = try PDFAdapter.glyphs(from: page, pageIndex: 0, text: mismatched as String)
+        #expect(rejected == original.filter { $0.characterIndex != target.characterIndex })
+        #expect(!rejected.contains { $0.text == "Z" })
+    }
+
+    @Test func glyphs_preserveComposedUTF16TextAndSourceRanges() async throws {
+        let rows = [["Item", "Count"], ["Café", "101"], ["😀", "202"]]
+        let url = try Self.writeTablePDF(rows: rows)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let document = try #require(PDFDocument(url: url))
+        let page = try #require(document.page(at: 0))
+        let text = try #require(page.string)
+        let glyphs = try PDFAdapter.glyphs(from: page, pageIndex: 0, text: text)
+        let emoji = try #require(glyphs.first { $0.text == "😀" })
+        #expect(emoji.characterRange.count == 2)
+        #expect((text as NSString).substring(with: NSRange(
+            location: emoji.characterRange.lowerBound, length: emoji.characterRange.count
+        )) == "😀")
+
+        let doc = try await PDFAdapter().parse(url: url, sizeLimit: 0)
+        let representation = try #require(doc.representation.underlying as? PDFDocumentRepresentation)
+        let table = try #require(representation.pages.first?.tables.first)
+        #expect(table.rows.map { $0.cells.map(\.text) } == rows)
+        let cell = try #require(table.rows.last?.cells.first)
+        let sourceRange = try #require(cell.anchor.sourceRange)
+        let end = try #require(sourceRange.end)
+        let startOffset = try #require(sourceRange.start.characterOffset)
+        let endOffset = try #require(end.characterOffset)
+        #expect(endOffset - startOffset == 2)
+        #expect(cell.anchor.textRange?.length == 2)
+    }
+
+    @Test func glyphSelectionRange_acceptsOnlyCompleteWhitespaceExtensions() {
+        let rangeCases: [(String, String, NSRange, NSRange, Bool)] = [
+            ("exact", "A", NSRange(location: 0, length: 1), NSRange(location: 0, length: 1), true),
+            ("trailing_native_newline", "A\n", NSRange(location: 0, length: 1), NSRange(location: 0, length: 2), true),
+            ("prefix_and_suffix_whitespace", " A\n", NSRange(location: 1, length: 1), NSRange(location: 0, length: 3), true),
+            ("extra_visible_suffix", "AB", NSRange(location: 0, length: 1), NSRange(location: 0, length: 2), false),
+            ("extra_visible_prefix", "BA", NSRange(location: 1, length: 1), NSRange(location: 0, length: 2), false),
+            ("wrong_native_range", "AB", NSRange(location: 0, length: 1), NSRange(location: 1, length: 1), false),
+            ("source_out_of_bounds", "A", NSRange(location: 0, length: 1), NSRange(location: 0, length: 2), false),
+            ("range_overflow", "A", NSRange(location: 0, length: 1), NSRange(location: 0, length: Int.max), false),
+            ("not_found", "A", NSRange(location: 0, length: 1), NSRange(location: NSNotFound, length: 1), false),
+            ("empty_requested", "A", NSRange(location: 0, length: 0), NSRange(location: 0, length: 1), false),
+            ("emoji_complete_with_newline", "😀\n", NSRange(location: 0, length: 2), NSRange(location: 0, length: 3), true),
+            ("emoji_partial_requested", "😀", NSRange(location: 0, length: 1), NSRange(location: 0, length: 2), false),
+            ("combining_complete", "e\u{301}\n", NSRange(location: 0, length: 2), NSRange(location: 0, length: 3), true),
+            ("combining_partial_requested", "e\u{301}", NSRange(location: 0, length: 1), NSRange(location: 0, length: 2), false),
+            ("complete_CRLF_suffix", "A\r\n", NSRange(location: 0, length: 1), NSRange(location: 0, length: 3), true),
+            ("partial_CRLF_suffix", "A\r\n", NSRange(location: 0, length: 1), NSRange(location: 0, length: 2), false),
+            ("partial_CRLF_prefix", "\r\nA", NSRange(location: 2, length: 1), NSRange(location: 1, length: 2), false),
+            ("partial_requested_CRLF_CR", "\r\n", NSRange(location: 0, length: 1), NSRange(location: 0, length: 2), false),
+            ("partial_requested_CRLF_LF", "\r\n", NSRange(location: 1, length: 1), NSRange(location: 0, length: 2), false),
+            ("zero_width_is_not_whitespace", "A\u{200B}", NSRange(location: 0, length: 1), NSRange(location: 0, length: 2), false),
+        ]
+        for (name, text, requested, native, expected) in rangeCases {
+            let admitted = PDFAdapter.selectionRange(native, covers: requested, in: text as NSString)
+            #expect(admitted == expected, Comment(rawValue: name))
+        }
+    }
+
     // MARK: - Fixtures
+
+    enum CellDrawingOrder {
+        case rowMajor, columnMajor, reversed
+    }
 
     private static func writePDF(text: String) throws -> URL {
         try Self.writePDF(pages: [text])
@@ -229,7 +370,9 @@ struct PDFAdapterTests {
         return url
     }
 
-    private static func writeTablePDF(rows: [[String]]) throws -> URL {
+    private static func writeTablePDF(
+        rows: [[String]], drawingOrder: CellDrawingOrder = .rowMajor
+    ) throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("osaurus-pdf-table-\(UUID().uuidString).pdf")
         var mediaBox = CGRect(x: 0, y: 0, width: 320, height: 220)
@@ -242,12 +385,23 @@ struct PDFAdapterTests {
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = gc
         let font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
-        for (rowIndex, row) in rows.enumerated() {
-            let y = 160 - rowIndex * 24
-            for (columnIndex, text) in row.enumerated() {
-                NSAttributedString(string: text, attributes: [.font: font])
-                    .draw(at: NSPoint(x: CGFloat(40 + columnIndex * 120), y: CGFloat(y)))
+        var cells = rows.enumerated().flatMap { rowIndex, row in
+            row.enumerated().map { columnIndex, text in (rowIndex, columnIndex, text) }
+        }
+        switch drawingOrder {
+        case .rowMajor:
+            break
+        case .columnMajor:
+            cells.sort { lhs, rhs in
+                lhs.1 == rhs.1 ? lhs.0 < rhs.0 : lhs.1 < rhs.1
             }
+        case .reversed:
+            cells.reverse()
+        }
+        for (rowIndex, columnIndex, text) in cells {
+            let y = 160 - rowIndex * 24
+            NSAttributedString(string: text, attributes: [.font: font])
+                .draw(at: NSPoint(x: CGFloat(40 + columnIndex * 120), y: CGFloat(y)))
         }
         NSGraphicsContext.restoreGraphicsState()
 

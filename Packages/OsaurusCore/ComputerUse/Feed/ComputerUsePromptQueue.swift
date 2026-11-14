@@ -18,11 +18,16 @@ public struct ConfirmRequest: Identifiable, Sendable, Equatable {
     public let id: UUID
     public let toolCallId: String
     public let preview: ActionPreview
+    /// Raised by a run from the owner's paired phone: listed on
+    /// `GET /computer-use/prompts` for the phone to answer (MOBILE_PROTOCOL
+    /// §16.4). Every Mac chat window still shows it too.
+    public let fromPairedPhone: Bool
 
-    public init(id: UUID = UUID(), toolCallId: String, preview: ActionPreview) {
+    public init(id: UUID = UUID(), toolCallId: String, preview: ActionPreview, fromPairedPhone: Bool = false) {
         self.id = id
         self.toolCallId = toolCallId
         self.preview = preview
+        self.fromPairedPhone = fromPairedPhone
     }
 }
 
@@ -41,10 +46,13 @@ public enum CloudVisionConsentChoice: String, Sendable, Equatable {
 public struct CloudVisionConsentRequest: Identifiable, Sendable, Equatable {
     public let id: UUID
     public let toolCallId: String
+    /// See `ConfirmRequest.fromPairedPhone`.
+    public let fromPairedPhone: Bool
 
-    public init(id: UUID = UUID(), toolCallId: String) {
+    public init(id: UUID = UUID(), toolCallId: String, fromPairedPhone: Bool = false) {
         self.id = id
         self.toolCallId = toolCallId
+        self.fromPairedPhone = fromPairedPhone
     }
 }
 
@@ -106,7 +114,11 @@ public final class ComputerUsePromptQueue: ObservableObject {
             )
             return true
         }
-        let request = ConfirmRequest(toolCallId: toolCallId, preview: preview)
+        let request = ConfirmRequest(
+            toolCallId: toolCallId,
+            preview: preview,
+            fromPairedPhone: ChatExecutionContext.hasRemoteReviewer
+        )
         ComputerUseTraceLog.recordConfirmationQueue(
             toolCallId: toolCallId,
             requestId: request.id,
@@ -121,16 +133,66 @@ public final class ComputerUsePromptQueue: ObservableObject {
                 }
                 continuations[request.id] = continuation
                 pending.append(request)
+                let id = request.id
+                let title =
+                    preview.appName.map { L("Allow Computer Use: \(preview.actionLabel) in \($0)?") }
+                    ?? L("Allow Computer Use: \(preview.actionLabel)?")
+                AttentionProducers.beginWaiting(itemId: id, step: L("Waiting for approval"))
+                let scoped = !(preview.appName ?? "").isEmpty
+                var item = AttentionProducers.item(
+                    id: id, kind: .computerUse, title: title, body: preview.targetLabel ?? "",
+                    actions: scoped ? [.approve, .approveRest, .deny, .open] : nil)
+                item.detail = Self.detail(for: preview)
+                AttentionCenter.shared.raise(item) { [weak self] resolution in
+                    if resolution.outcome == .allowedForConversation, scoped {
+                        self?.resolveApprovingRest(id: id, attention: resolution)
+                    } else {
+                        self?.resolve(id: id, approved: resolution.isGrant, attention: resolution)
+                    }
+                }
             }
         } onCancel: {
             Task { @MainActor in
-                self.resolve(id: request.id, approved: false)
+                self.resolve(id: request.id, approved: false, attention: AttentionProducers.abandoned)
             }
         }
     }
 
+    static let typedTextDetailLimit = 2_000
+    static let scriptDetailLimit = 4_000
+
+    /// The step as the owner's other devices show it before answering.
+    static func detail(for preview: ActionPreview) -> Data? {
+        var object: [String: Any] = ["action": preview.actionLabel, "effect": preview.effect.rawValue]
+        var cut = false
+        if let app = preview.appName, !app.isEmpty { object["app"] = app }
+        if let target = preview.targetLabel, !target.isEmpty { object["target"] = target }
+        if let note = preview.note, !note.isEmpty { object["note"] = note }
+        if let typed = preview.typedText, !typed.isEmpty {
+            let clipped = AttentionDetail.clip(typed, typedTextDetailLimit)
+            object["typedText"] = clipped.text
+            cut = cut || clipped.cut
+        }
+        if let script = preview.scriptBody, !script.isEmpty {
+            let clipped = AttentionDetail.clip(script, scriptDetailLimit)
+            object["script"] = clipped.text
+            cut = cut || clipped.cut
+        }
+        if cut { object["truncated"] = true }
+        return AttentionDetail.encode(object)
+    }
+
     /// Resolve a specific pending request (user tapped approve/deny).
     public func resolve(id: UUID, approved: Bool) {
+        resolve(id: id, approved: approved, attention: nil)
+    }
+
+    /// `attention` says who answered and where; nil means the owner on the card.
+    func resolve(id: UUID, approved: Bool, attention: AttentionResolution?) {
+        if continuations[id] != nil {
+            AttentionCenter.shared.resolve(id: id, with: attention ?? AttentionProducers.inline(approved ? .approved : .denied))
+            AttentionProducers.endWaiting(itemId: id)
+        }
         if let request = pending.first(where: { $0.id == id }) {
             ComputerUseTraceLog.recordConfirmationQueue(
                 toolCallId: request.toolCallId,
@@ -149,6 +211,10 @@ public final class ComputerUsePromptQueue: ObservableObject {
     /// in the same app for the rest of this run. A no-op for a request whose
     /// preview has no app (nothing safe to scope the blanket approval to).
     public func resolveApprovingRest(id: UUID) {
+        resolveApprovingRest(id: id, attention: nil)
+    }
+
+    func resolveApprovingRest(id: UUID, attention: AttentionResolution?) {
         guard let request = pending.first(where: { $0.id == id }) else { return }
         ComputerUseTraceLog.recordConfirmationQueue(
             toolCallId: request.toolCallId,
@@ -165,7 +231,7 @@ public final class ComputerUsePromptQueue: ObservableObject {
                 ?? request.preview.effect
             autoApprove[request.toolCallId] = perApp
         }
-        resolve(id: id, approved: true)
+        resolve(id: id, approved: true, attention: attention ?? AttentionProducers.inline(.allowedForConversation))
     }
 
     // MARK: - Cloud-vision consent
@@ -173,7 +239,10 @@ public final class ComputerUsePromptQueue: ObservableObject {
     /// Park a cloud-vision consent prompt and suspend until the user resolves it.
     /// Cancellation-aware (resolves as `.deny`) so the loop never hangs.
     public func requestCloudVisionConsent(toolCallId: String) async -> CloudVisionConsentChoice {
-        let request = CloudVisionConsentRequest(toolCallId: toolCallId)
+        let request = CloudVisionConsentRequest(
+            toolCallId: toolCallId,
+            fromPairedPhone: ChatExecutionContext.hasRemoteReviewer
+        )
         return await withTaskCancellationHandler {
             await withCheckedContinuation {
                 (continuation: CheckedContinuation<CloudVisionConsentChoice, Never>) in
@@ -183,18 +252,35 @@ public final class ComputerUsePromptQueue: ObservableObject {
                 }
                 consentContinuations[request.id] = continuation
                 pendingConsent.append(request)
+                let id = request.id
+                AttentionProducers.beginWaiting(itemId: id, step: L("Waiting for approval"))
+                AttentionCenter.shared.raise(
+                    AttentionProducers.item(
+                        id: id,
+                        kind: .computerUse,
+                        title: L("Allow screenshots to be sent to a cloud vision model?")
+                    )
+                ) { [weak self] resolution in
+                    self?.resolveConsent(id: id, choice: resolution.isGrant ? .allowOnce : .deny, attention: resolution)
+                }
             }
         } onCancel: {
             Task { @MainActor in
-                self.resolveConsent(id: request.id, choice: .deny)
+                self.resolveConsent(id: request.id, choice: .deny, attention: AttentionProducers.abandoned)
             }
         }
     }
 
     /// Resolve a specific pending consent prompt (user picked allow/deny).
     public func resolveConsent(id: UUID, choice: CloudVisionConsentChoice) {
+        resolveConsent(id: id, choice: choice, attention: nil)
+    }
+
+    func resolveConsent(id: UUID, choice: CloudVisionConsentChoice, attention: AttentionResolution?) {
         pendingConsent.removeAll { $0.id == id }
         guard let continuation = consentContinuations.removeValue(forKey: id) else { return }
+        AttentionCenter.shared.resolve(id: id, with: attention ?? AttentionProducers.inline(choice == .deny ? .denied : .approved))
+        AttentionProducers.endWaiting(itemId: id)
         continuation.resume(returning: choice)
     }
 
@@ -209,13 +295,88 @@ public final class ComputerUsePromptQueue: ObservableObject {
         let affected = pending.filter { $0.toolCallId == toolCallId }
         pending.removeAll { $0.toolCallId == toolCallId }
         for request in affected {
-            continuations.removeValue(forKey: request.id)?.resume(returning: false)
+            guard let continuation = continuations.removeValue(forKey: request.id) else { continue }
+            AttentionCenter.shared.resolve(id: request.id, with: AttentionProducers.abandoned)
+            AttentionProducers.endWaiting(itemId: request.id)
+            continuation.resume(returning: false)
         }
 
         let affectedConsent = pendingConsent.filter { $0.toolCallId == toolCallId }
         pendingConsent.removeAll { $0.toolCallId == toolCallId }
         for request in affectedConsent {
-            consentContinuations.removeValue(forKey: request.id)?.resume(returning: .deny)
+            guard let continuation = consentContinuations.removeValue(forKey: request.id) else { continue }
+            AttentionCenter.shared.resolve(id: request.id, with: AttentionProducers.abandoned)
+            AttentionProducers.endWaiting(itemId: request.id)
+            continuation.resume(returning: .deny)
         }
+    }
+}
+
+// MARK: - Paired phone (MOBILE_PROTOCOL §16.4)
+
+extension ComputerUsePromptQueue {
+    /// The phone's pending confirm and consent cards as
+    /// `GET /computer-use/prompts` JSON, confirmations first.
+    public func pairedPhoneListJSON() -> Data {
+        var rows: [[String: Any]] = pending.filter(\.fromPairedPhone).map { request in
+            let preview = request.preview
+            var row: [String: Any] = [
+                "id": request.id.uuidString,
+                "kind": "action",
+                "action": preview.actionLabel,
+                "effect": preview.effect.rawValue,
+                // "Approve the rest" needs an app to scope the lease to.
+                "offers_approve_rest": !(preview.appName ?? "").isEmpty,
+            ]
+            if let app = preview.appName { row["app"] = app }
+            if let target = preview.targetLabel { row["target"] = target }
+            if let note = preview.note { row["note"] = note }
+            if let typed = preview.typedText { row["typed_text"] = typed }
+            if let script = preview.scriptBody { row["script"] = script }
+            return row
+        }
+        rows += pendingConsent.filter(\.fromPairedPhone).map { request -> [String: Any] in
+            ["id": request.id.uuidString, "kind": "cloud_vision_consent"]
+        }
+        return (try? JSONSerialization.data(withJSONObject: ["prompts": rows], options: [.sortedKeys]))
+            ?? Data(#"{"prompts":[]}"#.utf8)
+    }
+
+    /// How a phone's answer landed.
+    public enum PairedPhoneAnswer: Sendable {
+        case answered
+        /// Already answered, the run ended, or never the phone's card.
+        case notPending
+        /// The card is still waiting: this decision does not fit its kind.
+        case invalidDecision
+    }
+
+    /// Answers one of the phone's cards. Actions take `approve | deny |
+    /// approve_rest`; consent takes `allow_once | allow_always | deny`. A
+    /// decision that does not fit is refused, never read as an approval, and
+    /// leaves the card pending.
+    public func resolveFromPairedPhone(id: UUID, decision: String) -> PairedPhoneAnswer {
+        func phone(_ outcome: AttentionResolution.Outcome) -> AttentionResolution {
+            AttentionResolution(outcome: outcome, surface: .phone, decidedBy: .ownerDevice(L("iPhone")))
+        }
+        if pending.contains(where: { $0.id == id && $0.fromPairedPhone }) {
+            switch decision {
+            case "approve": resolve(id: id, approved: true, attention: phone(.approved))
+            case "deny": resolve(id: id, approved: false, attention: phone(.denied))
+            case "approve_rest": resolveApprovingRest(id: id, attention: phone(.allowedForConversation))
+            default: return .invalidDecision
+            }
+            return .answered
+        }
+        if pendingConsent.contains(where: { $0.id == id && $0.fromPairedPhone }) {
+            switch decision {
+            case "allow_once": resolveConsent(id: id, choice: .allowOnce, attention: phone(.approved))
+            case "allow_always": resolveConsent(id: id, choice: .allowAlways, attention: phone(.approved))
+            case "deny": resolveConsent(id: id, choice: .deny, attention: phone(.denied))
+            default: return .invalidDecision
+            }
+            return .answered
+        }
+        return .notPending
     }
 }

@@ -64,7 +64,7 @@ public struct MasterMnemonicStore: Sendable {
         if KeychainQueryHelpers.disablesKeychainForProcess { return false }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: SpaceKeychainScope.service(service),
             kSecAttrAccount as String: account,
             kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
             kSecReturnData as String: false,
@@ -84,7 +84,7 @@ public struct MasterMnemonicStore: Sendable {
         }
         var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: SpaceKeychainScope.service(service),
             kSecAttrAccount as String: account,
             kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
             kSecReturnData as String: true,
@@ -145,7 +145,7 @@ public struct MasterMnemonicStore: Sendable {
         if KeychainQueryHelpers.disablesKeychainForProcess { return true }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: SpaceKeychainScope.service(service),
             kSecAttrAccount as String: account,
             kSecAttrSynchronizable as String: kSecAttrSynchronizableAny,
         ]

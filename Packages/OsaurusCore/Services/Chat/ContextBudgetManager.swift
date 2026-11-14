@@ -98,9 +98,11 @@ public struct ContextBreakdown: Equatable, Sendable {
         inputTokens: Int = 0,
         outputTokens: Int = 0
     ) -> ContextBreakdown {
-        var ctx: [Entry] = manifest.sections
-            .filter { $0.estimatedTokens > 0 }
-            .map { Entry(id: $0.id, label: $0.label, tokens: $0.estimatedTokens, tint: tint(for: $0.id)) }
+        var ctx: [Entry] = manifest.sections.compactMap { section in
+            let tokens = section.estimatedTokens
+            guard tokens > 0 else { return nil }
+            return Entry(id: section.id, label: section.label, tokens: tokens, tint: tint(for: section.id))
+        }
         if memoryTokens > 0 {
             ctx.append(Entry(id: "memory", label: L("Memory"), tokens: memoryTokens, tint: tint(for: "memory")))
         }
@@ -218,7 +220,13 @@ public struct ContextBudgetManager: Sendable {
 
     /// Estimate token count for a set of chat turns (conversation history).
     static func estimateTokens(for turns: [ChatTurn]) -> Int {
-        turns.reduce(0) { total, turn in
+        // INVARIANT: assistant.toolResults is a display mirror of the following
+        // explicit tool turns, not additional model-visible history. Count it
+        // only when that call has no explicit result in its own adjacent batch.
+        // Keep legacy result-only histories, and never deduplicate by payload
+        // text or against an unrelated batch that reuses a call id.
+        var followingResultIDs = Set<String>()
+        return turns.reversed().reduce(0) { total, turn in
             var t = 0
             if !turn.contentIsEmpty {
                 t += max(1, turn.contentLength / TokenEstimator.charsPerToken)
@@ -231,7 +239,8 @@ public struct ContextBudgetManager: Sendable {
                     )
                 }
             }
-            for (_, result) in turn.toolResults {
+            for (id, result) in turn.toolResults
+            where turn.role != .assistant || !followingResultIDs.contains(id) {
                 t += TokenEstimator.estimate(result)
             }
             if turn.hasThinking {
@@ -239,6 +248,13 @@ public struct ContextBudgetManager: Sendable {
             }
             for attachment in turn.attachments {
                 t += attachment.estimatedTokens
+            }
+            if turn.role == .tool {
+                if let id = turn.toolCallId, !id.isEmpty {
+                    followingResultIDs.insert(id)
+                }
+            } else {
+                followingResultIDs.removeAll(keepingCapacity: true)
             }
             return total + t
         }
@@ -273,6 +289,11 @@ public struct ContextBudgetManager: Sendable {
     /// and the unit the incremental drop loop subtracts.
     static func estimateTokens(forMessage msg: ChatMessage) -> Int {
         var msgTokens = TokenEstimator.estimate(msg.content)
+        // Retained reasoning is forwarded with assistant history even when
+        // thinking is disabled for the next response. Count its known text
+        // once; do not estimate native-item JSON or encrypted state that may
+        // mirror it as additional model-visible text.
+        msgTokens += TokenEstimator.estimate(msg.reasoning_content)
         if let toolCalls = msg.tool_calls {
             for tc in toolCalls {
                 msgTokens += TokenEstimator.estimate(tc.function.arguments)
@@ -794,6 +815,15 @@ public struct ContextBudgetManager: Sendable {
             let totalLines = payload["total_lines"] as? Int ?? lineCount
             return
                 "[Compressed: file content of '\(path)', \(totalLines) lines — no longer in context; re-read the file if you need specifics]"
+        }
+        if ToolEnvelope.isSuccess(content),
+            let payload = ToolEnvelope.successPayload(content) as? [String: Any],
+            payload["kind"] as? String == "files",
+            let files = payload["files"] as? [[String: Any]]
+        {
+            let paths = files.compactMap { $0["path"] as? String }.map { "'\($0)'" }
+            return
+                "[Compressed: contents of \(paths.count) files (\(paths.joined(separator: ", "))) — no longer in context; re-read them if you need specifics]"
         }
 
         // Try to detect the tool type from content patterns

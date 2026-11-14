@@ -1,0 +1,31 @@
+{
+  "id": "configurator.import-agent-file",
+  "domain": "configurator",
+  "label": "configurator • a pasted Claude Code agent file becomes an import, not a hand-built agent",
+  "query": "Add this agent:\n\n---\nname: changelog-writer\ndescription: Writes changelog entries from merged pull requests.\n---\nYou write concise changelog entries. Group changes under Added, Changed, and Fixed. Never invent pull request numbers.",
+  "notes": "Universal chat import. An agent file with frontmatter is a fast-path import; the Configurator should hand the whole text to osaurus_import instead of rewriting it into an osaurus_config agents entry.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_import"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_import",
+          "args": {
+            "source": "changelog-writer"
+          }
+        }
+      ],
+      "rubric": [
+        "Says a Changelog Writer agent was added (from the tool result) in one or two sentences."
+      ],
+      "maxIterations": 6
+    }
+  }
+}

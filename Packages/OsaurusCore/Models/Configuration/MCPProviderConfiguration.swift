@@ -73,6 +73,10 @@ public struct MCPOAuthConfig: Codable, Sendable, Equatable {
     /// strongly recommends servers accept any loopback port, but in practice
     /// several confidential-client OAuth providers don't.
     public var loopbackPort: UInt16?
+    /// Send `client_secret` as HTTP Basic credentials instead of in the form
+    /// body. Set at sign-in when the token endpoint only advertises
+    /// `client_secret_basic` (Zoom); nil means `client_secret_post`.
+    public var clientSecretBasic: Bool?
 
     public init(
         clientId: String? = nil,
@@ -84,7 +88,8 @@ public struct MCPOAuthConfig: Codable, Sendable, Equatable {
         tokenEndpoint: String? = nil,
         registrationEndpoint: String? = nil,
         serverMetadataCachedAt: Date? = nil,
-        loopbackPort: UInt16? = nil
+        loopbackPort: UInt16? = nil,
+        clientSecretBasic: Bool? = nil
     ) {
         self.clientId = clientId
         self.redirectURI = redirectURI
@@ -96,6 +101,7 @@ public struct MCPOAuthConfig: Codable, Sendable, Equatable {
         self.registrationEndpoint = registrationEndpoint
         self.serverMetadataCachedAt = serverMetadataCachedAt
         self.loopbackPort = loopbackPort
+        self.clientSecretBasic = clientSecretBasic
     }
 }
 
@@ -113,6 +119,10 @@ public struct MCPProvider: Codable, Identifiable, Sendable, Equatable {
     public var streamingEnabled: Bool
     public var discoveryTimeout: TimeInterval
     public var toolCallTimeout: TimeInterval
+    /// Longest a single tool call may run while the server keeps sending
+    /// `notifications/progress`. `toolCallTimeout` is the idle budget
+    /// between progress updates; this caps the total.
+    public var progressHardCap: TimeInterval
     public var autoConnect: Bool
 
     // Keys for headers that should be stored in Keychain (not persisted in config)
@@ -160,9 +170,14 @@ public struct MCPProvider: Codable, Identifiable, Sendable, Equatable {
     /// subprocess inherits.
     public var workingDirectory: String?
 
+    /// Agent whose credentials fill this provider's secret slots. Transient
+    /// (never encoded): set on a copy when building a per-agent connection.
+    /// `nil` resolves the values saved for all agents.
+    public var credentialAgentId: UUID?
+
     private enum CodingKeys: String, CodingKey {
         case id, name, url, enabled, customHeaders
-        case streamingEnabled, discoveryTimeout, toolCallTimeout, autoConnect
+        case streamingEnabled, discoveryTimeout, toolCallTimeout, progressHardCap, autoConnect
         case secretHeaderKeys
         case authType, oauth
         case pluginId
@@ -179,6 +194,7 @@ public struct MCPProvider: Codable, Identifiable, Sendable, Equatable {
         streamingEnabled: Bool = false,
         discoveryTimeout: TimeInterval = 20,
         toolCallTimeout: TimeInterval = 45,
+        progressHardCap: TimeInterval = MCPProvider.defaultProgressHardCap,
         autoConnect: Bool = true,
         secretHeaderKeys: [String] = [],
         authType: MCPProviderAuthType = .bearerToken,
@@ -200,6 +216,7 @@ public struct MCPProvider: Codable, Identifiable, Sendable, Equatable {
         self.streamingEnabled = streamingEnabled
         self.discoveryTimeout = discoveryTimeout
         self.toolCallTimeout = toolCallTimeout
+        self.progressHardCap = progressHardCap
         self.autoConnect = autoConnect
         self.secretHeaderKeys = secretHeaderKeys
         self.authType = authType
@@ -224,6 +241,12 @@ public struct MCPProvider: Codable, Identifiable, Sendable, Equatable {
         self.streamingEnabled = try container.decodeIfPresent(Bool.self, forKey: .streamingEnabled) ?? false
         self.discoveryTimeout = try container.decodeIfPresent(TimeInterval.self, forKey: .discoveryTimeout) ?? 20
         self.toolCallTimeout = try container.decodeIfPresent(TimeInterval.self, forKey: .toolCallTimeout) ?? 45
+        // Clamped to the settings slider's range so a hand-edited value
+        // cannot show a mismatched thumb or silently fall back to the idle timeout.
+        let decodedCap =
+            try container.decodeIfPresent(TimeInterval.self, forKey: .progressHardCap) ?? Self.defaultProgressHardCap
+        self.progressHardCap = min(
+            max(decodedCap, Self.progressHardCapRange.lowerBound), Self.progressHardCapRange.upperBound)
         self.autoConnect = try container.decodeIfPresent(Bool.self, forKey: .autoConnect) ?? true
         self.secretHeaderKeys = try container.decodeIfPresent([String].self, forKey: .secretHeaderKeys) ?? []
         // Migration: legacy configs default to .bearerToken so the existing token-from-Keychain path works.
@@ -242,46 +265,59 @@ public struct MCPProvider: Codable, Identifiable, Sendable, Equatable {
         self.workingDirectory = try container.decodeIfPresent(String.self, forKey: .workingDirectory)
     }
 
-    /// Get all headers including secret headers from Keychain
-    public func resolvedHeaders() -> [String: String] {
-        var headers = customHeaders
+    public static let defaultProgressHardCap: TimeInterval = 600
+    public static let progressHardCapRange: ClosedRange<TimeInterval> = 300 ... 14_400
 
-        // Add secret headers from Keychain
+    /// All headers: plain `customHeaders` (or the variable bound to one),
+    /// plus each secret header resolved through the unified credentials
+    /// store for `credentialAgentId`.
+    public func resolvedHeaders() -> [String: String] {
+        var headers: [String: String] = [:]
+        for (key, value) in customHeaders where !secretHeaderKeys.contains(key) {
+            headers[key] =
+                MCPCredentials.plainOverride(MCPCredentials.plainHeaderSlot(self, header: key), agentId: credentialAgentId)
+                ?? value
+        }
         for key in secretHeaderKeys {
-            if let value = MCPProviderKeychain.getHeaderSecret(key: key, for: id) {
+            if let value = MCPCredentials.headerValue(self, header: key, agentId: credentialAgentId) {
                 headers[key] = value
             }
         }
-
         return headers
     }
 
-    /// Resolve the full environment for a stdio subprocess: plain `env`
-    /// merged with any Keychain-stored values for `secretEnvKeys`. Keys
-    /// whose Keychain entry is missing are dropped so we don't ship a
-    /// literal placeholder over the wire.
+    /// Full environment for a stdio subprocess: plain `env` (or the variable
+    /// bound to an entry) merged with each secret env var resolved through
+    /// the credentials store. A secret with no value is dropped so a literal
+    /// placeholder never ships to the subprocess.
     public func resolvedEnv() -> [String: String] {
-        var merged = env
+        var merged: [String: String] = [:]
+        for (key, value) in env where !secretEnvKeys.contains(key) {
+            merged[key] =
+                MCPCredentials.plainOverride(MCPCredentials.plainEnvSlot(self, name: key), agentId: credentialAgentId)
+                ?? value
+        }
         for key in secretEnvKeys {
-            if let value = MCPProviderKeychain.getEnvSecret(key: key, for: id) {
+            if let value = MCPCredentials.envValue(self, name: key, agentId: credentialAgentId) {
                 merged[key] = value
-            } else {
-                // No Keychain value yet — strip the placeholder rather than
-                // forwarding it as a literal.
-                merged.removeValue(forKey: key)
             }
         }
         return merged
     }
 
-    /// Check if provider has a token stored in Keychain
-    public var hasToken: Bool {
-        MCPProviderKeychain.hasToken(for: id)
+    /// Bearer token for `credentialAgentId` (agent, then all agents).
+    public func resolvedBearerToken() -> String? {
+        MCPCredentials.tokenValue(self, agentId: credentialAgentId)
     }
 
-    /// Get token from Keychain
+    /// Whether a bearer token is available for all agents.
+    public var hasToken: Bool {
+        MCPCredentials.tokenAvailability(self) == .present
+    }
+
+    /// Bearer token saved for all agents.
     public func getToken() -> String? {
-        MCPProviderKeychain.getToken(for: id)
+        MCPCredentials.tokenValue(self, agentId: nil)
     }
 
     /// True if OAuth is configured AND tokens are present in Keychain.
@@ -306,6 +342,7 @@ public struct MCPProviderState: Sendable {
     public var lastError: String?
     public var discoveredToolCount: Int
     public var discoveredToolNames: [String]
+    public var discoveredToolSummaries: [MCPDiscoveredToolSummary]
     public var lastConnectedAt: Date?
     /// When the manager last auto-reconnected after a stale session during tool execution.
     public var lastAutoReconnectAt: Date?
@@ -319,6 +356,14 @@ public struct MCPProviderState: Sendable {
     /// Optional `resource_metadata` URL parsed out of `WWW-Authenticate`. When present
     /// the OAuth service can skip path-scoped `.well-known` discovery.
     public var resourceMetadataURL: URL?
+    /// Scopes to request on the next sign-in after a tool call was refused
+    /// with a valid session (`insufficient_scope` step-up). Passed to
+    /// `MCPOAuthService.signIn` as the challenge `scope=` hint.
+    public var stepUpScopes: [String]?
+    /// True when a provider saved without OAuth (`.none`) had a tool call
+    /// refused with 401 and the server publishes OAuth discovery metadata, so
+    /// the card offers Sign In instead of an API-token field.
+    public var oauthAvailable: Bool = false
     /// True when the most recent connect attempt failed for a *transient*
     /// reason (offline, timeout, DNS/TLS, server 5xx) rather than a terminal
     /// one (auth, bad config). Drives launch/network/wake/activation
@@ -335,12 +380,14 @@ public struct MCPProviderState: Sendable {
         self.lastError = nil
         self.discoveredToolCount = 0
         self.discoveredToolNames = []
+        self.discoveredToolSummaries = []
         self.lastConnectedAt = nil
         self.lastAutoReconnectAt = nil
         self.isAutoReconnecting = false
         self.lastStderrTail = nil
         self.requiresAuth = false
         self.resourceMetadataURL = nil
+        self.stepUpScopes = nil
         self.lastFailureWasTransient = false
     }
 }
@@ -382,10 +429,12 @@ public struct MCPProviderConfiguration: Codable, Sendable {
         }
     }
 
-    /// Remove a provider by ID
+    /// Remove a provider by ID. Its OAuth session is signed out; credentials
+    /// in the Keys store are kept (other consumers may share them, and an
+    /// unused key is listed on the Keys page). Legacy items are never deleted.
     public mutating func remove(id: UUID) {
-        // Clean up Keychain secrets
-        MCPProviderKeychain.deleteAllSecrets(for: id)
+        MCPProviderKeychain.deleteOAuthTokens(for: id)
+        MCPProviderKeychain.deleteOAuthClientSecret(for: id)
         providers.removeAll { $0.id == id }
     }
 

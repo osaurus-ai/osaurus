@@ -165,6 +165,17 @@ struct ModelRuntimeRAMFeasibilityTests {
             dynamicLimit: Int(8 * gib), configuredLimits: [headroom, 64 << 20]) == 64 << 20)
     }
 
+    @Test("Remaining-budget clamp never starves the admitted scratch floor")
+    func allocatorCapKeepsAdmittedScratchFloor() {
+        let floor = ModelRuntime.admittedAllocatorScratchFloorBytes
+        // A working-set estimate that meets the budget leaves headroom 0; the
+        // decode loop still gets the scratch the estimate already admitted.
+        #expect(ModelRuntime.allocatorCacheCapFromHeadroom(0) == floor)
+        #expect(ModelRuntime.allocatorCacheCapFromHeadroom(879_315_457) == floor)
+        #expect(ModelRuntime.allocatorCacheCapFromHeadroom(8 << 30) == 8 << 30)
+        #expect(ModelRuntime.allocatorCacheCapFromHeadroom(nil) == nil)
+    }
+
     @Test("Shared allocator accounts for every resident once and handles unbounded plans")
     func allocatorBudgetComposition() {
         #expect(ModelRuntime.allocatorCacheBudgetHeadroom(

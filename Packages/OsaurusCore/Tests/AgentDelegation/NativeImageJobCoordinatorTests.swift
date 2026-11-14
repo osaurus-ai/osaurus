@@ -241,11 +241,31 @@ struct NativeImageJobCoordinatorTests {
         )
     }
 
+    @Test func upscaleResolverPicksAReadyUpscalerAndNamesWhatIsWrong() throws {
+        let available = [
+            imageModel(id: "gen-only", ready: true, textToImage: true),
+            imageModel(id: "half-upscaler", ready: false, textToImage: false, upscale: true),
+            imageModel(id: "upscaler", ready: true, textToImage: false, upscale: true),
+        ]
+        #expect(try NativeImageJobModelResolver.resolveUpscale(requested: nil, available: available) == "upscaler")
+        #expect(try NativeImageJobModelResolver.resolveUpscale(requested: "upscaler", available: available) == "upscaler")
+        #expect(throws: NativeImageJobCoordinatorError.self) {
+            try NativeImageJobModelResolver.resolveUpscale(requested: "gen-only", available: available)
+        }
+        #expect(throws: NativeImageJobCoordinatorError.self) {
+            try NativeImageJobModelResolver.resolveUpscale(requested: "half-upscaler", available: available)
+        }
+        #expect(throws: NativeImageJobCoordinatorError.self) {
+            try NativeImageJobModelResolver.resolveUpscale(requested: nil, available: Array(available.prefix(2)))
+        }
+    }
+
     private func imageModel(
         id: String,
         ready: Bool,
         textToImage: Bool,
-        imageEdit: Bool = false
+        imageEdit: Bool = false,
+        upscale: Bool = false
     ) -> ImageModelInfo {
         ImageModelInfo(
             id: id,
@@ -256,7 +276,7 @@ struct NativeImageJobCoordinatorTests {
             quantizationBits: nil,
             defaultSteps: nil,
             defaultGuidance: nil,
-            capabilities: ImageModelCapabilities(textToImage: textToImage, imageEdit: imageEdit),
+            capabilities: ImageModelCapabilities(textToImage: textToImage, imageEdit: imageEdit, upscale: upscale),
             blockedReasons: ready ? [] : ["missing weights"],
             totalBytes: 0
         )

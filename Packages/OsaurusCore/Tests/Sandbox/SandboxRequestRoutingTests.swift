@@ -18,7 +18,7 @@ struct SandboxRequestRoutingTests {
 
             try await AgentSecretsKeychain._withInMemoryStoreForTesting {
                 #expect(
-                    AgentSecretsKeychain.saveSecret(
+                    AgentSecretsKeychain._testSeedSecret(
                         "request-only",
                         id: secret,
                         agentId: requestAgent.id

@@ -351,7 +351,8 @@ struct ChatWindowStateScopedTabsTests {
                 workspaceId: "ws-acme",
                 agentAddress: "0xshared",
                 callerWallet: "0xcaller",
-                callerName: "Alice"
+                callerName: "Alice",
+                callerHandle: "alice"
             )
             let handle = bridge.begin(
                 runKey: "run-\(UUID())",
@@ -372,7 +373,7 @@ struct ChatWindowStateScopedTabsTests {
             #expect(window.session === task.chatSession)
             #expect(
                 window.composerLock
-                    == .teammateConversation(callerName: "Alice", agentName: agentB.displayName, isWorkspace: true),
+                    == .teammateConversation(callerName: "@alice", agentName: agentB.displayName, isWorkspace: true),
                 "read-only: the composer is replaced by the hosted-run notice"
             )
 

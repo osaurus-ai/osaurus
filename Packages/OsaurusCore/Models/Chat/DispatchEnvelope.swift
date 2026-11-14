@@ -213,7 +213,9 @@ struct DispatchEnvelope: Equatable, Sendable {
     /// rendering the raw text.
     ///
     /// The watcher framing has no markers of its own, so it is only tried for
-    /// `.watcher` sessions; every other kind is self-identifying.
+    /// folder-started sessions: pass the runtime source
+    /// (`ChatSessionData.runtimeSource`), which maps a folder automation to
+    /// `.watcher`. Every other kind is self-identifying.
     static func parse(_ content: String, sessionSource: SessionSource) -> DispatchEnvelope? {
         var text = content
         var folderPath: String?
@@ -287,8 +289,8 @@ struct DispatchEnvelope: Equatable, Sendable {
     // MARK: Self-scheduled run
 
     private static func parseSelfScheduled(_ text: String) -> (kind: Kind, instructions: String)? {
-        guard text.hasPrefix(NextRunScheduler.selfScheduledRunPrefix) else { return nil }
-        let header = "\n" + NextRunScheduler.instructionsHeader + "\n"
+        guard text.hasPrefix(SelfScheduleAutomations.selfScheduledRunPrefix) else { return nil }
+        let header = "\n" + SelfScheduleAutomations.instructionsHeader + "\n"
         guard let range = text.range(of: header) else { return nil }
         let preamble = text[..<range.lowerBound]
         var scheduledBy: String?
@@ -296,9 +298,9 @@ struct DispatchEnvelope: Equatable, Sendable {
         var previousRun: String?
         for line in preamble.split(separator: "\n", omittingEmptySubsequences: true) {
             let s = String(line)
-            if s.hasPrefix(NextRunScheduler.scheduledByLinePrefix) {
+            if s.hasPrefix(SelfScheduleAutomations.scheduledByLinePrefix) {
                 // "Scheduled by: <who>, for <when>."
-                var rest = String(s.dropFirst(NextRunScheduler.scheduledByLinePrefix.count))
+                var rest = String(s.dropFirst(SelfScheduleAutomations.scheduledByLinePrefix.count))
                 if rest.hasSuffix(".") { rest.removeLast() }
                 if let split = rest.range(of: ", for ") {
                     scheduledBy = String(rest[..<split.lowerBound])
@@ -306,7 +308,7 @@ struct DispatchEnvelope: Equatable, Sendable {
                 } else {
                     scheduledBy = rest
                 }
-            } else if s.hasPrefix(NextRunScheduler.previousRunLinePrefix) {
+            } else if s.hasPrefix(SelfScheduleAutomations.previousRunLinePrefix) {
                 previousRun = s
             }
         }
@@ -322,13 +324,13 @@ struct DispatchEnvelope: Equatable, Sendable {
     private static func parseWatcher(_ text: String) -> (kind: Kind, instructions: String)? {
         // Peel the fixed guidance paragraphs off the end, innermost last.
         var body = Substring(text)
-        let organized = "\n" + WatcherManager.alreadyOrganizedGuidance + "\n"
+        let organized = "\n" + FolderEventSource.alreadyOrganizedGuidance + "\n"
         guard body.hasSuffix(organized) else { return nil }
         body = body.dropLast(organized.count)
 
         var iteration: Int?
-        let first = "\n" + WatcherManager.firstIterationGuidance + "\n"
-        let followUp = "\n" + WatcherManager.followUpIterationGuidance + "\n"
+        let first = "\n" + FolderEventSource.firstIterationGuidance + "\n"
+        let followUp = "\n" + FolderEventSource.followUpIterationGuidance + "\n"
         if body.hasSuffix(first) {
             body = body.dropLast(first.count)
             iteration = 1
@@ -343,17 +345,17 @@ struct DispatchEnvelope: Equatable, Sendable {
         // overflow line. It always follows the folder line / instructions.
         var changedPaths: [String] = []
         var overflow = 0
-        let changedMarker = "\n" + WatcherManager.changedSinceHeader + "\n"
+        let changedMarker = "\n" + FolderEventSource.changedSinceHeader + "\n"
         if let range = body.range(of: changedMarker, options: .backwards) {
             for line in body[range.upperBound...].split(separator: "\n", omittingEmptySubsequences: true) {
                 let s = String(line)
                 if s.hasPrefix("- `"), s.hasSuffix("`") {
                     changedPaths.append(String(s.dropFirst(3).dropLast()))
-                } else if s.hasPrefix(WatcherManager.changedPathOverflowPrefix),
-                    s.hasSuffix(WatcherManager.changedPathOverflowSuffix)
+                } else if s.hasPrefix(FolderEventSource.changedPathOverflowPrefix),
+                    s.hasSuffix(FolderEventSource.changedPathOverflowSuffix)
                 {
-                    let digits = s.dropFirst(WatcherManager.changedPathOverflowPrefix.count)
-                        .dropLast(WatcherManager.changedPathOverflowSuffix.count)
+                    let digits = s.dropFirst(FolderEventSource.changedPathOverflowPrefix.count)
+                        .dropLast(FolderEventSource.changedPathOverflowSuffix.count)
                     overflow = Int(digits) ?? 0
                 }
             }
@@ -364,7 +366,7 @@ struct DispatchEnvelope: Equatable, Sendable {
 
         // Folder line ("\n\n<prefix><path>\n") or the bare "\n" separator.
         var watchedFolder: String?
-        let folderMarker = "\n\n" + WatcherManager.watchedFolderLinePrefix
+        let folderMarker = "\n\n" + FolderEventSource.watchedFolderLinePrefix
         if let range = body.range(of: folderMarker, options: .backwards) {
             let after = body[range.upperBound...]
             if let lineEnd = after.firstIndex(of: "\n") {
@@ -421,15 +423,37 @@ extension DispatchEnvelope {
         case "discord": return "bubble.left.and.bubble.right"
         case "telegram": return "paperplane"
         case "whatsapp": return "phone.bubble"
+        case "email": return "envelope"
         case "imessage": return "message"
         default: return "antenna.radiowaves.left.and.right"
         }
     }
 
     /// Badges in display order: provenance first, then context, then any
-    /// warnings. The renderer caps the visible count and folds the rest into
-    /// a "+N" chip, so order here is also priority.
-    var badges: [Badge] {
+    /// warnings. The renderer caps the visible count, keeping warnings and
+    /// errors, and folds the rest into a "+N" chip.
+    var badges: [Badge] { badges(includingSender: true) }
+
+    /// The badge row for a user turn: who wrote it (when it isn't the person
+    /// at this Mac) first, then the envelope's provenance. The author chip
+    /// replaces a channel envelope's raw sender chip.
+    static func badges(for envelope: DispatchEnvelope?, author: ParticipantRef?) -> [Badge] {
+        guard let author else { return envelope?.badges ?? [] }
+        let tooltip = ParticipantFormatter.full(author).map { "\($0.label): \($0.value)" }.joined(separator: "\n")
+        let chip = Badge(symbol: authorSymbol(author.kind), label: ParticipantFormatter.short(author), tooltip: tooltip)
+        return [chip] + (envelope?.badges(includingSender: false) ?? [])
+    }
+
+    static func authorSymbol(_ kind: ParticipantKind) -> String {
+        switch kind {
+        case .owner, .ownerDevice: return "person"
+        case .teammate, .invitePeer, .agentOwner: return "person.2"
+        case .remoteAgent, .agent: return "cpu"
+        case .channelSender: return "person.bubble"
+        }
+    }
+
+    private func badges(includingSender: Bool) -> [Badge] {
         var out: [Badge] = []
         if let path = folderUnreadablePath {
             out.append(
@@ -454,7 +478,7 @@ extension DispatchEnvelope {
             if let conversation = channel.source.conversation {
                 out.append(Badge(symbol: "bubble.left.and.text.bubble.right", label: conversation, tooltip: L("Conversation")))
             }
-            if let sender = channel.source.sender {
+            if includingSender, let sender = channel.source.sender {
                 out.append(Badge(symbol: "person", label: sender, tooltip: L("Sender")))
             }
             if !channel.attachmentLines.isEmpty {

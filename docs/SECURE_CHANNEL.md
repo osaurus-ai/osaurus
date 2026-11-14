@@ -38,9 +38,9 @@ Your prompts, your models' responses, and your access keys stay between your mac
 
 4. **Tamper, replay, and truncation proof.** Sequence numbers double as AEAD nonces and are cryptographically bound to the session, direction, and call. A captured request can never re-execute (sliding anti-replay window → `409`). Response streams end with an authenticated `fin` frame, so a connection cut mid-stream is detected instead of silently passing as a complete answer.
 
-5. **No downgrade, ever.** Remote requests to agent execution routes (`/agents/{id}/run`, `/agents/{id}/dispatch`) that arrive outside the channel are refused with `426 Upgrade Required`. There is no fallback mode an attacker can force. Local callers (CLI, App Intents, scripts on the same machine) keep working unchanged, and `/models` metadata stays plaintext-compatible for third-party OpenAI-SDK clients.
+5. **No downgrade, ever.** Remote requests to agent execution routes (`/agents/{id}/run`, `/agents/{id}/dispatch`) that arrive outside the channel are refused with `426 Upgrade Required`, and so is every owner route — reads included — when a remote caller presents an owner (master-scoped) key: agents, sessions, run streams, review and approval queues, secret prompts, artifacts, unpairing. (For one release `GET /agents`, which holds no prompts or secrets, stays readable so phones up to 1.0(5) can learn their pin.) There is no fallback mode an attacker can force. Local callers (CLI, App Intents, scripts on the same machine) keep working unchanged, and OpenAI-style routes (`/models`, `/chat/completions`, `/images/*`) stay plaintext-compatible for third-party SDK clients.
 
-6. **Zero configuration.** There is nothing to set up. Pairing two agents — over Bonjour on the LAN or via a relay invite — is all it takes. Capability is advertised automatically (`osc=1` in Bonjour TXT, `secureChannel` in pair responses), sessions are established and refreshed transparently, and mixed-version setups produce a clear "upgrade Osaurus" message instead of a cryptic failure.
+6. **Zero configuration.** There is nothing to set up. Pairing two agents through a relay invite, or a phone through its pairing code, is all it takes. Capability is advertised automatically (`secureChannel` in pair responses), sessions are established and refreshed transparently, and mixed-version setups produce a clear "upgrade Osaurus" message instead of a cryptic failure.
 
 ---
 
@@ -90,7 +90,7 @@ sequenceDiagram
 | Relay operator (TLS-terminating by construction) | Blind pipe; forwards opaque frames, learns only timing/size |
 | Attacker replaying captured traffic | Rejected by the anti-replay window (`409 secure_replay`) |
 | Attacker truncating a streamed response | Missing authenticated `fin` → detected client-side, surfaced as an error |
-| Attacker forcing a plaintext fallback | None exists: remote plaintext on agent routes → `426 Upgrade Required` |
+| Attacker forcing a plaintext fallback | None exists: remote plaintext on agent and owner routes → `426 Upgrade Required`; a paired phone never sends its key outside the channel |
 | Future compromise of a device's identity key | Past sessions stay sealed — forward secrecy from ephemeral X25519 |
 
 What the channel does **not** hide: traffic timing and approximate sizes (true of any encrypted transport), and metadata the relay needs for routing (which tunnel a frame belongs to).
@@ -103,17 +103,21 @@ What the channel does **not** hide: traffic timing and approximate sizes (true o
 
 | Endpoint | Purpose | Notes |
 |---|---|---|
-| `POST /secure/session` | Handshake | Public, rate-limited per source IP; grants nothing by itself |
+| `POST /secure/session` | Handshake | Public, rate-limited per source IP; grants nothing by itself. Signed by the target agent's key, or by the Mac's connect identity for a paired phone whose Mac has no custom agents ([`MOBILE_PROTOCOL.md` §11.3](MOBILE_PROTOCOL.md)) |
 | `POST /secure/call` | Encrypted request envelope | Ciphertext decrypts to the inner request; inner auth fully enforced |
 
 ### Error codes
 
 | Status | Code | Meaning | Client action |
 |---|---|---|---|
-| `426` | `secure_channel_required` | Plaintext request to a protected agent route from a remote caller | Upgrade Osaurus / use the channel |
+| `426` | `secure_channel_required` | Plaintext request to a protected agent route from a remote caller | Upgrade Osaurus / use the channel. A paired phone never retries in plaintext: with nothing pinned it asks to pair again |
+| `404` | `Unknown agent address` | Handshake for an address that is no agent here and not the connect identity | Drop the stale pin |
+| `503` | `Secure channel identity unavailable, try again` | The connect identity's master key can't be read right now (a locked Keychain) | Keep the pin and retry |
 | `401` | `secure_session_unknown` | Session expired or server restarted | Re-handshake (automatic) |
 | `409` | `secure_replay` | Sequence number already consumed | Never retry the same envelope |
 | `400` | `secure_malformed` | Bad envelope, or inner request targeting `/secure/*` | Fix the request |
+
+These codes arrive outside the encryption (the handshake's answer, or `/secure/call`'s outer status), so anyone on the path can forge one. Clients treat them as "this attempt failed" only: never as proof an agent was deleted, a key revoked, or a pin stale. Those conclusions come from inside the channel — an inner `401`, or a roster fetched through another pinned agent that no longer lists the address.
 
 ### Code map
 
@@ -125,13 +129,14 @@ What the channel does **not** hide: traffic timing and approximate sizes (true o
 | Transparent response encryption (NIO outbound handler) | `Packages/OsaurusCore/Networking/SecureChannelResponseEncryptor.swift` |
 | Client session cache, identity verification, re-handshake, SSE decrypt | `Packages/OsaurusCore/Services/Provider/SecureChannelClient.swift` |
 | Remote-provider integration (`.osaurus` providers) | `Packages/OsaurusCore/Services/Provider/RemoteProviderService.swift` |
-| Capability advertisement (`osc=1`) | `Packages/OsaurusCore/Networking/BonjourAdvertiser.swift` / `BonjourBrowser.swift` |
 | Transcript signature domain prefix | `Packages/OsaurusCore/Identity/CryptoHelpers.swift` |
+| Connect identity for the paired phone | `Packages/OsaurusCore/Services/MobileConnect/MobileConnectIdentity.swift` |
 
 ### Test coverage
 
 - `Tests/Identity/SecureChannelTests.swift` — handshake roundtrip, wrong-identity and tampered-transcript rejection, version negotiation, replay/reorder windows, cross-session and cross-call frame rejection, `fin` authentication, truncation detection.
-- `Tests/Networking/SecureChannelE2ETests.swift` — full NIO server: encrypted buffered and SSE calls, replay → `409`, unknown session → `401`, the `426` gate (plaintext remote refused, loopback allowed, encrypted relay-origin passes), inner auth still enforced, built-in-agent guard still fires inside the channel, per-agent scope enforced on `GET /agents/{id}` (a cross-agent scoped key is refused `403 agent_scope_denied` inside the ciphertext), no `/secure/*` nesting.
+- `Tests/Networking/SecureChannelE2ETests.swift` — full NIO server: encrypted buffered and SSE calls, replay → `409`, unknown session → `401`, the `426` gate (plaintext remote refused, loopback allowed, encrypted relay-origin passes; every owner write, `POST /agents/{id}/warm` included, and owner reads such as `GET /sessions/{id}/context`), inner auth still enforced, built-in-agent guard still fires inside the channel, per-agent scope enforced on `GET /agents/{id}` (a cross-agent scoped key is refused `403 agent_scope_denied` inside the ciphertext), no `/secure/*` nesting.
+- `Tests/Identity/MobilePairingTests.swift` — the connect identity: deterministic, device-scoped, never equal to an agent key at any index, and carried under the built-in agent in the pairing payload only when no custom agent has an address.
 
 ### Compatibility
 
@@ -146,10 +151,10 @@ What the channel does **not** hide: traffic timing and approximate sizes (true o
 
 The Secure Channel composes with — it does not replace — the existing layers documented in [`IDENTITY.md`](IDENTITY.md) and [`SECURITY.md`](SECURITY.md):
 
-- **Pairing** establishes *who* a peer is (HPKE-sealed key delivery, challenge-response, server signature verification) and pins the agent address the channel later verifies on every handshake.
+- **Pairing** establishes *who* a peer is (for the phone, a SPAKE2 exchange keyed by the pairing code — MOBILE_PROTOCOL.md §11.3; between Macs, HPKE-sealed key delivery, challenge-response, server signature verification) and pins the agent address the channel later verifies on every handshake.
 - **`osk-v1` access keys** still authenticate *every* call — now inside the ciphertext — with unchanged scoping (`403 agent_scope_denied` for cross-agent use, on both the run route `/agents/{id}/run` and the `GET /agents/{id}` metadata route) and instant revocation.
 - **Relay trust hardening** (no loopback trust for relay-origin traffic) still applies to the decrypted inner request.
-- **Per-agent host workspace** rides on this trust boundary: only a caller that completed the handshake and passed the agent-scope gate can have a remote agent read/write files inside the folder its owner granted (host **file** tools only — `shell_run` / `git_commit` / `file_undo` stay denied). See [`SECURITY.md`](SECURITY.md) and [`OpenAI_API_GUIDE.md`](OpenAI_API_GUIDE.md).
+- **Per-agent host workspace** rides on this trust boundary: only a caller that completed the handshake and passed the agent-scope gate can have a remote agent read/write files inside the folder its owner granted. Of the externally denied tools, only `file_write` and `file_edit` are unlocked for such a run (`file_read` is not externally denied); `shell_run` / `git_commit` / `file_undo` stay denied. See [`SECURITY.md`](SECURITY.md) and [`OpenAI_API_GUIDE.md`](OpenAI_API_GUIDE.md).
 - **Storage encryption** protects data at rest; the Secure Channel protects it in motion between agents.
 
 Together: keys are sealed at delivery, pinned at pairing, verified at every session, and never travel in plaintext again — and everything an agent says travels inside a forward-secret envelope only the two endpoints can open.

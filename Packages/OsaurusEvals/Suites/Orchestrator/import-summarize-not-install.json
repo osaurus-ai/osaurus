@@ -1,0 +1,22 @@
+{
+  "id": "orchestrator.import-summarize-not-install",
+  "domain": "orchestrator",
+  "label": "orchestrator • summarizing a pasted SKILL.md is not an import",
+  "query": "Summarize this skill in two sentences, I'm just reading it:\n\n---\nname: release-notes\ndescription: Turns a list of merged pull requests into user-facing release notes.\n---\n# Release Notes\n\nGroup changes by user impact. Lead with new features, then fixes. Keep each line under 20 words and skip internal refactors.",
+  "notes": "Negative case for universal chat import routing. Reading or summarizing setup text is an ordinary question; nothing should be handed to the Configurator or installed.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustNotCallTools": [
+        "configurator_handoff",
+        "osaurus_config",
+        "osaurus_import",
+        "spawn_agent"
+      ],
+      "rubric": [
+        "Summarizes the skill (turns merged PRs into grouped, user-facing release notes) in about two sentences and does not offer to install it as the main answer."
+      ],
+      "maxIterations": 3
+    }
+  }
+}

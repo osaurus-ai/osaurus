@@ -369,10 +369,11 @@ extension EvalRunner {
                 }
             }
             for secret in sandboxFixture.seedSecrets ?? [] {
-                _ = AgentSecretsKeychain.saveSecret(
-                    secret.value,
-                    id: secret.key,
-                    agentId: evalAgentId
+                CredentialStore.current.save(
+                    secret.key,
+                    scope: .agent(evalAgentId),
+                    value: secret.value,
+                    origin: .sandboxPrompt
                 )
             }
         }
@@ -448,7 +449,7 @@ extension EvalRunner {
             maxIterations: exp.maxIterations ?? 10,
             contextWindowOverride: exp.contextWindowOverride,
             maxTokens: exp.maxTokens,
-            enableThinking: exp.enableThinking,
+            enableThinking: EvalThinkingControlState.resolve(exp.enableThinking),
             stopOnToolRejection: exp.stopOnToolRejection ?? false,
             sandbox: sandboxMode,
             useHostFolder: testCase.fixtures.useHostFolder ?? true,
@@ -598,13 +599,16 @@ extension EvalRunner {
                 fail: "ctx tokens \(prompt) > max \(maxPrompt)"
             )
         }
-        if let maxTotal = exp.scoredMaxTotalTokens, let prompt = transcript.promptTokensTotal {
-            let total = prompt + (transcript.completionTokens ?? 0)
-            score.check(
-                total <= maxTotal,
-                pass: "total tokens \(total) <= max \(maxTotal)",
-                fail: "total tokens \(total) > max \(maxTotal)"
-            )
+        if let maxTotal = exp.scoredMaxTotalTokens {
+            switch EvalTokenCost.ceiling(maxTotal, estimatedPrompt: transcript.promptTokensTotal,
+                reportedCompletion: transcript.completionTokens) {
+            case .within(let total):
+                score.check(true, pass: "estimated input + reported output tokens \(total) <= max \(maxTotal)", fail: "")
+            case .exceeded(let total):
+                score.check(false, pass: "", fail: "estimated input + reported output tokens \(total) > max \(maxTotal)")
+            case .unreported:
+                score.check(false, pass: "", fail: "total-cost gate unverified: prompt estimate or reported completion count unavailable")
+            }
         }
 
         // 2c. Capability-store outcomes (isolated per-eval-agent stores;
@@ -777,18 +781,19 @@ extension EvalRunner {
                 context: transcript.contextAttribution
             ),
             query: resolvedQuery,
-            includeSuccessful: exp.spawnSummaries != nil || exp.spawnWave != nil
+            expectations: exp
         )
     }
 
     /// Hand the full loop transcript to the transcript store (a no-op
-    /// unless `--transcripts` configured it). RAM/batch proof callers retain
-    /// successful rows too. Returns the report unchanged so call sites
+    /// unless `--transcripts` configured it). Rubric and RAM/batch proof
+    /// retain successful rows too, so grades remain auditable. Returns the report unchanged so call sites
     /// stay single-expression returns.
-    private static func persistAgentLoopTranscript(
+    static func persistAgentLoopTranscript(
         _ transcript: AgentLoopTranscript,
         for report: EvalCaseReport,
         query: String,
+        expectations: EvalCase.AgentLoopExpectations? = nil,
         includeSuccessful: Bool = false
     ) -> EvalCaseReport {
         EvalTranscriptStore.persistIfEnabled(
@@ -837,6 +842,9 @@ extension EvalRunner {
                 },
                 error: transcript.error
             ), includeSuccessful: includeSuccessful
+                || expectations?.spawnSummaries != nil
+                || expectations?.spawnWave != nil
+                || !(expectations?.rubric?.isEmpty ?? true)
         )
         return report
     }
@@ -845,15 +853,14 @@ extension EvalRunner {
     /// report's telemetry block (resource metrics — peak RAM, KV delta —
     /// are folded in later by `EvalRunner.runOne`). Returns nil when the
     /// run captured no streaming stats (remote/non-streaming).
-    private static func telemetry(
+    static func telemetry(
         from transcript: AgentLoopTranscript,
         mtpResolution: EvalMTPResolution? = nil
     ) -> EvalCaseTelemetry? {
-        // Total = input + output. Only meaningful once we have an input
-        // estimate; completion is 0 on remote/non-streaming runs that never
-        // surfaced a stats hint, which is the existing `completionTokens`
-        // semantic — so the total there is the input estimate alone.
-        let total = transcript.promptTokensTotal.map { $0 + (transcript.completionTokens ?? 0) }
+        // Estimated input + reported output. Keep this unavailable when a
+        // component is missing; prompt-only attribution remains separate.
+        let total = EvalTokenCost.total(estimatedPrompt: transcript.promptTokensTotal,
+            reportedCompletion: transcript.completionTokens)
         let mtpSteps = transcript.stepDiagnostics.filter { $0.mtpDepth != nil }
         let t = EvalCaseTelemetry(
             decodeTokensPerSecond: transcript.decodeTokensPerSecond,
@@ -954,7 +961,12 @@ extension EvalRunner {
                     var budgets = caps?.childBudgets ?? SubagentBudgets()
                     if let maximum = caps?.maxParallelSpawns { budgets.maxParallelSpawns = maximum }
                     return budgets.normalized
-                }()
+                }(),
+                calculatorEnabled: caps?.calculatorEnabled ?? false,
+                redactionToolsEnabled: caps?.redactionToolsEnabled ?? false,
+                taskChecklistEnabled: caps?.taskChecklistEnabled ?? true,
+                clarifyEnabled: caps?.clarifyEnabled ?? true,
+                artifactsEnabled: caps?.artifactsEnabled ?? true
             )
         )
         AgentStore.save(agent)
@@ -1215,8 +1227,8 @@ extension EvalRunner {
         }
     }
 
-    /// Post-case sandbox teardown: delete the eval agent's keychain
-    /// secrets, uninstall + unregister any plugin the case created
+    /// Post-case sandbox teardown: delete the eval agent's credentials,
+    /// uninstall + unregister any plugin the case created
     /// (diffed against the pre-run library snapshot), and unprovision
     /// the agent (Linux user, VM home dir via the host mount, plugin
     /// state, background jobs). The container intentionally stays
@@ -1226,7 +1238,7 @@ extension EvalRunner {
         agentId: UUID,
         pluginIdsBeforeRun: Set<String>
     ) async {
-        AgentSecretsKeychain.deleteAllSecrets(agentId: agentId)
+        CredentialStore.current.deleteAll(agentId: agentId)
 
         let createdPluginIds = Set(SandboxPluginLibrary.shared.plugins.map(\.id))
             .subtracting(pluginIdsBeforeRun)
@@ -1257,7 +1269,7 @@ extension EvalRunner {
     // MARK: - Telemetry
 
     /// Fold the transcript into per-tool usage counters for the report.
-    private static func toolUsageStats(_ transcript: AgentLoopTranscript) -> [ToolUsageStat]? {
+    static func toolUsageStats(_ transcript: AgentLoopTranscript) -> [ToolUsageStat]? {
         guard !transcript.toolCalls.isEmpty else { return nil }
         var calls: [String: Int] = [:]
         var errors: [String: Int] = [:]
@@ -1624,8 +1636,15 @@ extension EvalRunner {
         let targets = rows.map { $0.target ?? "" }
         let succeeded = rows.filter(\.ok).count
         let failed = rows.count - succeeded
-        if let expected = assertion.expectedTargets, targets != expected {
-            failures.append("targets \(targets) != \(expected)")
+        // Order-sensitive; each expected entry may be the raw `agent`
+        // argument, the resolved worker name, or the resolved UUID.
+        if let expected = assertion.expectedTargets {
+            let matches =
+                rows.count == expected.count
+                && zip(rows, expected).allSatisfy { $0.addresses($1) }
+            if !matches {
+                failures.append("targets \(targets) != \(expected)")
+            }
         }
         if let expected = assertion.expectedSucceeded, succeeded != expected {
             failures.append("succeeded \(succeeded) != \(expected)")
@@ -1655,7 +1674,7 @@ extension EvalRunner {
             }
             for (index, pair) in zip(rows, expectedRows).enumerated() {
                 let (observed, expected) = pair
-                if let value = expected.target, observed.target != value {
+                if let value = expected.target, !observed.addresses(value) {
                     failures.append(
                         "row[\(index)].target \(String(describing: observed.target)) != \(value)"
                     )
@@ -1685,6 +1704,27 @@ extension EvalRunner {
                     for needle in needles where !summary.contains(needle) {
                         failures.append("row[\(index)].summary missing '\(needle)'")
                     }
+                }
+                if let value = expected.hasSessionId,
+                    (observed.sessionId?.isEmpty == false) != value
+                {
+                    failures.append(
+                        "row[\(index)].session_id present=\(observed.sessionId != nil) != \(value)")
+                }
+                if let value = expected.continuesEarlierRow {
+                    let earlierHandles = Set(
+                        rows.prefix(index).compactMap { $0.sessionId?.lowercased() })
+                    let continued = observed.continuedSessionId?.lowercased()
+                    let observedContinues = continued.map(earlierHandles.contains) ?? false
+                    if observedContinues != value {
+                        failures.append(
+                            "row[\(index)].continue=\(String(describing: observed.continuedSessionId)) "
+                                + "reuses an earlier session_id: \(observedContinues) != \(value)")
+                    }
+                }
+                if let value = expected.needsInput, (observed.needsInput ?? false) != value {
+                    failures.append(
+                        "row[\(index)].needs_input \(String(describing: observed.needsInput)) != \(value)")
                 }
             }
         }

@@ -1,0 +1,21 @@
+{
+  "id": "configurator.help-path-grounded",
+  "domain": "configurator",
+  "label": "configurator • every Settings path in an answer is one the catalog gave it",
+  "query": "Where can I change which model the Configurator uses, and its temperature?",
+  "notes": "Hallucinated-path check: the deterministic scorer extracts every breadcrumb from the answer and requires it in the seed's catalog rows or a tool result.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustNotCallTools": [
+        "osaurus_config"
+      ],
+      "settingsPathsMustBeGrounded": true,
+      "rubric": [
+        "Names where the Configurator's model and temperature are set in Settings.",
+        "Does NOT claim anything was changed."
+      ],
+      "maxIterations": 6
+    }
+  }
+}

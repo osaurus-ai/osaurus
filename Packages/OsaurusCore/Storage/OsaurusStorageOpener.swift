@@ -22,14 +22,16 @@ public enum OsaurusStorageOpener {
     public static func open(
         path: String,
         applyPerfPragmas: Bool = true,
-        applyForeignKeys: Bool = true
+        applyForeignKeys: Bool = true,
+        cacheTier: EncryptedSQLiteOpener.CacheTier = .hot
     ) throws -> OpaquePointer {
         let key = try resolveKey(for: path)
         return try EncryptedSQLiteOpener.open(
             path: path,
             key: key,
             applyPerfPragmas: applyPerfPragmas,
-            applyForeignKeys: applyForeignKeys
+            applyForeignKeys: applyForeignKeys,
+            cacheTier: cacheTier
         )
     }
 

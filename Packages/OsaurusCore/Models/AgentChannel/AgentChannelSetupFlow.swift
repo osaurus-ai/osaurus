@@ -85,20 +85,24 @@ enum AgentChannelSetupFlow {
 
 // MARK: - Provider Setup Sections
 
-/// The four focused sections every native provider setup flow shares.
-/// Provider sheets map their fields into these instead of exposing one long
-/// scroll of numbered steps.
+/// The sections every native provider setup flow shares, in the order a
+/// message travels: connect the bot, choose what it receives, route each
+/// message to an agent or workflow, choose what agents may send, then
+/// test. Provider sheets map their fields into these instead of exposing
+/// one long scroll of numbered steps.
 enum AgentChannelProviderSetupSection: String, CaseIterable, Sendable {
     case connect
-    case access
-    case behavior
+    case receiving
+    case routing
+    case sending
     case verify
 
     var title: String {
         switch self {
         case .connect: return L("Connect")
-        case .access: return L("Conversations")
-        case .behavior: return L("Agent Behavior")
+        case .receiving: return L("Receiving")
+        case .routing: return L("Routing")
+        case .sending: return L("Sending")
         case .verify: return L("Test")
         }
     }
@@ -106,17 +110,19 @@ enum AgentChannelProviderSetupSection: String, CaseIterable, Sendable {
     var icon: String {
         switch self {
         case .connect: return "link"
-        case .access: return "bubble.left.and.bubble.right"
-        case .behavior: return "arrow.triangle.branch"
+        case .receiving: return "tray.and.arrow.down"
+        case .routing: return "arrow.triangle.branch"
+        case .sending: return "paperplane"
         case .verify: return "checkmark.seal"
         }
     }
 
     var caption: String? {
         switch self {
-        case .connect: return L("Bot and tokens")
-        case .access: return L("Rooms and people")
-        case .behavior: return L("Replies and sending")
+        case .connect: return L("Account and access")
+        case .receiving: return L("Rooms and people")
+        case .routing: return L("Who answers")
+        case .sending: return L("Posting rules")
         case .verify: return L("Live check")
         }
     }
@@ -127,11 +133,12 @@ enum AgentChannelProviderSetupSection: String, CaseIterable, Sendable {
         }
     }
 
-    /// Sections whose completion gates the initial landing position; behavior
-    /// and verify are optional or ongoing, so a configured channel opens on
-    /// Verify rather than an eternally "incomplete" optional section.
+    /// Sections whose completion gates the initial landing position;
+    /// routing, sending and verify are optional or ongoing, so a configured
+    /// channel opens on Test rather than an eternally "incomplete" optional
+    /// section.
     static var requiredSectionIds: [String] {
-        [Self.connect.rawValue, Self.access.rawValue]
+        [Self.connect.rawValue, Self.receiving.rawValue]
     }
 }
 
@@ -141,7 +148,7 @@ enum AgentChannelProviderSetupSection: String, CaseIterable, Sendable {
 /// the advanced custom HTTP definition last.
 enum AgentChannelAddCatalog {
     static let choices: [AgentChannelKind] = [
-        .discord, .slack, .telegram, .imessage, .whatsapp, .n8n, .customHTTP,
+        .discord, .slack, .telegram, .imessage, .whatsapp, .email, .n8n, .customHTTP,
     ]
 
     /// Custom HTTP is the advanced integration path, visually set apart from
@@ -157,6 +164,7 @@ enum AgentChannelAddCatalog {
         case .telegram: return L("Guided setup — bot access to allowlisted chats and groups")
         case .imessage: return L("Guided setup — this Mac's Messages app, allowlisted chats only")
         case .whatsapp: return L("Guided setup — QR-linked WhatsApp Web bridge, allowlisted chats only")
+        case .email: return L("Guided setup — Mail app or IMAP/SMTP accounts, allowlisted senders only")
         case .n8n: return L("Guided setup — n8n HTTP Request in, poll or webhook out")
         case .customHTTP: return L("Advanced — define your own HTTP JSON channel")
         }

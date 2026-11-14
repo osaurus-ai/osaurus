@@ -171,6 +171,54 @@ struct RemoteReasoningPolicy {
         }
     }
 
+    /// Hosted OpenAI-compatible APIs with strict request schemas (unknown
+    /// fields are rejected) or their own reasoning switch. They never receive
+    /// `chat_template_kwargs`.
+    static let strictSchemaHosts = [
+        "openai.com", "mistral.ai", "groq.com", "x.ai", "perplexity.ai", "googleapis.com",
+        "anthropic.com", "cohere", "cerebras.ai", "venice.ai", "deepseek.com",
+        // These hosted APIs expose their own reasoning controls. Do not add
+        // self-hosted template options; mandatory-reasoning models also need
+        // capability-aware handling before an off control can be selected.
+        "fireworks.ai", "openrouter.ai",
+    ]
+
+    /// Whether the caller asked for reasoning off: `disableThinking`, or a
+    /// direct-rail effort (`none`, `off`, `instruct`, ...).
+    static func requestsReasoningOff(_ options: [String: ModelOptionValue]) -> Bool {
+        if options["disableThinking"]?.boolValue == true { return true }
+        guard let effort = options["reasoningEffort"]?.stringValue?
+            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        else { return false }
+        return ["instruct", "chat", "none", "no_think", "nothink", "off", "disabled", "false"]
+            .contains(effort)
+    }
+
+    /// Wire form of "reasoning off" for this provider. DeepSeek V4 reads a
+    /// `thinking` object; self-hosted servers (vLLM, SGLang, llama.cpp,
+    /// LM Studio) read `chat_template_kwargs.enable_thinking`, and silently
+    /// ignore a DeepSeek-style flag (#3036). Strict hosted schemas get
+    /// nothing: they would reject the unknown field.
+    func reasoningOffControls(
+        disableThinking: Bool
+    ) -> (thinking: ThinkingConfig?, templateKwargs: [String: Bool]?) {
+        guard disableThinking else { return (nil, nil) }
+        switch providerType {
+        case .openaiLegacy:
+            let lowered = host.lowercased()
+            if lowered.contains("deepseek") {
+                return (
+                    DSV4ReasoningProfile.matches(modelId: model) ? ThinkingConfig(type: "disabled") : nil,
+                    nil
+                )
+            }
+            if Self.strictSchemaHosts.contains(where: { lowered.contains($0) }) { return (nil, nil) }
+            return (nil, ["enable_thinking": false])
+        case .azureOpenAI, .anthropic, .openResponses, .openAICodex, .gemini, .osaurus, .osaurusRouter:
+            return (nil, nil)
+        }
+    }
+
     /// Translate a local reasoning-effort value into the on-the-wire
     /// `reasoning_effort` + `thinking` fields the target provider understands.
     func controls(effort: String?) -> (effort: String?, thinking: ThinkingConfig?) {
@@ -223,9 +271,21 @@ struct RemoteReasoningPolicy {
     /// preserved as closely as the provider's thinking-mode contract allows.
     func sanitizedToolChoice(
         _ choice: ToolChoiceOption?,
-        thinking: ThinkingConfig?
+        thinking: ThinkingConfig?,
+        manualAnthropicThinking: Bool = false
     ) -> ToolChoiceOption? {
         guard let choice else { return nil }
+        // Newer Claude generations reject forced tool use outright, on every
+        // host that serves them (#3051); manual `enabled` thinking rejects it
+        // on every Claude model.
+        if Self.rejectsForcedToolChoice(model: model) || manualAnthropicThinking {
+            switch choice {
+            case .required, .function:
+                return .auto
+            case .auto, .none:
+                return choice
+            }
+        }
         switch providerType {
         case .openaiLegacy, .azureOpenAI:
             break
@@ -244,6 +304,19 @@ struct RemoteReasoningPolicy {
         case .auto, .none:
             return choice
         }
+    }
+
+    /// Claude models that return HTTP 400 "tool_choice: type \"tool\" and
+    /// \"any\" are not supported for this model." Matched on the bare model id
+    /// so OpenRouter (`anthropic/claude-sonnet-5.5`) and native
+    /// (`claude-sonnet-5-5`) ids both hit. OpenRouter still advertises
+    /// `tool_choice` for these models, so the limit cannot be discovered.
+    static func rejectsForcedToolChoice(model: String) -> Bool {
+        let bare =
+            (model.lowercased().split(separator: "/").last.map(String.init) ?? model.lowercased())
+            .replacingOccurrences(of: ".", with: "-")
+        let prefixes = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-fable-5", "claude-mythos-5"]
+        return prefixes.contains(where: { bare.hasPrefix($0) })
     }
 
     /// Translate the local DSV4 `reasoningEffort` value into the wire fields.
@@ -275,13 +348,14 @@ struct RemoteReasoningPolicy {
         }
 
         // The official OpenAI API likewise documents `none` as a real
-        // GPT-5.6 reasoning effort (`none` … `max`); stripping it here would
-        // silently re-enable the model's default reasoning. Only `none` is
-        // exempted, and only for GPT-5.6 on the official host — older OpenAI
-        // models and the other direct-rail aliases stay local-only.
+        // reasoning effort for GPT-5.6 and some GPT-6 models (`none` … `max`);
+        // stripping it here would silently re-enable the model's default
+        // reasoning. Only `none` is exempted, and only for models whose
+        // documented table has it on the official host — older OpenAI models
+        // and the other direct-rail aliases stay local-only.
         if normalized == "none",
             host.lowercased().contains("openai.com"),
-            ModelPickerItem.isPublicGPT56ModelId(model)
+            ModelPickerItem.officialOpenAIAcceptsNoneEffort(modelId: model)
         {
             return (normalized, nil)
         }

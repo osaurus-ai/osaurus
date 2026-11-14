@@ -369,3 +369,52 @@ extension WorkspaceCollaborationRegressionTests {
         #expect(WorkspaceSyncService.firstFrameDeadline < WorkspaceSyncService.verificationLease)
     }
 }
+
+extension WorkspaceCollaborationRegressionTests {
+    @Test(arguments: ["Reviews supplied research sources.", ""])
+    func credentialRefreshUpdatesDescriptionWithoutRePairing(description: String) async throws {
+        try await ChatHistoryTestStorage.run {
+            let service = WorkspaceAgentConnectService(observeAppActivation: false)
+            let manager = RemoteAgentManager.shared
+            let address = "0x00000000000000000000000000000000abcabcde"
+            let workspace = "description-refresh-\(UUID())"
+            let siblingWorkspace = "description-sibling-\(UUID())"
+            let sibling = manager.upsertPairedAgent(
+                agentAddress: address, name: "Other workspace", description: "Unchanged sibling description.",
+                relayBaseURL: "https://test.invalid", apiKey: "test-key", note: nil,
+                workspaceId: siblingWorkspace
+            )
+            var calls = 0
+            service.testHandshakeOverride = { incomingWorkspace, incomingAddress in
+                #expect(incomingWorkspace == workspace)
+                #expect(incomingAddress == address)
+                calls += 1
+                return .init(
+                    agentAddress: address, agentName: "Host name",
+                    agentDescription: calls == 1 ? "Old description." : description,
+                    agentModel: "test-model", apiKey: "test-key-\(calls)",
+                    attestationExpiresAt: calls == 1 ? Date().addingTimeInterval(0.2) : nil
+                )
+            }
+            defer {
+                service.stopRefreshing(agentAddress: address, workspaceId: workspace)
+                if let agent = manager.remoteAgent(forAddress: address, workspaceId: workspace) {
+                    _ = manager.remove(id: agent.id)
+                }
+                _ = manager.remove(id: sibling.id)
+            }
+            let paired = try #require(await service.connect(
+                workspaceId: workspace, agentAddress: address, displayName: "Shared display name", silent: true
+            ))
+            let deadline = Date().addingTimeInterval(3)
+            while calls < 2 && Date() < deadline { try await Task.sleep(for: .milliseconds(20)) }
+            #expect(calls == 2)
+            let refreshed = try #require(manager.remoteAgent(forAddress: address, workspaceId: workspace))
+            #expect(refreshed.id == paired.id)
+            #expect(refreshed.providerId == paired.providerId)
+            #expect(refreshed.name == "Shared display name")
+            #expect(refreshed.description == description)
+            #expect(manager.remoteAgent(forAddress: address, workspaceId: siblingWorkspace)?.description == "Unchanged sibling description.")
+        }
+    }
+}

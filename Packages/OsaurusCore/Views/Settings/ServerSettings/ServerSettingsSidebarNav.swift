@@ -23,13 +23,13 @@ struct ServerSettingsSidebarNav: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: theme.space.s14) {
                 ForEach(ServerSettingsSectionGroup.allCases, id: \.self) { group in
                     groupBlock(group)
                 }
             }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 18)
+            .padding(.horizontal, theme.space.s16)
+            .padding(.vertical, theme.space.s16)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .frame(maxHeight: .infinity)
@@ -37,12 +37,12 @@ struct ServerSettingsSidebarNav: View {
     }
 
     private func groupBlock(_ group: ServerSettingsSectionGroup) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
             Text(LocalizedStringKey(group.title), bundle: .module)
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundColor(theme.tertiaryText.opacity(0.7))
-                .padding(.leading, 10)
-                .padding(.bottom, 4)
+                .font(SettingsFont.chip)
+                .foregroundColor(theme.text.tertiary)
+                .padding(.leading, theme.space.s8)
+                .padding(.bottom, theme.space.s4)
 
             ForEach(group.sections) { section in
                 row(section)
@@ -56,17 +56,17 @@ struct ServerSettingsSidebarNav: View {
         Button {
             selection = section
         } label: {
-            HStack(spacing: 0) {
+            HStack(spacing: theme.space.s0) {
                 Rectangle()
-                    .fill(isSelected ? theme.accentColor : .clear)
+                    .fill(isSelected ? theme.action.primary.default.background : .clear)
                     .frame(width: 2)
-                    .padding(.vertical, 2)
+                    .padding(.vertical, theme.space.s2)
 
                 Text(LocalizedStringKey(section.title), bundle: .module)
-                    .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
-                    .foregroundColor(isSelected ? theme.primaryText : theme.secondaryText)
-                    .padding(.leading, 10)
-                    .padding(.vertical, 5)
+                    .textStyle(.caption, weight: isSelected ? 600 : 400)
+                    .foregroundColor(isSelected ? theme.text.primary : theme.text.secondary)
+                    .padding(.leading, theme.space.s8)
+                    .padding(.vertical, theme.space.s6)
 
                 Spacer(minLength: 0)
             }

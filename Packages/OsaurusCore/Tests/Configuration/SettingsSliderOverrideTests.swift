@@ -9,7 +9,7 @@ struct SettingsSliderOverrideTests {
     @Test("Reading an inherited slider never creates an override")
     func inheritedReadIsNotAnOverride() {
         var text = ""
-        let field = SettingsSliderField(
+        let field = SettingsSliderRow(
             label: "Temperature",
             help: "",
             text: Binding(get: { text }, set: { text = $0 }),
@@ -35,7 +35,7 @@ struct SettingsSliderOverrideTests {
     @Test("Saved values and external resets are reflected without asynchronous state")
     func externalChangesAreImmediate() {
         var text = "0.85"
-        let field = SettingsSliderField(
+        let field = SettingsSliderRow(
             label: "Top P Override",
             help: "",
             text: Binding(get: { text }, set: { text = $0 }),

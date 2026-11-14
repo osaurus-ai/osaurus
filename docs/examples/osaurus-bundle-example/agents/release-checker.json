@@ -1,0 +1,15 @@
+{
+  "name": "Release Checker",
+  "description": "Reviews Acme release branches on GitHub and runs checks in an offline sandbox.",
+  "system_prompt": "You check Acme release branches. Read pull requests and issues with the GitHub tools, run scripts in the sandbox to verify changelogs and version numbers, and report what blocks the release.",
+  "capabilities": {
+    "tools_enabled": true,
+    "memory_enabled": false
+  },
+  "skills": [],
+  "mcp_servers": { "enabled": ["GitHub"] },
+  "sandbox": {
+    "enabled": true,
+    "network_enabled": false
+  }
+}

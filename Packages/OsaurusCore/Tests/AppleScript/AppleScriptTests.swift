@@ -3122,7 +3122,7 @@ struct AppleScriptMapOutcomeTests {
 
     @Test("token/s + elapsed are reported when measured, never fabricated")
     func tokensPerSecondReported() throws {
-        // A live-model run: tokens + model time measured → token/s present.
+        // Reported tokens + step wall time do not establish decode speed.
         let live = AppleScriptRunResult(
             outcome: .done(summary: "Done."),
             scriptsExecuted: 1,
@@ -3137,7 +3137,8 @@ struct AppleScriptMapOutcomeTests {
         let mapped = try AppleScriptKind.mapOutcome(live, model: "m", mode: .automate)
         #expect(mapped.payload["elapsed_seconds"] as? Double == 12.5)
         #expect(mapped.payload["model_tokens"] as? Int == 300)
-        #expect(mapped.payload["tokens_per_second"] as? Double == 30.0)
+        #expect(mapped.payload["tokens_per_second"] == nil)
+        #expect(live.modelStepThroughputTokensPerSecond == 30.0)
 
         // A scripted/injected run (no tokens, no model time) → NO token/s key.
         let scripted = AppleScriptRunResult(

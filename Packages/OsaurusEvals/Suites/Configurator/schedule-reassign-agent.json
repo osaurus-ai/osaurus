@@ -1,0 +1,54 @@
+{
+  "id": "configurator.schedule-reassign-agent",
+  "domain": "configurator",
+  "label": "configurator • move a schedule to another agent",
+  "query": "Move my schedule \"Morning Brief\" to run under the agent \"Eval Browser Agent\" instead.",
+  "notes": "Reassignment is an automations entry (schedule source) patching `agent` to the new agent's name (merge semantics). Both the target agent AND a real schedule under the referenced name (owned by a different seeded agent) are seeded, so the reassignment is an actual change an inspect-first model can ground in live state instead of dead-ending on not-found.",
+  "fixtures": {
+    "seedAgents": [
+      {
+        "id": "2a9f4c7d-1e83-4b56-9d02-7f1a6c3e8b45",
+        "name": "Eval Browser Agent"
+      },
+      {
+        "id": "9d6b3f8a-5c21-4e74-a038-1f7e4b2d9c56",
+        "name": "Eval Brief Agent"
+      }
+    ],
+    "seedSchedules": [
+      {
+        "name": "Morning Brief",
+        "agentId": "9d6b3f8a-5c21-4e74-a038-1f7e4b2d9c56",
+        "instructions": "Compile the morning brief.",
+        "timeOfDay": "08:30",
+        "enabled": true
+      }
+    ]
+  },
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "osaurus_config"
+      ],
+      "mustNotCallTools": [
+        "capabilities_discover",
+        "capabilities_load"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "yaml": "Eval Browser Agent"
+          }
+        },
+        {
+          "tool": "osaurus_config",
+          "args": {
+            "yaml": "Morning Brief"
+          }
+        }
+      ],
+      "maxIterations": 8
+    }
+  }
+}

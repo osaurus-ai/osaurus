@@ -202,7 +202,7 @@ struct MCPHTTPHandlerTests {
         }
     }
 
-    @Test func claude_bridge_grant_rejects_tools_outside_its_scope() async throws {
+    @Test func harness_token_rejects_tools_outside_its_scope() async throws {
         try await DynamicCatalogTestLock.shared.run {
             let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(
                 "osaurus-tests-\(UUID().uuidString)",
@@ -215,11 +215,12 @@ struct MCPHTTPHandlerTests {
             ToolRegistry.shared.setEnabled(true, for: EchoTool.nameStatic)
             defer { ToolRegistry.shared.unregister(names: [EchoTool.nameStatic]) }
 
-            let grant = await ClaudeCodeBridgeGrantStore.shared.mint(
+            let grant = HarnessGrantStore.shared.mint(
                 agentId: UUID(),
-                allowsConfigWrites: false
+                allowsConfigWrites: false,
+                allowedToolNames: ["osaurus_inspect"]
             )
-            defer { Task { await ClaudeCodeBridgeGrantStore.shared.revoke(grant) } }
+            defer { HarnessGrantStore.shared.revoke(grant) }
 
             let server = try await startTestServer()
             defer { Task { await server.shutdown() } }
@@ -229,7 +230,7 @@ struct MCPHTTPHandlerTests {
             )
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue(grant, forHTTPHeaderField: ClaudeCodeBridgeGrantStore.headerName)
+            request.setValue(grant, forHTTPHeaderField: HarnessGrantStore.headerName)
             request.authenticate()
             request.httpBody = try JSONSerialization.data(withJSONObject: [
                 "name": EchoTool.nameStatic,
@@ -244,17 +245,158 @@ struct MCPHTTPHandlerTests {
             #expect(json["isError"] as? Bool == true)
             let content = try #require(json["content"] as? [[String: Any]])
             let envelopeText = try #require(content.first?["text"] as? String)
-            #expect(envelopeText.contains("outside this Claude Code turn's grant"))
+            #expect(envelopeText.contains("outside this agent token's scope"))
             #expect(envelopeText.contains(#""retryable":false"#))
 
-            request.setValue(
-                "\(grant)-tampered",
-                forHTTPHeaderField: ClaudeCodeBridgeGrantStore.headerName
-            )
+            request.setValue("\(grant)-tampered", forHTTPHeaderField: HarnessGrantStore.headerName)
             let (invalidData, invalidResponse) = try await URLSession.shared.data(for: request)
             #expect((invalidResponse as? HTTPURLResponse)?.statusCode == 200)
             let invalidBody = String(decoding: invalidData, as: UTF8.self)
-            #expect(invalidBody.contains("invalid or expired"))
+            #expect(invalidBody.contains("invalid or has been revoked"))
+
+            var list = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/mcp/tools")!)
+            list.setValue(grant, forHTTPHeaderField: HarnessGrantStore.headerName)
+            list.authenticate()
+            let (scopedData, scopedResponse) = try await URLSession.shared.data(for: list)
+            #expect((scopedResponse as? HTTPURLResponse)?.statusCode == 200)
+            #expect(!String(decoding: scopedData, as: UTF8.self).contains(EchoTool.nameStatic))
+
+            list.setValue("\(grant)-tampered", forHTTPHeaderField: HarnessGrantStore.headerName)
+            let (revokedData, revokedResponse) = try await URLSession.shared.data(for: list)
+            #expect((revokedResponse as? HTTPURLResponse)?.statusCode == 401)
+            #expect(String(decoding: revokedData, as: UTF8.self).contains("invalid or has been revoked"))
+        }
+    }
+
+    /// What `osaurus mcp` sends for a Claude Code agent: the bridge header
+    /// alone, no access key, against a server that does not trust loopback
+    /// (network exposure on).
+    @Test func bridge_header_alone_lists_the_agents_tools_without_loopback_trust() async throws {
+        try await DynamicCatalogTestLock.shared.run {
+            let grant = HarnessGrantStore.shared.mint(
+                agentId: UUID(),
+                allowsConfigWrites: false,
+                allowedToolNames: Set(ClaudeCodeConfiguration.osaurusReadOnlyTools)
+            )
+            defer { HarnessGrantStore.shared.revoke(grant) }
+
+            let server = try await startTestServer()
+            defer { Task { await server.shutdown() } }
+
+            var list = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/mcp/tools")!)
+            list.setValue(grant, forHTTPHeaderField: HarnessGrantStore.headerName)
+            let (data, response) = try await URLSession.shared.data(for: list)
+            #expect((response as? HTTPURLResponse)?.statusCode == 200)
+            let json = try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let names = Set((json["tools"] as? [[String: Any]] ?? []).compactMap { $0["name"] as? String })
+            #expect(names.isSubset(of: Set(ClaudeCodeConfiguration.osaurusReadOnlyTools)))
+
+            var anonymous = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/mcp/tools")!)
+            anonymous.httpMethod = "GET"
+            let (_, anonymousResponse) = try await URLSession.shared.data(for: anonymous)
+            #expect((anonymousResponse as? HTTPURLResponse)?.statusCode == 401)
+        }
+    }
+
+    /// The Architect on a harness reaches its drafting tools over the
+    /// bridge. The grant carries the chat, so the draft tools find (or make)
+    /// that chat's draft; without it they have nowhere to put one.
+    @Test func architect_grant_binds_draft_tools_to_its_chat() async throws {
+        let chatId = UUID()
+        let grant = HarnessGrantStore.shared.mint(
+            agentId: Agent.architectId,
+            chatId: chatId,
+            allowsConfigWrites: false,
+            allowedToolNames: HarnessGrantStore.architectToolNames
+        )
+        let unbound = HarnessGrantStore.shared.mint(
+            agentId: Agent.architectId,
+            allowsConfigWrites: false,
+            allowedToolNames: HarnessGrantStore.architectToolNames
+        )
+        defer {
+            HarnessGrantStore.shared.revoke(grant)
+            HarnessGrantStore.shared.revoke(unbound)
+            if let draft = WorkflowDraftStore.shared.draft(forSession: chatId.uuidString) {
+                WorkflowDraftStore.shared.delete(draft.id)
+            }
+        }
+
+        let server = try await startTestServer()
+        defer { Task { await server.shutdown() } }
+
+        var list = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/mcp/tools")!)
+        list.setValue(grant, forHTTPHeaderField: HarnessGrantStore.headerName)
+        let (listData, _) = try await URLSession.shared.data(for: list)
+        let tools = try #require(
+            (try JSONSerialization.jsonObject(with: listData) as? [String: Any])?["tools"] as? [[String: Any]])
+        let names = Set(tools.compactMap { $0["name"] as? String })
+        #expect(names.isSubset(of: HarnessGrantStore.architectToolNames))
+        #expect(names.contains(WorkflowDraftTool.toolName))
+        #expect(names.contains(WorkflowProposeSaveTool.toolName))
+        let inspect = tools.first { $0["name"] as? String == "osaurus_inspect" }
+        #expect(inspect?["description"] as? String == OsaurusInspectTool.architectDescription)
+
+        func callDraftGet(_ token: String) async throws -> String {
+            var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/mcp/call")!)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(token, forHTTPHeaderField: HarnessGrantStore.headerName)
+            request.httpBody = try JSONSerialization.data(withJSONObject: [
+                "name": WorkflowDraftTool.toolName, "arguments": ["action": "get"],
+            ])
+            let (data, _) = try await URLSession.shared.data(for: request)
+            return String(decoding: data, as: UTF8.self)
+        }
+
+        let bound = try await callDraftGet(grant)
+        #expect(bound.contains(#""isError":false"#), "\(bound)")
+        #expect(WorkflowDraftStore.shared.draft(forSession: chatId.uuidString) != nil)
+
+        let loose = try await callDraftGet(unbound)
+        #expect(loose.contains("no chat to attach a workflow draft"), "\(loose)")
+    }
+
+    @Test func harness_token_is_confined_to_inference_and_mcp_routes() async throws {
+        let grant = HarnessGrantStore.shared.mint(agentId: UUID(), allowsConfigWrites: false)
+        defer { HarnessGrantStore.shared.revoke(grant) }
+
+        let server = try await startTestServer()
+        defer { Task { await server.shutdown() } }
+
+        var admin = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/admin/cache-stats")!)
+        admin.setValue("Bearer \(grant)", forHTTPHeaderField: "Authorization")
+        let (adminData, adminResponse) = try await URLSession.shared.data(for: admin)
+        #expect((adminResponse as? HTTPURLResponse)?.statusCode == 403)
+        #expect(String(decoding: adminData, as: UTF8.self).contains("harness_token_scope"))
+
+        var health = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/mcp/health")!)
+        health.setValue("Bearer \(grant)", forHTTPHeaderField: "Authorization")
+        let (_, healthResponse) = try await URLSession.shared.data(for: health)
+        #expect((healthResponse as? HTTPURLResponse)?.statusCode == 200)
+
+        HarnessGrantStore.shared.revoke(grant)
+        let (_, revokedResponse) = try await URLSession.shared.data(for: admin)
+        #expect((revokedResponse as? HTTPURLResponse)?.statusCode == 401)
+    }
+
+    @Test func harness_token_cannot_reach_built_in_loop_or_spawn_tools() async throws {
+        let grant = HarnessGrantStore.shared.mint(agentId: UUID(), allowsConfigWrites: true)
+        defer { HarnessGrantStore.shared.revoke(grant) }
+
+        let server = try await startTestServer()
+        defer { Task { await server.shutdown() } }
+
+        for tool in [SubagentCapabilityRegistry.spawnAgentToolName, "todo", ComputerUseTool.toolName] {
+            var request = URLRequest(url: URL(string: "http://\(server.host):\(server.port)/mcp/call")!)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue(grant, forHTTPHeaderField: HarnessGrantStore.headerName)
+            request.httpBody = try JSONSerialization.data(withJSONObject: ["name": tool, "arguments": [:]])
+            let (data, _) = try await URLSession.shared.data(for: request)
+            let body = String(decoding: data, as: UTF8.self)
+            #expect(body.contains(#""isError":true"#) || body.contains("tool_not_exposable"), "\(tool): \(body)")
+            #expect(!body.contains(#""ok":true"#), "\(tool) must not run with a harness token")
         }
     }
 
@@ -293,6 +435,9 @@ struct MCPHTTPHandlerTests {
                 == ToolRegistry.externallyDeniedHostToolNames
                 .union(ToolRegistry.agentChannelToolNames)
                 .union(AppleApp.allToolNames)
+                // Pops an AppKit folder picker on a chat window — never
+                // reachable from a remote surface.
+                .union([PromptWorkingFolderTool.toolName])
         )
         // Every REGISTERED agent_channel_* tool must be in the deny family.
         let registeredChannelNames = Set(
@@ -465,12 +610,12 @@ struct MCPHTTPHandlerTests {
     }
 
     @Test func stdio_mcp_policy_hides_externally_denied_tools() {
-        #expect(MCPServerManager.isToolVisibleToExternalMCP(name: EchoTool.nameStatic, enabled: true))
-        #expect(!MCPServerManager.isToolVisibleToExternalMCP(name: EchoTool.nameStatic, enabled: false))
+        #expect(ExternalMCPToolPolicy.isToolVisibleToExternalMCP(name: EchoTool.nameStatic, enabled: true))
+        #expect(!ExternalMCPToolPolicy.isToolVisibleToExternalMCP(name: EchoTool.nameStatic, enabled: false))
 
         for name in ["file_write", "shell_run"] + Self.agentChannelToolNames {
-            #expect(!MCPServerManager.isToolVisibleToExternalMCP(name: name, enabled: true))
-            let denial = MCPServerManager.externalMCPDenialMessage(for: name)
+            #expect(!ExternalMCPToolPolicy.isToolVisibleToExternalMCP(name: name, enabled: true))
+            let denial = ExternalMCPToolPolicy.externalMCPDenialMessage(for: name)
             #expect(denial?.contains("App-only tools") == true)
         }
     }
@@ -488,7 +633,7 @@ struct MCPHTTPHandlerTests {
             ToolRegistry.shared.setEnabled(true, for: ExternalSurfaceProbeTool.nameStatic)
             defer { ToolRegistry.shared.unregister(names: [ExternalSurfaceProbeTool.nameStatic]) }
 
-            let text = try await MCPServerManager.executeToolAsExternalMCP(
+            let text = try await ExternalMCPToolPolicy.executeToolAsExternalMCP(
                 name: ExternalSurfaceProbeTool.nameStatic,
                 argumentsJSON: "{}"
             )
@@ -504,7 +649,7 @@ struct MCPHTTPHandlerTests {
 
     @Test func stdio_mcp_execution_denies_agent_channel_tools() async throws {
         for toolName in Self.agentChannelToolNames {
-            let text = try await MCPServerManager.executeToolAsExternalMCP(
+            let text = try await ExternalMCPToolPolicy.executeToolAsExternalMCP(
                 name: toolName,
                 argumentsJSON: #"{"connection_id":"telegram","room_id":"-100111222333","content":"must not leak"}"#
             )

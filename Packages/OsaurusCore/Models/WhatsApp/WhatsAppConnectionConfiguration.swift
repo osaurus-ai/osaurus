@@ -41,7 +41,6 @@ struct WhatsAppConnectionConfiguration: Codable, Equatable, Sendable {
     /// always written inside the default media directory.
     var allowedAttachmentRoots: [String]
     var maxAttachmentBytes: Int
-    var inboundDispatch: AgentChannelInboundDispatchConfiguration
 
     enum CodingKeys: String, CodingKey {
         case readableChatIds
@@ -55,7 +54,6 @@ struct WhatsAppConnectionConfiguration: Codable, Equatable, Sendable {
         case attachmentIngestionEnabled
         case allowedAttachmentRoots
         case maxAttachmentBytes
-        case inboundDispatch
     }
 
     static let defaultMaxAttachmentBytes = 25 * 1_024 * 1_024
@@ -84,10 +82,7 @@ struct WhatsAppConnectionConfiguration: Codable, Equatable, Sendable {
         sendReadReceipts: Bool = false,
         attachmentIngestionEnabled: Bool = false,
         allowedAttachmentRoots: [String]? = nil,
-        maxAttachmentBytes: Int = WhatsAppConnectionConfiguration.defaultMaxAttachmentBytes,
-        inboundDispatch: AgentChannelInboundDispatchConfiguration = AgentChannelInboundDispatchConfiguration(
-            requireMention: false
-        )
+        maxAttachmentBytes: Int = WhatsAppConnectionConfiguration.defaultMaxAttachmentBytes
     ) {
         self.readableChatIds = Self.normalizedIds(readableChatIds)
         self.writableChatIds = Self.normalizedIds(writableChatIds)
@@ -102,7 +97,6 @@ struct WhatsAppConnectionConfiguration: Codable, Equatable, Sendable {
             allowedAttachmentRoots ?? Self.defaultAttachmentRoots
         )
         self.maxAttachmentBytes = Self.clampAttachmentBytes(maxAttachmentBytes)
-        self.inboundDispatch = inboundDispatch
     }
 
     init(from decoder: Decoder) throws {
@@ -126,11 +120,7 @@ struct WhatsAppConnectionConfiguration: Codable, Equatable, Sendable {
                 forKey: .allowedAttachmentRoots
             ),
             maxAttachmentBytes: try container.decodeIfPresent(Int.self, forKey: .maxAttachmentBytes)
-                ?? Self.defaultMaxAttachmentBytes,
-            inboundDispatch: try container.decodeIfPresent(
-                AgentChannelInboundDispatchConfiguration.self,
-                forKey: .inboundDispatch
-            ) ?? AgentChannelInboundDispatchConfiguration(requireMention: false)
+                ?? Self.defaultMaxAttachmentBytes
         )
     }
 
@@ -146,8 +136,7 @@ struct WhatsAppConnectionConfiguration: Codable, Equatable, Sendable {
             sendReadReceipts: sendReadReceipts,
             attachmentIngestionEnabled: attachmentIngestionEnabled,
             allowedAttachmentRoots: allowedAttachmentRoots,
-            maxAttachmentBytes: maxAttachmentBytes,
-            inboundDispatch: inboundDispatch
+            maxAttachmentBytes: maxAttachmentBytes
         )
     }
 
@@ -237,12 +226,27 @@ struct WhatsAppConnectionConfiguration: Codable, Equatable, Sendable {
 }
 
 enum WhatsAppConnectionConfigurationStore {
-    nonisolated(unsafe) static var overrideDirectory: URL?
+    nonisolated(unsafe) static var overrideDirectory: URL? {
+        didSet { cache.reset() }
+    }
 
     private static let fileName = "whatsapp.json"
 
+    /// In-memory copy of the last loaded/saved configuration. See
+    /// `ConnectionConfigurationCache` (Sentry APPLE-MACOS-3C5).
+    private static let cache = ConnectionConfigurationCache<WhatsAppConnectionConfiguration>()
+
+    /// Drop the in-memory copy so the next `load()` reads from disk.
+    static func resetCache() {
+        cache.reset()
+    }
+
     static func load() -> WhatsAppConnectionConfiguration {
         let url = configurationFileURL()
+        return cache.value(for: url) { loadFromDisk(at: url) }
+    }
+
+    private static func loadFromDisk(at url: URL) -> WhatsAppConnectionConfiguration {
         guard FileManager.default.fileExists(atPath: url.path) else {
             return WhatsAppConnectionConfiguration()
         }
@@ -261,13 +265,16 @@ enum WhatsAppConnectionConfigurationStore {
         OsaurusPaths.ensureExistsSilent(url.deletingLastPathComponent())
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(configuration.normalized).write(to: url, options: [.atomic])
+        let normalized = configuration.normalized
+        let data = try encoder.encode(normalized)
+        try LegacyInboundDispatchCarryOver.platformFile(data, replacing: url).write(to: url, options: [.atomic])
+        cache.store(normalized, for: url)
     }
 
     static func configurationFileURL() -> URL {
         if let overrideDirectory {
-            return overrideDirectory.appendingPathComponent(fileName)
+            return overrideDirectory.appendingPathComponent(fileName, isDirectory: false)
         }
-        return OsaurusPaths.config().appendingPathComponent(fileName)
+        return OsaurusPaths.config().appendingPathComponent(fileName, isDirectory: false)
     }
 }

@@ -272,37 +272,37 @@
         "de" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus nutzt das lokale Netzwerk, um Agenten auf anderen Geräten zu finden und zu verbinden."
+            "value" : "Osaurus nutzt das lokale Netzwerk, um deine Chats mit deinen anderen Geräten zu synchronisieren und sich mit Agenten auf ihnen zu verbinden."
           }
         },
         "en" : {
           "stringUnit" : {
             "state" : "new",
-            "value" : "Osaurus uses the local network to discover and connect to agents running on other devices."
+            "value" : "Osaurus uses the local network to sync your chats with your other devices and to connect to agents running on them."
           }
         },
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus가 다른 기기에서 실행 중인 에이전트를 검색하고 연결하기 위해 로컬 네트워크를 사용합니다."
+            "value" : "Osaurus는 로컬 네트워크를 사용해 다른 기기와 채팅을 동기화하고 그 기기에서 실행 중인 에이전트에 연결합니다."
           }
         },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus использует локальную сеть, чтобы находить агентов на других устройствах и подключаться к ним."
+            "value" : "Osaurus использует локальную сеть, чтобы синхронизировать ваши чаты с другими вашими устройствами и подключаться к агентам на них."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus 使用本地网络来发现并连接运行在其他设备上的智能体。"
+            "value" : "Osaurus 使用本地网络与你的其他设备同步聊天，并连接在这些设备上运行的智能体。"
           }
         },
         "zh-Hant" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Osaurus 使用本地網路來發現並連接執行在其他裝置上的智慧代理。"
+            "value" : "Osaurus 使用本地網路與你的其他裝置同步聊天，並連接在這些裝置上執行的智慧代理。"
           }
         }
       }
@@ -528,6 +528,9 @@
           }
         }
       }
+    },
+    "Osaurus Template" : {
+
     }
   },
   "version" : "1.0"

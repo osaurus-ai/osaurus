@@ -10,7 +10,7 @@
 //      → ExecutionContext (forms the contract, stamps the session)
 //        → ChatSession.delegationBudget
 //          → clampedContextWindow → AgentLoopBudget.makeBudgetManager
-//            → trimming / `.overBudget` (ContextBudgetManager)
+//            → trimming / advisory overflow (ContextBudgetManager)
 //          → clampedToolAttempts → AgentLoopPolicy.maxIterations
 //            → AgentToolLoop `.iterationCapReached`
 //          → clampedResponseTokens → per-generation `max_tokens`
@@ -105,9 +105,8 @@ struct DelegatedBudgetEnforcementTests {
             "no over-allowance tool result survives verbatim")
 
         // The SAME bloat sitting in the PROTECTED recent tail cannot be
-        // trimmed away — and the honest outcome is the reported overflow
-        // (which the loop turns into `.overBudget` before any model step),
-        // never a silently over-ceiling request.
+        // trimmed away. Report the estimated overflow for diagnostics;
+        // the runtime, not this heuristic, decides whether it can execute.
         var recentBloat: [ChatMessage] = [
             ChatMessage(role: "system", content: "delegated child system prompt")
         ]
@@ -136,13 +135,12 @@ struct DelegatedBudgetEnforcementTests {
         #expect(huge.historyBudget < modest.historyBudget, "overrun comes out of history")
     }
 
-    // MARK: Context ceiling → loop `.overBudget` before any model step
+    // MARK: Context estimate → runtime admission
 
-    /// A transcript that cannot fit even fully compacted ends the run with
-    /// `.overBudget` BEFORE the model step: zero model calls, zero charged
-    /// iterations. This is the "no model step runs after overflow" proof.
-    @Test("unfittable transcript exits overBudget with no model step")
-    func overBudgetExitsBeforeModelStep() async throws {
+    /// Contract trimming still applies, but its heuristic measurement cannot
+    /// refuse the request. Actual runtime limits remain authoritative.
+    @Test("unfittable estimate still reaches the model step")
+    func overBudgetEstimateReachesModelStep() async throws {
         let contract = self.contract
         let manager = delegatedBudgetManager(contract)
 
@@ -185,9 +183,9 @@ struct DelegatedBudgetEnforcementTests {
             hooks: hooks
         )
 
-        #expect(result.exit == .overBudget)
-        #expect(result.iterations == 0, "the doomed build charges no iteration")
-        #expect(modelSteps.count.withLock { $0 } == 0, "NO model step after overflow")
+        #expect(result.exit == .finalResponse)
+        #expect(result.iterations == 1)
+        #expect(modelSteps.count.withLock { $0 } == 1, "estimates cannot refuse admission")
     }
 
     // MARK: Turn ceiling → loop `.iterationCapReached`

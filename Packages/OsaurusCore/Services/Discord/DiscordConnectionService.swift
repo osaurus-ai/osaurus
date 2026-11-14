@@ -172,17 +172,23 @@ final class DiscordConnectionService: @unchecked Sendable {
         messageStore: AgentChannelMessageStore.shared
     )
 
+    /// The bot's channel connection: `discord` for the primary bot,
+    /// `discord-<session>` for the others (`ChannelAccounts`).
+    let connectionId: String
     private let client: DiscordAPIClientProtocol
     private let credentialStore: any DiscordCredentialStorage
     private let messageStore: AgentChannelMessageStore?
     private let recordMessageSnapshotsInline: Bool
     private let activityCenter: AgentChannelInboundActivityCenter
     private let inboundAgentAvailability: @Sendable (UUID) async -> Bool
+    /// The enabled events listening on this connection.
+    private let channelListeners: @Sendable () -> ChannelEventListeners
     private let runningInstanceCount: @Sendable () -> Int
     private let channelGuildCacheLock = NSLock()
     private var channelGuildCache: (updatedAt: Date, values: [String: String])?
 
     init(
+        connectionId: String = DiscordConnectionService.nativeConnectionId,
         client: DiscordAPIClientProtocol,
         credentialStore: any DiscordCredentialStorage = KeychainDiscordCredentialStorage(),
         messageStore: AgentChannelMessageStore? = nil,
@@ -193,26 +199,29 @@ final class DiscordConnectionService: @unchecked Sendable {
                 AgentManager.shared.agent(for: agentId).map { !$0.isBuiltIn } ?? false
             }
         },
+        channelListeners: (@Sendable () -> ChannelEventListeners)? = nil,
         runningInstanceCount: @escaping @Sendable () -> Int = {
             OsaurusRunningInstanceInspector.runningInstanceCount()
         }
     ) {
+        self.connectionId = connectionId
         self.client = client
         self.credentialStore = credentialStore
         self.messageStore = messageStore
         self.recordMessageSnapshotsInline = recordMessageSnapshotsInline
         self.activityCenter = activityCenter
         self.inboundAgentAvailability = inboundAgentAvailability
+        self.channelListeners = channelListeners ?? { EventManager.channelListeners(kind: .discord, connectionId: connectionId) }
         self.runningInstanceCount = runningInstanceCount
     }
 
     func configuration() -> DiscordConnectionConfiguration {
-        DiscordConnectionConfigurationStore.load()
+        DiscordConnectionConfigurationStore.load(connectionId: connectionId)
     }
 
     func saveConfiguration(_ configuration: DiscordConnectionConfiguration) throws {
         do {
-            try DiscordConnectionConfigurationStore.save(configuration)
+            try DiscordConnectionConfigurationStore.save(configuration, connectionId: connectionId)
         } catch {
             throw DiscordConnectionServiceError.configurationSaveFailed(error.localizedDescription)
         }
@@ -236,6 +245,11 @@ final class DiscordConnectionService: @unchecked Sendable {
 
     func hasBotToken() -> Bool {
         credentialStore.hasBotToken()
+    }
+
+    /// The bot's token, for its Gateway presence session.
+    func savedBotToken() -> String? {
+        credentialStore.botToken()
     }
 
     // MARK: - Off-main credential access
@@ -320,7 +334,7 @@ final class DiscordConnectionService: @unchecked Sendable {
         var dispatchSuppressed = 0
 
         for channelId in config.readableChannelIds {
-            let cursor = try messageStore.cursor(connectionId: Self.nativeConnectionId, roomId: channelId)
+            let cursor = try messageStore.cursor(connectionId: connectionId, roomId: channelId)
             let messages = try await client.messages(
                 channelId: channelId,
                 token: token,
@@ -331,7 +345,7 @@ final class DiscordConnectionService: @unchecked Sendable {
             if cursor == nil {
                 if let newest = ordered.last {
                     try messageStore.upsertCursor(
-                        connectionId: Self.nativeConnectionId,
+                        connectionId: connectionId,
                         roomId: channelId,
                         cursor: newest.id
                     )
@@ -342,7 +356,7 @@ final class DiscordConnectionService: @unchecked Sendable {
                 received += 1
                 let providerEventId = "discord:\(message.id)"
                 await activityCenter.record(
-                    connectionId: Self.nativeConnectionId,
+                    connectionId: connectionId,
                     providerEventId: providerEventId,
                     stage: .received
                 )
@@ -353,7 +367,7 @@ final class DiscordConnectionService: @unchecked Sendable {
                 )
                 let authorization = try authorizationService.authorizeInboundMessage(
                     AgentChannelInboundMessageAuthorizationRequest(
-                        connectionId: Self.nativeConnectionId,
+                        connectionId: connectionId,
                         providerEventId: providerEventId,
                         providerMessageId: message.id,
                         spaceId: channelGuildIds[channelId],
@@ -366,32 +380,33 @@ final class DiscordConnectionService: @unchecked Sendable {
                 )
                 let storedMessage = Self.storedMessage(
                     message,
+                    connectionId: connectionId,
                     channelId: channelId,
                     direction: .inbound
                 )
                 let result = try messageStore.recordReceiveEvent(
-                    connectionId: Self.nativeConnectionId,
+                    connectionId: connectionId,
                     providerEventId: providerEventId,
                     authorization: authorization,
                     message: storedMessage,
                     cursor: message.id
                 )
                 try messageStore.upsertCursor(
-                    connectionId: Self.nativeConnectionId,
+                    connectionId: connectionId,
                     roomId: channelId,
                     cursor: message.id
                 )
                 if result.messageInserted { stored += 1 }
                 if result.disposition != .accepted {
                     await activityCenter.record(
-                        connectionId: Self.nativeConnectionId,
+                        connectionId: connectionId,
                         providerEventId: providerEventId,
                         stage: .rejected,
                         reason: result.authorizationReason
                     )
                 } else {
                     await activityCenter.record(
-                        connectionId: Self.nativeConnectionId,
+                        connectionId: connectionId,
                         providerEventId: providerEventId,
                         stage: .stored
                     )
@@ -406,7 +421,7 @@ final class DiscordConnectionService: @unchecked Sendable {
                 switch relay {
                 case .dispatched(let target, let rule):
                     await activityCenter.record(
-                        connectionId: Self.nativeConnectionId,
+                        connectionId: connectionId,
                         providerEventId: providerEventId,
                         stage: .dispatched,
                         reason: await AgentChannelInboundActivityPresentation.dispatchReason(
@@ -414,9 +429,16 @@ final class DiscordConnectionService: @unchecked Sendable {
                             rule: rule
                         )
                     )
+                case .fired(let eventNames, _):
+                    await activityCenter.record(
+                        connectionId: connectionId,
+                        providerEventId: providerEventId,
+                        stage: .dispatched,
+                        reason: AgentChannelInboundActivityPresentation.firedReason(eventNames: eventNames)
+                    )
                 case .suppressed(let reason):
                     await activityCenter.record(
-                        connectionId: Self.nativeConnectionId,
+                        connectionId: connectionId,
                         providerEventId: providerEventId,
                         stage: .dispatchSuppressed,
                         reason: reason
@@ -437,40 +459,30 @@ final class DiscordConnectionService: @unchecked Sendable {
         botId: String,
         config: DiscordConnectionConfiguration
     ) async -> AgentChannelInboundRelaySubmission {
-        let settings = config.inboundDispatch
-        guard settings.isConfigured else {
-            return .suppressed("inbound_dispatch_not_configured")
-        }
         let mentionsBot = message.content.contains("<@\(botId)>")
             || message.content.contains("<@!\(botId)>")
-        if settings.requireMention, !mentionsBot {
-            let continuing = settings.continueThreads && hasOutboundMessage(in: message.channelId)
-            guard continuing else { return .suppressed("mention_required") }
-        }
         let content = message.content
             .replacingOccurrences(of: "<@\(botId)>", with: "")
             .replacingOccurrences(of: "<@!\(botId)>", with: "")
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        var responder: AgentChannelInboundReplyHandler?
-        if settings.autoReplyEnabled {
-            responder = { [weak self] response in
-                guard let self else { return }
-                _ = try await self.sendMessage(
-                    channelId: message.channelId,
-                    content: response,
-                    confirmSend: true
-                )
-            }
+        let responder: AgentChannelInboundReplyHandler = { [weak self] response in
+            guard let self else { return }
+            _ = try await self.sendMessage(
+                channelId: message.channelId,
+                content: response,
+                confirmSend: true
+            )
         }
-        return await AgentChannelInboundRelay.shared.submit(
-            AgentChannelInboundRelayRequest(
+        return await EventManager.shared.ingestChannelMessage(
+            ChannelInboundMessage(
                 identity: ChannelIdentity(
                     kind: .discord,
-                    installationId: config.configuredGuildIds.first ?? Self.nativeConnectionId,
+                    installationId: config.configuredGuildIds.first ?? connectionId,
                     groupId: message.channelId,
                     sender: ChannelSenderMetadata(senderId: message.author.id)
                 ),
-                connectionId: Self.nativeConnectionId,
+                kind: .discord,
+                connectionId: connectionId,
                 providerEventId: "discord:\(message.id)",
                 providerRoute: AgentChannelProviderRoute(
                     conversationId: message.channelId,
@@ -479,11 +491,13 @@ final class DiscordConnectionService: @unchecked Sendable {
                 content: content,
                 attachments: Self.storedMessage(
                     message,
+                    connectionId: connectionId,
                     channelId: message.channelId,
                     direction: .inbound
                 ).attachments,
-                settings: settings,
                 sourceLabel: "Discord channel \(message.channelId), sender \(message.author.id)",
+                mentionsBot: mentionsBot,
+                hasPriorOutbound: !mentionsBot && hasOutboundMessage(in: message.channelId),
                 reply: responder
             )
         )
@@ -515,7 +529,7 @@ final class DiscordConnectionService: @unchecked Sendable {
         do {
             try messageStore.openIfNeeded()
             return try messageStore.recentMessages(
-                connectionId: Self.nativeConnectionId,
+                connectionId: connectionId,
                 roomId: channelId,
                 limit: 200
             ).contains { $0.direction == .outbound }
@@ -535,7 +549,7 @@ final class DiscordConnectionService: @unchecked Sendable {
                 writableChannelIds: config.writableChannelIds,
                 senderAllowlist: config.senderAllowlist,
                 writeEnabled: config.writeEnabled,
-                inboundDispatchEnabled: config.inboundDispatch.enabled,
+                inboundDispatchEnabled: !channelListeners().isEmpty,
                 status: "not_configured",
                 failures: ["No Discord bot token is saved."]
             )
@@ -576,25 +590,18 @@ final class DiscordConnectionService: @unchecked Sendable {
         }
 
         var inboundDispatchIssue: String?
-        if config.inboundDispatch.enabled {
-            let referencedAgents = config.inboundDispatch.referencedAgentIds
-            if referencedAgents.isEmpty {
-                inboundDispatchIssue = "inbound_agent_not_selected"
+        let listeners = channelListeners()
+        if !listeners.isEmpty {
+            for agentId in listeners.referencedAgentIds where await !inboundAgentAvailability(agentId) {
+                inboundDispatchIssue = "inbound_agent_unavailable"
                 failures.append(
-                    "Inbound dispatch is enabled but no agent is selected for incoming Discord messages."
+                    "An automation for incoming Discord messages runs an agent that no longer exists. Pick another agent for it in Automations."
                 )
-            } else {
-                for agentId in referencedAgents where await !inboundAgentAvailability(agentId) {
-                    inboundDispatchIssue = "inbound_agent_unavailable"
-                    failures.append(
-                        "Inbound dispatch is enabled but a routed agent no longer exists. Update the routing rules in Discord settings."
-                    )
-                    break
-                }
+                break
             }
             if config.senderAllowlist.isEmpty {
                 failures.append(
-                    "Inbound dispatch is enabled but no authorized Discord senders are allowlisted, so nothing will be received."
+                    "An event listens to Discord but no authorized Discord senders are allowlisted, so nothing will be received."
                 )
             }
         }
@@ -626,7 +633,7 @@ final class DiscordConnectionService: @unchecked Sendable {
             writableChannelIds: config.writableChannelIds,
             senderAllowlist: config.senderAllowlist,
             writeEnabled: config.writeEnabled,
-            inboundDispatchEnabled: config.inboundDispatch.enabled,
+            inboundDispatchEnabled: !channelListeners().isEmpty,
             inboundDispatchIssue: inboundDispatchIssue,
             status: status,
             failures: failures,
@@ -1010,6 +1017,7 @@ final class DiscordConnectionService: @unchecked Sendable {
         let rows = messages.map { message in
             Self.storedMessage(
                 message,
+                connectionId: connectionId,
                 channelId: channelId,
                 direction: direction
             )
@@ -1037,11 +1045,12 @@ final class DiscordConnectionService: @unchecked Sendable {
 
     private static func storedMessage(
         _ message: DiscordMessage,
+        connectionId: String,
         channelId: String,
         direction: AgentChannelStoredMessageDirection
     ) -> AgentChannelStoredMessage {
         AgentChannelStoredMessage(
-            connectionId: "discord",
+            connectionId: connectionId,
             roomId: channelId,
             providerMessageId: message.id,
             direction: direction,

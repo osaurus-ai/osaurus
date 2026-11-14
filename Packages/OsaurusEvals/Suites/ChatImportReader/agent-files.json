@@ -1,0 +1,34 @@
+{
+  "id": "chat_import_reader.agent-files",
+  "domain": "chat_import_reader",
+  "label": "chat import reader • Claude Code, Copilot, and OpenCode agent files from one repo",
+  "query": "Import the agents from github.com/acme/agents",
+  "notes": "Claude Code `agents/*.md` is a fast path. Copilot `.github/agents/*.agent.md` and OpenCode `.opencode/agent/*.md` sit outside an `agents/` folder, so the reader must report them as agents pointing at their documents.",
+  "fixtures": {},
+  "expect": {
+    "chatImport": {
+      "documents": [
+        {
+          "origin": "https://github.com/acme/agents",
+          "path": "agents/security-reviewer.md",
+          "text": "---\nname: security-reviewer\ndescription: Reviews code for security issues.\ntools: Read, Grep, Glob\n---\nYou are a security reviewer. Look for injection, secrets in code, and unsafe deserialization. Report findings with file and line."
+        },
+        {
+          "origin": "https://github.com/acme/agents",
+          "path": ".github/agents/docs-writer.agent.md",
+          "text": "---\ndescription: Writes and updates project documentation.\ntools: ['edit', 'search']\n---\n# Docs Writer\n\nYou write clear documentation for this repository. Keep a friendly tone and update the README when features change."
+        },
+        {
+          "origin": "https://github.com/acme/agents",
+          "path": ".opencode/agent/test-runner.md",
+          "text": "---\ndescription: Runs the test suite and explains failures.\nmode: subagent\ntools:\n  write: false\n---\nYou are the Test Runner. Run the tests, then explain each failure in one paragraph with a suggested fix."
+        }
+      ],
+      "items": [
+        { "kind": "agent", "name": "security" },
+        { "kind": "agent", "name": "docs" },
+        { "kind": "agent", "name": "test" }
+      ]
+    }
+  }
+}

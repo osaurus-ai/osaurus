@@ -1,0 +1,25 @@
+{
+  "id": "orchestrator.route-settings-change-calls-state",
+  "domain": "orchestrator",
+  "label": "orchestrator • a settings change goes to the Configurator, then state is written",
+  "query": "Stop suggesting follow-up questions after your answers.",
+  "notes": "Rule 4 (never apply a change yourself) and rule 6 (call state once per turn). The handoff runs the real Configurator, whose apply auto-approves in this headless lane.",
+  "fixtures": {},
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "configurator_handoff",
+        "state"
+      ],
+      "mustNotCallTools": [
+        "architect_handoff",
+        "spawn_agent",
+        "osaurus_config"
+      ],
+      "rubric": [
+        "Says follow-up suggestions are now off (or that the change is done), with no option menu."
+      ],
+      "maxIterations": 5
+    }
+  }
+}

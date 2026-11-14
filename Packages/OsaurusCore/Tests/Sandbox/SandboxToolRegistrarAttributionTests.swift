@@ -153,6 +153,46 @@ struct SandboxToolRegistrarAttributionTests {
         }
     }
 
+    // MARK: - Cancellation
+
+    @Test
+    func cancelledStart_isNotRecordedAsAFailure() async {
+        await SandboxTestLock.runWithStoragePaths {
+            let registrar = SandboxToolRegistrar.shared
+            let fixture = makeFixture(name: "CancelledStart")
+
+            registrar.containerStartOverride = { throw CancellationError() }
+            SandboxManager.State.shared.status = .stopped
+            await registrar.registerTools(for: fixture.agent.id, trigger: .onDemand)
+
+            #expect(registrar.unavailabilityReason(for: fixture.agent.id) == nil)
+            #expect(SandboxStartupMetricsStore.loadFailures().isEmpty)
+
+            registrar.containerStartOverride = fixture.originalStartOverride
+            await settle(fixture)
+            await tearDown(fixture)
+        }
+    }
+
+    @Test
+    func cancelledProvision_isNotRecordedAsAFailure() async {
+        await SandboxTestLock.runWithStoragePaths {
+            let registrar = SandboxToolRegistrar.shared
+            let fixture = makeFixture(name: "CancelledProvision")
+
+            registrar.provisionAgentOverride = { @MainActor _ in
+                throw SandboxProvisionStepError(step: .startReentry, underlying: CancellationError())
+            }
+            await registrar.registerTools(for: fixture.agent.id, trigger: .onDemand)
+
+            #expect(registrar.unavailabilityReason(for: fixture.agent.id) == nil)
+            #expect(SandboxStartupMetricsStore.loadFailures().isEmpty)
+
+            await settle(fixture)
+            await tearDown(fixture)
+        }
+    }
+
     // MARK: - Bootstrap step refinement
 
     @Test
@@ -469,5 +509,177 @@ struct SandboxToolRegistrarAttributionTests {
             await settle(fixture)
             await tearDown(fixture)
         }
+    }
+
+    // MARK: - Lease conflict episodes
+
+    /// A VM lease conflict is not a failed boot: it never arms the startup
+    /// cool-down or counts toward the lockout, carries the classified owner
+    /// for the chip's resolver, and is recorded once per episode however
+    /// many registrations hit it.
+    @Test
+    func leaseConflict_recordsOncePerEpisodeWithOwner_andNeverArmsTheLockout() async {
+        await SandboxTestLock.runWithStoragePaths {
+            let registrar = SandboxToolRegistrar.shared
+            let fixture = makeFixture(name: "Lease")
+            SandboxManager.State.shared.status = .stopped
+            var starts = 0
+            registrar.containerStartOverride = { @MainActor in
+                starts += 1
+                throw SandboxError.ownershipConflict("Sandbox VM is already owned by PID 1 (osaurus)")
+            }
+
+            // One more than the startup-failure lockout (3).
+            for _ in 0..<4 {
+                await registrar.registerTools(for: fixture.agent.id, trigger: .external)
+            }
+
+            let reason = registrar.unavailabilityReason(for: fixture.agent.id)
+            #expect(reason?.kind == .vmnetOwnedByOtherProcess)
+            #expect(reason?.leaseOwner != nil)
+            #expect(reason?.message.contains("cool-down") == false)
+            #expect(reason?.message.contains("automatic retries disabled") == false)
+            #expect(starts >= 1)
+            #expect(registrar.hasLeaseWatcherForTests)
+            let samples = SandboxStartupMetricsStore.loadFailures()
+            #expect(samples.count == 1)
+            #expect(samples.last?.category == "vmnet_in_use")
+            #expect(
+                SandboxVMOwnershipLease.OwnerState.allCases.map(\.rawValue).contains(samples.last?.ownerState ?? ""))
+            #expect(samples.last?.lockHolders != nil)
+
+            registrar.resetLeaseConflictForTests()
+            #expect(!registrar.hasLeaseWatcherForTests)
+            registrar.containerStartOverride = { @MainActor in
+                SandboxManager.State.shared.status = .running
+            }
+            registrar.provisionAgentOverride = { @MainActor _ in }
+            await registrar.registerTools(for: fixture.agent.id, trigger: .external)
+            #expect(registrar.unavailabilityReason(for: fixture.agent.id) == nil)
+            await tearDown(fixture)
+        }
+    }
+
+    /// A custom agent's chat turn during a lease conflict tells the model who
+    /// holds the VM and does not offer the host folder picker in its place.
+    @Test
+    func leaseConflict_customAgentChatGetsNoticeAndNoHostPicker() async {
+        await SandboxTestLock.runWithStoragePaths {
+            let registrar = SandboxToolRegistrar.shared
+            let fixture = makeFixture(name: "LeaseChat")
+            let previousAvailability = SandboxManager.State.shared.availability
+            SandboxManager.State.shared.availability = .available
+            defer { SandboxManager.State.shared.availability = previousAvailability }
+            SandboxManager.State.shared.status = .stopped
+            registrar.containerStartOverride = { @MainActor in
+                throw SandboxError.ownershipConflict("Sandbox VM is already owned by PID 1 (osaurus)")
+            }
+            await registrar.registerTools(for: fixture.agent.id, trigger: .external)
+            #expect(registrar.unavailabilityReason(for: fixture.agent.id)?.kind == .vmnetOwnedByOtherProcess)
+
+            let ctx = await ChatExecutionContext.$currentSessionSource.withValue(.chat) {
+                await SystemPromptComposer.composeChatContext(
+                    agentId: fixture.agent.id,
+                    executionMode: .none,
+                    model: "gpt-5"
+                )
+            }
+            #expect(ctx.manifest.sections.map(\.id).last == "sandboxUnavailable")
+            #expect(ctx.prompt.contains("owned by another Osaurus process"))
+            #expect(ctx.prompt.contains("already owned by PID 1"))
+            #expect(!ctx.tools.map(\.function.name).contains(PromptWorkingFolderTool.toolName))
+
+            // A guessed workspace tool names the sandbox, not a host folder.
+            let refused = try? await ChatExecutionContext.$currentAgentId.withValue(fixture.agent.id) {
+                try await ChatExecutionContext.$toolExecutionScope.withValue(ToolExecutionScope(exposed: [])) {
+                    try await ToolRegistry.shared.execute(name: "shell_run", argumentsJSON: "{}")
+                }
+            }
+            #expect(refused?.contains("runs in this agent's sandbox, which is not available") == true)
+            #expect(refused?.contains("already owned by PID 1") == true)
+            #expect(refused?.contains("Folder chip") == false)
+            let loadRefused = await ChatExecutionContext.$currentAgentId.withValue(fixture.agent.id) {
+                try? await CapabilitiesLoadTool().execute(argumentsJSON: #"{"ids":["tool/file_write"]}"#)
+            }
+            #expect(loadRefused?.contains("runs in this agent's sandbox") == true)
+            #expect(loadRefused?.contains("Folder chip") == false)
+
+            registrar.resetLeaseConflictForTests()
+            await settle(fixture)
+            await tearDown(fixture)
+        }
+    }
+
+    @Test
+    func sandboxNotReadyRefusal_pointsAtStartupOrTheBlocker() async {
+        await SandboxTestLock.runWithStoragePaths {
+            let fixture = makeFixture(name: "NotReady")
+            let previousAvailability = SandboxManager.State.shared.availability
+            defer { SandboxManager.State.shared.availability = previousAvailability }
+
+            SandboxManager.State.shared.availability = .available
+            let pending = ToolRegistry.sandboxNotReadyRefusal(tool: "file_write", agentId: fixture.agent.id)
+            #expect(pending?.message.contains(BuiltinSandboxTools.initPendingToolName) == true)
+            #expect(pending?.retryable == true)
+            // No sandbox on this host, or no agent: the folder guidance applies.
+            SandboxManager.State.shared.availability = .unavailable(reason: "test")
+            #expect(ToolRegistry.sandboxNotReadyRefusal(tool: "file_write", agentId: fixture.agent.id) == nil)
+            #expect(ToolRegistry.sandboxNotReadyRefusal(tool: "file_write", agentId: nil) == nil)
+
+            await tearDown(fixture)
+        }
+    }
+
+    @Test
+    func leaseConflictBackoff_doublesFromFifteenSecondsToFiveMinutes() {
+        var delays: [TimeInterval] = []
+        var delay: TimeInterval?
+        for _ in 0..<7 {
+            delay = SandboxToolRegistrar.nextLeaseConflictBackoff(after: delay)
+            delays.append(delay!)
+        }
+        #expect(delays == [15, 30, 60, 120, 240, 300, 300])
+    }
+
+    @Test
+    func autoStartOff_onlyASendOrExplicitStartBootsTheSandbox() {
+        typealias Trigger = SandboxToolRegistrar.RegistrationTrigger
+        let background: [Trigger] = [.launch, .statusChange, .agentSwitch, .agentUpdated]
+        for trigger in Trigger.allCases {
+            #expect(SandboxToolRegistrar.mayWarmStart(on: trigger, autoStart: true))
+            #expect(SandboxToolRegistrar.mayWarmStart(on: trigger, autoStart: false) == !background.contains(trigger))
+        }
+    }
+
+    @Test
+    func leaseConflictResolver_offersTheFixThatMatchesTheHolder() {
+        typealias Lease = SandboxVMOwnershipLease
+        let owner = Lease.Owner(pid: 4242, processName: "osaurus", executablePath: nil, acquiredAt: "")
+        let app = Lease.Holder(pid: 4242, path: "/Applications/Osaurus.app/Contents/MacOS/osaurus")
+        let evals = Lease.Holder(pid: 5151, path: "/repo/.build/debug/osaurus-evals")
+        let node = Lease.Holder(pid: 6161, path: "/usr/local/bin/node")
+        let names: (Int32) -> String? = { $0 == 4242 ? "Osaurus" : nil }
+        func action(_ state: Lease.OwnerState, _ owner: Lease.Owner?, _ holders: [Lease.Holder]) -> SandboxLeaseConflictResolver.Action {
+            SandboxLeaseConflictResolver.action(
+                for: .init(state: state, owner: owner, holders: holders), appName: names)
+        }
+
+        #expect(action(.osaurusAlive, owner, [app]) == .quitApp(pid: 4242, name: "Osaurus"))
+        #expect(action(.osaurusAlive, nil, [evals]) == .endProcess(pid: 5151, name: "osaurus-evals"))
+        #expect(action(.otherAlive, owner, [node]) == .endOrphans([node]))
+        #expect(action(.ownerDeadLockHeld, owner, [node, evals]) == .endOrphans([node]))
+        #expect(action(.ownerDeadLockHeld, owner, []) == .retry)
+        #expect(action(.unknown, nil, []) == .retry)
+        #expect(action(.current, owner, [app]) == .retry)
+    }
+
+    @Test
+    func leaseConflictExplanation_namesTheHolderAndTheFix() {
+        typealias Resolver = SandboxLeaseConflictResolver
+        let node = SandboxVMOwnershipLease.Holder(pid: 6161, path: "/usr/local/bin/node")
+        #expect(Resolver.explanation(for: .quitApp(pid: 4242, name: "Osaurus")).contains("Quit Osaurus (process 4242)"))
+        #expect(Resolver.explanation(for: .endProcess(pid: 5151, name: "osaurus-evals")).contains("osaurus-evals (process 5151)"))
+        #expect(Resolver.explanation(for: .endOrphans([node])).contains("node (6161)"))
+        #expect(Resolver.explanation(for: .retry).contains("retries automatically"))
     }
 }

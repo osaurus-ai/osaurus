@@ -15,7 +15,7 @@
 import Foundation
 
 /// Structured error emitted whenever an external surface attempts to
-/// reach a built-in agent (currently just the Default agent). Callers
+/// reach a built-in agent (Default, Architect, Configurator, or a worker). Callers
 /// translate this to the appropriate transport-level response (HTTP 403,
 /// background-task failure, tool envelope, log + skip).
 public enum BuiltInAgentGuardError: Error, Equatable, Sendable {
@@ -52,7 +52,9 @@ extension Agent {
         guard let agentId else {
             return .builtInAgentNotExposable(agentId: defaultId, source: source)
         }
-        if agentId == defaultId {
+        // The Architect stays out of `isHiddenBuiltIn` (it is listed in the
+        // app), but no external surface may run it.
+        if agentId == defaultId || agentId == architectId || isHiddenBuiltIn(agentId) {
             return .builtInAgentNotExposable(agentId: agentId, source: source)
         }
         return nil

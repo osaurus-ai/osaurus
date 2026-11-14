@@ -34,6 +34,12 @@ public protocol SubagentKind: Sendable {
     /// mirror it into a duplicate Activity row. Defaults to false.
     var suppressActivityMirror: Bool { get }
 
+    /// The persisted worker session this run will create or resume, known
+    /// BEFORE the run starts, so a `background: true` acknowledgment can
+    /// hand the parent the `session_id` it will later `continue` with or
+    /// open. Nil (the default) for kinds without a persisted session.
+    var plannedSessionId: UUID? { get }
+
     /// Bounded request facts for RAM-admission pricing: the seed/input size
     /// and configured max output THIS run will actually ask the child model
     /// to hold. nil (the default) means "unknown" and admission falls back
@@ -109,6 +115,15 @@ protocol SubagentPostAdmissionResidencyPlanning: SubagentKind {
     ) async throws -> ResidencyPlan
 }
 
+/// A child whose history window can be tightened before dispatch. The same
+/// ceiling must be used by RAM pricing, history compaction and the rendered
+/// token check; changing an estimate without changing execution is unsafe.
+protocol SubagentContextAdmission: SubagentKind {
+    var minimumAdmissionContextPositions: Int? { get }
+    var admissionContextWasMemoryFitted: Bool { get }
+    func tightenAdmissionContextPositions(to limit: Int) -> Bool
+}
+
 extension SubagentKind {
     func admissionRequestEstimate() -> SubagentChildRequestEstimate? { nil }
 
@@ -116,6 +131,9 @@ extension SubagentKind {
 
     /// Default: ordinary in-memory subagent runs are mirrored to the Activity section.
     public var suppressActivityMirror: Bool { false }
+
+    /// Default: no persisted worker session to announce ahead of the run.
+    public var plannedSessionId: UUID? { nil }
 
     /// Default: no residency change. Model-swapping kinds override.
     public func makeHandoff() -> SubagentHandoff { PassthroughHandoff() }
@@ -147,6 +165,10 @@ extension SubagentKind {
 /// `PassthroughHandoff`. Implemented as an "around" combinator so restore is
 /// guaranteed even when the run throws.
 public protocol SubagentHandoff: Sendable {
+    /// Cleanup may unload/reload local graphs after the child body returns.
+    /// Unknown/wrapped handoffs conservatively retain GPU admission.
+    var requiresAdmissionForCleanup: Bool { get }
+
     func around(
         scope: SubagentScope,
         resolved: ResolvedModel,
@@ -155,10 +177,15 @@ public protocol SubagentHandoff: Sendable {
     ) async throws -> SubagentResult
 }
 
+extension SubagentHandoff {
+    public var requiresAdmissionForCleanup: Bool { true }
+}
+
 /// No-op handoff: same-model kinds (computer_use) run the
 /// body directly with no preflight / unload / restore.
 public struct PassthroughHandoff: SubagentHandoff {
     public init() {}
+    public var requiresAdmissionForCleanup: Bool { false }
     public func around(
         scope: SubagentScope,
         resolved: ResolvedModel,

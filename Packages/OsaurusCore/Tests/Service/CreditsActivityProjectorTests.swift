@@ -171,4 +171,20 @@ struct CreditsActivityProjectorTests {
         #expect(row.matchQuality == .exactRequestId)
         #expect(row.localReference?.requestId == "run-abc:old")
     }
+
+    @Test func parsesRouterTimestampsWithAndWithoutFractionalSeconds() {
+        let base = CreditsActivityProjectorTests.baseDate
+        #expect(CreditsActivityProjector.date(fromRouterTimestamp: "2027-01-15T08:00:00Z") == base)
+        let fractional = CreditsActivityProjector.date(fromRouterTimestamp: "2027-01-15T08:00:00.250Z")
+        #expect(fractional.map { abs($0.timeIntervalSince(base) - 0.25) < 0.001 } == true)
+        // Repeated calls reuse the shared formatters and stay consistent.
+        for _ in 0 ..< 100 {
+            #expect(CreditsActivityProjector.date(fromRouterTimestamp: "2027-01-15T08:00:00Z") == base)
+        }
+    }
+
+    @Test func invalidRouterTimestampReturnsNil() {
+        #expect(CreditsActivityProjector.date(fromRouterTimestamp: "not a date") == nil)
+        #expect(CreditsActivityProjector.date(fromRouterTimestamp: "") == nil)
+    }
 }

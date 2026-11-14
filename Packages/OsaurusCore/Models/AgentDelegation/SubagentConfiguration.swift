@@ -1423,6 +1423,8 @@ struct SpawnTargetAuthority: Equatable, Sendable {
     let systemPrompt: String
     let defaultModel: String?
     let temperature: Float?
+    let maxTokens: Int?
+    let generationSettings: AgentGenerationSettings?
     let toolsEnabled: Bool
     let toolSelectionMode: ToolSelectionMode?
     let manualToolNames: [String]?
@@ -1440,6 +1442,8 @@ struct SpawnTargetAuthority: Equatable, Sendable {
     let knowledgeEnabled: Bool
     let knowledgeCollectionIDs: [UUID]
     let knowledgeCuratorEnabled: Bool
+    let calculatorEnabled: Bool
+    let artifactsEnabled: Bool
 
     init(_ agent: Agent) {
         id = agent.id
@@ -1447,6 +1451,8 @@ struct SpawnTargetAuthority: Equatable, Sendable {
         systemPrompt = agent.systemPrompt
         defaultModel = agent.defaultModel
         temperature = agent.temperature
+        maxTokens = agent.maxTokens
+        generationSettings = agent.generationSettings
         toolsEnabled = agent.toolsEnabled
         toolSelectionMode = agent.toolSelectionMode
         manualToolNames = agent.manualToolNames
@@ -1465,5 +1471,7 @@ struct SpawnTargetAuthority: Equatable, Sendable {
         knowledgeCollectionIDs = agent.settings.knowledgeCollectionIds
         knowledgeCuratorEnabled =
             agent.settings.knowledgeCuratorEnabled
+        calculatorEnabled = agent.settings.calculatorEnabled
+        artifactsEnabled = agent.settings.artifactsEnabled
     }
 }

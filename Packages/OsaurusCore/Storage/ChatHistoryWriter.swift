@@ -2,7 +2,7 @@
 //  ChatHistoryWriter.swift
 //  osaurus
 //
-//  Writer-side facade over `ChatHistoryDatabase` shared by every entry point
+//  Writer-side facade over the conversation store shared by every entry point
 //  that runs raw `ChatEngine` inference (plugin `complete`/`complete_stream`,
 //  HTTP `/v1/chat/completions`, etc.). Handles find-or-create-by-external-key
 //  grouping and converts `ChatMessage` arrays to persistable turns.
@@ -69,34 +69,11 @@ enum ChatHistoryWriter {
     ) {
         let conversational = finalMessages.filter { $0.role != "system" }
         guard !conversational.isEmpty else { return }
-        // Close the launch prewarm race: an early write (first request after
-        // launch) can arrive before the detached key prewarm warms the cache.
-        // This runs on a background request executor — not the launch-critical
-        // path — so loading the key now is safe, and it prevents silently
-        // dropping the write. Only the genuine "key can't be unlocked" case
-        // falls through to the skip below. Plaintext mode needs no key, so
-        // the prewarm is skipped and readiness is always true.
-        if StorageEncryptionPolicy.shared.isEncryptionEnabled,
-            !StorageKeyManager.shared.hasCachedKey
-        {
-            try? StorageKeyManager.shared.prewarmCurrentKey()
-        }
-        guard StorageKeyManager.shared.isStorageReadyForWrites else {
-            print("[ChatHistoryWriter] Skipping chat history persistence: storage key is not already unlocked")
-            return
-        }
-
-        // Park if a key rotation is re-encrypting databases before
-        // opening SQLCipher. No-op fast path otherwise; here so a
-        // background HTTP / plugin path that hits `persist` during a
-        // rotation can't open a half-rekeyed file.
-        StorageMutationGate.blockingAwaitNotMutating()
-
-        let db = ChatHistoryDatabase.shared
+        let db = ConversationStores.current
         do {
             try db.open()
         } catch {
-            print("[ChatHistoryWriter] Failed to open chat history db: \(error)")
+            print("[ChatHistoryWriter] Failed to open chat history: \(error)")
             return
         }
 
@@ -117,7 +94,7 @@ enum ChatHistoryWriter {
 
         let session: ChatSessionData
         if var hit = existing {
-            hit.turns = turns
+            hit.turns = reusingStoredTurns(turns, from: db.loadSession(id: hit.id)?.turns ?? [])
             hit.updatedAt = now
             hit.selectedModel = model
             if hit.title == "New Chat" {
@@ -166,24 +143,82 @@ enum ChatHistoryWriter {
         }
     }
 
+    /// `turns` rebuilt from the caller's full transcript, with the turns
+    /// already stored kept as they are while the transcript still matches
+    /// them, so a repeat call only appends what's new.
+    static func reusingStoredTurns(_ turns: [ChatTurnData], from stored: [ChatTurnData]) -> [ChatTurnData] {
+        var result = turns
+        for index in 0..<min(turns.count, stored.count) {
+            let fresh = turns[index]
+            var previous = stored[index]
+            guard previous.role == fresh.role, previous.content == fresh.content,
+                previous.toolCallId == fresh.toolCallId
+            else { break }
+            previous.toolResults.merge(fresh.toolResults) { _, new in new }
+            result[index] = previous
+        }
+        return result
+    }
+
     /// Canonical `ChatMessage` → persisted-turn mapping shared by every raw
     /// inference surface (HTTP / plugin rows written here, and the live
     /// transcript `InboundSharedRunBridge` keeps for a remote caller's run of
     /// a shared agent). System messages are dropped; tool results stay as
-    /// their own `.tool` turns, keyed by `tool_call_id`.
+    /// their own `.tool` turns, keyed by `tool_call_id`, and are also recorded
+    /// on the assistant turn that made the call, as a Mac chat records them.
     static func turns(from messages: [ChatMessage]) -> [ChatTurnData] {
+        foldingToolResults(mappedTurns(from: messages))
+    }
+
+    /// Records each `.tool` turn's result on the assistant turn that made the
+    /// call (`toolResults[call id]`), where a Mac chat keeps it and where its
+    /// window reads it: without it the call draws as still running forever.
+    /// A Mac chat does both as the run goes; turns written from raw messages
+    /// have only the `.tool` turns. Results already there are left alone.
+    static func foldingToolResults(_ turns: [ChatTurnData]) -> [ChatTurnData] {
+        var folded = turns
+        for (index, turn) in turns.enumerated() where turn.role == .tool {
+            guard let callId = turn.toolCallId,
+                let owner = folded[..<index].lastIndex(where: { candidate in
+                    candidate.role == .assistant && (candidate.toolCalls?.contains { $0.id == callId } ?? false)
+                }),
+                folded[owner].toolResults[callId] == nil
+            else { continue }
+            folded[owner].toolResults[callId] = turn.content
+        }
+        return folded
+    }
+
+    private static func mappedTurns(from messages: [ChatMessage]) -> [ChatTurnData] {
         messages
             .filter { $0.role != "system" }
             .map { msg in
-                ChatTurnData(
+                // A user message that went to the model carries the memory
+                // and time blocks ahead of the user's words. They are kept
+                // beside the turn, as a Mac chat keeps them, so the bubble
+                // shows only what was typed.
+                let injected =
+                    msg.role == "user" ? InjectedContextSpans.splittingLeadingBlocks(msg.content ?? "") : nil
+                var turn = ChatTurnData(
                     id: UUID(),
                     role: MessageRole(rawValue: msg.role) ?? .assistant,
-                    content: msg.content ?? "",
+                    content: injected?.rest ?? msg.content ?? "",
+                    // Images the client sent inline (data URLs) are kept, as a
+                    // Mac chat keeps its own; otherwise the saved chat loses
+                    // the photo the model was shown. Large ones spill to the
+                    // blob store when the turn is written.
+                    attachments: msg.imageDataFromParts.map(Attachment.image),
                     toolCalls: msg.tool_calls,
                     toolCallId: msg.tool_call_id,
                     toolResults: [:],
-                    thinking: ""
+                    thinking: msg.reasoning_content ?? "",
+                    reasoningItemId: msg.reasoning_item_id,
+                    reasoningEncrypted: msg.reasoning_encrypted,
+                    responsesOutputItems: msg.responses_output_items ?? [],
+                    injectedContextPrefix: injected?.prefix
                 )
+                turn.anthropicThinkingBlocks = msg.anthropic_thinking_blocks ?? []
+                return turn
             }
     }
 

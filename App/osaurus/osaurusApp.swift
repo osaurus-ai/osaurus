@@ -6,6 +6,7 @@
 //
 
 import AppKit
+import Combine
 import Foundation
 import OsaurusCore
 import SwiftUI
@@ -30,17 +31,22 @@ enum OsaurusMain {
         // by default. Ignore it so those writes fail with EPIPE and
         // surface as ordinary errors on the write path instead.
         signal(SIGPIPE, SIG_IGN)
+        DevelopmentDesignInspector.prepareProcess()
+        SpaceLauncher.prepareProcess()
         osaurusApp.main()
     }
 }
 
 struct osaurusApp: SwiftUI.App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @ObservedObject private var themeManager = ThemeManager.shared
-    private var scheduleManager = ScheduleManager.shared
-    private var watcherManager = WatcherManager.shared
-    @ObservedObject private var vadService = VADService.shared
-    @ObservedObject private var speechModelManager = SpeechModelManager.shared
+    // NOTE: Do not add `@ObservedObject` singletons here. Every `@Published`
+    // change on an object observed by the App struct re-evaluates the whole
+    // `Commands` tree and rebuilds the main menu on the main thread. High-churn
+    // publishers (e.g. `VADService.audioLevel`, `SpeechModelManager`
+    // download progress) did exactly that and hung the UI. Observe state from
+    // small, dedicated menu-item views instead (see `VADToggleMenuItem`,
+    // `ThemeMenuItems`).
+    private var eventManager = EventManager.shared
     /// Chat settings toggle: ⌘N starts a new chat in the frontmost chat
     /// window instead of opening a new window (see `NewChatShortcutSetting`).
     @AppStorage(NewChatShortcutSetting.defaultsKey)
@@ -84,7 +90,7 @@ private extension osaurusApp {
                         }
                     }
                 } label: {
-                    Text(verbatim: L("New Chat"))
+                    Text(verbatim: LCached("New Chat"))
                 }
                 .keyboardShortcut("n", modifiers: .command)
             }
@@ -94,7 +100,7 @@ private extension osaurusApp {
                     ChatWindowManager.shared.createWindow()
                 }
             } label: {
-                Text(verbatim: L("New Window"))
+                Text(verbatim: LCached("New Window"))
             }
             .keyboardShortcut(
                 "n",
@@ -102,17 +108,9 @@ private extension osaurusApp {
             )
 
             Menu {
-                ForEach(AgentManager.shared.agents, id: \.id) { agent in
-                    Button {
-                        Task { @MainActor in
-                            ChatWindowManager.shared.createWindow(agentId: agent.id)
-                        }
-                    } label: {
-                        Text(verbatim: agent.displayName)
-                    }
-                }
+                AgentWindowMenuItems()
             } label: {
-                Text(verbatim: L("New Window with Agent"))
+                Text(verbatim: LCached("New Window with Agent"))
             }
         }
     }
@@ -121,16 +119,11 @@ private extension osaurusApp {
         CommandGroup(after: .newItem) {
             Divider()
 
-            Button(vadToggleLabel) {
-                toggleVAD()
-            }
-            .keyboardShortcut("v", modifiers: [.command, .shift])
-            .disabled(!canToggleVAD)
+            VADToggleMenuItem()
 
             Divider()
 
-            schedulesMenu
-            watchersMenu
+            automationsMenu
             agentsMenu
         }
     }
@@ -142,9 +135,27 @@ private extension osaurusApp {
             Button {
                 openManagementTab(nil)
             } label: {
-                Text(verbatim: L("Settings…"))
+                Text(verbatim: LCached("Settings…"))
             }
             .keyboardShortcut(",", modifiers: .command)
+
+            Button {
+                openManagementTab(.agents)
+            } label: {
+                Text(verbatim: LCached("Agents…"))
+            }
+
+            Button {
+                openManagementTab(.workflows)
+            } label: {
+                Text(verbatim: LCached("Workflows…"))
+            }
+
+            Button {
+                Task { @MainActor in SetUpOsaurusCommand.run() }
+            } label: {
+                Text(verbatim: LCached("Set Up Osaurus…"))
+            }
         }
     }
 
@@ -160,7 +171,7 @@ private extension osaurusApp {
                     .version: Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1",
                 ])
             } label: {
-                Text(verbatim: L("About Osaurus"))
+                Text(verbatim: LCached("About Osaurus"))
             }
         }
     }
@@ -174,7 +185,7 @@ private extension osaurusApp {
                     ChatWindowManager.shared.toggleSidebarInFocusedWindow()
                 }
             } label: {
-                Text(verbatim: L("Toggle Sidebar"))
+                Text(verbatim: LCached("Toggle Sidebar"))
             }
             .keyboardShortcut("b", modifiers: .command)
 
@@ -183,119 +194,19 @@ private extension osaurusApp {
                     ChatWindowManager.shared.cycleAgentInFocusedWindow()
                 }
             } label: {
-                Text(verbatim: L("Next Agent"))
+                Text(verbatim: LCached("Next Agent"))
             }
             .keyboardShortcut(".", modifiers: [.command, .shift])
 
             Divider()
 
-            Menu {
-                Button {
-                    themeManager.setAppearanceMode(.system, clearActiveTheme: true)
-                } label: {
-                    HStack {
-                        Text(verbatim: L("System"))
-                        if themeManager.activeCustomTheme == nil && themeManager.appearanceMode == .system {
-                            Spacer()
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-
-                Button {
-                    themeManager.setAppearanceMode(.light, clearActiveTheme: true)
-                } label: {
-                    HStack {
-                        Text(verbatim: L("Light"))
-                        if themeManager.activeCustomTheme == nil && themeManager.appearanceMode == .light {
-                            Spacer()
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-
-                Button {
-                    themeManager.setAppearanceMode(.dark, clearActiveTheme: true)
-                } label: {
-                    HStack {
-                        Text(verbatim: L("Dark"))
-                        if themeManager.activeCustomTheme == nil && themeManager.appearanceMode == .dark {
-                            Spacer()
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-
+            AppearanceMenuItems()
+            if DevelopmentDesignInspector.isAvailable {
                 Divider()
-
-                ForEach(themeMenuThemeItems, id: \.metadata.id) { theme in
-                    Button {
-                        if let mode = ThemeManager.appearanceMode(forBuiltInTheme: theme) {
-                            themeManager.setAppearanceMode(mode, clearActiveTheme: true)
-                        } else {
-                            themeManager.applyCustomTheme(theme)
-                        }
-                    } label: {
-                        HStack {
-                            Text(theme.metadata.name)
-                            if isThemeMenuItemActive(theme) {
-                                Spacer()
-                                Image(systemName: "checkmark")
-                            }
-                        }
-                    }
-                }
-
-                Divider()
-
-                Button {
-                    openManagementTab(.themes)
-                } label: {
-                    Text(verbatim: L("Manage Themes…"))
-                }
-            } label: {
-                Text(verbatim: L("Theme"))
+                Button("Live Design Inspector") { Task { @MainActor in DevelopmentDesignInspector.show() } }
+                    .keyboardShortcut("d", modifiers: [.command, .option])
             }
-
-            Divider()
-
-            Button {
-                themeManager.zoomFontIn()
-            } label: {
-                Text(verbatim: L("Zoom In"))
-            }
-            // "=" is the unshifted key under "+", matching how ⌘+ zoom is
-            // reached without holding Shift in browsers.
-            .keyboardShortcut("=", modifiers: .command)
-            .disabled(!themeManager.canZoomFontIn)
-
-            Button {
-                themeManager.zoomFontOut()
-            } label: {
-                Text(verbatim: L("Zoom Out"))
-            }
-            .keyboardShortcut("-", modifiers: .command)
-            .disabled(!themeManager.canZoomFontOut)
-
-            Button {
-                themeManager.resetFontScale()
-            } label: {
-                Text(verbatim: L("Actual Size"))
-            }
-            .keyboardShortcut("0", modifiers: .command)
-            .disabled(themeManager.isDefaultFontScale)
         }
-    }
-
-    private func isThemeMenuItemActive(_ theme: CustomTheme) -> Bool {
-        if let mode = ThemeManager.appearanceMode(forBuiltInTheme: theme) {
-            return themeManager.activeCustomTheme == nil && themeManager.appearanceMode == mode
-        }
-        return themeManager.activeCustomTheme?.metadata.id == theme.metadata.id
-    }
-
-    private var themeMenuThemeItems: [CustomTheme] {
-        themeManager.installedThemes.filter { ThemeManager.appearanceMode(forBuiltInTheme: $0) == nil }
     }
 
     // MARK: Window Menu
@@ -306,17 +217,17 @@ private extension osaurusApp {
             Button {
                 openManagementTab(.models)
             } label: {
-                Text(verbatim: L("Models"))
+                Text(verbatim: LCached("Models"))
             }
             Button {
                 openManagementTab(.tools)
             } label: {
-                Text(verbatim: L("Tools"))
+                Text(verbatim: LCached("Tools"))
             }
             Button {
                 openManagementTab(.server)
             } label: {
-                Text(verbatim: L("Server"))
+                Text(verbatim: LCached("Server"))
             }
         }
     }
@@ -328,7 +239,7 @@ private extension osaurusApp {
             Button {
                 openURL("https://docs.osaurus.ai/")
             } label: {
-                Text(verbatim: L("Osaurus Help"))
+                Text(verbatim: LCached("Osaurus Help"))
             }
             .keyboardShortcut("?", modifiers: .command)
 
@@ -337,19 +248,19 @@ private extension osaurusApp {
             Button {
                 openURL("https://docs.osaurus.ai/")
             } label: {
-                Text(verbatim: L("Documentation"))
+                Text(verbatim: LCached("Documentation"))
             }
 
             Button {
                 openURL("https://discord.gg/osaurus")
             } label: {
-                Text(verbatim: L("Discord Community"))
+                Text(verbatim: LCached("Discord Community"))
             }
 
             Button {
                 openURL("https://github.com/osaurus-ai/osaurus/issues/new")
             } label: {
-                Text(verbatim: L("Report an Issue…"))
+                Text(verbatim: LCached("Report an Issue…"))
             }
 
             Divider()
@@ -357,13 +268,7 @@ private extension osaurusApp {
             Button {
                 openURL("https://docs.osaurus.ai/keyboard-shortcuts")
             } label: {
-                Text(verbatim: L("Keyboard Shortcuts"))
-            }
-
-            Button {
-                Task { @MainActor in ChatLayoutTour.shared.start() }
-            } label: {
-                Text(verbatim: L("Chat Layout Tour"))
+                Text(verbatim: LCached("Keyboard Shortcuts"))
             }
 
             Divider()
@@ -373,7 +278,7 @@ private extension osaurusApp {
                     appDelegate.showAcknowledgements()
                 }
             } label: {
-                Text(verbatim: L("Acknowledgements…"))
+                Text(verbatim: LCached("Acknowledgements…"))
             }
         }
     }
@@ -383,112 +288,118 @@ private extension osaurusApp {
 
 private extension osaurusApp {
 
-    var schedulesMenu: some View {
+    var automationsMenu: some View {
         Menu {
-            ForEach(scheduleManager.schedules) { schedule in
+            ForEach(eventManager.events) { event in
                 Button {
-                    openManagementTab(.schedules)
+                    Task { @MainActor in
+                        ManagementStateManager.shared.pendingEventEditId = event.id
+                        openManagementTab(.automations)
+                    }
                 } label: {
-                    Text(verbatim: schedule.name)
+                    Text(verbatim: event.name)
                 }
             }
 
-            if !scheduleManager.schedules.isEmpty {
+            if !eventManager.events.isEmpty {
                 Divider()
             }
 
             Button {
-                openManagementTab(.schedules)
+                openManagementTab(.automations)
             } label: {
-                Text(verbatim: L("New Schedule…"))
-            }
-
-            Button {
-                openManagementTab(.schedules)
-            } label: {
-                Text(verbatim: L("Manage Schedules…"))
+                Text(verbatim: LCached("Manage Automations…"))
             }
         } label: {
-            Text(verbatim: L("Schedules"))
-        }
-    }
-
-    var watchersMenu: some View {
-        Menu {
-            ForEach(watcherManager.watchers) { watcher in
-                Button {
-                    openManagementTab(.watchers)
-                } label: {
-                    Text(verbatim: watcher.name)
-                }
-            }
-
-            if !watcherManager.watchers.isEmpty {
-                Divider()
-            }
-
-            Button {
-                openManagementTab(.watchers)
-            } label: {
-                Text(verbatim: L("New Watcher…"))
-            }
-
-            Button {
-                openManagementTab(.watchers)
-            } label: {
-                Text(verbatim: L("Manage Watchers…"))
-            }
-        } label: {
-            Text(verbatim: L("Watchers"))
+            Text(verbatim: LCached("Automations"))
         }
     }
 
     var agentsMenu: some View {
         Menu {
-            ForEach(AgentManager.shared.agents, id: \.id) { agent in
-                Button {
-                    Task { @MainActor in
-                        ChatWindowManager.shared.createWindow(agentId: agent.id)
-                    }
-                } label: {
-                    Text(verbatim: agent.displayName)
-                }
-            }
+            AgentWindowMenuItems()
 
             Divider()
 
             Button {
                 openManagementTab(.agents)
             } label: {
-                Text(verbatim: L("Manage Agents…"))
+                Text(verbatim: LCached("Manage Agents…"))
             }
         } label: {
-            Text(verbatim: L("Agents"))
+            Text(verbatim: LCached("Agents"))
         }
     }
 }
 
-// MARK: - VAD Helpers
+/// Keep both agent lists current after creation, rename and deletion without
+/// observing the manager from the App and rebuilding every command group.
+private struct AgentWindowMenuItems: View {
+    @ObservedObject private var agentManager = AgentManager.shared
 
-private extension osaurusApp {
+    var body: some View {
+        ForEach(agentManager.agents, id: \.id) { agent in
+            Button {
+                Task { @MainActor in
+                    ChatWindowManager.shared.createWindow(agentId: agent.id)
+                }
+            } label: {
+                Text(verbatim: agent.displayName)
+            }
+        }
+    }
+}
 
-    var canToggleVAD: Bool {
-        speechModelManager.selectedModel != nil
+// MARK: - VAD Menu Item
+
+/// File-menu Voice Detection toggle.
+///
+/// Owns its own (narrow) state so VAD / speech-model changes only invalidate
+/// this menu item instead of the whole App `Commands` tree. It intentionally
+/// does NOT observe `VADService` (whose `audioLevel` publishes per audio
+/// buffer while listening) or the full `SpeechModelManager` (whose
+/// `downloadStates` publish on every download-progress tick).
+private struct VADToggleMenuItem: View {
+    @State private var isVADEnabled: Bool = VADConfigurationStore.load().vadModeEnabled
+    @State private var hasSelectedModel: Bool = SpeechModelManager.shared.selectedModel != nil
+
+    var body: some View {
+        Button(label) {
+            toggleVAD()
+        }
+        .keyboardShortcut("v", modifiers: [.command, .shift])
+        .disabled(!hasSelectedModel)
+        .onReceive(
+            NotificationCenter.default.publisher(for: .voiceConfigurationChanged)
+                .receive(on: RunLoop.main)
+        ) { _ in
+            let enabled = VADConfigurationStore.load().vadModeEnabled
+            if enabled != isVADEnabled { isVADEnabled = enabled }
+        }
+        .onReceive(
+            SpeechModelManager.shared.$selectedModelId
+                .removeDuplicates()
+                .receive(on: RunLoop.main)
+        ) { _ in
+            let hasModel = SpeechModelManager.shared.selectedModel != nil
+            if hasModel != hasSelectedModel { hasSelectedModel = hasModel }
+        }
     }
 
-    var vadToggleLabel: String {
-        let config = VADConfigurationStore.load()
-        guard canToggleVAD else { return L("Toggle Voice Detection") }
-        return config.vadModeEnabled
-            ? L("Disable Voice Detection") : L("Enable Voice Detection")
+    private var label: String {
+        guard hasSelectedModel else { return LCached("Toggle Voice Detection") }
+        return isVADEnabled
+            ? LCached("Disable Voice Detection") : LCached("Enable Voice Detection")
     }
 
-    func toggleVAD() {
+    private func toggleVAD() {
         Task { @MainActor in
+            let vadService = VADService.shared
             var config = VADConfigurationStore.load()
             let newState = !config.vadModeEnabled
             config.vadModeEnabled = newState
             VADConfigurationStore.save(config)
+            isVADEnabled = newState
             vadService.loadConfiguration()
 
             do {
@@ -501,7 +412,70 @@ private extension osaurusApp {
                 if newState {
                     config.vadModeEnabled = false
                     VADConfigurationStore.save(config)
+                    isVADEnabled = false
                     vadService.loadConfiguration()
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Appearance Menu Items
+
+/// View-menu Appearance submenu + font zoom items.
+///
+/// Observes `ThemeManager` locally so appearance changes only invalidate these
+/// items rather than re-evaluating every App-level `Commands` builder.
+private struct AppearanceMenuItems: View {
+    @ObservedObject private var themeManager = ThemeManager.shared
+
+    var body: some View {
+        Menu {
+            appearanceButton(LCached("System"), mode: .system)
+            appearanceButton(LCached("Light"), mode: .light)
+            appearanceButton(LCached("Dark"), mode: .dark)
+        } label: {
+            Text(verbatim: LCached("Appearance"))
+        }
+
+        Divider()
+
+        Button {
+            themeManager.zoomFontIn()
+        } label: {
+            Text(verbatim: LCached("Zoom In"))
+        }
+        // "=" is the unshifted key under "+", matching how ⌘+ zoom is
+        // reached without holding Shift in browsers.
+        .keyboardShortcut("=", modifiers: .command)
+        .disabled(!themeManager.canZoomFontIn)
+
+        Button {
+            themeManager.zoomFontOut()
+        } label: {
+            Text(verbatim: LCached("Zoom Out"))
+        }
+        .keyboardShortcut("-", modifiers: .command)
+        .disabled(!themeManager.canZoomFontOut)
+
+        Button {
+            themeManager.resetFontScale()
+        } label: {
+            Text(verbatim: LCached("Actual Size"))
+        }
+        .keyboardShortcut("0", modifiers: .command)
+        .disabled(themeManager.isDefaultFontScale)
+    }
+
+    private func appearanceButton(_ title: String, mode: AppearanceMode) -> some View {
+        Button {
+            themeManager.setAppearanceMode(mode)
+        } label: {
+            HStack {
+                Text(verbatim: title)
+                if themeManager.appearanceMode == mode {
+                    Spacer()
+                    Image(systemName: "checkmark")
                 }
             }
         }
@@ -518,9 +492,21 @@ private extension osaurusApp {
         }
     }
 
+    /// Opens `string` in its default handler app without blocking the main thread.
+    ///
+    /// `NSWorkspace.shared.open(_:)` is synchronous: it waits on a LaunchServices
+    /// mach reply until the handler (usually the browser) has launched. Called from
+    /// a Help menu action on the main thread, that froze the UI for 3+ seconds on a
+    /// cold launch (Sentry APPLE-MACOS-3V1, same cause as APPLE-MACOS-36N). The
+    /// completion-handler variant returns immediately.
     func openURL(_ string: String) {
-        if let url = URL(string: string) {
-            NSWorkspace.shared.open(url)
+        guard let url = URL(string: string) else { return }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        NSWorkspace.shared.open(url, configuration: configuration) { _, error in
+            if let error {
+                NSLog("[osaurus] Failed to open URL %@: %@", url.absoluteString, error.localizedDescription)
+            }
         }
     }
 }

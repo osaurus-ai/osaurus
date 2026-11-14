@@ -33,6 +33,9 @@ struct ChatResidencyLease: Sendable, Equatable {
     /// Detached cleanup must not turn a schedule/API/plugin parent into a
     /// legacy chat-owned preload before its next generation resumes.
     var parentSource: RequestSource?
+    /// The parent may itself belong to an outer delegation. Restore that owner,
+    /// never the inner image job's token, after the temporary unload.
+    var parentOwnershipToken: ModelResidencyOwnershipToken?
     let childOwnershipToken: ModelResidencyOwnershipToken
 
     init(
@@ -40,13 +43,26 @@ struct ChatResidencyLease: Sendable, Equatable {
         restoreModelNames: [String]? = nil,
         unloadedParentIdentity: ModelResidencyIdentity? = nil,
         parentSource: RequestSource? = nil,
+        parentOwnershipToken: ModelResidencyOwnershipToken? = nil,
         childOwnershipToken: ModelResidencyOwnershipToken = ModelResidencyOwnershipToken()
     ) {
         self.unloadedModelNames = unloadedModelNames
         self.restoreModelNames = restoreModelNames ?? unloadedModelNames
         self.unloadedParentIdentity = unloadedParentIdentity
         self.parentSource = parentSource
+        self.parentOwnershipToken = parentOwnershipToken
         self.childOwnershipToken = childOwnershipToken
+    }
+
+    /// Detached cleanup must restore the saved ownership, not inherit the
+    /// current task's owner or erase the surrounding delegation's claim.
+    func withParentOwnership<Value: Sendable>(
+        isolation: isolated (any Actor)? = #isolation,
+        _ body: () async throws -> Value
+    ) async rethrows -> Value {
+        try await ModelResidencyOwnershipContext.$childOwnershipToken.withValue(parentOwnershipToken) {
+            try await body()
+        }
     }
 
     static var empty: ChatResidencyLease {
@@ -98,7 +114,7 @@ enum ChatResidencyHandoff {
             case let .insufficientMemory(neededGB, availableGB):
                 return String(
                     format:
-                        "Memory check refused the task: the subagent's model needs ~%.1f GB but only ~%.1f GB would be available after freeing the chat model. Use a smaller model for the subagent, free memory, or turn off \"Check memory before delegating\" in Settings → Subagents.",
+                        "Memory check refused the task: the subagent's model needs ~%.1f GB but only ~%.1f GB would be available after freeing the chat model. Use a smaller model for the subagent, free memory, or turn off \"Check memory before delegating\" in Settings → Agents → Delegation.",
                     neededGB,
                     availableGB
                 )
@@ -131,12 +147,9 @@ enum ChatResidencyHandoff {
         var errorDescription: String? { description }
     }
 
-    /// Physical memory macOS can reclaim without swapping non-purgeable
-    /// anonymous state. This deliberately matches ModelRuntime's normal-load
-    /// estimator: mmap-backed model/file-cache pages can sit on the ACTIVE
-    /// queue after a child run and are still reclaimable. Counting only
-    /// free+inactive+purgeable made the exact same resident model look as if it
-    /// had lost all child capacity after its first delegated turn.
+    /// Host capacity available without swapping non-purgeable anonymous state.
+    /// Includes file-backed pages on either active or inactive queues. This is
+    /// an estimate of reclaimable capacity, not a model's physical footprint.
     static func availableMemoryBytes() -> Int64 {
         sampledAvailableMemoryBytes() ?? 0
     }
@@ -161,36 +174,42 @@ enum ChatResidencyHandoff {
         return reclaimableMemoryBytes(
             physicalBytes: Int64(ProcessInfo.processInfo.physicalMemory),
             pageSize: Int64(rawPage),
-            wiredPages: Int64(vmInfo.wire_count),
-            compressorPages: Int64(vmInfo.compressor_page_count),
-            internalPages: Int64(vmInfo.internal_page_count),
-            purgeablePages: Int64(vmInfo.purgeable_count)
+            freePages: Int64(vmInfo.free_count),
+            fileBackedPages: Int64(vmInfo.external_page_count),
+            purgeablePages: Int64(vmInfo.purgeable_count),
+            speculativePages: Int64(vmInfo.speculative_count)
         )
     }
 
-    /// Pure arithmetic seam for the shared host estimator. Saturating math is
-    /// fail-closed: malformed/overflowing kernel counters produce zero
-    /// reclaimable bytes rather than an enormous wrapped capacity.
+    /// Count the reclaimable page classes directly. HOST_VM_INFO64's free
+    /// count includes speculative pages, which are also file-backed: subtract
+    /// that overlap once. Purgeable pages are unwired anonymous pages, separate
+    /// from file-backed pages. Inactive anonymous pages are not free capacity.
+    ///
+    /// Deriving this as physical - wired - compressed - internal can report
+    /// zero on hosts whose internal aggregate exceeds physical RAM. Neither
+    /// queue totals nor a guessed scale factor repair that aggregate.
+    /// Malformed/overflowing snapshots retain the existing zero-capacity result.
     static func reclaimableMemoryBytes(
         physicalBytes: Int64,
         pageSize: Int64,
-        wiredPages: Int64,
-        compressorPages: Int64,
-        internalPages: Int64,
-        purgeablePages: Int64
+        freePages: Int64,
+        fileBackedPages: Int64,
+        purgeablePages: Int64,
+        speculativePages: Int64
     ) -> Int64 {
-        guard physicalBytes > 0, pageSize > 0 else { return 0 }
-        let nonPurgeableInternal = max(0, internalPages - max(0, purgeablePages))
-        let (first, overflow1) = max(0, wiredPages).addingReportingOverflow(
-            max(0, compressorPages))
-        guard !overflow1 else { return 0 }
-        let (unreclaimablePages, overflow2) = first.addingReportingOverflow(
-            nonPurgeableInternal)
-        guard !overflow2 else { return 0 }
-        let (unreclaimableBytes, overflow3) = unreclaimablePages
-            .multipliedReportingOverflow(by: pageSize)
-        guard !overflow3 else { return 0 }
-        return max(0, physicalBytes - unreclaimableBytes)
+        guard physicalBytes > 0, pageSize > 0,
+            freePages >= 0, fileBackedPages >= 0, purgeablePages >= 0,
+            speculativePages >= 0,
+            speculativePages <= freePages,
+            speculativePages <= fileBackedPages
+        else { return 0 }
+        let (first, overflow1) = (freePages - speculativePages)
+            .addingReportingOverflow(fileBackedPages)
+        let (availablePages, overflow2) = first.addingReportingOverflow(purgeablePages)
+        let (availableBytes, overflow3) = availablePages.multipliedReportingOverflow(by: pageSize)
+        guard !overflow1, !overflow2, !overflow3, availableBytes <= physicalBytes else { return 0 }
+        return availableBytes
     }
 
     /// Refuse-before-evict preflight. With `requiredBytes` (the spawn model's
@@ -205,12 +224,13 @@ enum ChatResidencyHandoff {
         requiredBytes: Int64,
         enabled: Bool,
         physicalCapacityOnly: Bool = false,
+        estimateIncludesWorkspace: Bool = false,
         onPhase: (_ phase: String, _ detail: String) -> Void = { _, _ in }
     ) async throws {
         guard enabled, requiredBytes > 0 else { return }
         // Models occupy more resident RAM than their on-disk weights (KV +
         // activations + framework overhead); inflate the on-disk estimate.
-        let inflation = 1.3
+        let inflation = estimateIncludesWorkspace ? 1.0 : 1.3
         let needed = Int64(Double(requiredBytes) * inflation) + headroomBytes
         // Disk shard sizes are not resident/releasable bytes. The host sample
         // already includes reclaimable file-backed pages, and a handoff may
@@ -228,16 +248,27 @@ enum ChatResidencyHandoff {
         }
     }
 
-    /// Best-effort on-disk size (bytes) of an installed chat model, used as the
-    /// spawn-model `requiredBytes` for the text/spawn RAM preflight. Falls back to
-    /// summing the model directory when the catalog has no size estimate (e.g. a
-    /// manually-placed bundle). Returns 0 when unknown → the preflight is skipped.
+    /// Best-effort size (bytes) of the weights an installed chat model keeps
+    /// resident, used as the spawn-model `requiredBytes` for the text/spawn RAM
+    /// preflight: the download minus SSD-resident tables, the same figure the
+    /// model cards' memory estimate uses. Allosaurus downloads 94.6 GB but keeps
+    /// ~57 GB of n-gram tables on SSD; sizing it by download refused it on a
+    /// 96 GB Mac. Falls back to summing the model directory when the catalog has
+    /// no size estimate (e.g. a manually-placed bundle). Returns 0 when unknown
+    /// → the preflight is skipped.
     static func estimatedChatModelBytes(named name: String) -> Int64 {
         let models = ModelManager.discoverLocalModels()
         guard let model = models.first(where: { $0.name == name || $0.id == name }) else {
             return 0
         }
-        if let bytes = model.totalSizeEstimateBytes { return bytes }
+        return requiredResidentBytes(for: model)
+    }
+
+    static func requiredResidentBytes(for model: MLXModel) -> Int64 {
+        // INVARIANT: price resident weights rather than SSD-backed tables;
+        // unknown sizes retain the existing directory fallback and admission
+        // policy. Guarded by ChatResidencyHandoffPreflightSizingTests.
+        if let bytes = model.residentWeightEstimateBytes { return bytes }
         return directorySizeBytes(model.localDirectory)
     }
 
@@ -320,6 +351,7 @@ enum ChatResidencyHandoff {
                 restoreModelNames: [installed.name],
                 unloadedParentIdentity: nil,
                 parentSource: currentInferenceSource,
+                parentOwnershipToken: ModelResidencyOwnershipContext.childOwnershipToken,
                 childOwnershipToken: ModelResidencyOwnershipToken()
             )
         }
@@ -333,13 +365,14 @@ enum ChatResidencyHandoff {
             identity,
             leaseDrainTimeoutSeconds: Double(max(15, min(maxElapsedSeconds, 300)))
         )
-        guard result == .unloaded else {
+        guard result.result == .unloaded else {
             throw HandoffError.parentNotReclaimable(requestedParent)
         }
         return ChatResidencyLease(
             unloadedModelNames: [identity.modelName],
             unloadedParentIdentity: identity,
             parentSource: currentInferenceSource,
+            parentOwnershipToken: result.ownershipToken,
             childOwnershipToken: token
         )
     }
@@ -420,7 +453,7 @@ enum ChatResidencyHandoff {
         var failures: [String] = []
         for name in lease.restoreModelNames {
             do {
-                try await reloadAndVerify(name, ownershipToken: lease.childOwnershipToken, source: lease.parentSource)
+                try await reloadAndVerify(name, lease: lease)
                 restored.append(name)
                 continue
             } catch let error as ModelRuntime.HandoffRestoreBlockedError {
@@ -439,7 +472,7 @@ enum ChatResidencyHandoff {
             // resident model and only a log to show for it.
             onPhase("restoring_chat_models_retry", name)
             do {
-                try await reloadAndVerify(name, ownershipToken: lease.childOwnershipToken, source: lease.parentSource)
+                try await reloadAndVerify(name, lease: lease)
                 restored.append(name)
             } catch let error as ModelRuntime.HandoffRestoreBlockedError {
                 throw HandoffError.restoreBlocked(
@@ -465,10 +498,9 @@ enum ChatResidencyHandoff {
     /// after the load. Never throws: callers branch on the Bool and retry.
     private static func reloadAndVerify(
         _ name: String,
-        ownershipToken: ModelResidencyOwnershipToken,
-        source: RequestSource?
+        lease: ChatResidencyLease
     ) async throws {
-        try await ModelResidencyOwnershipContext.$childOwnershipToken.withValue(nil) {
+        try await lease.withParentOwnership {
             // This decision must be made atomically inside ModelRuntime.
             // `hasLoadInFlight() + preload()` is explicitly diagnostics-only:
             // the observation is stale after the actor hop. The restore intent
@@ -477,8 +509,8 @@ enum ChatResidencyHandoff {
             try await ModelRuntime.shared.preload(
                 name: name,
                 intent: .handoffRestore,
-                restoreOwnershipToken: ownershipToken,
-                restoreSource: source
+                restoreOwnershipToken: lease.childOwnershipToken,
+                restoreSource: lease.parentSource
             )
         }
         let resident = await ModelRuntime.shared.cachedModelSummaries().map(\.name)

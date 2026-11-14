@@ -3,7 +3,8 @@
 //  OsaurusCoreTests
 //
 //  The `AgentDispatchTarget` plumbing behind every trigger that can name a
-//  teammate's shared workspace agent: schedules, watchers, channel routes,
+//  teammate's shared workspace agent: events (and the legacy schedule,
+//  watcher and channel-route rows they migrate from),
 //  the delegation configuration and the dispatch funnel. Stored rows written
 //  before workspace targets must keep decoding as `.local`; workspace rows
 //  round-trip; the funnel refuses a workspace run with a typed reason that
@@ -170,23 +171,29 @@ struct WorkspaceTargetStoredModelTests {
         #expect(decoded == config)
     }
 
-    @Test("dispatch router resolves an alias route and the default to workspace targets")
-    func routerResolvesWorkspaceTargets() {
+    @Test("channel events resolve an alias event and an any-room event to workspace targets")
+    func matcherResolvesWorkspaceTargets() {
         let local = UUID()
-        let config = AgentChannelInboundDispatchConfiguration(
-            enabled: true,
-            target: .workspace(wsRef),
-            routes: [AgentChannelDispatchRoute(roomId: nil, agentId: local, nameAliases: ["ops"])]
+        let workspaceEvent = OsaurusEvent(
+            name: "Workspace",
+            source: .channelMessage(ChannelMessageSourceConfig(kind: .slack)),
+            action: .agent(AgentEventAction(target: .workspace(wsRef)))
         )
-        let byAlias = AgentChannelDispatchRouter.resolve(settings: config, roomId: "C9", content: "ops: deploy")
-        #expect(byAlias?.target == .local(local))
-        #expect(byAlias?.agentId == local)
-        #expect(byAlias?.content == "deploy")
+        let aliasEvent = EventTestFixtures.channelAgentEvent(kind: .slack, agentId: local, aliases: ["ops"])
+        func facts(_ content: String) -> EventMatcher.ChannelFacts {
+            EventMatcher.ChannelFacts(
+                kind: .slack, connectionId: "slack", roomId: "C9", content: content, mentionsBot: true,
+                hasPriorOutbound: false)
+        }
 
-        let byDefault = AgentChannelDispatchRouter.resolve(settings: config, roomId: "C9", content: "hello")
-        #expect(byDefault?.target == .workspace(wsRef))
-        #expect(byDefault?.agentId == nil)
-        #expect(byDefault?.matchedRule == "default")
+        let byAlias = EventMatcher.rankChannelEvents([workspaceEvent, aliasEvent], facts: facts("ops: deploy"))
+        #expect(byAlias.map(\.event.target) == [.local(local)])
+        #expect(byAlias.first?.content == "deploy")
+
+        let byDefault = EventMatcher.rankChannelEvents([workspaceEvent, aliasEvent], facts: facts("hello"))
+        #expect(byDefault.map(\.event.target) == [.workspace(wsRef)])
+        #expect(byDefault.first?.event.agentId == nil)
+        #expect(byDefault.first?.rule == "default")
     }
 
     @Test("DispatchRequest derives agentId from a local target and exposes the workspace ref")
@@ -294,18 +301,20 @@ struct WorkspaceTargetDeclarativeConfigTests {
         #expect(change?.changes.contains { $0.contains("spawnable_workspace_agents") } == true, "\(plan.summaryText())")
     }
 
-    @Test("schedules and watchers accept a workspace key where an agent name is expected")
-    func scheduleAndWatcherAcceptWorkspaceKeys() throws {
+    @Test("events accept a workspace key where an agent name is expected")
+    func eventsAcceptWorkspaceKeys() throws {
         var document = OsaurusConfigDocument()
-        var schedule = ScheduleEntry(name: "Workspace Probe Schedule \(UUID().uuidString.prefix(6))")
-        schedule.agent = wsRef.key
-        schedule.instructions = "do things"
-        schedule.frequency = "daily"
-        schedule.frequencyTimeOfDay = "08:00"
-        document.schedules = [schedule]
+        var event = EventEntry(name: "Workspace Probe Event \(UUID().uuidString.prefix(6))")
+        var source = EventSourceEntry(kind: "schedule")
+        source.frequency = "daily"
+        source.frequencyTimeOfDay = "08:00"
+        event.source = source
+        event.agent = wsRef.key
+        event.instructions = "do things"
+        document.automations = [event]
 
         let plan = try ConfigPlanner.plan(document: document, prune: false)
-        #expect(plan.actions.contains { $0.section == "schedules" && $0.kind == .create }, "\(plan.summaryText())")
+        #expect(plan.actions.contains { $0.section == "automations" && $0.kind == .create }, "\(plan.summaryText())")
 
         // The exporter writes the same key back for a workspace-targeted row.
         #expect(ConfigAgentTargetReference.export(.workspace(wsRef)) == wsRef.key)
@@ -399,6 +408,18 @@ struct WorkspaceDispatchFunnelTests {
         SubagentConfigurationStore.save(SubagentConfiguration(spawnableWorkspaceAgents: [wsRef]))
 
         try await WorkspaceRosterTestLock.shared.run {
+            let workspace = try decode(OsaurusRouterWorkspaceSummary.self, """
+                {"id":"ws-target","name":"Probe workspace","role":"member","source":"subscription",
+                 "active":true,"members_active":2,"agents_shared":1,"created_at":"2026-01-01T00:00:00Z"}
+                """)
+            let agent = try decode(OsaurusRouterWorkspaceAgent.self, """
+                {"agent_address":"\(wsAddress)","display_name":"Research Agent",
+                 "description":"Finds papers for a separately requested research task.",
+                 "owner":{"account_id":"acct-probe","wallet_address":"0xowner","display_name":"Owner"},
+                 "relay_url":"wss://relay.example","online":true,"last_seen":null,
+                 "shared_at":"2026-01-01T00:00:00Z"}
+                """)
+            WorkspaceRosterStore.shared.apply(rosters: [.init(workspace: workspace, agents: [agent])])
             let kind = TextSubagentKind(workspaceAgent: wsRef, input: "x")
             let scope = SubagentScope(sessionId: "s", toolCallId: "t", agentId: Agent.defaultId)
             let resolved = try await kind.resolveModel(scope)

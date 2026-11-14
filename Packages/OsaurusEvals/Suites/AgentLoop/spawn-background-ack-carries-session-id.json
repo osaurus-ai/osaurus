@@ -1,0 +1,63 @@
+{
+  "id": "agent_loop.spawn-background-ack-carries-session-id",
+  "domain": "agent_loop",
+  "label": "agent loop • background spawn returns an ack with the worker's session_id and no polling",
+  "query": "Delegate this to agent `A11CE005-0000-4000-8000-000000000001` (Osaurus Eval Background Worker) with `background` set to true: \"Return exactly BG_TOKEN_9.\" Do not wait for the result — the worker reports back later. Reply with one sentence telling me the worker is running and quote its session_id from the tool result, then stop.",
+  "notes": "Background contract (PR3): a `background: true` spawn returns AT ONCE with `dispatched: true`, `background: true`, and the worker's planned `session_id`; the parent must not poll, re-dispatch, or call spawn_agent again. The ack row scores `ok: true` + `hasSessionId`. The worker's digest is delivered as a follow-up message in a live chat (dropped in the headless harness), so the parent's final text is NOT expected to contain BG_TOKEN_9. Bundle generation defaults stay authoritative.",
+  "fixtures": {
+    "agentCapabilities": {
+      "spawnAgents": [
+        {
+          "id": "A11CE005-0000-4000-8000-000000000001",
+          "name": "Osaurus Eval Background Worker",
+          "description": "Returns the exact requested validation token.",
+          "systemPrompt": "Complete the bounded delegated task. Return only the exact token requested, with no preamble or explanation."
+        }
+      ],
+      "maxParallelSpawns": 1
+    }
+  },
+  "expect": {
+    "agentLoop": {
+      "maxIterations": 4,
+      "maxModelSteps": 3,
+      "mustCallTools": [
+        "spawn_agent"
+      ],
+      "mustNotCallTools": [
+        "clarify"
+      ],
+      "maxToolCalls": 1,
+      "noToolErrors": true,
+      "allowedExits": [
+        "finalResponse"
+      ],
+      "finalTextContains": [
+        "session"
+      ],
+      "toolUsageAudit": [
+        {
+          "tool": "spawn_agent",
+          "minCalls": 1,
+          "maxCalls": 1,
+          "maxErrors": 0,
+          "argsMustContain": "background"
+        }
+      ],
+      "spawnWave": {
+        "exactCallCount": 1,
+        "expectedTargets": [
+          "A11CE005-0000-4000-8000-000000000001"
+        ],
+        "expectedSucceeded": 1,
+        "expectedFailed": 0,
+        "expectedRows": [
+          {
+            "ok": true,
+            "hasSessionId": true
+          }
+        ]
+      }
+    }
+  }
+}
