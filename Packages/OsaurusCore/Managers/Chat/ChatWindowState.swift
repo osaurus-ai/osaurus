@@ -405,13 +405,15 @@ final class ChatWindowState: ObservableObject {
     /// Main navigation is independent of the live chat/session lifecycle.
     /// `newAgent` is the New Agent creator: no rail entry, reached from New
     /// Agent buttons, with the way back in the title bar.
-    enum MainSurface: String { case chat, workflows, insights, newAgent, settings }
+    enum MainSurface: String { case chat, workflows, insights, help, newAgent, settings }
     @Published var mainSurface: MainSurface = .chat {
         willSet { recordSurfaceReturn(to: newValue) }
     }
-    /// Insights, New Agent and Settings are full-window pages over the
+    /// Insights, Help, New Agent and Settings are full-window pages over the
     /// window's chat: Cmd+F and Esc belong to the page, not that chat.
-    var showsPageSurface: Bool { mainSurface == .insights || mainSurface == .newAgent || mainSurface == .settings }
+    var showsPageSurface: Bool {
+        mainSurface == .insights || mainSurface == .help || mainSurface == .newAgent || mainSurface == .settings
+    }
     @Published var showsWorkflowLibrary = true
     /// Retain the unsent workflow brief when switching between main destinations.
     /// This is the same chat-session model used by the shared composer, and is
@@ -639,6 +641,10 @@ final class ChatWindowState: ObservableObject {
                 CrashReportingService.recordBreadcrumb(category: "navigation", message: "insights.window")
                 FeatureTelemetry.settingsOpened(tab: .insights)
             }
+        } else if surface == .help {
+            if mainSurface != .help {
+                CrashReportingService.recordBreadcrumb(category: "navigation", message: "help.window")
+            }
         } else if surface == .chat, activeTab?.workflowID != nil || agentId == Agent.architectId {
             if let recent = tabs.filter({ $0.workflowID == nil && $0.session.agentId != Agent.architectId })
                 .max(by: { $0.lastActivatedAt < $1.lastActivatedAt }) {
@@ -684,6 +690,7 @@ final class ChatWindowState: ObservableObject {
             switch surface {
             case .chat: L("Chat")
             case .insights: L("Insights")
+            case .help: L("Help")
             case .newAgent: L("New Agent")
             case .settings: settingsTab.label
             case .workflows: showedWorkflowLibrary ? WorkflowsView.backTitle(to: workflowsPath.last) : L("Workflows")
@@ -750,7 +757,7 @@ final class ChatWindowState: ObservableObject {
         switch back.surface {
         case .settings:
             showSettings(tab: back.settingsTab)
-        case .insights, .newAgent:
+        case .insights, .help, .newAgent:
             showMainSurface(back.surface)
         case .workflows:
             workflowsPath = back.workflowsPath

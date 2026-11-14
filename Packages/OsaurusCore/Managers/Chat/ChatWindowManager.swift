@@ -488,7 +488,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
             withAnimation(state.theme.motion.springAnimation) { state.isSettingsSidebarCollapsed.toggle() }
             return
         }
-        if state.mainSurface == .insights || state.mainSurface == .newAgent { return }
+        if state.mainSurface == .insights || state.mainSurface == .help || state.mainSurface == .newAgent { return }
         withAnimation(state.theme.motion.quick) {
             state.toggleSidebar()
         }

@@ -73,6 +73,31 @@ struct ChatWindowStateSettingsSurfaceTests {
         }
     }
 
+    @Test("Help is a page of the window, opened from the rail, and keeps the chat tab")
+    func helpIsItsOwnSurface() async throws {
+        try await ChatHistoryTestStorage.run {
+            let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
+            defer { window.cleanup() }
+            let chatTab = window.activeTabId
+
+            window.showMainSurfaceFromRail(.help)
+            #expect(window.mainSurface == .help)
+            #expect(window.showsPageSurface, "Cmd+F and Esc belong to Help, not the hidden chat")
+            #expect(window.surfaceBack == nil, "the rail is top level")
+            #expect(window.goBack() == false, "back never leaves Help")
+            #expect(window.activeTabId == chatTab)
+
+            window.showMainSurface(.insights)
+            #expect(window.surfaceBack?.title == "Help")
+            #expect(window.returnToPreviousSurface())
+            #expect(window.mainSurface == .help)
+
+            window.showMainSurfaceFromRail(.chat)
+            #expect(window.showsPageSurface == false)
+            #expect(window.activeTabId == chatTab)
+        }
+    }
+
     @Test("a link to another surface offers the way back, one jump at a time")
     func linkedSurfaceOffersBack() async throws {
         try await ChatHistoryTestStorage.run {
