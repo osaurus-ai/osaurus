@@ -150,11 +150,15 @@ struct FileDiffStreamingPreviewTests {
             built += 1
             return [(path: "a.txt", content: "a long enough line of file content here")]
         }
+        // Call outside `#expect`: the macro captures call arguments for its
+        // diagnostics, which would evaluate the autoclosure eagerly.
         let short = #"{"old_string": "    }"#
-        #expect(FileDiff.inferredEditPath(partialArgs: short, knownFiles: files()) == nil)
+        let shortMatch = FileDiff.inferredEditPath(partialArgs: short, knownFiles: files())
+        #expect(shortMatch == nil)
         #expect(built == 0)
         let long = #"{"old_string": "a long enough line of file"#
-        #expect(FileDiff.inferredEditPath(partialArgs: long, knownFiles: files()) == "a.txt")
+        let longMatch = FileDiff.inferredEditPath(partialArgs: long, knownFiles: files())
+        #expect(longMatch == "a.txt")
         #expect(built == 1)
     }
 
