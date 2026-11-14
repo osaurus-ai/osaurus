@@ -663,6 +663,8 @@ public struct AgentEntry: Equatable, Sendable {
     /// the name's initial; absent preserves it.
     public var avatar: String?
     public var model: ConfigField<String> = .absent
+    /// `true` locks chats to `model` (`Agent.modelLocked`); absent preserves it.
+    public var modelLocked: Bool?
     public var temperature: ConfigField<Double> = .absent
     public var maxTokens: ConfigField<Int> = .absent
     /// Replaces the advanced override group; null clears it, absent preserves it.
@@ -718,6 +720,7 @@ extension AgentEntry: Codable {
         case systemPrompt = "system_prompt"
         case avatar
         case model, temperature
+        case modelLocked = "model_locked"
         case maxTokens = "max_tokens"
         case generationSettings = "generation_settings"
         case showResponseMetrics = "show_response_metrics"
@@ -748,6 +751,7 @@ extension AgentEntry: Codable {
         systemPrompt = try c.decodeIfPresent(String.self, forKey: .systemPrompt)
         avatar = try c.decodeIfPresent(String.self, forKey: .avatar)
         model = try c.configField(String.self, forKey: .model)
+        modelLocked = try c.decodeIfPresent(Bool.self, forKey: .modelLocked)
         temperature = try c.configField(Double.self, forKey: .temperature)
         maxTokens = try c.configField(Int.self, forKey: .maxTokens)
         generationSettings = try c.configField(AgentGenerationSettings.self, forKey: .generationSettings)
@@ -779,6 +783,7 @@ extension AgentEntry: Codable {
         try c.encodeIfPresent(systemPrompt, forKey: .systemPrompt)
         try c.encodeIfPresent(avatar, forKey: .avatar)
         try c.encode(configField: model, forKey: .model)
+        try c.encodeIfPresent(modelLocked, forKey: .modelLocked)
         try c.encode(configField: temperature, forKey: .temperature)
         try c.encode(configField: maxTokens, forKey: .maxTokens)
         try c.encode(configField: generationSettings, forKey: .generationSettings)

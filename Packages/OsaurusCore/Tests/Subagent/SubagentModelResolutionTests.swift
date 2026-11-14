@@ -215,4 +215,34 @@ struct SubagentModelResolutionTests {
             Issue.record("unexpected error: \(error)")
         }
     }
+
+    @Test("a spawn target locked to its model skips the launcher's configured override")
+    func lockedTargetIgnoresConfiguredOverride() async throws {
+        let lease = await acquireSubagentStoreSandbox(
+            "subagent-model-resolution-locked-target"
+        )
+        defer { lease.release() }
+        let override = SpawnRemoteModelIdentity.make(
+            providerId: UUID(uuidString: "5C0D3F8E-7A51-4C8B-9E7A-2F0B6E1D4A93")!,
+            modelId: "vendor/launcher-override"
+        )!
+        SubagentConfigurationStore.save(
+            SubagentConfiguration(
+                subagentModelOverrides: [SubagentCapabilityRegistry.spawn.id: override]
+            )
+        )
+
+        let resolved = try await SubagentModelResolution.resolve(
+            capabilityId: SubagentCapabilityRegistry.spawn.id,
+            agentId: Agent.defaultId,
+            evalModel: nil,
+            invokingParentModelName: nil,
+            idleWaitSeconds: 30,
+            deniedMessage: "denied",
+            unavailableMessage: "unavailable",
+            honorConfiguredOverride: false,
+            defaultModel: { "remote/locked-model" }
+        )
+        #expect(resolved.model == "remote/locked-model")
+    }
 }

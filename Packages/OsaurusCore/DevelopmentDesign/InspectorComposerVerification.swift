@@ -79,7 +79,7 @@ struct InspectorComposerVerification: View {
                 onStop: { stopCount += 1; phase = "Idle" },
                 pendingSkillId: $pendingSkill, queuedSend: $queued,
                 onSendNow: { nowCount += 1; sendCount += 1; lastSent = queued?.text ?? ""; queued = nil; phase = "Idle" },
-                onCancelQueued: { queued = nil }, isModelPinned: true,
+                onCancelQueued: { queued = nil }, modelPin: .remoteAgent,
                 pinnedModelLabel: "Local verification", composerLock: lock, isRemoteAgentRun: true,
                 folderState: folder)
                 .environment(\.composerGeneration, draftGeneration)

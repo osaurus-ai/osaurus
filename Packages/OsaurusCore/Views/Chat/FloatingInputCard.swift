@@ -24,6 +24,14 @@ extension EnvironmentValues {
     }
 }
 
+/// Why a chat's model chip is a fixed label instead of a picker.
+enum ModelPinReason: Equatable {
+    /// Mode 2: the remote agent runs on its owner's model.
+    case remoteAgent
+    /// The agent is locked to its model (`Agent.modelLocked`).
+    case agentLocked
+}
+
 struct FloatingInputCard: View {
     @Environment(\.composerAllowsWorkflowSelection) private var allowsWorkflowSelection
     @ObservedObject private var alignmentPreparation = AlignmentPreparationState.shared
@@ -147,11 +155,15 @@ struct FloatingInputCard: View {
     var onCancelQueued: (() -> Void)?
     /// Invoked by the wallet panel's "Add Credits" button (opens the top-up sheet).
     var onAddCredits: (() -> Void)?
-    /// Mode 2 (remote agent run): the model is pinned to the remote agent's own
-    /// model and the user must not change it. Renders the model chip as a
-    /// non-interactive label (no chevron / popover) and disables the `/model`
-    /// slash command.
-    var isModelPinned: Bool = false
+    /// Why the user must not change this chat's model: a Mode 2 remote agent
+    /// run (the remote agent's own model) or an agent locked to its model.
+    /// Renders the model chip as a non-interactive label (no chevron /
+    /// popover), drops the harness columns, and disables `/model`.
+    var modelPin: ModelPinReason? = nil
+    var isModelPinned: Bool { modelPin != nil }
+    /// The locked agent's model is not in the picker, so nothing can run.
+    /// Draws the pinned chip in warning ink; the parent explains above.
+    var isPinnedModelUnavailable: Bool = false
     /// Mode 2: explicit text for the pinned model chip. The caller resolves the
     /// remote agent's effective model (or a neutral "agent name / Default"
     /// fallback while it's still loading) so the chip never implies a specific
@@ -245,7 +257,8 @@ struct FloatingInputCard: View {
         onSendNow: (() -> Void)? = nil,
         onCancelQueued: (() -> Void)? = nil,
         onAddCredits: (() -> Void)? = nil,
-        isModelPinned: Bool = false,
+        modelPin: ModelPinReason? = nil,
+        isPinnedModelUnavailable: Bool = false,
         pinnedModelLabel: String? = nil,
         remoteConnectionPending: Bool = false,
         composerLock: ComposerLock? = nil,
@@ -307,7 +320,8 @@ struct FloatingInputCard: View {
         self.onSendNow = onSendNow
         self.onCancelQueued = onCancelQueued
         self.onAddCredits = onAddCredits
-        self.isModelPinned = isModelPinned
+        self.modelPin = modelPin
+        self.isPinnedModelUnavailable = isPinnedModelUnavailable
         self.pinnedModelLabel = pinnedModelLabel
         self.remoteConnectionPending = remoteConnectionPending
         self.composerLock = composerLock
@@ -2241,16 +2255,22 @@ extension FloatingInputCard {
                 ToastManager.shared.infoLocalized("Clear Chat", message: "Pass an onClearChat handler to enable /clear")
             }
         case "model":
-            // Ignored in Mode 2: the model is pinned to the remote agent's own
-            // model and can't be changed from the client.
-            guard !isModelPinned else {
+            // Ignored while pinned: a remote agent's model is its owner's,
+            // and a locked agent's model changes only in its settings.
+            switch modelPin {
+            case .remoteAgent:
                 ToastManager.shared.infoLocalized(
                     "Model Pinned",
                     message: "This chat runs on the remote agent's own model, set by its owner."
                 )
-                break
+            case .agentLocked:
+                ToastManager.shared.infoLocalized(
+                    "Model Locked",
+                    message: "This agent is locked to its model. Change it in the agent's settings."
+                )
+            case nil:
+                openModelPicker()
             }
-            openModelPicker()
         case "agent":
             NotificationCenter.default.post(
                 name: .chatToolbarOpenAgentPicker,
@@ -3261,9 +3281,15 @@ extension FloatingInputCard {
     /// model name and a lock glyph. Styled to match the resting `SelectorChip`.
     private var pinnedModelChip: some View {
         SharedChipContent(spacing: theme.assignedMetric("component.library.23.gap", fallback: theme.space.s6)) {
-            Image(systemName: "lock.fill")
-                .glyphSize(.micro)
-                .composerChipInk("secondary", fallback: theme.text.tertiary)
+            if isPinnedModelUnavailable {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .glyphSize(.micro)
+                    .foregroundStyle(theme.status.warning.foreground)
+            } else {
+                Image(systemName: "lock.fill")
+                    .glyphSize(.micro)
+                    .composerChipInk("secondary", fallback: theme.text.tertiary)
+            }
             Text(pinnedModelLabel ?? selectedPickerItem?.displayName ?? L("Default"))
                 .composerChipTextStyle(.caption, weight: 500)
                 .composerChipInk("foreground", fallback: theme.text.secondary)
@@ -3271,9 +3297,18 @@ extension FloatingInputCard {
         }
         .modifier(CappedHuggingWidth(maxWidth: Self.modelChipMaxLabelWidth))
         .modifier(QuietChipSurface(isActive: false, isHovered: false))
-        .localizedHelp(
-            "This chat runs on the remote agent's own model — chosen by the agent's owner and not changeable here."
-        )
+        .help(pinnedModelHelp)
+    }
+
+    private var pinnedModelHelp: String {
+        switch modelPin {
+        case .agentLocked where isPinnedModelUnavailable:
+            return L("This agent is locked to this model, which isn't available. Repair it or change it in the agent's settings.")
+        case .agentLocked:
+            return L("This agent is locked to its model. Change it in the agent's settings.")
+        case .remoteAgent, nil:
+            return L("This chat runs on the remote agent's own model — chosen by the agent's owner and not changeable here.")
+        }
     }
 
     private func openModelPicker() {

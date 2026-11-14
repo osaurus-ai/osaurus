@@ -3246,6 +3246,18 @@ public enum SettingsSearchIndex {
             declarativeSection: "agents"
         ),
         .init(
+            id: "agents.model.locked",
+            tab: .agents,
+            section: "Model",
+            title: "Lock Model",
+            keywords: [
+                "lock model", "required model", "pin model", "hide model picker", "fixed model",
+                "model_locked", "strictness always",
+            ],
+            disambiguation: "Custom agent → General → Configure → Model. On: chats with this agent always use its model, the chat model picker becomes a fixed lock chip, and a missing model or provider fails the turn instead of falling back. Templates and bundles whose main model is `strictness: always` turn it on at install. Declarative key: `model_locked` on agents[].",
+            declarativeSection: "agents"
+        ),
+        .init(
             id: "agents.followUpSuggestions",
             tab: .agents,
             section: "Follow-Up Suggestions",

@@ -545,6 +545,7 @@ public final class AgentManager: ObservableObject {
             generatedDescriptionPromptHash: agent.generatedDescriptionPromptHash,
             systemPrompt: agent.systemPrompt,
             defaultModel: agent.defaultModel,
+            modelLocked: agent.modelLocked,
             temperature: agent.temperature,
             maxTokens: agent.maxTokens,
             generationSettings: agent.generationSettings,
@@ -1673,6 +1674,22 @@ extension AgentManager {
             ?? defaultAgentModel
     }
 
+    /// The model every chat with this agent must run on, or nil when the
+    /// agent is not locked. Only a custom agent on the built-in loop with
+    /// its own `defaultModel` can be locked; a lock with nothing to lock to
+    /// is no lock.
+    public func lockedModel(for agentId: UUID?) -> String? {
+        guard let agentId, let agent = agent(for: agentId) else { return nil }
+        return Self.lockedModel(of: agent)
+    }
+
+    static func lockedModel(of agent: Agent) -> String? {
+        guard agent.modelLocked == true, !agent.isBuiltIn, (agent.runtime ?? .builtIn) == .builtIn,
+            let model = agent.defaultModel?.trimmingCharacters(in: .whitespacesAndNewlines), !model.isEmpty
+        else { return nil }
+        return model
+    }
+
     /// Get the effective temperature for an agent
     public func effectiveTemperature(for agentId: UUID) -> Float? {
         if agentId == Agent.configuratorId {
@@ -2146,6 +2163,13 @@ extension AgentManager {
         } else {
             refresh()
         }
+    }
+
+    /// Turn Lock Model on or off for a custom agent.
+    public func updateModelLocked(for agentId: UUID, locked: Bool) {
+        guard var agent = agent(for: agentId), !agent.isBuiltIn, (agent.modelLocked == true) != locked else { return }
+        agent.modelLocked = locked ? true : nil
+        update(agent)
     }
 
 }

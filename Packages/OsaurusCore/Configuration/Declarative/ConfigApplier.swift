@@ -810,6 +810,7 @@ enum ConfigApplier {
             agent.avatar = AgentMascot(storedID: avatar)?.rawValue
         }
         if entry.model.isSpecified { agent.defaultModel = entry.model.valueOrNil }
+        if let locked = entry.modelLocked { agent.modelLocked = locked }
         if entry.temperature.isSpecified {
             agent.temperature = entry.temperature.valueOrNil.map(Float.init)
         }

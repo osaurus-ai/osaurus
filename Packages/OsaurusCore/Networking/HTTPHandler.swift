@@ -10943,6 +10943,32 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     return
                 }
                 model = agentModel ?? ""
+            } else if let lockedModel = await MainActor.run(body: {
+                AgentManager.shared.lockedModel(for: agentId)
+            }) {
+                let requested = req.model
+                if !requested.isEmpty, requested != "default", requested != lockedModel {
+                    let msg =
+                        "This agent is locked to model '\(lockedModel)'; remove the `model` override and retry."
+                    RemoteAgentRunLog.serverError(
+                        "run agent=\(agentId.uuidString) REJECTED reqModel=\(requested) error=agent_model_locked"
+                    )
+                    hop {
+                        writerBound.value.writeError(msg, context: ctx.value)
+                        writerBound.value.writeEnd(ctx.value)
+                    }
+                    logSelf.logRequest(
+                        method: "POST",
+                        path: path,
+                        userAgent: logUserAgent,
+                        requestBody: logRequestBody,
+                        responseStatus: 200,
+                        startTime: logStartTime,
+                        errorMessage: msg
+                    )
+                    return
+                }
+                model = lockedModel
             } else if req.model.isEmpty || req.model == "default" {
                 let agentModel = await MainActor.run { AgentManager.shared.effectiveModel(for: agentId) }
                 if let agentModel {
