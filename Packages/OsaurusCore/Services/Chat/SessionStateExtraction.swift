@@ -77,7 +77,7 @@ enum SessionStateExtraction {
         return [first] + lines.suffix(maxLines - 1)
     }
 
-    /// The object in the answer, decoded and bounded like a `state` call.
+    /// The object in the answer, decoded and bounded.
     /// Nil when the answer holds no JSON object or the object is empty.
     static func parse(_ answer: String) -> SessionState? {
         let text = answer.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -971,6 +971,10 @@ public enum CapabilityClaimsEvaluator {
         )
         request.generation.temperature = 0
         request.generation.maxOutputTokens = 1024
+        // A reasoning judge spends this budget thinking and never reaches the verdict.
+        if let stored = ModelProfileRegistry.thinkingStoredOption(for: resolvedModel, enabled: false) {
+            request.context.modelOptions = [stored.id: stored.value]
+        }
         let judgeAttempt = DesktopResponsesAttempt()
         // Retry only transient transport failure before any typed output.
         // A deterministic judge is still a request: partial output, protocol,

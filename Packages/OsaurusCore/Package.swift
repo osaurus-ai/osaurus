@@ -370,7 +370,7 @@ let package = Package(
         // GLM4/Spark2.5 tool calls (a `file_write` append lost its blank line).
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "85a8d4871e89d9a11f75b7a94259c3dd360e9162"
+            revision: "2073a764e61e6efad2322684720c8716ac92f4ff"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
