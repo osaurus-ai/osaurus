@@ -396,7 +396,8 @@ struct SettingsTextEditor: View {
                 paragraphSpacing: theme.catalogLayoutMetric(prefix + "elements.layout.paragraphGap", inheriting: theme.assignedMetric(prefix + "gap", fallback: theme.space.s0)),
                 textColor: NSColor(ink),
                 editable: isEnabled, onFocusChange: { nativeFocused = $0 },
-                accessibleName: fieldName, accessibleHelp: fieldAccessibility?.help)
+                accessibleName: fieldName, accessibleHelp: fieldAccessibility?.help,
+                showsVerticalScroller: maxHeight.map { contentHeight > $0 } ?? false)
                 .frame(height: min(maxHeight ?? .greatestFiniteMagnitude, max(theme.assignedMetric(prefix + "height", fallback: minHeight), contentHeight)))
         }
         .padding(.horizontal, paddingX).padding(.vertical, paddingY)
