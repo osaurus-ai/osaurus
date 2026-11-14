@@ -368,7 +368,7 @@ let package = Package(
         // DFlash chain sampling is isolated per request.
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "1bcd74ad182103a3b83941f61e57ee0bac23b330"
+            revision: "1a227377fcca0e94ea8b6304f7cd9dff68791130"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the
