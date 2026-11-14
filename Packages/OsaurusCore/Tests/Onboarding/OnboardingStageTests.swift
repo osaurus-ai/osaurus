@@ -37,8 +37,8 @@ struct OnboardingStageTests {
 
     @Test func compactFrameHonorsTheChatMinimum() {
         let visible = CGRect(x: 0, y: 0, width: 2000, height: 1200)
-        let frame = OnboardingHandoff.compactChatFrame(in: visible, minimum: CGSize(width: 1100, height: 800))
-        #expect(frame.size == CGSize(width: 1100, height: 800))
+        let frame = OnboardingHandoff.compactChatFrame(in: visible, minimum: CGSize(width: 1100, height: 900))
+        #expect(frame.size == CGSize(width: 1100, height: 900))
     }
 
     @Test func compactFrameFollowsSecondaryScreens() {

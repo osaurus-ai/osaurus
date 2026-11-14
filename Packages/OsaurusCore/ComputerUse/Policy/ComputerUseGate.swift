@@ -39,7 +39,7 @@ public struct ComputerUseGate: ComputerUseGating {
             return .reject(
                 reason:
                     "\(appLabel) is not on the Computer Use allowlist. Ask the user to add it in "
-                    + "Settings → Computer Use, or work in an allowed app."
+                    + "Settings → Computer & Browser Use → Autonomy, or work in an allowed app."
             )
         }
 
@@ -72,7 +72,7 @@ public struct ComputerUseGate: ComputerUseGating {
                 reason:
                     "The current autonomy policy blocks \(effect.displayLabel.lowercased()) actions"
                     + (appName.map { " in \($0)" } ?? "")
-                    + ". Raise the policy in Settings → Computer Use to allow it, or take a different action."
+                    + ". Raise the policy in Settings → Computer & Browser Use → Autonomy to allow it, or take a different action."
             )
         }
     }

@@ -87,22 +87,38 @@ struct AgentAvatarView: View {
     /// (no inner inset). Use for hero treatments; leave default for small
     /// list/sidebar avatars where the inset reads as more iconic.
     var bleedsToEdge: Bool = false
+    /// False keeps `diameter` over the library's avatar size, for an avatar
+    /// whose size is part of its layout (the setup's team list).
+    var followsLibrarySize: Bool = true
 
     @Environment(\.theme) private var baseTheme
     @Environment(\.isEnabled) private var baseComponentEnabled
     private var theme: any ThemeProtocol { baseTheme.catalogFamily(11, enabled: baseComponentEnabled) }
     @Environment(\.displayScale) private var displayScale
 
-    private var resolvedDiameter: CGFloat { theme.catalogMetric("avatarSize", fallback: diameter) }
+    private var resolvedDiameter: CGFloat {
+        followsLibrarySize ? theme.catalogMetric("avatarSize", fallback: diameter) : diameter
+    }
+    /// A circle unless the library pins a numeric radius (`radius.pill` is
+    /// not a number). A pinned radius is set for the library's avatar size
+    /// and scales with the avatar, so a hero keeps the same shape as a row.
+    private var cornerRadius: CGFloat {
+        let half = resolvedDiameter / 2
+        let radius = theme.catalogMetric("radius", fallback: .infinity)
+        guard radius.isFinite else { return half }
+        let librarySize = theme.catalogMetric("avatarSize", fallback: resolvedDiameter)
+        guard librarySize > 0 else { return min(radius, half) }
+        return min(radius * resolvedDiameter / librarySize, half)
+    }
     private var avatarShape: AnyShape {
-        AnyShape(RoundedRectangle(cornerRadius: theme.catalogMetric("radius", fallback: resolvedDiameter / 2)))
+        AnyShape(RoundedRectangle(cornerRadius: cornerRadius))
     }
     var body: some View {
         ZStack {
             if let artwork {
                 avatarShape.fill(theme.assignedColor("component.library.11." + (baseComponentEnabled ? "background" : "disabledBackground"), fallback: theme.surface.raised))
                 Image(nsImage: artwork)
-                RoundedRectangle(cornerRadius: theme.catalogMetric("radius", fallback: resolvedDiameter / 2))
+                RoundedRectangle(cornerRadius: cornerRadius)
                     .strokeBorder(theme.assignedColor("component.library.11.border", fallback: theme.rule(around: tint)), lineWidth: theme.catalogMetric("borderWidth", fallback: borderWidth))
             } else {
                 monogram

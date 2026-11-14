@@ -124,7 +124,7 @@ Osaurus runs a local server with drop-in endpoints for existing tools:
 | --------- | --------------------------------------------- |
 | OpenAI    | `http://127.0.0.1:1337/v1/chat/completions`   |
 | Responses | `http://127.0.0.1:1337/v1/responses`          |
-| Anthropic | `http://127.0.0.1:1337/anthropic/v1/messages` |
+| Anthropic | `http://127.0.0.1:1337/v1/messages`           |
 | Ollama    | `http://127.0.0.1:1337/api/chat`              |
 
 `/chat/completions` keeps strict OpenAI semantics: it returns `tool_calls` and your client runs them. `/v1/responses` speaks the item-based [Open Responses](https://www.openresponses.org) format, so Responses-only clients such as Codex work too. For server-side autonomous runs, use `POST /agents/{id}/run`. See the [OpenAI API Guide](docs/OpenAI_API_GUIDE.md).
@@ -145,7 +145,7 @@ More for developers:
 
 - [Shared Configuration](docs/SHARED_CONFIGURATION_GUIDE.md): connecting your own macOS app to Osaurus.
 - [Osaurus Bundles](docs/OSAURUS_BUNDLES.md): shipping Osaurus with your agents, skills, and MCP servers pre-installed (`osaurus import`).
-- [Developer Tools](docs/DEVELOPER_TOOLS.md): Server Explorer and Insights.
+- [Developer Tools](docs/DEVELOPER_TOOLS.md): Server and API Reference, and Insights.
 - [Inference Runtime](docs/INFERENCE_RUNTIME.md): the scheduler, batching, and caches.
 
 ## Privacy and telemetry

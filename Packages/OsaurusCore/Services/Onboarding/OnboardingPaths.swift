@@ -130,7 +130,7 @@ enum OnboardingPaths {
         teammate: .planner,
         job: L("Your day"),
         pitch: L("Work with me to plan out your day."),
-        icon: "calendar",
+        icon: Teammate.planner.symbol,
         note: nil,
         request: .permission(.calendar),
         introLine: L(
@@ -166,7 +166,7 @@ enum OnboardingPaths {
         teammate: .courier,
         job: L("Your mail"),
         pitch: L("Let me help you catch up on your email."),
-        icon: "envelope",
+        icon: Teammate.courier.symbol,
         note: nil,
         request: .permission(.automationMail),
         introLine: L(
@@ -200,7 +200,7 @@ enum OnboardingPaths {
         teammate: .keeper,
         job: L("Your files and notes"),
         pitch: L("Ask me to find and sum up your files and notes."),
-        icon: "folder",
+        icon: Teammate.keeper.symbol,
         note: nil,
         request: .downloadsFolder,
         introLine: L(
@@ -235,7 +235,7 @@ enum OnboardingPaths {
         teammate: .scout,
         job: L("Finding things out"),
         pitch: L("Send me to look something up on the web for you."),
-        icon: "globe",
+        icon: Teammate.scout.symbol,
         note: L("Searches the web"),
         request: .topic,
         introLine: L(
@@ -253,7 +253,7 @@ enum OnboardingPaths {
         teammate: .builder,
         job: L("Your code"),
         pitch: L("Let me walk you through a coding project and what changed."),
-        icon: "hammer",
+        icon: Teammate.builder.symbol,
         note: nil,
         request: .projectFolder,
         introLine: L(

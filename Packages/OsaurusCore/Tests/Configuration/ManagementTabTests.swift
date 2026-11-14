@@ -60,17 +60,17 @@ struct ManagementTabTests {
         #expect(ManagementTab.sidebarCases == ManagementSection.allCases.flatMap(\.tabs))
     }
 
-    @Test func agentsArePinnedFirstAndWorkflowsLiveInTheMainWindow() {
+    @Test func agentsArePinnedFirstAndWorkflowsAndInsightsLiveInTheMainWindow() {
         #expect(ManagementSection.allCases.first == .home)
         #expect(ManagementSection.home.title.isEmpty)
         #expect(ManagementSection.home.tabs == [.agents, .automations, .approvals])
-        #expect(ManagementTab.mainWindowCases == [.workflows])
+        #expect(ManagementTab.mainWindowCases == [.workflows, .insights])
         #expect(ManagementTab.approvals.rawValue == "approvals")
         #expect(ManagementTab.approvals.label == "Inbox")
         #expect(ManagementTab.resolved(from: "inbox") == .approvals)
         #expect(ManagementTab.resolved(from: "needsYou") == .approvals)
         #expect(ManagementSection.allCases.last == .developers)
-        #expect(ManagementSection.developers.tabs == [.server, .sandbox, .insights, .tasks])
+        #expect(ManagementSection.developers.tabs == [.server, .sandbox, .tasks])
         #expect(ManagementTab.defaultTab == .agents)
         #expect(ManagementTab.sidebarCases.first == .agents)
     }

@@ -640,7 +640,7 @@ enum OnboardingChapter: Int, CaseIterable {
     static func of(_ step: OnboardingPanel.Step?) -> OnboardingChapter {
         switch step {
         case .brain: return .model
-        case .team, .firstTask, nil: return .team
+        case .team, .firstTask, .explore, nil: return .team
         }
     }
 }

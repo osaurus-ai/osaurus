@@ -790,16 +790,23 @@ final class NativeToolCallGroupView: NSView {
             ) { [weak self] in
                 self?.onToggle?(item.call.id)
             } onHeightChanged: { [weak self] in
+                self?.syncGroupHeight()
                 self?.onHeightChanged?()
             }
         }
         lastCallIds = newIds
+        syncGroupHeight()
+    }
 
-        let totalH = measuredHeight()
+    /// The group's height is required, so it must follow every row change,
+    /// not only a reconfigure, or a row resizing on its own is squeezed.
+    private func syncGroupHeight() {
+        let totalH = max(measuredHeight(), 1)
         if let c = groupHeightConstraint {
-            c.constant = max(totalH, 1)
+            guard c.constant != totalH else { return }
+            c.constant = totalH
         } else {
-            let c = heightAnchor.constraint(equalToConstant: max(totalH, 1))
+            let c = heightAnchor.constraint(equalToConstant: totalH)
             c.priority = .required
             c.isActive = true
             groupHeightConstraint = c
@@ -809,8 +816,9 @@ final class NativeToolCallGroupView: NSView {
 
     // MARK: Measured height (used by cell coordinator)
 
+    /// Height on screen, following any row's disclosure in motion.
     func measuredHeight() -> CGFloat {
-        rowViews.reduce(0) { $0 + $1.measuredHeight() }
+        rowViews.reduce(0) { $0 + $1.displayedHeight() }
             + rowStack.spacing * CGFloat(max(0, rowViews.count - 1))
     }
 
@@ -959,6 +967,7 @@ final class NativeToolCallRowView: NSView {
     // MARK: Self-sizing height constraint
 
     private var rowHeight: NSLayoutConstraint?
+    private let heightAnimation = DisclosureHeightAnimation()
 
     // MARK: State
 
@@ -975,6 +984,12 @@ final class NativeToolCallRowView: NSView {
     private var sectionInset: CGFloat { ActivityInspectionStyle.layout("toolInnerPaddingX", "padding", Self.sectionContentInset, lastConfiguredTheme ?? CustomizableTheme.light()) }
     private var outerInset: CGFloat { ActivityInspectionStyle.layout("toolOuterPaddingX", "padding", Self.sectionContentInset, lastConfiguredTheme ?? CustomizableTheme.light()) }
     private var sectionWidthDeduction: CGFloat { 2 * outerInset + 2 * sectionInset }
+    private var contentGap: CGFloat { ActivityInspectionStyle.layout("toolContentGap", "gap", (lastConfiguredTheme ?? CustomizableTheme.light()).space.s8, lastConfiguredTheme ?? CustomizableTheme.light()) }
+    /// A section label sits closer to its own content than to the section above it.
+    private var sectionTitleGap: CGFloat { contentGap / 2 }
+    private var sectionGap: CGFloat { contentGap * 2 }
+    private var sectionTitleHeight: CGFloat { ceil(argumentsSectionTitle.intrinsicContentSize.height) }
+    private var argsViewTopToTitle: NSLayoutConstraint?
     private var assignedHeaderHeight: CGFloat { ActivityInspectionStyle.headerHeight(lastConfiguredTheme ?? CustomizableTheme.light()) }
     private let inspectionHeader = InspectorActivityHeaderSurface()
     /// `nonisolated(unsafe)` so deinit can read it; only ever set in
@@ -1113,11 +1128,15 @@ final class NativeToolCallRowView: NSView {
             return
         }
         lastConfigureInputs = inputs
+        heightAnimation.isConfiguring = true
         self.currentWidth = width
         self.lastConfiguredTheme = theme
 
         let isNew = item.call.id != currentItemId
-        if isNew { stopRegistryObservation() }
+        if isNew {
+            stopRegistryObservation()
+            heightAnimation.cancel()
+        }
         let argumentsChanged = item.call.function.arguments != currentItem?.call.function.arguments
         if argumentsChanged { cachedArgs = nil }
         currentItemId = item.call.id
@@ -1320,10 +1339,12 @@ final class NativeToolCallRowView: NSView {
         // Same-call collapsed → expanded: fade the details in instead of
         // popping (cell recycling and streaming reconfigures must not fade).
         let expandTransition = !isNew && isExpanded && !wasExpanded
-        updateChevron(expanded: isExpanded, animated: !isNew && isExpanded != wasExpanded)
+        let toggled = !isNew && isExpanded != wasExpanded
+        updateChevron(expanded: isExpanded, animated: toggled)
 
-        separatorView.isHidden = !isExpanded
-        contentContainer.isHidden = !isExpanded
+        let showsContent = isExpanded || toggled || heightAnimation.isRunning
+        separatorView.isHidden = !showsContent
+        contentContainer.isHidden = !showsContent
 
         if isExpanded {
             applyToolDetailSectionHeading(to: argumentsSectionTitle, text: "ARGUMENTS", theme: theme)
@@ -1357,12 +1378,9 @@ final class NativeToolCallRowView: NSView {
             bindSubagentFeedIfPresent(toolCallId: item.call.id)
         }
 
-        // Tear down panes when the row collapses.
-        if !isExpanded {
-            stopRegistryObservation()
-            tearDownTerminalView()
-            tearDownSubagentFeedView()
-        }
+        // Tear down panes when the row collapses; a collapse in motion keeps
+        // them drawn until it finishes.
+        if !showsContent { tearDownCollapsedContent() }
 
         // After the detail views exist — on a first-ever expand the sections
         // are only built above, and a reveal fired before that would find an
@@ -1375,7 +1393,29 @@ final class NativeToolCallRowView: NSView {
         ActivityInspectionStyle.label(argPreviewLabel, property: "caption", theme: theme)
         applyAssignedLayout(theme)
         inspectionHeader.configure(theme: theme, selected: isExpanded)
-        applyHeight()
+        heightAnimation.isConfiguring = false
+        if toggled {
+            heightAnimation.run(
+                on: self,
+                from: rowHeight?.constant ?? measuredHeight(),
+                target: { [weak self] in self?.measuredHeight() ?? 0 },
+                apply: { [weak self] in self?.setHeight($0) },
+                finish: { [weak self] in
+                    guard let self, !self.isExpanded else { return }
+                    self.separatorView.isHidden = true
+                    self.contentContainer.isHidden = true
+                    self.tearDownCollapsedContent()
+                }
+            )
+        } else {
+            applyHeight()
+        }
+    }
+
+    private func tearDownCollapsedContent() {
+        stopRegistryObservation()
+        tearDownTerminalView()
+        tearDownSubagentFeedView()
     }
 
     private func applyAssignedLayout(_ theme: any ThemeProtocol) {
@@ -1413,10 +1453,10 @@ final class NativeToolCallRowView: NSView {
             let view = c.firstItem as? NSView
             if c.firstAttribute == .leading, c.secondItem as? NSView === contentContainer { c.constant = sectionInset }
             if c.firstAttribute == .trailing, c.secondItem as? NSView === contentContainer { c.constant = -sectionInset }
-            if c.firstAttribute == .top, view !== argumentsSectionTitle { c.constant = gap }
+            if c.firstAttribute == .top, view !== argumentsSectionTitle { c.constant = sectionGap }
         }
-        resultTitleTopToArgs?.constant = gap
-        resultViewTopToTitle?.constant = gap
+        argsViewTopToTitle?.constant = sectionTitleGap
+        resultViewTopToTitle?.constant = sectionTitleGap
     }
 
     // MARK: Measured height
@@ -1425,14 +1465,13 @@ final class NativeToolCallRowView: NSView {
         let rowH = assignedHeaderHeight
         let theme = lastConfiguredTheme ?? CustomizableTheme.light()
         guard isExpanded else { return rowH + ActivityInspectionStyle.metric("borderWidth", 1, theme) }
-        // matches InlineToolCallView ToolDetailSection header row (~9pt bold + padding)
-        let gap = ActivityInspectionStyle.layout("toolContentGap", "gap", theme.space.s8, theme)
-        let sectionTitleH = ActivityInspectionStyle.fieldHeight("caption", theme, fallback: 22)
+        let gap = contentGap
+        let sectionTitleH = sectionTitleHeight + sectionTitleGap
         let textW = max(0, currentWidth - sectionWidthDeduction)
         let argsH = argsView?.measuredHeight(for: textW) ?? 0
         let resultH: CGFloat
         if let rv = resultView, !rv.isHidden {
-            resultH = gap + sectionTitleH + rv.measuredHeight(for: textW)
+            resultH = sectionGap + sectionTitleH + rv.measuredHeight(for: textW)
         } else {
             resultH = 0
         }
@@ -1440,11 +1479,11 @@ final class NativeToolCallRowView: NSView {
         // view's adaptive measured height (60–140pt body + 30pt header).
         let terminalH: CGFloat
         if let tv = terminalView {
-            terminalH = gap + tv.currentMeasuredHeight
+            terminalH = sectionGap + tv.currentMeasuredHeight
         } else {
             terminalH = 0
         }
-        let subagentH: CGFloat = subagentFeedHostingView != nil ? (gap + Self.subagentPaneHeight) : 0
+        let subagentH: CGFloat = subagentFeedHostingView != nil ? (sectionGap + Self.subagentPaneHeight) : 0
         return rowH + ActivityInspectionStyle.metric("borderWidth", 1, theme) + gap + sectionTitleH + argsH + terminalH + subagentH + resultH + ActivityInspectionStyle.layout("toolBottomPadding", "padding", theme.space.s8, theme)
     }
 
@@ -1592,7 +1631,7 @@ final class NativeToolCallRowView: NSView {
                     equalTo: contentContainer.trailingAnchor,
                     constant: -sectionInset
                 ),
-                view.topAnchor.constraint(equalTo: av.bottomAnchor, constant: 8),
+                view.topAnchor.constraint(equalTo: av.bottomAnchor, constant: sectionGap),
                 heightConst,
             ])
             let pin = contentContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor)
@@ -1695,7 +1734,7 @@ final class NativeToolCallRowView: NSView {
                     equalTo: contentContainer.trailingAnchor,
                     constant: -sectionInset
                 ),
-                hosting.topAnchor.constraint(equalTo: av.bottomAnchor, constant: 8),
+                hosting.topAnchor.constraint(equalTo: av.bottomAnchor, constant: sectionGap),
                 heightConst,
             ])
             let pin = contentContainer.bottomAnchor.constraint(equalTo: hosting.bottomAnchor)
@@ -1742,7 +1781,7 @@ final class NativeToolCallRowView: NSView {
         _ result: String, toolName: String = ""
     ) -> String {
         if ToolEnvelope.isError(result) {
-            return result
+            return markdownForErrorResult(result)
         }
         let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -1784,6 +1823,33 @@ final class NativeToolCallRowView: NSView {
             return "```json\n\(pretty)\n```"
         }
         return trimmed
+    }
+
+    /// A failed envelope leads with its message, the part a person reads;
+    /// the remaining fields follow as formatted JSON for diagnosis. Text
+    /// errors (`[REJECTED] …`) and unparseable results stay verbatim.
+    /// Internal (not private) so unit tests can pin the rendering contract.
+    static func markdownForErrorResult(_ result: String) -> String {
+        let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let data = trimmed.data(using: .utf8),
+            var payload = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        else { return trimmed }
+        var message = payload.removeValue(forKey: "message") as? String
+        if message?.isEmpty ?? true, let error = payload["error"] as? String {
+            message = error
+            payload["error"] = nil
+        }
+        payload["ok"] = nil
+        var parts: [String] = []
+        if let message, !message.isEmpty { parts.append(message) }
+        if !payload.isEmpty,
+            let pretty = try? JSONSerialization.data(
+                withJSONObject: payload, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]),
+            let details = String(data: pretty, encoding: .utf8)
+        {
+            parts.append("```json\n\(details)\n```")
+        }
+        return parts.isEmpty ? trimmed : parts.joined(separator: "\n\n")
     }
 
     /// Render an `osaurus_config` plan or apply payload as a readable
@@ -1941,8 +2007,16 @@ final class NativeToolCallRowView: NSView {
         return lines.joined(separator: "\n")
     }
 
+    /// Height the row occupies now: mid-disclosure the animated value.
+    func displayedHeight() -> CGFloat { heightAnimation.height(measured: measuredHeight()) }
+
     private func applyHeight() {
-        rowHeight?.constant = measuredHeight()
+        guard !heightAnimation.holdsHeight else { return }
+        setHeight(measuredHeight())
+    }
+
+    private func setHeight(_ height: CGFloat) {
+        rowHeight?.constant = height
         invalidateIntrinsicContentSize()
         onHeightChanged?()
     }
@@ -2242,11 +2316,13 @@ final class NativeToolCallRowView: NSView {
         v.translatesAutoresizingMaskIntoConstraints = false
         v.onHeightChanged = { [weak self] in self?.applyHeight() }
         contentContainer.addSubview(v)
+        let top = v.topAnchor.constraint(equalTo: argumentsSectionTitle.bottomAnchor, constant: sectionTitleGap)
         NSLayoutConstraint.activate([
             v.leadingAnchor.constraint(equalTo: contentContainer.leadingAnchor, constant: sectionInset),
             v.trailingAnchor.constraint(equalTo: contentContainer.trailingAnchor, constant: -sectionInset),
-            v.topAnchor.constraint(equalTo: argumentsSectionTitle.bottomAnchor, constant: 4),
+            top,
         ])
+        argsViewTopToTitle = top
         argsView = v
 
         let pinArgs = contentContainer.bottomAnchor.constraint(equalTo: v.bottomAnchor)
@@ -2270,7 +2346,7 @@ final class NativeToolCallRowView: NSView {
         applyToolDetailSectionHeading(to: t, text: resultLabel, theme: theme)
         contentContainer.addSubview(t)
         let av = ensureArgsView()
-        let top = t.topAnchor.constraint(equalTo: av.bottomAnchor, constant: 8)
+        let top = t.topAnchor.constraint(equalTo: av.bottomAnchor, constant: sectionGap)
         top.isActive = true
         resultTitleTopToArgs = top
         NSLayoutConstraint.activate([
@@ -2311,7 +2387,7 @@ final class NativeToolCallRowView: NSView {
         pinResult.isActive = true
         contentBottomToResult = pinResult
 
-        let topToTitle = v.topAnchor.constraint(equalTo: rt.bottomAnchor, constant: 4)
+        let topToTitle = v.topAnchor.constraint(equalTo: rt.bottomAnchor, constant: sectionTitleGap)
         topToTitle.isActive = true
         resultViewTopToTitle = topToTitle
 

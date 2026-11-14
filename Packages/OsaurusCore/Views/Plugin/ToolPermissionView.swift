@@ -162,7 +162,15 @@ struct ToolPermissionView: View {
     /// click away.
     @ViewBuilder
     private var arguments: some View {
-        if presentation.preview != nil || presentation.fullDetail != nil {
+        if !presentation.targets.isEmpty {
+            HStack(alignment: .top, spacing: theme.settingsControlGap) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
+                    ForEach(presentation.targets) { PermissionPathRow(entry: $0) }
+                }
+                .accessibilityIdentifier("toolPermission.targets")
+                detailsToggle
+            }
+        } else if presentation.preview != nil || presentation.fullDetail != nil {
             HStack(spacing: theme.settingsControlGap) {
                 if let preview = presentation.preview {
                     Text(verbatim: preview)
@@ -170,21 +178,30 @@ struct ToolPermissionView: View {
                         .foregroundColor(theme.text.primary)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                        .help(presentation.rawPath ?? preview)
                 }
                 Spacer(minLength: 0)
-                if presentation.fullDetail != nil {
-                    SettingsButton(.tertiary, showsDetails ? "Hide details" : "Show details", size: .compact) {
-                        withAnimation(theme.motion.quick) { showsDetails.toggle() }
-                    }
-                    .fixedSize()
+                if let rawPath = presentation.rawPath {
+                    PathActionsMenu(path: rawPath, revealURL: nil)
                 }
+                detailsToggle
             }
-            if showsDetails, let fullDetail = presentation.fullDetail {
-                ContentSizedScrollView(maxHeight: 180) {
-                    SettingsCodeBlock(code: fullDetail)
-                }
-                .accessibilityIdentifier("toolPermission.fullDetail")
+        }
+        if showsDetails, let fullDetail = presentation.fullDetail {
+            ContentSizedScrollView(maxHeight: 180) {
+                SettingsCodeBlock(code: fullDetail)
             }
+            .accessibilityIdentifier("toolPermission.fullDetail")
+        }
+    }
+
+    @ViewBuilder
+    private var detailsToggle: some View {
+        if presentation.fullDetail != nil {
+            SettingsButton(.tertiary, showsDetails ? "Hide details" : "Show details", size: .compact) {
+                withAnimation(theme.motion.quick) { showsDetails.toggle() }
+            }
+            .fixedSize()
         }
     }
 
@@ -256,15 +273,16 @@ struct PermissionFact: Identifiable, Equatable {
     let icon: String
     let title: String
     let detail: String?
+    var paths: [ToolApprovalPresentation.PathEntry] = []
 
     /// Things to watch for first, then protections, then what came back
     /// clean.
     static func facts(for presentation: ToolApprovalPresentation) -> [PermissionFact] {
-        var rows: [(Tone, String, String, String?)] = []
+        var rows: [(Tone, String, String, String?, [ToolApprovalPresentation.PathEntry])] = []
         for finding in presentation.risk?.findings ?? [] {
             rows.append(
                 (finding.signal == .runsInBackground ? .info : .warning, icon(for: finding.signal),
-                 finding.title, finding.detail))
+                 finding.title, finding.detail, []))
         }
         for guarantee in presentation.guarantees {
             let tone: Tone =
@@ -273,13 +291,13 @@ struct PermissionFact: Identifiable, Equatable {
                 case .caution: .warning
                 case .note: .neutral
                 }
-            rows.append((tone, guarantee.icon, guarantee.title, guarantee.detail))
+            rows.append((tone, guarantee.icon, guarantee.title, guarantee.detail, guarantee.paths))
         }
         if let clean = presentation.risk?.cleanSummary {
-            rows.append((.clean, "checkmark.circle", clean, nil))
+            rows.append((.clean, "checkmark.circle", clean, nil, []))
         }
         return rows.enumerated().map { index, row in
-            PermissionFact(id: index, tone: row.0, icon: row.1, title: row.2, detail: row.3)
+            PermissionFact(id: index, tone: row.0, icon: row.1, title: row.2, detail: row.3, paths: row.4)
         }
     }
 
@@ -318,10 +336,16 @@ private struct PermissionFactRow: View {
                         .foregroundColor(theme.text.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                if !fact.paths.isEmpty {
+                    VStack(alignment: .leading, spacing: theme.space.s8) {
+                        ForEach(fact.paths) { PermissionPathRow(entry: $0) }
+                    }
+                    .padding(.top, theme.space.s4)
+                }
             }
             Spacer(minLength: 0)
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: fact.paths.isEmpty ? .combine : .contain)
         .accessibilityValue(accessibilityTone)
     }
 
@@ -340,6 +364,80 @@ private struct PermissionFactRow: View {
         case .protection: Text("Enforced", bundle: .module)
         case .info, .clean, .neutral: Text(verbatim: "")
         }
+    }
+}
+
+/// One path on this Mac in full, with where it sits for the run and its
+/// Copy Path / Show in Finder menu.
+private struct PermissionPathRow: View {
+    let entry: ToolApprovalPresentation.PathEntry
+
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        HStack(alignment: .top, spacing: theme.space.s8) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
+                HStack(spacing: theme.space.s4) {
+                    if let role = entry.role {
+                        Text(verbatim: role)
+                            .font(SettingsFont.footnote)
+                            .foregroundColor(theme.text.secondary)
+                    }
+                    Text(verbatim: entry.displayPath)
+                        .font(SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.primary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                        .help(entry.url.path)
+                }
+                StatusChip(entry.origin.tag, tone: tone, help: entry.origin.explanation)
+            }
+            Spacer(minLength: 0)
+            PathActionsMenu(path: entry.url.path, revealURL: entry.url)
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private var tone: StatusChip.Tone {
+        switch entry.origin {
+        case .runWorkspace, .osaurusData: .info
+        case .outside: .warning
+        case .workingFolder, .chosen: .neutral
+        }
+    }
+}
+
+/// Copy Path, and Show in Finder when the path is on this Mac. Nothing is
+/// created: a path that doesn't exist yet opens its nearest existing folder.
+private struct PathActionsMenu: View {
+    let path: String
+    let revealURL: URL?
+
+    var body: some View {
+        SettingsOverflowMenu(help: "More actions", size: .compact) {
+            Button(L("Copy Path")) {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(path, forType: .string)
+            }
+            if let revealURL {
+                Button(L("Show in Finder")) { Self.reveal(revealURL) }
+            }
+        }
+        .accessibilityIdentifier("toolPermission.pathActions")
+    }
+
+    static func reveal(_ url: URL) {
+        let fileManager = FileManager.default
+        if fileManager.fileExists(atPath: url.path) {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+            return
+        }
+        var folder = url.deletingLastPathComponent()
+        while !fileManager.fileExists(atPath: folder.path), folder.path != "/" {
+            folder = folder.deletingLastPathComponent()
+        }
+        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: folder.path)
     }
 }
 
@@ -445,6 +543,27 @@ private struct ContentSizedScrollView<Content: View>: View {
             onAllow: {}, onDeny: {}, onAlwaysAllow: {}, onAllowForRun: {}
         )
         .environment(\.theme, CustomizableTheme.light())
+        .padding()
+    }
+
+    #Preview("Permission sheet - workflow file step") {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let workspace = home.appendingPathComponent(
+            ".osaurus/workflows/6f1c2e9a-0b7d-4a51-9c3e-2d8f4b6a1e70/runs/484436d8-5405-44d0-917e-edd96b738134")
+        let dinos = home.appendingPathComponent("Downloads/dinos")
+        let facts = ToolApprovalPresentation.WorkflowFacts.make(
+            granted: [workspace, dinos], writable: [workspace, dinos.appendingPathComponent("png")],
+            workspace: workspace, folderRoot: workspace, asksBeforeReplacing: true)
+        ToolPermissionView(
+            presentation: ToolApprovalPresentation.make(
+                toolName: "file_write", description: "", descriptionIsForModel: true,
+                argumentsJSON: #"{"path":"p-architecture.drawio","content":"<mxfile/>"}"#,
+                surface: .nativeHost, stepReason: "Write the .drawio file into the run's folder.", sandbox: nil,
+                workflow: facts),
+            onAllow: {}, onDeny: {}, onAlwaysAllow: {}, onAllowForRun: {}
+        )
+        .environment(\.theme, CustomizableTheme.dark())
+        .preferredColorScheme(.dark)
         .padding()
     }
 

@@ -9,16 +9,16 @@ order: 180
 ## Quick checks
 
 - Model not responding or slow: check the model is downloaded (Local Models tab) and fits in RAM; a smaller or more-quantized model often fixes it. Server → health indicator shows whether the server is running.
-- Tools not being used: make sure the agent's tool mode is Auto with Tools enabled, and use a model with good tool calling (curated catalog models are validated for this).
+- Tools not being used: make sure the agent has Tools on and the tools assigned (Abilities → Tools; in **Auto** mode, **Auto-discover relevant tools** loads more of them on demand), and use a model with good tool calling (curated catalog models are validated for this).
 - Provider shows Error: open the provider card for the exact message; re-check the API key (Providers tab), then use the connectivity center's reconnect.
 - New skill/plugin/MCP tools not appearing mid-chat: start a new chat so the session's capability manifest refreshes.
 - Port already in use: change the server port (Server tab or ask the assistant); ports below 1024 need elevated permissions — pick a higher one.
 - Permission prompts (Microphone, Accessibility, Screen Recording, Full Disk Access): grant in macOS System Settings → Privacy & Security, then retry.
-- Broken data store: Settings… (⌘,) → Privacy & Security → Data & Storage → "Stores needing attention" → Retry or Reset (Reset quarantines the file, never deletes it).
+- Broken data store: Settings… (⌘,) → Privacy & Security → Data & Storage → **Stores Needing Attention** → **Retry** or **Reset…** (Reset quarantines the file, never deletes it).
 
 ## Diagnostics
 
-- Insights tab: the persisted activity log — every model request (local or cloud), web search, URL fetch, MCP call, channel delivery, Router call, inbound API request and plugin call, with Local/Cloud badges, filters, Verify and Export. Open a row's Overview tab for the plain-language summary and any error message. Retention: Privacy & Security → Activity Log.
+- Insights (main window rail): the persisted activity log — every model request (local or cloud), web search, URL fetch, MCP call, channel delivery, Router call, inbound API request and plugin call, with Local/Cloud badges, filters, Verify and Export. Open a row's Overview tab for the plain-language summary and any error message. Retention: Privacy & Security → Activity Log.
 - Memory → Diagnostics for the memory store; Developer Tools → Sandbox → Troubleshooting → Run Diagnostics for the sandbox VM.
 - CLI: `osaurus status`.
 

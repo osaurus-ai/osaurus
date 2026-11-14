@@ -11,7 +11,8 @@ import SwiftUI
 
 // MARK: - Hero Avatar Metrics
 
-/// Diameter for hero-sized agent avatars in the empty-state surfaces.
+/// Diameter for hero-sized agent avatars in the empty-state surfaces. Not
+/// the design library's avatar size, which is sized for chat and list rows.
 private let heroAvatarDiameter: CGFloat = 64
 /// Font size for the icon/monogram inside a hero avatar (built-in `person.fill`
 /// placeholder and `AgentAvatarView` monogram fallback).
@@ -47,7 +48,8 @@ private struct HeroAgentAvatar: View {
             customImageURL: agent.customAvatarURL,
             monogramFontSize: heroAvatarIconFontSize,
             borderWidth: 0,
-            bleedsToEdge: true
+            bleedsToEdge: true,
+            followsLibrarySize: false
         )
     }
 }
@@ -422,7 +424,8 @@ struct ChatEmptyState: View {
                 customImageURL: sharedAgent?.customAvatarURL,
                 monogramFontSize: heroAvatarIconFontSize,
                 borderWidth: 0,
-                bleedsToEdge: true
+                bleedsToEdge: true,
+                followsLibrarySize: false
             )
         } else {
             HeroAgentAvatar(agent: activeAgent)

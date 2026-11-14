@@ -450,6 +450,36 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         showWindow(id: state.windowId)
     }
 
+    /// Insights in the window the person is in (else a new one). Every
+    /// Insights entry point, including legacy Settings links, lands here.
+    func showInsightsSurface() {
+        let state: ChatWindowState
+        if let current = shortcutTargetState {
+            state = current
+        } else {
+            let id = createWindow()
+            guard let created = windowStates[id] else { return }
+            state = created
+        }
+        state.showMainSurface(.insights)
+        showWindow(id: state.windowId)
+    }
+
+    /// The New Agent creator in the window the person is in (else a new
+    /// one). `AgentCreatorController` holds the chat and its draft.
+    func showNewAgentSurface() {
+        let state: ChatWindowState
+        if let current = shortcutTargetState {
+            state = current
+        } else {
+            let id = createWindow()
+            guard let created = windowStates[id] else { return }
+            state = created
+        }
+        state.showMainSurface(.newAgent)
+        showWindow(id: state.windowId)
+    }
+
     /// ⌘B: hide/show the focused chat window's session sidebar, mirroring
     /// the toolbar's sidebar button.
     public func toggleSidebarInFocusedWindow() {
@@ -458,6 +488,7 @@ public final class ChatWindowManager: NSObject, ObservableObject {
             withAnimation(state.theme.motion.springAnimation) { state.isSettingsSidebarCollapsed.toggle() }
             return
         }
+        if state.mainSurface == .insights || state.mainSurface == .newAgent { return }
         withAnimation(state.theme.motion.quick) {
             state.toggleSidebar()
         }
@@ -1584,11 +1615,11 @@ private final class ChatPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 
-    /// NSPanel closes on an Esc nothing else took. On Settings the pages'
-    /// own Esc shortcuts and fields have had it by now, and the window
-    /// must stay open.
+    /// NSPanel closes on an Esc nothing else took. On Settings and Insights
+    /// the pages' own Esc shortcuts and fields have had it by now, and the
+    /// window must stay open.
     override func cancelOperation(_ sender: Any?) {
-        if chatWindowState?.mainSurface == .settings { return }
+        if chatWindowState?.showsPageSurface == true { return }
         super.cancelOperation(sender)
     }
 
@@ -1854,12 +1885,22 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
 
 // MARK: - Toolbar Item Views
 
-/// Sidebar toggle button.
+/// Sidebar toggle button, then the way back when a link opened this surface.
 private struct ChatToolbarSidebarView: View {
     @ObservedObject var windowState: ChatWindowState
 
     var body: some View {
-        Group {
+        HStack(spacing: windowState.theme.space.s8) {
+            sidebarControl
+            if windowState.mainSurface != .workflows, let back = windowState.surfaceBack {
+                SurfaceBackButton(windowState: windowState, back: back)
+            }
+        }
+        .environment(\.theme, windowState.theme)
+    }
+
+    @ViewBuilder
+    private var sidebarControl: some View {
         if windowState.mainSurface == .chat {
         HeaderActionButton(
             icon: "sidebar.left",
@@ -1884,18 +1925,38 @@ private struct ChatToolbarSidebarView: View {
             }
             .environment(\.theme, windowState.theme)
         }
+    }
+}
+
+/// Back to the surface a link came from, named for the page it returns to.
+private struct SurfaceBackButton: View {
+    @ObservedObject var windowState: ChatWindowState
+    let back: ChatWindowState.SurfaceReturn
+
+    var body: some View {
+        // Settings' child pages and Insights' detail page keep ⌘[ for
+        // their own back buttons.
+        SettingsBackButton(
+            title: back.title,
+            verbatim: true,
+            shortcut: windowState.showsPageSurface ? nil : KeyboardShortcut("[", modifiers: .command)
+        ) {
+            withAnimation(windowState.theme.motion.quick) { _ = windowState.returnToPreviousSurface() }
         }
     }
 }
 
 /// The one back button of every Workflows screen but the home: from the
 /// editor to the page under it, or from a pushed page to the one before.
+/// While the page a link opened is on screen, back returns to the link.
 private struct WorkflowsTitleBarBackButton: View {
     @ObservedObject var windowState: ChatWindowState
 
     var body: some View {
         let path = windowState.workflowsPath
-        if !windowState.showsWorkflowLibrary {
+        if let back = windowState.surfaceBack {
+            SurfaceBackButton(windowState: windowState, back: back)
+        } else if !windowState.showsWorkflowLibrary {
             SettingsBackButton(title: WorkflowsView.backTitle(to: path.last), verbatim: true) {
                 windowState.goBack()
             }

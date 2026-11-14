@@ -3,8 +3,8 @@
   "format_version": 5,
   "id": "0f5c1a4e-6b7d-4c1a-9a01-000000000206",
   "kind": "workflow",
-  "version": 1,
-  "changelog": "Built-in workflow",
+  "version": 2,
+  "changelog": "Keeps search snippets when a page cannot be read, and reports the search's own error.",
   "name": "Research Brief",
   "summary": "A note on one topic: the short answer, the findings, and a source for every claim.",
   "author": {
@@ -64,10 +64,35 @@
           "concurrency": 2,
           "on_item_error": "skip",
           "step": {
-            "name": "Search and read",
+            "name": "Search",
+            "kind": "tool",
+            "tool": { "name": "web_search", "agent": "793CABDD-863B-4D89-9010-BA873C39CA45" },
+            "input": { "query": "{{item}}", "max_results": 5 }
+          }
+        }
+      },
+      {
+        "id": "pick",
+        "name": "Pick the pages",
+        "kind": "code",
+        "code": {
+          "source": "function run(input) { const search = input.search || {}; const errors = (search.failed || []).map(f => f && f.error).filter(e => typeof e === 'string' && e.length > 0).map(e => e.replace(/^\\S+ failed \\([^)]*\\): /, '')); const lists = (search.items || []).map(r => (r && r.results) || []); const seen = {}; const targets = []; const longest = lists.reduce((n, l) => Math.max(n, l.length), 0); for (let i = 0; i < longest && targets.length < 5; i++) { for (const list of lists) { const p = list[i]; const url = p && p.url; if (!url || seen[url]) continue; seen[url] = true; targets.push({ url: url, title: p.title || url, snippet: p.snippet || '' }); if (targets.length >= 5) break; } } return { targets: targets, errors: errors }; }"
+        },
+        "input": { "search": "{{nodes.search.output}}" }
+      },
+      {
+        "id": "extract",
+        "name": "Open the pages",
+        "kind": "map",
+        "map": {
+          "items": "{{nodes.pick.output.targets}}",
+          "concurrency": 2,
+          "on_item_error": "skip",
+          "step": {
+            "name": "Open the page",
             "kind": "tool",
             "tool": { "name": "search_and_extract", "agent": "793CABDD-863B-4D89-9010-BA873C39CA45" },
-            "input": { "query": "{{item}}", "max_results": 5, "extract_count": 2 }
+            "input": { "url": "{{item.url}}" }
           }
         }
       },
@@ -76,9 +101,13 @@
         "name": "Collect the pages",
         "kind": "code",
         "code": {
-          "source": "function run(input) { const seen = {}; const pages = []; const search = input.search || {}; const errors = (search.failed || []).map(f => f && f.error).filter(e => typeof e === 'string' && e.length > 0); for (const r of search.items || []) { for (const p of (r && r.results) || []) { const url = p.url || p.canonical_url; const read = p.extracted === true && typeof p.markdown === 'string' && p.markdown.length > 0; const text = read ? p.markdown : (p.snippet || ''); if (!url || seen[url] || !text) continue; seen[url] = true; pages.push({ url: url, title: p.title || url, text: String(text).slice(0, 6000), read: read }); if (pages.length >= 5) return { pages: pages, errors: errors }; } } return { pages: pages, errors: errors }; }"
+          "source": "function run(input) { const read = {}; for (const r of (input.extract && input.extract.items) || []) { for (const p of (r && r.results) || []) { if (p && p.url && p.extracted === true && typeof p.markdown === 'string' && p.markdown.length > 0) read[p.url] = p; } } const pages = []; for (const t of input.targets || []) { if (!t || !t.url) continue; const p = read[t.url]; const text = p ? p.markdown : (t.snippet || ''); if (!text) continue; pages.push({ url: t.url, title: (p && p.title) || t.title || t.url, text: String(text).slice(0, 6000), read: !!p }); } const errors = input.errors || []; const problem = pages.length === 0 && errors.length > 0 ? 'The web search did not work: ' + errors[0] : ''; return { pages: pages, errors: errors, search_problem: problem }; }"
         },
-        "input": { "search": "{{nodes.search.output}}" }
+        "input": {
+          "targets": "{{nodes.pick.output.targets}}",
+          "errors": "{{nodes.pick.output.errors}}",
+          "extract": "{{nodes.extract.output}}"
+        }
       },
       {
         "id": "read",
@@ -118,12 +147,12 @@
           "model_slot": "writer",
           "mode": "generate",
           "temperature": 0.2,
-          "instructions": "Write a research note on the topic: a short answer first, then the findings. End every claim with the URL of the page it came from, in brackets. Use only the findings given. If there are no findings, give no claims: when search_errors are given, say the search did not work and pass on what the first error advises, such as adding a search provider in Settings → Search; otherwise say no page about the topic could be read."
+          "instructions": "Write a research note on the topic: a short answer first, then the findings. End every claim with the URL of the page it came from, in brackets. Use only the findings given. If there are no findings, give no claims: when search_problem is not empty, the note is search_problem exactly as given, with no advice of your own; otherwise say no page about the topic could be read."
         },
         "input": {
           "topic": "{{input.topic}}",
           "findings": "{{nodes.read.output}}",
-          "search_errors": "{{nodes.pages.output.errors}}"
+          "search_problem": "{{nodes.pages.output.search_problem}}"
         },
         "output_schema": {
           "type": "object",
@@ -149,7 +178,9 @@
     ],
     "edges": [
       { "from": "plan", "to": "search" },
-      { "from": "search", "to": "pages" },
+      { "from": "search", "to": "pick" },
+      { "from": "pick", "to": "extract" },
+      { "from": "extract", "to": "pages" },
       { "from": "pages", "to": "read" },
       { "from": "read", "to": "write" },
       { "from": "write", "to": "sources" }

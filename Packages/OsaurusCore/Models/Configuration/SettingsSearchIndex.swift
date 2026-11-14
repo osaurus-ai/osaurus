@@ -62,7 +62,12 @@ public struct SettingsSearchEntry: Identifiable, Sendable, Hashable {
     /// A section that just repeats the tab label (e.g. the "General" card inside
     /// the General tab) is collapsed so results don't read "General › General".
     public var breadcrumb: [String] {
-        let destination = tab == .workflows ? "Main window › Workflows" : tab.label
+        let destination =
+            switch tab {
+            case .workflows: "Main window › Workflows"
+            case .insights: "Main window › Insights"
+            default: tab.label
+            }
         return section.isEmpty || section == tab.label
             ? [destination, title]
             : [destination, section, title]
@@ -2867,8 +2872,13 @@ public enum SettingsSearchIndex {
             tab: .privacy,
             section: "Data & Storage",
             title: "Encrypt Local Data at Rest",
-            keywords: ["sqlcipher", "encryption", "filevault", "at rest", "storage key", "backup", "data & storage", "storage"],
-            subTab: "storage"
+            keywords: [
+                "sqlcipher", "encryption", "filevault", "at rest", "storage key", "backup", "data & storage", "storage",
+                "conversations encrypted", "rotate storage key",
+            ],
+            subTab: "storage",
+            disambiguation:
+                "Covers local stores such as memory, knowledge, tasks and attachments. Synced conversations are always encrypted with their own key, whether or not this is on."
         ),
         .init(
             id: "storage.fileHistory.retention",
@@ -3023,7 +3033,7 @@ public enum SettingsSearchIndex {
                 "agent", "assistant", "persona", "custom agent", "create agent", "new agent",
                 "system prompt", "agent settings", "make an agent", "agent draft",
             ],
-            disambiguation: "New agent in the Agents header opens the New Agent page right here: it asks what the agent should do, then the Configurator drafts it in a card beside its chat that fills in part by part. Every part has Edit, and only Create Agent saves it. An unfinished draft waits on the Agents list with Continue.",
+            disambiguation: "New agent in the Agents header opens the New Agent page in the main window (the title bar's back button returns to where it was opened from): it asks what the agent should do, then the Configurator drafts it in a card beside its chat that fills in part by part. Every part has Edit, and only Create Agent saves it. An unfinished draft waits on the Agents list with Continue.",
             declarativeSection: "agents"
         ),
         .init(
@@ -5094,7 +5104,7 @@ public enum SettingsSearchIndex {
                 "request history", "review activity",
             ],
             disambiguation:
-                "The Insights tab is the activity log / audit dashboard: every model request (local or cloud), web search, URL fetch, MCP tool call, channel delivery, Router call and inbound API request, with Local/Cloud badges, filters, Verify and Export. Retention and content policy live under Privacy & Security → Activity Log."
+                "Main window ▸ Insights (the chart button in the window's left rail, just above Settings) is the activity log / audit dashboard; it is not in Settings. It shows every model request (local or cloud), web search, URL fetch, MCP tool call, channel delivery, Router call and inbound API request, with Local/Cloud badges, filters, Verify and Export. Retention and content policy live under Privacy & Security → Activity Log."
         ),
     ] + appleAppEntries
 

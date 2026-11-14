@@ -171,8 +171,10 @@ Configure the container in Settings… (`⌘,`) → **Developer Tools** → **Sa
 |---------|-------|---------|-------------|
 | CPUs | 1–8 | 2 | Virtual CPU cores allocated to the VM |
 | Memory | 1–8 GB | 2 GB | RAM allocated to the VM, shared by all agent containers (also each container's limit) |
-| Network | outbound / proxy / none | outbound | `outbound` = unrestricted NAT; `proxy` = host-only network with a domain-allowlist egress proxy (set per-agent Allowed Domains in Agent settings); `none` = no networking |
-| Agents Kept Warm | 1–8 | 3 | How many agents keep their own container in the VM at once (see [Agent environments](#agent-environments-and-pod-membership)) |
+| Agents Kept Warm | 1–8 | 4 under 16 GB of RAM, 6 under 32 GB, 8 otherwise | How many agents and workflows keep their own container in the VM at once (see [Agent environments](#agent-environments-and-pod-membership)) |
+| Environments Kept on Disk | 1–64 | 16 | Agent and workflow environments (each rootfs clone with its apk packages) kept between runs; the least recently used beyond this are removed after a boot and set up again on next use. Never fewer than Agents Kept Warm. Home folders are always kept |
+| Stop When Idle | 0–240 min | 0 (keep running) | Stop the VM after this many minutes with no commands, background jobs or connected sandboxed MCP servers, to free its memory; it starts again when next needed |
+| Network | read-only | — | Shows the running sandbox's network: **Open** (NAT), **Filtered per agent** (agents with different settings share the pod, so web traffic goes through a per-agent filter and other connections are blocked), **Off**, or **Per agent** before it starts. Set per agent with the agent's Sandbox Network and Allowed Domains; there is no sandbox-wide switch |
 | Auto-Start | on / off | on | Start the sandbox when Osaurus launches; when off, it starts the first time an agent runs a command |
 
 Changes require a container restart to take effect.
@@ -184,9 +186,14 @@ Changes require a container restart to take effect.
   "autoStart": true,
   "cpus": 2,
   "memoryGB": 2,
-  "network": "outbound"
+  "maxAgentEnvironments": 6,
+  "maxRetainedEnvironments": 16,
+  "idleShutdownMinutes": 0
 }
 ```
+
+The file still carries a legacy `network` key; it is only echoed in
+diagnostics; the pod's network comes from each agent's own setting.
 
 ### Rootfs templates and copy-on-write boots
 
@@ -812,7 +819,7 @@ When another process holds the lock:
 
 ### Reset
 
-Removes the template and every agent environment and re-provisions from scratch. All agent workspaces and installed plugins are preserved (they live in the VirtioFS workspace). Workflow sandbox environments (below) are marked as needing their packages installed again, since `apk` packages and Linux users live in each environment's rootfs; the same happens to one workflow environment when its clone is evicted or re-cloned.
+Deletes the Linux system (the template) and every agent's environment, including apk packages, then downloads the runtime and sets the sandbox up again. Kept: every agent's home folder (its files, `SOUL.md`, and pip and npm packages) and the shared folder, which live in the VirtioFS workspace. Workflow sandbox environments (below) are marked as needing their packages installed again, since `apk` packages and Linux users live in each environment's rootfs; the same happens to one workflow environment when its clone is evicted or re-cloned.
 
 ### Workflow environments
 

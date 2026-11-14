@@ -109,7 +109,7 @@ struct ApprovalsView: View {
                     anchorId: "approvals.history"
                 ) {
                     InsightsService.shared.showInteractions()
-                    ManagementStateManager.shared.selectedTab = .insights
+                    ChatWindowManager.shared.showInsightsSurface()
                 }
             }
         }

@@ -11600,16 +11600,26 @@ struct ChatView: View {
                     MainNavigationRail(windowState: windowState)
                         .padding(.top, topInset)
                 }
+                HStack(alignment: .top, spacing: theme.space.s0) {
                 // Sidebar, docked beside the content (regular and wide).
+                // Stays mounted at its own width while hidden: opening and
+                // closing only animates the clipped column it slides through,
+                // so the rail is neither rebuilt nor re-laid out per frame.
+                let keepsSidebarMounted = layout.breakpoint != .compact
+                    && windowState.mainSurface == .chat && !isEmbedded
+                let railWidth = sidebarDocked ? sidebarWidth : clampedSidebarWidth
                 VStack(alignment: .leading, spacing: theme.space.s0) {
-                    if sidebarDocked {
-                        navigatorRail(width: sidebarWidth)
+                    if sidebarDocked || keepsSidebarMounted {
+                        navigatorRail(width: railWidth)
                             .padding(.top, topInset)
+                            .frame(width: railWidth)
                     }
                 }
-                .frame(width: sidebarWidth, alignment: .top)
+                .frame(width: sidebarWidth, alignment: .topTrailing)
                 .frame(maxHeight: .infinity, alignment: .top)
                 .clipped()
+                .allowsHitTesting(sidebarDocked)
+                .accessibilityHidden(!sidebarDocked)
                 .overlay(alignment: .trailing) {
                     if sidebarDocked {
                         sidebarResizeHandle.padding(.top, topInset)
@@ -11969,33 +11979,37 @@ struct ChatView: View {
                     .allowsHitTesting(!isChatContentCovered)
                     .accessibilityHidden(isChatContentCovered)
 
-
-                    if windowState.mainSurface == .workflows && windowState.showsWorkflowLibrary {
-                        WorkflowMainDestination(windowState: windowState)
-                            .padding(.top, Self.headerHeight(theme))
+                    ZStack {
+                        if windowState.mainSurface == .workflows && windowState.showsWorkflowLibrary {
+                            WorkflowMainDestination(windowState: windowState)
+                                .padding(.top, Self.headerHeight(theme))
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .transition(pageTransition)
+                        } else if windowState.mainSurface == .insights {
+                            InsightsView()
+                                .padding(.top, Self.headerHeight(theme))
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .transition(pageTransition)
+                        } else if windowState.mainSurface == .newAgent {
+                            AgentCreatorMainDestination(windowState: windowState)
+                                .padding(.top, Self.headerHeight(theme))
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .transition(pageTransition)
+                        } else if windowState.mainSurface == .settings {
+                            SettingsMainDestination(
+                                topInset: topInset,
+                                sidebarWidth: clampedSidebarWidth,
+                                isSidebarCollapsed: windowState.isSettingsSidebarCollapsed,
+                                sidebarWidthRange: Self.sidebarWidthRange,
+                                storedSidebarWidth: $storedSidebarWidth,
+                                liveSidebarWidth: $liveSidebarWidth
+                            )
+                            .equatable()
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .zIndex(2)
-                    } else if windowState.mainSurface == .settings {
-                        SettingsMainDestination(
-                            topInset: topInset,
-                            sidebarWidth: clampedSidebarWidth,
-                            isSidebarCollapsed: windowState.isSettingsSidebarCollapsed,
-                            sidebarWidthRange: Self.sidebarWidthRange,
-                            storedSidebarWidth: $storedSidebarWidth,
-                            liveSidebarWidth: $liveSidebarWidth
-                        )
-                        .equatable()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .zIndex(2)
+                            .transition(pageTransition)
+                        }
                     }
-                }
-                // Workflows keeps its rounded canvas; Chat meets the sidebar
-                // with a square corner. Leave the titlebar above it intact.
-                .mask {
-                    VStack(spacing: theme.space.s0) {
-                        Rectangle().frame(height: topInset)
-                        UnevenRoundedRectangle(topLeadingRadius: windowState.mainSurface == .workflows ? theme.radius.xlarge : 0, style: .continuous)
-                    }
+                    .zIndex(2)
                 }
                 .environment(\.workflowSharedGrid, windowState.mainSurface == .workflows)
                 // Computer Use gated-action confirmations. Process-wide queue so
@@ -12013,6 +12027,16 @@ struct ChatView: View {
                 theme.surface.canvas
                     .padding(.top, topInset)
                     .frame(width: inspectorWidth)
+                }
+                // Everything beside the rail meets it with one rounded
+                // corner, whichever surface or sidebar is first. Leave the
+                // titlebar above it intact.
+                .mask {
+                    VStack(spacing: theme.space.s0) {
+                        Rectangle().frame(height: topInset)
+                        UnevenRoundedRectangle(topLeadingRadius: isEmbedded ? 0 : theme.radius.xlarge, style: .continuous)
+                    }
+                }
             }
             // The card sits in that column when there is one, otherwise
             // over the content's trailing edge.
@@ -12053,6 +12077,14 @@ struct ChatView: View {
             .onChange(of: sidebarWidth, initial: true) { _, width in
                 if windowState.sidebarColumnWidth != width {
                     windowState.sidebarColumnWidth = width
+                }
+            }
+            // `toggleSidebar` publishes the width it expects ahead of layout;
+            // when the layout disagrees (the rail stepping aside for the
+            // inspector) the width above may not change, so correct it here.
+            .onChange(of: windowState.showSidebar) { _, _ in
+                if !isEmbedded, windowState.sidebarColumnWidth != sidebarWidth {
+                    windowState.sidebarColumnWidth = sidebarWidth
                 }
             }
             .onChange(of: inspectorWidth, initial: true) { _, width in
@@ -12411,11 +12443,18 @@ struct ChatView: View {
     /// Either creation chat, which share the chat-beside-draft layout.
     private var isCreationLayout: Bool { isWorkflowCreation || isAgentCreation }
 
-    /// The Workflows home or Settings owns the content area; the live
-    /// thread and composer stay mounted underneath, hidden.
+    /// The Workflows home, Insights, New Agent or Settings owns the content
+    /// area; the live thread and composer stay mounted underneath, hidden.
     private var isChatContentCovered: Bool {
         (windowState.mainSurface == .workflows && windowState.showsWorkflowLibrary)
-            || windowState.mainSurface == .settings
+            || windowState.showsPageSurface
+    }
+
+    /// A short fade carried by the transition alone, so nothing inside the
+    /// page animates its layout. Any movement shows a gap under the rounded
+    /// corner.
+    private var pageTransition: AnyTransition {
+        .opacity.animation(theme.motion.quick)
     }
 
     /// The Architect chat's draft, when it has one.
@@ -13382,7 +13421,7 @@ extension ChatView {
                 guard let ourWindow = ChatWindowManager.shared.getNSWindow(id: capturedWindowId),
                     event.window === ourWindow,
                     let windowState,
-                    windowState.mainSurface != .settings
+                    !windowState.showsPageSurface
                 else { return event }
                 windowState.isFindBarVisible = true
                 // Also fires when the bar is already open so Cmd+F always
@@ -13441,12 +13480,12 @@ extension ChatView {
                     return nil
                 }
 
-                // Stage 2.5: Settings covers the chat. Esc belongs to the
-                // page on screen (its search field, an inspector); the
-                // hidden chat's prompts and the window itself are never
-                // its target. A focused field gets it first, then lets go
-                // of focus, as in Stage 4.25.
-                if let windowState, windowState.mainSurface == .settings {
+                // Stage 2.5: Settings or Insights covers the chat. Esc
+                // belongs to the page on screen (its search field, an
+                // inspector); the hidden chat's prompts and the window
+                // itself are never its target. A focused field gets it
+                // first, then lets go of focus, as in Stage 4.25.
+                if let windowState, windowState.showsPageSurface {
                     if let field = ourWindow.firstResponder as? NSTextView,
                         field.isFieldEditor || field is IMETrackingTextView, !field.hasMarkedText()
                     {
@@ -13543,9 +13582,10 @@ extension ChatView {
                     return nil
                 }
 
-                // Stage 7.5: A page is pushed (Workflows' editor, a
-                // workflow, a run, New Workflow) — go back one level, as
-                // the title bar's back button does.
+                // Stage 7.5: A link opened this surface, or a page is
+                // pushed (Workflows' editor, a workflow, a run, New
+                // Workflow) — go back one level, as the title bar's back
+                // button does.
                 if let windowState, windowState.goBack() {
                     return nil
                 }
@@ -13594,6 +13634,7 @@ private struct MainNavigationRail: View {
             destination(.workflows, symbol: "point.forward.to.point.capsulepath", label: "Workflows")
             Spacer(minLength: 8)
             NavigationUsageButton()
+            destination(.insights, symbol: "chart.bar.doc.horizontal", label: "Insights")
             destination(.settings, symbol: "gearshape", label: "Settings")
         }
         .padding(.horizontal, theme.space.s6).padding(.vertical, theme.space.s8)
@@ -13605,11 +13646,7 @@ private struct MainNavigationRail: View {
     private func destination(_ surface: ChatWindowState.MainSurface, symbol: String, label: String) -> some View {
         let isSelected = windowState.mainSurface == surface
         return SettingsIconButton(symbol, help: label, size: .regular, isActive: isSelected, role: .tertiary) {
-            if surface == .workflows, windowState.mainSurface == .workflows, windowState.showsWorkflowLibrary {
-                withAnimation(theme.motion.quick) { windowState.showWorkflowsHome() }
-            } else {
-                windowState.showMainSurface(surface)
-            }
+            windowState.showMainSurfaceFromRail(surface)
         }
         .frame(width: 32, height: 32)
         .accessibilityAddTraits(isSelected ? .isSelected : [])

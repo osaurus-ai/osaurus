@@ -44,6 +44,7 @@ final class NativeActivityGroupView: NSView {
     // MARK: Self-sizing height constraint
 
     private var selfHeight: NSLayoutConstraint?
+    private let heightAnimation = DisclosureHeightAnimation()
 
     // MARK: State
 
@@ -102,6 +103,7 @@ final class NativeActivityGroupView: NSView {
         onHeightChanged: @escaping () -> Void
     ) {
         let theme = theme.catalogFamily(34)
+        heightAnimation.isConfiguring = true
         inspectionTheme = theme
         self.onToggle = onToggle
         self.onHeightChanged = onHeightChanged
@@ -171,13 +173,12 @@ final class NativeActivityGroupView: NSView {
         )
 
         let isSameBlock = configuredBlockId == blockId
+        if !isSameBlock { heightAnimation.cancel() }
         // Same-block collapsed → expanded: fade the children in instead of
         // popping (cell recycling and streaming reconfigures must not fade).
         let expandTransition = isSameBlock && expanded && !self.isExpanded
-        updateChevron(
-            expanded: expanded,
-            animated: isSameBlock && expanded != self.isExpanded
-        )
+        let toggled = isSameBlock && expanded != self.isExpanded
+        updateChevron(expanded: expanded, animated: toggled)
         self.isExpanded = expanded
         ActivityInspectionStyle.label(titleLabel, property: "heading", theme: theme)
         ActivityInspectionStyle.label(stepCountLabel, property: "caption", theme: theme)
@@ -185,8 +186,10 @@ final class NativeActivityGroupView: NSView {
         applyAssignedLayout(theme)
         configuredBlockId = blockId
 
-        contentContainer.isHidden = !expanded
-        separatorView.isHidden = !expanded
+        // A collapse in motion keeps the children drawn until it finishes.
+        let showsContent = expanded || toggled || heightAnimation.isRunning
+        contentContainer.isHidden = !showsContent
+        separatorView.isHidden = !showsContent
 
         // Expand All / Collapse All while the group is open: expand when any
         // step is still collapsed, collapse once everything is open.
@@ -204,7 +207,8 @@ final class NativeActivityGroupView: NSView {
             allStepsExpanded ? L("Collapse all steps") : L("Expand all steps")
         expandAllButton.setAccessibilityLabel(expandAllButton.toolTip ?? "")
         expandAllButton.contentTintColor = NSColor(theme.text.tertiary)
-        let expandTitle = NSTextField(labelWithString: expandAllButton.title)
+        // NSButton draws a leading image flush against its title.
+        let expandTitle = NSTextField(labelWithString: "\u{2009}" + expandAllButton.title)
         expandTitle.textColor = NSColor(theme.text.tertiary)
         ActivityInspectionStyle.label(expandTitle, property: "caption", theme: theme)
         expandAllButton.attributedTitle = expandTitle.attributedStringValue
@@ -219,7 +223,7 @@ final class NativeActivityGroupView: NSView {
                 sessionRedactions: sessionRedactions,
                 onToggleChild: onToggleChild
             )
-        } else {
+        } else if !showsContent {
             // Collapsed: drop child views so a huge expanded run doesn't keep
             // its markdown/tool layers alive off-screen.
             tearDownChildren()
@@ -231,7 +235,23 @@ final class NativeActivityGroupView: NSView {
         // step, and a long run at the default interval feels sluggish.
         if expandTransition { ExpandFade.run(childStack, interval: 0.05, duration: 0.2) }
 
-        applyHeight()
+        heightAnimation.isConfiguring = false
+        if toggled {
+            heightAnimation.run(
+                on: self,
+                from: selfHeight?.constant ?? measuredHeight(),
+                target: { [weak self] in self?.measuredHeight() ?? 0 },
+                apply: { [weak self] in self?.setHeight($0) },
+                finish: { [weak self] in
+                    guard let self, !self.isExpanded else { return }
+                    self.contentContainer.isHidden = true
+                    self.separatorView.isHidden = true
+                    self.tearDownChildren()
+                }
+            )
+        } else {
+            applyHeight()
+        }
     }
 
     private func applyAssignedLayout(_ theme: any ThemeProtocol) {
@@ -279,7 +299,7 @@ final class NativeActivityGroupView: NSView {
         for id in childOrder {
             guard let v = childViews[id] else { continue }
             if let tv = v as? NativeThinkingView {
-                contentH += tv.measuredHeight()
+                contentH += tv.displayedHeight()
             } else if let gv = v as? NativeToolCallGroupView {
                 contentH += gv.measuredHeight()
             }
@@ -536,8 +556,16 @@ final class NativeActivityGroupView: NSView {
 
     // MARK: - Private
 
+    /// Height the view occupies now: mid-disclosure the animated value.
+    func displayedHeight() -> CGFloat { heightAnimation.height(measured: measuredHeight()) }
+
     private func applyHeight() {
-        selfHeight?.constant = measuredHeight()
+        guard !heightAnimation.holdsHeight else { return }
+        setHeight(measuredHeight())
+    }
+
+    private func setHeight(_ height: CGFloat) {
+        selfHeight?.constant = height
         onHeightChanged?()
     }
 

@@ -5,10 +5,17 @@
 //  Manages scroll anchoring for the NSTableView-backed chat thread.
 //
 //  Responsibilities:
-//  - Tracks whether the user is "pinned" to the bottom of the scroll view.
-//  - Fires callbacks when the pinned state transitions (for the scroll-to-bottom button).
+//  - Owns whether the thread follows its bottom edge, and keeps a following
+//    reader there as the content or the viewport changes size.
+//  - Fires callbacks when following starts / stops (for the scroll-to-bottom button).
 //  - Saves / restores a scroll anchor so that applying a new diffable snapshot
 //    preserves the user's reading position.
+//
+//  Following is explicit state. Only the reader changes it: scrolling toward
+//  older content stops it, scrolling back to the bottom (or the
+//  scroll-to-bottom button) resumes it. Content growth, clip-view clamps and
+//  this manager's own scrolls never do, so a large height change can't drop
+//  a following reader and a scrolled-up reader is never pulled back down.
 //
 //  The anchor is block-based: we record the block in the topmost visible row
 //  and the pixel offset from that row's top edge. After a snapshot, we find
@@ -25,27 +32,22 @@ final class ScrollAnchorManager {
 
     // MARK: - Public State
 
-    /// Whether the scroll view is currently pinned to the bottom.
+    /// Whether the thread follows its bottom edge.
     private(set) var isPinnedToBottom: Bool = true
 
-    /// While true, bounds changes never mark the reader pinned. Set while a
-    /// restored position settles: rows still measuring can briefly make the
-    /// content shorter than the viewport, which would read as "at bottom"
-    /// and let pinned-follow paths yank the reader down.
+    /// While true the reader never starts following. Set while a restored
+    /// position settles: rows still measuring can briefly make the content
+    /// shorter than the viewport, which would read as "at bottom".
     var holdUnpinned = false {
-        didSet { if oldValue != holdUnpinned { handleBoundsChanged() } }
+        didSet {
+            guard oldValue != holdUnpinned else { return }
+            if holdUnpinned {
+                setFollowing(false)
+            } else if distanceFromBottom <= 1 {
+                setFollowing(true)
+            }
+        }
     }
-
-    /// Distance (in points) from the bottom within which we consider the
-    /// user "pinned". A small tolerance prevents jitter.
-    var bottomThreshold: CGFloat = 50
-
-    /// Set when the reader scrolls up by hand. Keeps them unpinned, even
-    /// inside `bottomThreshold`, until they scroll back down to the very
-    /// bottom, so streamed growth can't pull a reader back down mid-scroll.
-    private var userLeftBottom = false
-
-    private var lastOriginY: CGFloat = 0
 
     // MARK: - Callbacks
 
@@ -64,17 +66,33 @@ final class ScrollAnchorManager {
     private weak var scrollView: NSScrollView?
     private weak var tableView: NSTableView?
 
-    /// Observer token for clip-view bounds changes.
-    /// `nonisolated(unsafe)` so `deinit` can access it without actor isolation.
-    nonisolated(unsafe) private var boundsObserver: NSObjectProtocol?
+    /// `nonisolated(unsafe)` so `deinit` can remove them without actor isolation.
+    nonisolated(unsafe) private var observers: [NSObjectProtocol] = []
 
     /// Saved scroll anchor (row + pixel offset).
     private var savedAnchor: Anchor?
 
-    /// One shot flag for coalesced `scrollToBottomCoalesced()`. multiple calls in
-    /// the same runloop tick collapse to a single bounds mutation which avoids
-    /// redundant clip view composites during streaming
-    private var coalescedScrollPending: Bool = false
+    private var lastOriginY: CGFloat = 0
+    /// > 0 while this manager moves the origin itself.
+    private var programmaticScrollDepth = 0
+    /// > 0 while a disclosure toggle holds the origin still (see `beginHoldingPosition`).
+    private var positionHoldDepth = 0
+    private let scrollAnimator = ChatFrameAnimator()
+
+    /// > 0 during a live scroll: a scroller drag or a trackpad gesture,
+    /// momentum included.
+    private var liveScrollDepth = 0
+    /// End of the window after a wheel or keyboard scroll event in which
+    /// origin changes are the reader's. A mouse-wheel notch and a page key
+    /// both animate the origin after the event.
+    private var userScrollUntil: CFTimeInterval = 0
+    private static let userScrollWindow: CFTimeInterval = 0.4
+
+    private var isUserScrolling: Bool {
+        liveScrollDepth > 0 || CACurrentMediaTime() < userScrollUntil
+    }
+
+    private static let scrollAnimationDuration: CFTimeInterval = 0.25
 
     private struct Anchor {
         let row: Int
@@ -90,19 +108,62 @@ final class ScrollAnchorManager {
 
         let clipView = scrollView.contentView
         clipView.postsBoundsChangedNotifications = true
-        boundsObserver = NotificationCenter.default.addObserver(
-            forName: NSView.boundsDidChangeNotification,
-            object: clipView,
-            queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.handleBoundsChanged() }
-        }
+        clipView.postsFrameChangedNotifications = true
+        tableView.postsFrameChangedNotifications = true
+        // Synchronous (queue: nil): a following reader is re-pinned inside the
+        // same layout pass that changed the size, so no frame is drawn with
+        // the bottom out of place.
+        let center = NotificationCenter.default
+        observers = [
+            center.addObserver(forName: NSView.boundsDidChangeNotification, object: clipView, queue: nil) {
+                [weak self] _ in MainActor.assumeIsolated { self?.handleBoundsChanged() }
+            },
+            center.addObserver(forName: NSView.frameDidChangeNotification, object: clipView, queue: nil) {
+                [weak self] _ in MainActor.assumeIsolated { self?.followBottomIfNeeded() }
+            },
+            center.addObserver(forName: NSView.frameDidChangeNotification, object: tableView, queue: nil) {
+                [weak self] _ in MainActor.assumeIsolated { self?.followBottomIfNeeded() }
+            },
+            center.addObserver(forName: NSScrollView.willStartLiveScrollNotification, object: scrollView, queue: nil) {
+                [weak self] _ in
+                MainActor.assumeIsolated {
+                    self?.liveScrollDepth += 1
+                    self?.scrollAnimator.stop()
+                }
+            },
+            center.addObserver(forName: NSScrollView.didEndLiveScrollNotification, object: scrollView, queue: nil) {
+                [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.liveScrollDepth = max(0, self.liveScrollDepth - 1)
+                }
+            },
+        ]
+        lastOriginY = clipView.bounds.origin.y
     }
 
     deinit {
-        if let observer = boundsObserver {
+        for observer in observers {
             NotificationCenter.default.removeObserver(observer)
         }
+    }
+
+    // MARK: - Geometry
+
+    /// The resting origin at the bottom: the last row clears the bottom
+    /// content inset, and a thread shorter than the viewport stays at the
+    /// top inset. This is also the furthest the clip view lets the reader
+    /// scroll, so a reader at the true bottom and a following reader agree.
+    var bottomOriginY: CGFloat {
+        guard let scrollView, let documentView = scrollView.documentView else { return 0 }
+        let insets = scrollView.contentInsets
+        let clipHeight = scrollView.contentView.bounds.height
+        return max(-insets.top, documentView.frame.height - clipHeight + insets.bottom)
+    }
+
+    var distanceFromBottom: CGFloat {
+        guard let scrollView else { return 0 }
+        return bottomOriginY - scrollView.contentView.bounds.origin.y
     }
 
     // MARK: - Anchor Save / Restore
@@ -198,115 +259,105 @@ final class ScrollAnchorManager {
         if let scrollView, abs(scrollView.contentView.bounds.origin.y - targetY) > 0.5 {
             setScrollOriginY(targetY)
         }
-        // Unpin explicitly: the clip view has no height yet on first mount,
-        // so the bounds-based check could read this as "at bottom".
         unpinFromBottom()
         return true
     }
 
     // MARK: - Scroll Actions
 
-    /// Scroll to the very bottom of the content.
-    /// Uses clip view bounds directly rather than `scrollRowToVisible`,
-    /// which only ensures a row is visible but won't fully scroll to the end.
+    /// Follow the bottom from here on and scroll there. An animated scroll
+    /// tracks the bottom as it moves, so content arriving mid-animation is
+    /// part of the same motion rather than a snap at its end.
     func scrollToBottom(animated: Bool = false) {
-        guard let scrollView, let documentView = scrollView.documentView else { return }
-        // Asked for the bottom, so follow again even if growth during an
-        // animated scroll leaves the reader a little short of it.
-        userLeftBottom = false
-        let clipView = scrollView.contentView
-        // A short conversation stays at the top content inset. Clamping to
-        // zero here erased that padding as soon as the first message arrived.
-        let maxY = documentView.frame.height <= clipView.bounds.height
-            ? -scrollView.contentInsets.top
-            : documentView.frame.height - clipView.bounds.height
-
-        // if already within 1pt of the target — skip. streaming height updates fire
-        // this repeatedly even when the row grew by less than a pixel, and each
-        // call would otherwise re-damage the full clip view via
-        // `reflectScrolledClipView`
-        if !animated, abs(clipView.bounds.origin.y - maxY) <= 1.0 {
+        guard let scrollView else { return }
+        setFollowing(true)
+        let startY = scrollView.contentView.bounds.origin.y
+        guard abs(startY - bottomOriginY) > 0.5 else {
+            scrollAnimator.stop()
             return
         }
-
-        if animated {
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = ThemeManager.shared.currentTheme.motion.quickInterval
-                ctx.allowsImplicitAnimation = true
-                clipView.setBoundsOrigin(NSPoint(x: clipView.bounds.origin.x, y: maxY))
-            }
-            scrollView.reflectScrolledClipView(clipView)
-        } else {
-            setScrollOriginY(maxY)
+        guard animated, !ChatFrameAnimator.reduceMotion else {
+            scrollAnimator.stop()
+            setScrollOriginY(bottomOriginY)
+            return
         }
+        ChatPerfTrace.shared.count("scrollAnchor.animateToBottom")
+        scrollAnimator.run(
+            duration: Self.scrollAnimationDuration,
+            curve: .easeOut,
+            on: scrollView,
+            step: { [weak self] progress in
+                guard let self else { return }
+                self.setScrollOriginY(startY + (self.bottomOriginY - startY) * progress)
+            },
+            completion: { [weak self] in self?.followBottomIfNeeded() }
+        )
     }
 
-    /// Coalesced variant: multiple calls within the same runloop tick collapse
-    /// to a single trailing-edge `scrollToBottom()`. Use from per-token paths
-    /// (streaming height update + path 2 reconfigures can fire back-to-back
-    /// within a few ms of each other).
-    func scrollToBottomCoalesced() {
-        guard !coalescedScrollPending else { return }
-        coalescedScrollPending = true
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.coalescedScrollPending = false
-            // The reader may have scrolled up since this was queued.
-            guard !self.userLeftBottom else { return }
-            self.scrollToBottom()
-        }
-    }
-
-    /// Scroll so that the given row is visible.
-    ///
-    /// `HoverTrackingTableView.allowProgrammaticScroll` gates the
-    /// `scrollRowToVisible` call past the subview-initiated-scroll blocker
-    /// (see `HoverTrackingTableView.scrollToVisible`). Without this gate,
-    /// the override would short-circuit the scroll and the row wouldn't move.
-    func scrollToRow(_ row: Int, animated: Bool = false) {
-        guard let tableView, row >= 0, row < tableView.numberOfRows else { return }
-        HoverTrackingTableView.allowProgrammaticScroll = true
-        defer { HoverTrackingTableView.allowProgrammaticScroll = false }
-        if animated {
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = ThemeManager.shared.currentTheme.motion.quickInterval
-                ctx.allowsImplicitAnimation = true
-                tableView.scrollRowToVisible(row)
-            }
-        } else {
-            tableView.scrollRowToVisible(row)
-        }
-    }
-
-    /// Force unpin from the bottom (i.e user jumped to a specific turn via
-    /// the minimap). Subsequent snapshot applies will preserve the anchor
-    /// instead of re-snapping to bottom. Fires `onScrolledAwayFromBottom`
-    /// if we were previously pinned.
+    /// Stop following (the reader jumped to a specific turn via the minimap
+    /// or find bar). Snapshot applies then preserve the anchor instead of
+    /// going back to the bottom.
     func unpinFromBottom() {
-        guard isPinnedToBottom else { return }
-        isPinnedToBottom = false
-        let cb = onScrolledAwayFromBottom
-        DispatchQueue.main.async { cb?() }
+        scrollAnimator.stop()
+        setFollowing(false)
+    }
+
+    /// A wheel, trackpad or keyboard scroll event: the reader takes over from
+    /// a scroll animation still running, and the origin changes it causes
+    /// count as theirs.
+    func userWillScroll() {
+        scrollAnimator.stop()
+        userScrollUntil = CACurrentMediaTime() + Self.userScrollWindow
     }
 
     /// The reader is scrolling toward older content with the wheel or
-    /// trackpad. Called when the event arrives, before the view moves.
+    /// trackpad. Called when the event arrives, before the view moves: a
+    /// mouse-wheel notch animates, so the origin hasn't moved yet.
     /// Ignored when there is nothing above to scroll to.
     func userScrolledUp() {
-        guard let scrollView, let documentView = scrollView.documentView else { return }
-        let clipView = scrollView.contentView
-        guard documentView.frame.height > clipView.bounds.height,
-            clipView.bounds.origin.y > -scrollView.contentInsets.top + 0.5
-        else { return }
-        userLeftBottom = true
-        handleBoundsChanged()
+        guard let scrollView else { return }
+        guard scrollView.contentView.bounds.origin.y > -scrollView.contentInsets.top + 0.5 else { return }
+        scrollAnimator.stop()
+        setFollowing(false)
+    }
+
+    /// Hold the origin still while a disclosure row changes height, so the
+    /// header the reader clicked stays under the pointer instead of being
+    /// carried along by the follow-the-bottom re-pin. Pair with
+    /// `endHoldingPosition`.
+    func beginHoldingPosition() {
+        positionHoldDepth += 1
+        scrollAnimator.stop()
+    }
+
+    /// End a hold. A reader the change left at the bottom follows (a
+    /// collapse undoing an expand returns them there). A following reader
+    /// keeps following when `resumeFollowing` asks for it (a collapse); one
+    /// whose bottom content moved below the viewport (an expand) stops, so
+    /// the next streamed token doesn't scroll the expanded row away.
+    func endHoldingPosition(resumeFollowing: Bool) {
+        guard positionHoldDepth > 0 else { return }
+        positionHoldDepth -= 1
+        guard positionHoldDepth == 0 else { return }
+        if distanceFromBottom <= 1 {
+            if isPinnedToBottom { followBottomIfNeeded() } else if !holdUnpinned { setFollowing(true) }
+            return
+        }
+        guard isPinnedToBottom else { return }
+        if resumeFollowing {
+            scrollToBottom(animated: true)
+        } else {
+            setFollowing(false)
+        }
     }
 
     /// Run `changeHeights`, which re-notes `rows`, without moving what the
     /// reader sees. NSTableView keeps the scroll origin, so a row above the
     /// viewport that grows or shrinks would shift everything below it.
+    /// A following reader is re-pinned by the document frame change instead.
     func keepingVisibleContent(whileChanging rows: IndexSet, _ changeHeights: () -> Void) {
-        guard !isPinnedToBottom, let tableView, let scrollView, let firstChanged = rows.first else {
+        let following = isPinnedToBottom && positionHoldDepth == 0
+        guard !following, let tableView, let scrollView, let firstChanged = rows.first else {
             changeHeights()
             return
         }
@@ -324,48 +375,67 @@ final class ScrollAnchorManager {
         setScrollOriginY(scrollView.contentView.bounds.origin.y + shift)
     }
 
-    /// Re-check pinned state against the current scroll position.
-    /// Call after the initial snapshot or any layout that doesn't trigger
-    /// `boundsDidChangeNotification` (e.g. content growing while the
-    /// clip view stays at origin 0,0).
+    /// Re-pin a following reader. For geometry changes that don't resize the
+    /// document or the clip view (content insets changing, first mount).
     func checkPinnedState() {
-        handleBoundsChanged()
+        followBottomIfNeeded()
     }
 
     // MARK: - Private Helpers
+
+    /// Keep a following reader at the bottom. Runs synchronously from the
+    /// document and clip-view frame changes, so every height change, row
+    /// insert and viewport resize re-pins in the pass that caused it.
+    private func followBottomIfNeeded() {
+        guard isPinnedToBottom, positionHoldDepth == 0, !holdUnpinned, !scrollAnimator.isRunning,
+            let scrollView
+        else { return }
+        let target = bottomOriginY
+        guard abs(scrollView.contentView.bounds.origin.y - target) > 0.5 else { return }
+        ChatPerfTrace.shared.count("scrollAnchor.follow")
+        setScrollOriginY(target)
+    }
 
     /// Set the clip view's vertical scroll origin and notify the scroll view.
     private func setScrollOriginY(_ y: CGFloat) {
         guard let scrollView else { return }
         let clipView = scrollView.contentView
+        programmaticScrollDepth += 1
+        defer { programmaticScrollDepth -= 1 }
         clipView.setBoundsOrigin(NSPoint(x: clipView.bounds.origin.x, y: y))
         scrollView.reflectScrolledClipView(clipView)
     }
 
-    /// Called on every clip-view bounds change (i.e. scroll). Fires pinned-state
-    /// callbacks asynchronously to avoid mutating SwiftUI `@State` during a view update.
+    /// Classify a bounds change. Only one made while the reader is scrolling
+    /// changes following: up and short of the bottom stops it, down onto the
+    /// bottom resumes it. Everything else is ours (re-pin, anchor restore,
+    /// scroll animation) or AppKit's (clamping to a resized document or clip
+    /// view, shifting for a changed content inset); those can move the
+    /// origin either way, so a following reader is put back on the bottom.
     private func handleBoundsChanged() {
         guard let scrollView else { return }
-        let wasPinned = isPinnedToBottom
-        let distance = distanceFromBottom(scrollView: scrollView)
         let originY = scrollView.contentView.bounds.origin.y
-        let movedDown = originY > lastOriginY + 0.5
+        let delta = originY - lastOriginY
         lastOriginY = originY
-        if userLeftBottom, movedDown, distance <= 1 { userLeftBottom = false }
-        isPinnedToBottom = !holdUnpinned && !userLeftBottom && distance <= bottomThreshold
-
-        if isPinnedToBottom, !wasPinned {
-            let cb = onScrolledToBottom
-            DispatchQueue.main.async { cb?() }
-        } else if !isPinnedToBottom, wasPinned {
-            let cb = onScrolledAwayFromBottom
-            DispatchQueue.main.async { cb?() }
+        guard programmaticScrollDepth == 0, !scrollAnimator.isRunning, abs(delta) > 0.5 else { return }
+        guard isUserScrolling else {
+            followBottomIfNeeded()
+            return
+        }
+        let distance = distanceFromBottom
+        if delta < 0, distance > 1 {
+            setFollowing(false)
+        } else if delta > 0, distance <= 1, !holdUnpinned {
+            setFollowing(true)
         }
     }
 
-    private func distanceFromBottom(scrollView: NSScrollView) -> CGFloat {
-        let clipView = scrollView.contentView
-        let contentHeight = scrollView.documentView?.frame.height ?? 0
-        return contentHeight - (clipView.bounds.origin.y + clipView.bounds.height)
+    /// Fires the callbacks asynchronously to avoid mutating SwiftUI `@State`
+    /// during a view update.
+    private func setFollowing(_ following: Bool) {
+        guard following != isPinnedToBottom else { return }
+        isPinnedToBottom = following
+        let callback = following ? onScrolledToBottom : onScrolledAwayFromBottom
+        DispatchQueue.main.async { callback?() }
     }
 }

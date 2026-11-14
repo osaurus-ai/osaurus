@@ -625,7 +625,7 @@ private struct PrivacyOverviewTab: View {
                 actionTitle: "Open Insights",
                 anchorId: "privacy.activityLog.openInsights"
             ) {
-                ManagementStateManager.shared.selectedTab = .insights
+                ChatWindowManager.shared.showInsightsSurface()
             }
         }
     }

@@ -22,11 +22,19 @@ public final class AgentSetupPromptCoordinator {
     public static let shared = AgentSetupPromptCoordinator()
 
     private var promptedThisLaunch: Set<UUID> = []
+    /// The setup card each chat window is showing, so switching that
+    /// window to another agent closes it instead of leaving one agent's
+    /// prompt over another agent's chat.
+    private var openCards: [ThemedAlertScope: (agentId: UUID, requestId: UUID)] = [:]
 
     private init() {}
 
     /// Called when `agentId` becomes the agent a chat window shows.
     public func agentShown(_ agentId: UUID, windowId: UUID) {
+        let scope = ThemedAlertScope.chat(windowId)
+        if let card = openCards[scope], card.agentId != agentId {
+            closeCard(scope: scope, id: card.requestId)
+        }
         guard SetupStateStore.shared.needsSetup(agentId),
             let agent = AgentManager.shared.agent(for: agentId),
             !agent.isBuiltIn
@@ -37,7 +45,7 @@ public final class AgentSetupPromptCoordinator {
             return
         }
         guard promptedThisLaunch.insert(agentId).inserted else { return }
-        present(report, for: agent, scope: .chat(windowId))
+        present(report, for: agent, scope: scope)
     }
 
     /// Re-check an agent on demand (card menu "Run Setup", after the user
@@ -51,7 +59,10 @@ public final class AgentSetupPromptCoordinator {
     }
 
     /// Test seam.
-    func resetForTesting() { promptedThisLaunch = [] }
+    func resetForTesting() {
+        promptedThisLaunch = []
+        openCards = [:]
+    }
 
     // MARK: - Presentation
 
@@ -59,14 +70,17 @@ public final class AgentSetupPromptCoordinator {
         // Headless tests have no one to dismiss the card, and the shared
         // alert center would stay occupied for every later test.
         guard !RuntimeEnvironment.isUnderTests else { return }
+        let requestId = UUID()
+        openCards[scope] = (agent.id, requestId)
         if let folder = Self.waitingFolder(in: report, for: agent) {
-            presentFolderAccess(folder, for: agent, scope: scope)
+            presentFolderAccess(folder, for: agent, scope: scope, requestId: requestId)
             return
         }
         let checklist = AgentSetupChecklistView(report: report)
         // An accessory, not custom content: custom content replaces the
         // button row, which left this card with no way forward.
         let request = ThemedAlertRequest(
+            id: requestId,
             title: L("Finish setting up \(agent.name)"),
             message: report.hasBlockers
                 ? L("This agent was created with settings this Mac cannot honour yet. It will not work as intended until these are fixed.")
@@ -84,12 +98,21 @@ public final class AgentSetupPromptCoordinator {
                     // orchestrator's spawn gate keeps refusing until then.
                 },
             ],
-            onDismiss: {
+            onDismiss: { [weak self] in
                 // Closing the card is "Later": the marker stays so the spawn
                 // gate and the card badge keep pointing at the gap.
+                self?.closeCard(scope: scope, id: requestId)
             }
         )
         ThemedAlertCenter.shared.present(request, scope: scope)
+    }
+
+    /// The alert host only calls `onDismiss`; the request stays in the
+    /// center until removed, and a leftover renders again whenever the
+    /// chat view rebuilds (every agent switch).
+    private func closeCard(scope: ThemedAlertScope, id: UUID) {
+        ThemedAlertCenter.shared.dismiss(scope: scope, id: id)
+        if openCards[scope]?.requestId == id { openCards[scope] = nil }
     }
 
     // MARK: - A teammate's folder
@@ -106,9 +129,15 @@ public final class AgentSetupPromptCoordinator {
         return guarded
     }
 
-    private func presentFolderAccess(_ path: String, for agent: Agent, scope: ThemedAlertScope) {
+    private func presentFolderAccess(
+        _ path: String,
+        for agent: Agent,
+        scope: ThemedAlertScope,
+        requestId: UUID
+    ) {
         let folder = FileManager.default.displayName(atPath: path)
         let request = ThemedAlertRequest(
+            id: requestId,
             title: L("Let \(agent.name) see your \(folder) folder?"),
             message: L("\(agent.name) works with the files in \(folder). macOS will ask you once to allow it."),
             buttons: [
@@ -117,7 +146,7 @@ public final class AgentSetupPromptCoordinator {
                     Task { await self?.grantFolder(path, agentId: agent.id) }
                 },
             ],
-            onDismiss: {}
+            onDismiss: { [weak self] in self?.closeCard(scope: scope, id: requestId) }
         )
         ThemedAlertCenter.shared.present(request, scope: scope)
     }

@@ -2,10 +2,10 @@
 //  AgentCreatorController.swift
 //  osaurus
 //
-//  The New Agent creator on Settings' Agents page: a Configurator chat that
-//  lives outside any chat window. It stays alive while the person looks
-//  elsewhere in Settings, and its draft can be picked up again after a
-//  relaunch.
+//  The New Agent creator, the main window's New Agent page: a
+//  Configurator chat that lives outside any chat window's tabs. It stays
+//  alive while the person looks elsewhere, and its draft can be picked up
+//  again after a relaunch.
 //
 
 import Foundation
@@ -14,10 +14,8 @@ import Foundation
 final class AgentCreatorController: ObservableObject {
     static let shared = AgentCreatorController()
 
-    /// The creator's chat, until it is closed, discarded or creates its agent.
+    /// The creator's chat, until it is discarded or creates its agent.
     @Published private(set) var chat: ChatWindowState?
-    /// Whether the Agents page shows the creator rather than its list.
-    @Published var isShowing = false
 
     private init() {}
 
@@ -35,7 +33,7 @@ final class AgentCreatorController: ObservableObject {
         openDraft ?? AgentDraftStore.shared.unfinishedDrafts.first
     }
 
-    /// Shows the creator. Without a `brief` it continues the draft in
+    /// Readies the creator. Without a `brief` it continues the draft in
     /// progress; a `brief` starts a fresh one and is sent first when a
     /// model can answer.
     func open(brief: String?, source: AgentCreatorLauncher.Source) {
@@ -46,12 +44,11 @@ final class AgentCreatorController: ObservableObject {
             startFresh(brief: brief)
             FeatureTelemetry.agentCreationStarted(source: source.rawValue)
         }
-        isShowing = true
     }
 
-    /// Continues `draft`, reopening its chat when it isn't the one on screen.
+    /// Continues `draft`, reopening its chat when it isn't the open one.
     func resume(_ draft: AgentDraft) {
-        if openDraft?.id == draft.id { isShowing = true; return }
+        if openDraft?.id == draft.id { return }
         let sessionId = draft.sessionID.flatMap(UUID.init(uuidString:))
         let saved = sessionId.flatMap(ChatSessionStore.load(id:))
         let state = ChatWindowState(windowId: UUID(), agentId: Agent.configuratorId, sessionData: saved)
@@ -65,11 +62,7 @@ final class AgentCreatorController: ObservableObject {
             AgentCreatorLauncher.retitle(sessionId: id, name: draft.agent.name)
         }
         replaceChat(with: state)
-        isShowing = true
     }
-
-    /// Back to the Agents list; the chat and its draft wait.
-    func hide() { isShowing = false }
 
     /// Drops the draft in progress (`draft`, or the open one) and its chat.
     func discard(_ draft: AgentDraft? = nil) {
@@ -77,7 +70,6 @@ final class AgentCreatorController: ObservableObject {
         if openDraft?.id == draft.id { closeChat() }
         AgentDraftStore.shared.delete(draft.id)
         FeatureTelemetry.agentCreationAbandoned(touchedFields: draft.touched.count)
-        isShowing = false
     }
 
     /// The draft became an agent: close the creator and forget the draft.
@@ -85,7 +77,6 @@ final class AgentCreatorController: ObservableObject {
         let draft = AgentDraftStore.shared.draft(forSession: chat?.session.sessionId?.uuidString)
         closeChat()
         if let draft, draft.isCreated { AgentDraftStore.shared.delete(draft.id) }
-        isShowing = false
     }
 
     private func startFresh(brief: String) {

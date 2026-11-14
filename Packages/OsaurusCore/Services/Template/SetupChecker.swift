@@ -267,7 +267,7 @@ public enum SetupChecker {
         switch name {
         case AppleScriptTool.toolName, MacQueryTool.toolName:
             guard !ModelPickerItemCache.shared.hasReadyAppleScriptModel else { return nil }
-            return L("No AppleScript model is installed. Download one in Settings → Computer Use → Models.")
+            return L("No AppleScript model is installed. Download one in Settings → Local Models → AppleScript.")
         case "image":
             guard items.imageGenerationDelegateCandidates.isEmpty else { return nil }
             return L("No image generation model is installed or connected. Download one in Local Models → Image.")

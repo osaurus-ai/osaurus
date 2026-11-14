@@ -589,7 +589,7 @@ public final class OsaurusInspectTool: OsaurusTool, @unchecked Sendable {
                     "Spawn pool is EMPTY although \(customAgents.count) custom agent(s) exist — the "
                         + "Orchestrator cannot hand work to any of them. Restore delegation with "
                         + "osaurus_config apply `delegation: {spawnable_agents: [<names to allow>]}` "
-                        + "(the list replaces the pool) or Settings → Orchestrator → Add all agents.")
+                        + "(the list replaces the pool) or Settings → Agents → Delegation → Add all agents.")
             }
 
             let snapshot: [String: Any] = [
@@ -1119,7 +1119,7 @@ public final class OsaurusHelpTool: OsaurusTool, @unchecked Sendable {
         "Osaurus user guide and settings catalog. Answers what Osaurus is, how its features work, and "
         + "where a setting lives. "
         + "`action`: topics (index of topic ids with summaries), read (needs `topic` id; returns the "
-        + "full topic text), find (needs `query`; returns Management breadcrumbs from the same "
+        + "full topic text), find (needs `query`; returns Settings path breadcrumbs from the same "
         + "catalog as in-app settings search). Answer from the topic or find results — for the "
         + "user's CURRENT configuration use osaurus_inspect instead. Never spawn an agent or use "
         + "Computer Use to hunt Osaurus Settings."
@@ -1221,7 +1221,7 @@ public final class OsaurusHelpTool: OsaurusTool, @unchecked Sendable {
                         + "Do not spawn an agent or use Computer Use to hunt Settings. "
                         + "Do not claim you changed a Settings-UI-only control."
                     : "Quote the `path` breadcrumb. Settings-UI-only rows cannot be changed "
-                        + "with osaurus_config — tell the user to open that Management path. "
+                        + "with osaurus_config — tell the user to open that Settings path. "
                         + "Never spawn an agent or use Computer Use to find a setting.",
             ]
             if let relaxed = lookup.relaxedQuery {
@@ -1728,7 +1728,7 @@ extension OsaurusInspectTool {
         }
         if settingsUIOnlyScopes.contains(scope.lowercased()) {
             let path =
-                "Settings… (⌘,) → Server → Settings (port, sampling, Cache → Context Window Cap, KV). "
+                "Settings… (⌘,) → Server → Server Settings (Listening Port, Sampling Defaults, Cache → Context Window Cap, KV). "
                 + "Find the exact control with osaurus_help {action: 'find', query: '…'}."
             return ToolEnvelope.failure(
                 kind: .invalidArgs,
