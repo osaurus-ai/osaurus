@@ -212,6 +212,7 @@ Workflow and agent template files name MCP servers by name and may carry `mcp_se
 | **ClickUp** | Business Productivity | OAuth |  | `https://mcp.clickup.com/mcp` |
 | **DeepL** | Business Productivity | OAuth |  | `https://mcp.deepl.com/v1/mcp` |
 | **Dropbox Dash** | Business Productivity | OAuth | Yes | `https://mcp.dropbox.com/dash` |
+| **EvoLink** | Business Productivity | OAuth |  | `https://mcp.evolink.ai/mcp` |
 | **Exa Search** | Business Productivity | None |  | `https://mcp.exa.ai/mcp` |
 | **Excalidraw** | Business Productivity | None |  | `https://mcp.excalidraw.com/mcp` |
 | **Fireflies** | Business Productivity | OAuth |  | `https://api.fireflies.ai/mcp` |
