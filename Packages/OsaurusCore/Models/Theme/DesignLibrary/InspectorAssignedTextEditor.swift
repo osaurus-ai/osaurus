@@ -12,7 +12,6 @@ struct InspectorAssignedTextEditor: NSViewRepresentable {
     let tracking: CGFloat
     let paragraphSpacing: CGFloat
     let textColor: NSColor
-    let selectionColor: NSColor
     let editable: Bool
     var onFocusChange: (Bool) -> Void
     var accessibleName: String? = nil
@@ -54,7 +53,8 @@ struct InspectorAssignedTextEditor: NSViewRepresentable {
         view.setAccessibilityLabel(accessibleName ?? L("Multiline editor"))
         view.setAccessibilityHelp(accessibleHelp)
         view.insertionPointColor = textColor
-        view.selectedTextAttributes = [.backgroundColor: selectionColor, .foregroundColor: textColor]
+        // Selection keeps AppKit's accent highlight, like single-line fields:
+        // a neutral fill matches the editor's hover surface and disappears.
         guard !view.hasMarkedText() else { return }
         let selected = view.selectedRanges
         if view.string != text { view.string = text }

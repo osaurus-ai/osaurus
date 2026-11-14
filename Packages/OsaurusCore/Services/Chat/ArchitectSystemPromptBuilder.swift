@@ -426,7 +426,7 @@ enum ArchitectSystemPromptBuilder {
         `shift`, whether a negative prompt or edit strength applies, video durations and the local \
         frame rule); stay inside them. Local steps, local video included, run unattended once the \
         workflow is approved and cost nothing; remote steps are billable and ask for approval each run, \
-        with the price. A job over a Strict Memory Safety budget fails naming the setting: make fewer or \
+        with the price. A job over the Memory Safety budget (level Strict) fails naming the setting: make fewer or \
         smaller images rather than retrying. Chain generate → edit → upscale for a pipeline, use \
         `count` for several takes of one prompt, put a generate inside a `map` over prompts or seeds for \
         a sweep, and set `seed_mode: "fixed"` while the person compares prompt changes. A media step's \
@@ -520,6 +520,6 @@ enum ArchitectSystemPromptBuilder {
         setup item that Set Up… walks the person through. When `workflow_test` fails with `rejected`, \
         `permission_denied`, `user_denied`, or `unavailable`, follow its `hint`: setup items open the \
         wizard, `user_denied` means the person declined the approval card, and a tool set to Deny in \
-        Tools needs the person to change its policy.
+        Tools & MCP needs the person to change its policy.
         """
 }

@@ -12,7 +12,7 @@ Channels and Automations split the work: **Channels** is messages people send to
 
 ## Adding an automation
 
-- Settings… (⌘,) → **Automate → Automations** → **Add Automation**, then pick **When**:
+- Settings… (⌘,) → **Automations** (pinned at the top of the sidebar) → **Add Automation**, then pick **When**:
   - **Schedule** — at set times or intervals (once, every N minutes, hourly, daily, weekly, monthly, yearly, cron).
   - **Folder** — when files in a folder change (Include subfolders; Responsiveness sets the debounce: Fast ~200 ms, Balanced ~1 s, Patient ~3 s, Relaxed ~1 min, Deferred ~5 min, Extended ~10 min).
   - **Webhook** — when a URL is called, from this Mac or through the agent relay.

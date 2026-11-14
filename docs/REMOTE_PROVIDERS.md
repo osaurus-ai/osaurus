@@ -29,17 +29,28 @@ With Remote Providers, you can:
 
 ### Provider Presets
 
-Osaurus includes presets for common providers:
+Osaurus includes presets for common providers (`Models/Configuration/ProviderPresets.swift`).
+OpenAI, xAI and OpenRouter also offer a browser sign-in and are listed first;
+the rest are under **Use an API Key**:
 
-| Preset         | Host              | Port | Base Path | API Format | Auth             |
-| -------------- | ----------------- | ---- | --------- | ---------- | ---------------- |
-| **Anthropic**  | api.anthropic.com | 443  | /v1       | Anthropic  | API Key required |
-| **OpenAI**     | api.openai.com    | 443  | /v1       | OpenAI     | API Key required |
-| **xAI**        | api.x.ai          | 443  | /v1       | OpenAI     | API Key required |
-| **OpenRouter** | openrouter.ai     | 443  | /api/v1   | OpenAI     | API Key required |
-| **Custom**     | (you specify)     | —    | /v1       | OpenAI     | Optional         |
+| Preset                   | Host                              | Base Path      | API Format     | Auth             |
+| ------------------------ | --------------------------------- | -------------- | -------------- | ---------------- |
+| **OpenAI**               | api.openai.com                    | /v1            | Open Responses | Sign-in or API Key |
+| **xAI**                  | api.x.ai                          | /v1            | OpenAI         | Sign-in or API Key |
+| **OpenRouter**           | openrouter.ai                     | /api/v1        | OpenAI         | Sign-in or API Key |
+| **Anthropic**            | api.anthropic.com                 | /v1            | Anthropic      | API Key          |
+| **AtlasCloud**           | api.atlascloud.ai                 | /v1            | OpenAI         | API Key          |
+| **Azure OpenAI Foundry** | (your resource host)              | /openai/v1     | Azure OpenAI   | API Key          |
+| **DeepSeek**             | api.deepseek.com                  | /v1            | OpenAI         | API Key          |
+| **Fireworks AI**         | api.fireworks.ai                  | /inference/v1  | OpenAI         | API Key          |
+| **Google**               | generativelanguage.googleapis.com | /v1beta        | Gemini         | API Key          |
+| **MiniMax**              | api.minimax.io                    | /v1            | OpenAI         | API Key          |
+| **Mistral**              | api.mistral.ai                    | /v1            | OpenAI         | API Key          |
+| **Venice AI**            | api.venice.ai                     | /api/v1        | OpenAI         | API Key          |
+| **Ollama**               | localhost:11434 (HTTP)            | /v1            | OpenAI         | No Auth          |
+| **Custom**               | (you specify)                     | /v1            | OpenAI         | No Auth or API Key |
 
-**Note:** For Ollama, LM Studio, or other OpenAI-compatible endpoints, use the **Custom** preset and configure the host/port manually. See [Provider-Specific Notes](#provider-specific-notes) for configuration examples.
+**Note:** For LM Studio or other OpenAI-compatible endpoints, use **Add Custom Endpoint** and configure the host/port manually. See [Provider-Specific Notes](#provider-specific-notes) for configuration examples.
 
 ### API Format Types
 
@@ -67,7 +78,7 @@ Osaurus includes presets for common providers:
 
 | Setting       | Description                                  |
 | ------------- | -------------------------------------------- |
-| **Auth Type** | None or API Key                              |
+| **Auth Type** | No Auth or API Key                           |
 | **API Key**   | Your provider's API key (stored in Keychain) |
 
 ### Advanced Settings
@@ -75,9 +86,12 @@ Osaurus includes presets for common providers:
 | Setting            | Description                               | Default |
 | ------------------ | ----------------------------------------- | ------- |
 | **Enabled**        | Whether the provider is active            | true    |
-| **Auto-connect**   | Connect automatically when Osaurus starts | true    |
-| **Timeout**        | Request timeout in seconds                | 60      |
+| **Request Timeout** | Request timeout in seconds (10–300, or **Disable timeout** for no limit) | 60 |
 | **Custom Headers** | Additional HTTP headers to send           | {}      |
+
+Providers added from the app always connect when Osaurus starts
+(`autoConnect: true`); there is no control for it in the sheet. The value can
+still be set in a declarative config document.
 
 ### Custom Headers
 

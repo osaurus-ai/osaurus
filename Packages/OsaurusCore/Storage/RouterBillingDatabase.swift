@@ -299,7 +299,7 @@ public final class RouterBillingDatabase: @unchecked Sendable {
     }
 
     private func migrateToV2() throws {
-        try executeRaw("ALTER TABLE router_billing ADD COLUMN request_id TEXT")
+        try addColumnIfMissing("request_id", "TEXT")
         try executeRaw(
             "CREATE INDEX IF NOT EXISTS idx_router_billing_request ON router_billing(request_id)"
         )
@@ -310,8 +310,8 @@ public final class RouterBillingDatabase: @unchecked Sendable {
     /// served from / written to the upstream prompt cache. Additive, defaulted
     /// to 0 so pre-migration rows read back as "no cache activity".
     private func migrateToV3() throws {
-        try executeRaw("ALTER TABLE router_billing ADD COLUMN cached_input_tokens INTEGER NOT NULL DEFAULT 0")
-        try executeRaw("ALTER TABLE router_billing ADD COLUMN cache_write_tokens INTEGER NOT NULL DEFAULT 0")
+        try addColumnIfMissing("cached_input_tokens", "INTEGER NOT NULL DEFAULT 0")
+        try addColumnIfMissing("cache_write_tokens", "INTEGER NOT NULL DEFAULT 0")
         try setSchemaVersion(3)
     }
 
@@ -337,6 +337,18 @@ public final class RouterBillingDatabase: @unchecked Sendable {
         }
         defer { sqlite3_finalize(statement) }
         try handler(statement)
+    }
+
+    /// Stores converted by an older build lost `user_version` and re-run
+    /// migrations whose columns are already there.
+    private func addColumnIfMissing(_ column: String, _ definition: String) throws {
+        var found = false
+        try executeRaw("PRAGMA table_info(router_billing)") { stmt in
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let name = sqlite3_column_text(stmt, 1), String(cString: name) == column { found = true }
+            }
+        }
+        if !found { try executeRaw("ALTER TABLE router_billing ADD COLUMN \(column) \(definition)") }
     }
 
     private func prepareAndExecute(

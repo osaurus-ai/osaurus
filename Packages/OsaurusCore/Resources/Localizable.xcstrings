@@ -412,610 +412,6 @@
         }
       }
     },
-    "A folder or file this run was given: picked when it started, bound in setup, or allowed while it ran." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ein Ordner oder eine Datei, die dieser Lauf erhalten hat: beim Start ausgewählt, bei der Einrichtung festgelegt oder während des Laufs erlaubt."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "이번 실행에 주어진 폴더나 파일입니다. 시작할 때 골랐거나, 설정에서 지정했거나, 실행 중에 허용한 것입니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Папка или файл, переданные этому запуску: выбраны при старте, заданы при настройке или разрешены во время выполнения."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "提供给本次运行的文件夹或文件：在开始时选择、在设置中绑定，或在运行期间允许。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "提供給本次執行的資料夾或檔案：在開始時選擇、在設定中綁定，或在執行期間允許。"
-          }
-        }
-      }
-    },
-    "Agent's working folder" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Arbeitsordner des Agenten"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "에이전트 작업 폴더"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Рабочая папка агента"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "智能体工作文件夹"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "智能體工作資料夾"
-          }
-        }
-      }
-    },
-    "Calendar and reminders" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Kalender und Erinnerungen"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "캘린더와 미리 알림"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Календарь и напоминания"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "日历和提醒事项"
-          }
-        }
-      }
-    },
-    "Chosen for this run" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Für diesen Lauf gewählt"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "이번 실행용으로 선택됨"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выбрано для этого запуска"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "为本次运行选择"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "為本次執行選擇"
-          }
-        }
-      }
-    },
-    "Code in a project folder" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Code in einem Projektordner"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "프로젝트 폴더의 코드"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Код в папке проекта"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "项目文件夹中的代码"
-          }
-        }
-      }
-    },
-    "Email in Mail" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "E-Mails in Mail"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mail의 이메일"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Почта в Mail"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Mail 中的电子邮件"
-          }
-        }
-      }
-    },
-    "Files and notes" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Dateien und Notizen"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "파일과 메모"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Файлы и заметки"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "文件和笔记"
-          }
-        }
-      }
-    },
-    "From" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Von"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "원본"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Из"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "来源"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "來源"
-          }
-        }
-      }
-    },
-    "Inside the Osaurus data folder." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Im Osaurus-Datenordner."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Osaurus 데이터 폴더 안에 있습니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Внутри папки данных Osaurus."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "位于 Osaurus 数据文件夹内。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "位於 Osaurus 資料資料夾內。"
-          }
-        }
-      }
-    },
-    "Meet Another Teammate" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Weiteres Teammitglied kennenlernen"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "다른 팀원 만나기"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Познакомиться с другим коллегой"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "认识另一位队友"
-          }
-        }
-      }
-    },
-    "Not in any of this run's folders. The step can't use it unless you allow that folder." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Liegt in keinem Ordner dieses Laufs. Der Schritt kann ihn nur verwenden, wenn du diesen Ordner erlaubst."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "이번 실행의 어떤 폴더에도 없습니다. 그 폴더를 허용하지 않으면 이 단계에서 사용할 수 없습니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не входит ни в одну из папок этого запуска. Шаг не сможет его использовать, пока вы не разрешите эту папку."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "不在本次运行的任何文件夹中。除非你允许该文件夹，否则此步骤无法使用它。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "不在本次執行的任何資料夾中。除非你允許該資料夾，否則此步驟無法使用它。"
-          }
-        }
-      }
-    },
-    "Osaurus data" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Osaurus-Daten"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Osaurus 데이터"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Данные Osaurus"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Osaurus 数据"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Osaurus 資料"
-          }
-        }
-      }
-    },
-    "Osaurus · run workspace" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Osaurus · Arbeitsbereich des Laufs"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Osaurus · 실행 작업 공간"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Osaurus · рабочая область запуска"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Osaurus · 运行工作区"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Osaurus · 執行工作區"
-          }
-        }
-      }
-    },
-    "Outside this run's folders" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Außerhalb der Ordner dieses Laufs"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "이번 실행의 폴더 밖"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Вне папок этого запуска"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "在本次运行的文件夹之外"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "在本次執行的資料夾之外"
-          }
-        }
-      }
-    },
-    "Research on the web" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Recherche im Web"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "웹 리서치"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Поиск в интернете"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "网络调研"
-          }
-        }
-      }
-    },
-    "The working folder of the agent this step runs as." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Der Arbeitsordner des Agenten, als der dieser Schritt läuft."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "이 단계를 실행하는 에이전트의 작업 폴더입니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Рабочая папка агента, от имени которого выполняется этот шаг."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "执行此步骤的智能体的工作文件夹。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "執行此步驟的智能體的工作資料夾。"
-          }
-        }
-      }
-    },
-    "This run's own workspace. Osaurus creates it and keeps it with the run." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Der eigene Arbeitsbereich dieses Laufs. Osaurus legt ihn an und bewahrt ihn mit dem Lauf auf."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "이번 실행 전용 작업 공간입니다. Osaurus가 만들고 실행과 함께 보관합니다."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Собственная рабочая область этого запуска. Osaurus создаёт её и хранит вместе с запуском."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "本次运行自己的工作区。由 Osaurus 创建，并随运行一起保留。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "本次執行自己的工作區。由 Osaurus 建立，並隨執行一起保留。"
-          }
-        }
-      }
-    },
-    "To" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nach"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "대상"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "В"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "目标"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "目標"
-          }
-        }
-      }
-    },
-    "Who do you want to try next?" : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Wen möchtest du als Nächstes ausprobieren?"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "다음에는 누구를 써 볼까요?"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Кого попробуете следующим?"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "接下来想试试谁？"
-          }
-        }
-      }
-    },
     "—" : {
       "comment" : "A placeholder text to indicate missing data.",
       "isCommentAutoGenerated" : true,
@@ -3606,7 +3002,11 @@
         }
       }
     },
+    "%@ · Connected directly" : {
+
+    },
     "%@ · Connected now" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -3633,6 +3033,9 @@
           }
         }
       }
+    },
+    "%@ · Connected through a relay server" : {
+
     },
     "%@ · Last seen %@" : {
       "localizations" : {
@@ -9582,6 +8985,9 @@
         }
       }
     },
+    "%@ runs a version of Osaurus that can't sync with this one. Update both to the latest version." : {
+
+    },
     "%@ runs at a provider, which does not take %@; they were not sent." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -11054,6 +10460,34 @@
           "stringUnit" : {
             "state" : "new",
             "value" : "%1$@, %2$lld tools"
+          }
+        }
+      }
+    },
+    "%@, a one-time %@ download." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@, ein einmaliger Download von %2$@."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@, 1회 %2$@ 다운로드."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@, разовая загрузка %2$@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%1$@，一次性下载 %2$@。"
           }
         }
       }
@@ -26050,6 +25484,40 @@
         }
       }
     },
+    "A folder or file this run was given: picked when it started, bound in setup, or allowed while it ran." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ein Ordner oder eine Datei, die dieser Lauf erhalten hat: beim Start ausgewählt, bei der Einrichtung festgelegt oder während des Laufs erlaubt."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이번 실행에 주어진 폴더나 파일입니다. 시작할 때 골랐거나, 설정에서 지정했거나, 실행 중에 허용한 것입니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Папка или файл, переданные этому запуску: выбраны при старте, заданы при настройке или разрешены во время выполнения."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提供给本次运行的文件夹或文件：在开始时选择、在设置中绑定，或在运行期间允许。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提供給本次執行的資料夾或檔案：在開始時選擇、在設定中綁定，或在執行期間允許。"
+          }
+        }
+      }
+    },
     "a folder you choose" : {
       "localizations" : {
         "de" : {
@@ -35539,6 +35007,9 @@
         }
       }
     },
+    "add this Mac to another device's sync account" : {
+
+    },
     "Add to %@" : {
       "comment" : "Primary button in the Use with Codex CLI card. %@ is the Codex home directory, e.g. ~/.codex.",
       "localizations" : {
@@ -39069,6 +38540,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "智能体所有者"
+          }
+        }
+      }
+    },
+    "Agent's working folder" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Arbeitsordner des Agenten"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트 작업 폴더"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Рабочая папка агента"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "智能体工作文件夹"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "智能體工作資料夾"
           }
         }
       }
@@ -46942,6 +46447,9 @@
           }
         }
       }
+    },
+    "Another device is being added right now. Wait for it to finish, then try again." : {
+
     },
     "Another device is serving this agent's address on the relay. Re-enable here to take it back." : {
       "localizations" : {
@@ -67601,6 +67109,34 @@
         }
       }
     },
+    "Calendar and reminders" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Kalender und Erinnerungen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "캘린더와 미리 알림"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Календарь и напоминания"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "日历和提醒事项"
+          }
+        }
+      }
+    },
     "Calibrated MTP draft missing" : {
 
     },
@@ -70225,6 +69761,9 @@
           }
         }
       }
+    },
+    "change your sync recovery phrase" : {
+
     },
     "Change…" : {
       "localizations" : {
@@ -74144,6 +73683,9 @@
 
     },
     "Check the name and description and try again." : {
+
+    },
+    "Check the Number" : {
 
     },
     "Check the watched mailboxes while the app runs and store mail from allowed senders in the local inbox." : {
@@ -78506,6 +78048,40 @@
     "Chosen" : {
 
     },
+    "Chosen for this run" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Für diesen Lauf gewählt"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이번 실행용으로 선택됨"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбрано для этого запуска"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "为本次运行选择"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "為本次執行選擇"
+          }
+        }
+      }
+    },
     "Cipher: AES-256-CBC + HMAC-SHA512, page size 4096, kdf_iter 256000" : {
       "comment" : "A technical detail about the encryption algorithm used in the app.",
       "isCommentAutoGenerated" : true,
@@ -80288,291 +79864,6 @@
         }
       }
     },
-    "Not enough free disk space — this model needs %@ and this Mac has %@ free. Free up space and try again." : {
-      "comment" : "Warning text displayed when a model download cannot fit on the user's Mac due to insufficient free disk space. The first argument is the formatted size of the model download. The second argument is the formatted free disk space on the user's Mac.",
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Nicht genügend freier Speicherplatz – dieses Modell benötigt %1$@, auf diesem Mac sind %2$@ frei. Geben Sie Speicherplatz frei und versuchen Sie es erneut."
-          }
-        },
-        "en" : {
-          "stringUnit" : {
-            "state" : "new",
-            "value" : "Not enough free disk space — this model needs %1$@ and this Mac has %2$@ free. Free up space and try again."
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "디스크 여유 공간이 부족합니다 — 이 모델의 필요 공간은 %1$@, 이 Mac의 여유 공간은 %2$@입니다. 공간을 확보한 후 다시 시도하세요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Недостаточно свободного места на диске — модели нужно %1$@, а на этом Mac свободно %2$@. Освободите место и повторите попытку."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "磁盘可用空间不足——此模型需要 %1$@，而这台 Mac 仅剩 %2$@。请释放空间后重试。"
-          }
-        },
-        "zh-Hant" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "磁盤可用空間不足——此模型需要 %1$@，而這臺 Mac 僅剩 %2$@。請釋放空間後重試。"
-          }
-        }
-      }
-    },
-    "Want a different one later? You can add more models any time in Settings." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Später lieber ein anderes? Du kannst jederzeit in den Einstellungen weitere Modelle hinzufügen."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "以后想换一个？你随时可以在设置中添加更多模型。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "나중에 다른 모델을 원하세요? 설정에서 언제든 모델을 더 추가할 수 있어요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Захотите другую позже? Добавить модели можно в любой момент в настройках."
-          }
-        }
-      }
-    },
-    "%@, a one-time %@ download." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%1$@, ein einmaliger Download von %2$@."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%1$@，一次性下载 %2$@。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%1$@, 1회 %2$@ 다운로드."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "%1$@, разовая загрузка %2$@."
-          }
-        }
-      }
-    },
-    "This model runs right here on your Mac, so nothing you type leaves it and it works offline." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Dieses Modell läuft direkt auf deinem Mac. Nichts, was du eingibst, verlässt ihn, und es funktioniert offline."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "这个模型直接在你的 Mac 上运行，你输入的内容不会离开它，而且可以离线使用。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "이 모델은 바로 이 Mac에서 실행돼요. 입력한 내용이 Mac 밖으로 나가지 않고, 오프라인에서도 작동해요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Эта модель работает прямо на вашем Mac: ничего из того, что вы вводите, его не покидает, и она работает офлайн."
-          }
-        }
-      }
-    },
-    "It stays on this Mac, so it works offline." : {
-      "localizations" : {
-        "de" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Es bleibt auf diesem Mac und funktioniert deshalb offline."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "它保存在这台 Mac 上，所以可以离线使用。"
-          }
-        },
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "이 Mac에 머무르니 오프라인에서도 작동해요."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Она остаётся на этом Mac, поэтому работает офлайн."
-          }
-        }
-      }
-    },
-    "%@ runs a version of Osaurus that can't sync with this one. Update both to the latest version." : {
-
-    },
-    "%@ · Connected directly" : {
-
-    },
-    "%@ · Connected through a relay server" : {
-
-    },
-    "Another device is being added right now. Wait for it to finish, then try again." : {
-
-    },
-    "Check the Number" : {
-
-    },
-    "Does %@ show this number? Look at its screen. Only confirm if both show the same number." : {
-
-    },
-    "Downloading for %lld chats" : {
-
-    },
-    "I Wrote It Down" : {
-
-    },
-    "It stops receiving your chats. Unless it was wiped, it still holds your account's keys, so changing the recovery phrase is what keeps it out. %@ Your other devices pick up the change the next time they connect. Choose Remove Only for a device you've wiped." : {
-
-    },
-    "Join the other device's account?" : {
-
-    },
-    "Numbers Match" : {
-
-    },
-    "Older Messages" : {
-
-    },
-    "Pairing stopped, and no device was added. To add your own device, start again with a new code." : {
-
-    },
-    "Pairing was cancelled on the other device." : {
-
-    },
-    "Paused on this network or in Low Power Mode" : {
-
-    },
-    "Remove Only" : {
-
-    },
-    "Remove and Change Phrase" : {
-
-    },
-    "Removing the device changed your recovery phrase. The old one no longer works." : {
-
-    },
-    "Same Network only reaches devices on this Mac's Wi-Fi or Ethernet. If your other devices are somewhere else, use Anywhere (Beta) here and on each of them." : {
-
-    },
-    "Sync then gets its own recovery phrase again, since anyone with your Osaurus recovery phrase could derive the old one." : {
-
-    },
-    "The code expired before both devices confirmed the number. Show a new code and try again." : {
-
-    },
-    "The code was wrong or has expired. Show a new code on your other device and paste its link again." : {
-
-    },
-    "The new device needs the latest version of Osaurus to pair. Update it, then try again." : {
-
-    },
-    "The old recovery phrase stops working." : {
-
-    },
-    "The other device couldn't confirm the code. Use a link shown on your own device's screen, then try again." : {
-
-    },
-    "The other device disconnected before pairing finished. Try again." : {
-
-    },
-    "The other device stopped pairing, so no device was added. If you're adding your own device, start again with a new code." : {
-
-    },
-    "They're Different" : {
-
-    },
-    "This Mac couldn't reach the other device. Check that it still shows the code and is on the same network, or set Find Devices to Anywhere (Beta) on both." : {
-
-    },
-    "This Mac couldn't reach the other device. Check that it still shows the code and is online, then try again." : {
-
-    },
-    "This Mac got your message more than an hour after you sent it, so it didn't start it. Send it again to run it now." : {
-
-    },
-    "This Mac's chats move to the account of the device that shows this link, and its chats come here. Only use a link shown on your own device's screen." : {
-
-    },
-    "Use Anywhere" : {
-
-    },
-    "Waiting for you to confirm the same number on %@." : {
-
-    },
-    "Windows PC" : {
-
-    },
-    "Write Down Your New Recovery Phrase" : {
-
-    },
-    "Your Devices Aren't Connecting" : {
-
-    },
-    "add this Mac to another device's sync account" : {
-
-    },
-    "change your sync recovery phrase" : {
-
-    },
-    "move this Mac to another sync account" : {
-
-    },
-    "remove a device from your sync account" : {
-
-    },
-    "show a code that adds a device to your sync account" : {
-
-    },
-    "show your sync recovery phrase" : {
-
-    },
-    "sign this Mac out of sync" : {
-
-    },
     "Click or drag to move around" : {
 
     },
@@ -82173,6 +81464,34 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "代碼執行"
+          }
+        }
+      }
+    },
+    "Code in a project folder" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Code in einem Projektordner"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "프로젝트 폴더의 코드"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Код в папке проекта"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "项目文件夹中的代码"
           }
         }
       }
@@ -113576,6 +112895,9 @@
         }
       }
     },
+    "Does %@ show this number? Look at its screen. Only confirm if both show the same number." : {
+
+    },
     "Doesn't look like a 64-character theme ID or osaurus://themes-install link." : {
       "comment" : "A message displayed when the user pastes an invalid theme ID or link.",
       "extractionState" : "stale",
@@ -115207,6 +114529,9 @@
     "Downloading %lld%%" : {
       "comment" : "A status message for a model download progress bar. The argument is the percentage of the download.",
       "isCommentAutoGenerated" : true
+    },
+    "Downloading for %lld chats" : {
+
     },
     "Downloading init filesystem" : {
       "localizations" : {
@@ -121031,6 +120356,34 @@
     },
     "Email automations moved to Channels → Email. Set up the account and allowed senders there." : {
 
+    },
+    "Email in Mail" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "E-Mails in Mail"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mail의 이메일"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Почта в Mail"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mail 中的电子邮件"
+          }
+        }
+      }
     },
     "Email is now a channel" : {
 
@@ -128846,9 +128199,6 @@
       "comment" : "A description of the History tab.",
       "isCommentAutoGenerated" : true
     },
-    "Everything below can be changed any time." : {
-
-    },
     "Everything checks out. The agent is ready to use." : {
 
     },
@@ -135195,6 +134545,34 @@
         }
       }
     },
+    "Files and notes" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dateien und Notizen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "파일과 메모"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файлы и заметки"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "文件和笔记"
+          }
+        }
+      }
+    },
     "Files created by this chat will be removed, and edited or deleted files restored to their previous state. Changes made outside this chat are never overwritten." : {
       "comment" : "Message in the confirmation overlay for undoing all chat-related workspace changes.",
       "extractionState" : "stale",
@@ -140451,6 +139829,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "频率惩罚"
+          }
+        }
+      }
+    },
+    "From" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Von"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "원본"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Из"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "来源"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "來源"
           }
         }
       }
@@ -153901,6 +153313,9 @@
     "I understand: agents get new addresses, existing access keys are revoked, and the current identity's recovery phrase will no longer restore this Mac unless I saved it." : {
 
     },
+    "I Wrote It Down" : {
+
+    },
     "I've saved it" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -160803,6 +160218,40 @@
         }
       }
     },
+    "Inside the Osaurus data folder." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Im Osaurus-Datenordner."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 데이터 폴더 안에 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Внутри папки данных Osaurus."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "位于 Osaurus 数据文件夹内。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "位於 Osaurus 資料資料夾內。"
+          }
+        }
+      }
+    },
     "Inside the sandbox only" : {
       "localizations" : {
         "de" : {
@@ -166146,10 +165595,41 @@
         }
       }
     },
+    "It stays on this Mac, so it works offline." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Es bleibt auf diesem Mac und funktioniert deshalb offline."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 Mac에 머무르니 오프라인에서도 작동해요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Она остаётся на этом Mac, поэтому работает офлайн."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "它保存在这台 Mac 上，所以可以离线使用。"
+          }
+        }
+      }
+    },
     "It stopped at “%@”." : {
 
     },
     "It stopped before the end." : {
+
+    },
+    "It stops receiving your chats. Unless it was wiped, it still holds your account's keys, so changing the recovery phrase is what keeps it out. %@ Your other devices pick up the change the next time they connect. Choose Remove Only for a device you've wiped." : {
 
     },
     "It took %lld tries. Open the step to see why the earlier ones failed." : {
@@ -166953,6 +166433,9 @@
         }
       }
     },
+    "Join the other device's account?" : {
+
+    },
     "Join workspace" : {
       "localizations" : {
         "de" : {
@@ -167585,6 +167068,9 @@
           }
         }
       }
+    },
+    "Keep exploring" : {
+
     },
     "Keep File History" : {
       "localizations" : {
@@ -181774,6 +181260,7 @@
       }
     },
     "Management" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -185159,6 +184646,34 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "中等（2-4 GB）"
+          }
+        }
+      }
+    },
+    "Meet Another Teammate" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Weiteres Teammitglied kennenlernen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다른 팀원 만나기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Познакомиться с другим коллегой"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "认识另一位队友"
           }
         }
       }
@@ -193119,6 +192634,9 @@
         }
       }
     },
+    "move this Mac to another sync account" : {
+
+    },
     "Move to Project" : {
       "localizations" : {
         "de" : {
@@ -200278,7 +199796,7 @@
         }
       }
     },
-    "No AppleScript model is installed. Download one in Settings → Computer Use → Models." : {
+    "No AppleScript model is installed. Download one in Settings → Local Models → AppleScript." : {
 
     },
     "No AppleScript models installed yet. Download one in Settings → Computer Use → Models." : {
@@ -212482,6 +212000,47 @@
         }
       }
     },
+    "Not enough free disk space — this model needs %@ and this Mac has %@ free. Free up space and try again." : {
+      "comment" : "Warning text displayed when a model download cannot fit on the user's Mac due to insufficient free disk space. The first argument is the formatted size of the model download. The second argument is the formatted free disk space on the user's Mac.",
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nicht genügend freier Speicherplatz – dieses Modell benötigt %1$@, auf diesem Mac sind %2$@ frei. Geben Sie Speicherplatz frei und versuchen Sie es erneut."
+          }
+        },
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Not enough free disk space — this model needs %1$@ and this Mac has %2$@ free. Free up space and try again."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "디스크 여유 공간이 부족합니다 — 이 모델의 필요 공간은 %1$@, 이 Mac의 여유 공간은 %2$@입니다. 공간을 확보한 후 다시 시도하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Недостаточно свободного места на диске — модели нужно %1$@, а на этом Mac свободно %2$@. Освободите место и повторите попытку."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "磁盘可用空间不足——此模型需要 %1$@，而这台 Mac 仅剩 %2$@。请释放空间后重试。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "磁盤可用空間不足——此模型需要 %1$@，而這臺 Mac 僅剩 %2$@。請釋放空間後重試。"
+          }
+        }
+      }
+    },
     "Not enough free disk space for cold provisioning" : {
       "localizations" : {
         "de" : {
@@ -212625,6 +212184,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "無法導入"
+          }
+        }
+      }
+    },
+    "Not in any of this run's folders. The step can't use it unless you allow that folder." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Liegt in keinem Ordner dieses Laufs. Der Schritt kann ihn nur verwenden, wenn du diesen Ordner erlaubst."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이번 실행의 어떤 폴더에도 없습니다. 그 폴더를 허용하지 않으면 이 단계에서 사용할 수 없습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не входит ни в одну из папок этого запуска. Шаг не сможет его использовать, пока вы не разрешите эту папку."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不在本次运行的任何文件夹中。除非你允许该文件夹，否则此步骤无法使用它。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不在本次執行的任何資料夾中。除非你允許該資料夾，否則此步驟無法使用它。"
           }
         }
       }
@@ -215612,6 +215205,9 @@
         }
       }
     },
+    "Numbers Match" : {
+
+    },
     "Numeric server IDs Osaurus may inspect. At least one is required." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -217024,6 +216620,9 @@
           }
         }
       }
+    },
+    "Older Messages" : {
+
     },
     "Older messages are being summarized. Your visible chat stays exactly as it is." : {
       "comment" : "A description of how context compaction works.",
@@ -226358,6 +225957,40 @@
       },
       "shouldTranslate" : false
     },
+    "Osaurus · run workspace" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus · Arbeitsbereich des Laufs"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus · 실행 작업 공간"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus · рабочая область запуска"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus · 运行工作区"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus · 執行工作區"
+          }
+        }
+      }
+    },
     "Osaurus (built-in)" : {
       "localizations" : {
         "de" : {
@@ -227151,6 +226784,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "保存时 Osaurus 会创建密钥。打开此自动化即可复制 URL、密钥和一条可直接运行的测试命令。"
+          }
+        }
+      }
+    },
+    "Osaurus data" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus-Daten"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 데이터"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Данные Osaurus"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 数据"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 資料"
           }
         }
       }
@@ -229518,6 +229185,40 @@
         }
       }
     },
+    "Outside this run's folders" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Außerhalb der Ordner dieses Laufs"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이번 실행의 폴더 밖"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вне папок этого запуска"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在本次运行的文件夹之外"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在本次執行的資料夾之外"
+          }
+        }
+      }
+    },
     "Over limit" : {
       "comment" : "Label for the status when the data usage is over the limit.",
       "isCommentAutoGenerated" : true,
@@ -231120,6 +230821,9 @@
         }
       }
     },
+    "Pairing stopped, and no device was added. To add your own device, start again with a new code." : {
+
+    },
     "Pairing timed out before the QR code was scanned. Start again when ready." : {
       "localizations" : {
         "de" : {
@@ -231147,6 +230851,9 @@
           }
         }
       }
+    },
+    "Pairing was cancelled on the other device." : {
+
     },
     "Pairing, sync and each device's ID live in Sharing → Devices." : {
 
@@ -234378,6 +234085,9 @@
           }
         }
       }
+    },
+    "Paused on this network or in Low Power Mode" : {
+
     },
     "Paused: the selected model's context limit disables tools" : {
 
@@ -269318,6 +269028,9 @@
         }
       }
     },
+    "remove a device from your sync account" : {
+
+    },
     "Remove Account…" : {
       "comment" : "Channel accounts: adding and removing extra bots, workspaces and email accounts.",
       "extractionState" : "manual",
@@ -269330,7 +269043,11 @@
         }
       }
     },
+    "Remove and Change Phrase" : {
+
+    },
     "Remove and Change Recovery Phrase…" : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -270148,6 +269865,9 @@
           }
         }
       }
+    },
+    "Remove Only" : {
+
     },
     "Remove or move %@, then rerun sandbox setup." : {
       "localizations" : {
@@ -271212,6 +270932,9 @@
           }
         }
       }
+    },
+    "Removing the device changed your recovery phrase. The old one no longer works." : {
+
     },
     "Removing..." : {
       "localizations" : {
@@ -276806,6 +276529,34 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "檢索案例、案卷和法律新聞"
+          }
+        }
+      }
+    },
+    "Research on the web" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Recherche im Web"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "웹 리서치"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поиск в интернете"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "网络调研"
           }
         }
       }
@@ -289499,6 +289250,9 @@
         }
       }
     },
+    "Same Network only reaches devices on this Mac's Wi-Fi or Ethernet. If your other devices are somewhere else, use Anywhere (Beta) here and on each of them." : {
+
+    },
     "Same Network reaches devices on your Wi-Fi or Ethernet. Anywhere also connects through Osaurus servers, so your devices sync on different networks. Chats stay end-to-end encrypted either way." : {
       "localizations" : {
         "de" : {
@@ -295740,6 +295494,74 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "捲動"
+          }
+        }
+      }
+    },
+    "Scroll left" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nach links scrollen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "왼쪽으로 스크롤"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прокрутить влево"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "向左滚动"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "向左捲動"
+          }
+        }
+      }
+    },
+    "Scroll right" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nach rechts scrollen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "오른쪽으로 스크롤"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Прокрутить вправо"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "向右滚动"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "向右捲動"
           }
         }
       }
@@ -309508,6 +309330,9 @@
         }
       }
     },
+    "show a code that adds a device to your sync account" : {
+
+    },
     "Show a microphone button in the chat input area." : {
       "extractionState" : "manual",
       "localizations" : {
@@ -311110,6 +310935,9 @@
           }
         }
       }
+    },
+    "show your sync recovery phrase" : {
+
     },
     "Showing %lld %@" : {
       "comment" : "A footer that shows the number of rows currently displayed.",
@@ -313302,6 +313130,9 @@
           }
         }
       }
+    },
+    "sign this Mac out of sync" : {
+
     },
     "Sign up at api.search.brave.com (a credit card is required; new accounts get a small starting credit)." : {
       "localizations" : {
@@ -328344,6 +328175,9 @@
         }
       }
     },
+    "Sync then gets its own recovery phrase again, since anyone with your Osaurus recovery phrase could derive the old one." : {
+
+    },
     "Synced Chats" : {
       "localizations" : {
         "de" : {
@@ -336366,6 +336200,9 @@
     "The code carries the one URL that reaches this Mac from where your n8n runs, the connection id, the secret, and the verification method — treat it like the secret." : {
 
     },
+    "The code expired before both devices confirmed the number. Show a new code and try again." : {
+
+    },
     "The code is on your osaurus.ai receipt and account page." : {
       "localizations" : {
         "de" : {
@@ -336399,6 +336236,9 @@
           }
         }
       }
+    },
+    "The code was wrong or has expired. Show a new code on your other device and paste its link again." : {
+
     },
     "The Code worker's sandbox could not start: %@" : {
       "localizations" : {
@@ -340082,6 +339922,9 @@
         }
       }
     },
+    "The new device needs the latest version of Osaurus to pair. Update it, then try again." : {
+
+    },
     "The next local model load will capture the saved resolved policy." : {
       "localizations" : {
         "de" : {
@@ -340130,6 +339973,9 @@
           }
         }
       }
+    },
+    "The old recovery phrase stops working." : {
+
     },
     "The one macOS folder this agent works inside. Remembered from the chat Folder chip or set here." : {
       "localizations" : {
@@ -340477,6 +340323,15 @@
 
     },
     "The Osaurus team took this down. It can't be published again." : {
+
+    },
+    "The other device couldn't confirm the code. Use a link shown on your own device's screen, then try again." : {
+
+    },
+    "The other device disconnected before pairing finished. Try again." : {
+
+    },
+    "The other device stopped pairing, so no device was added. If you're adding your own device, start again with a new code." : {
 
     },
     "The outbound webhook URL must be an absolute https:// URL." : {
@@ -344884,6 +344739,40 @@
         }
       }
     },
+    "The working folder of the agent this step runs as." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Arbeitsordner des Agenten, als der dieser Schritt läuft."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 단계를 실행하는 에이전트의 작업 폴더입니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Рабочая папка агента, от имени которого выполняется этот шаг."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "执行此步骤的智能体的工作文件夹。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "執行此步驟的智能體的工作資料夾。"
+          }
+        }
+      }
+    },
     "the workspace handshake did not complete" : {
       "localizations" : {
         "de" : {
@@ -346392,6 +346281,9 @@
           }
         }
       }
+    },
+    "They're Different" : {
+
     },
     "Thinking" : {
       "localizations" : {
@@ -349170,7 +349062,16 @@
     "This Mac and Your Other Devices" : {
 
     },
+    "This Mac couldn't reach the other device. Check that it still shows the code and is on the same network, or set Find Devices to Anywhere (Beta) on both." : {
+
+    },
+    "This Mac couldn't reach the other device. Check that it still shows the code and is online, then try again." : {
+
+    },
     "This Mac doesn't have this workflow." : {
+
+    },
+    "This Mac got your message more than an hour after you sent it, so it didn't start it. Send it again to run it now." : {
 
     },
     "This Mac has %lld cores; the sandbox can keep all of them busy." : {
@@ -349803,6 +349704,9 @@
         }
       }
     },
+    "This Mac's chats move to the account of the device that shows this link, and its chats come here. Only use a link shown on your own device's screen." : {
+
+    },
     "This Mac's Messages app, allowlisted chats only" : {
       "localizations" : {
         "de" : {
@@ -350189,6 +350093,34 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "此模型需要約 %1$@ GB，但此 Mac 在 GPU 上只能保持約 %2$@ GB。macOS 將會對權重進行分頁，生成速度會非常慢 — 請選擇更小的模型或更低精度的版本。"
+          }
+        }
+      }
+    },
+    "This model runs right here on your Mac, so nothing you type leaves it and it works offline." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieses Modell läuft direkt auf deinem Mac. Nichts, was du eingibst, verlässt ihn, und es funktioniert offline."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 모델은 바로 이 Mac에서 실행돼요. 입력한 내용이 Mac 밖으로 나가지 않고, 오프라인에서도 작동해요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Эта модель работает прямо на вашем Mac: ничего из того, что вы вводите, его не покидает, и она работает офлайн."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这个模型直接在你的 Mac 上运行，你输入的内容不会离开它，而且可以离线使用。"
           }
         }
       }
@@ -351588,6 +351520,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "未经询问，本次运行的文件步骤无法读取或保存到你 Mac 上的其他位置。"
+          }
+        }
+      }
+    },
+    "This run's own workspace. Osaurus creates it and keeps it with the run." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der eigene Arbeitsbereich dieses Laufs. Osaurus legt ihn an und bewahrt ihn mit dem Lauf auf."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이번 실행 전용 작업 공간입니다. Osaurus가 만들고 실행과 함께 보관합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Собственная рабочая область этого запуска. Osaurus создаёт её и хранит вместе с запуском."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本次运行自己的工作区。由 Osaurus 创建，并随运行一起保留。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本次執行自己的工作區。由 Osaurus 建立，並隨執行一起保留。"
           }
         }
       }
@@ -354999,6 +354965,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "至"
+          }
+        }
+      }
+    },
+    "To" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nach"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대상"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "目标"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "目標"
           }
         }
       }
@@ -360167,6 +360167,9 @@
           }
         }
       }
+    },
+    "Try another teammate, or finish setup and ask me anything." : {
+
     },
     "Try first:" : {
       "localizations" : {
@@ -367930,6 +367933,9 @@
         }
       }
     },
+    "Use Anywhere" : {
+
+    },
     "Use Apple Intelligence" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -369237,6 +369243,7 @@
 
     },
     "Use this for a device you've wiped or given away. It stops receiving your chats." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -369271,6 +369278,7 @@
       }
     },
     "Use this for a lost or stolen device. Your account gets new keys and a new recovery phrase; your other devices pick them up the next time they connect. The old phrase stops working." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -369305,6 +369313,7 @@
       }
     },
     "Use this for a lost or stolen device. Your account gets new keys and its own recovery phrase again, since anyone holding your Osaurus recovery phrase could derive the old one; your other devices pick them up the next time they connect." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -369333,6 +369342,7 @@
       }
     },
     "Use this for an iPhone you've wiped or given away. It stops receiving your chats and can't allow tools or change agents on this Mac. If it was lost or stolen, use Remove and Change Recovery Phrase instead." : {
+      "extractionState" : "stale",
       "localizations" : {
         "de" : {
           "stringUnit" : {
@@ -375466,6 +375476,9 @@
         }
       }
     },
+    "Waiting for you to confirm the same number on %@." : {
+
+    },
     "Waiting for your answer" : {
       "comment" : "Text describing the status of a workflow run that is awaiting user input.",
       "extractionState" : "manual",
@@ -376225,6 +376238,34 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "钱包已验证"
+          }
+        }
+      }
+    },
+    "Want a different one later? You can add more models any time in Settings." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Später lieber ein anderes? Du kannst jederzeit in den Einstellungen weitere Modelle hinzufügen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "나중에 다른 모델을 원하세요? 설정에서 언제든 모델을 더 추가할 수 있어요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Захотите другую позже? Добавить модели можно в любой момент в настройках."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "以后想换一个？你随时可以在设置中添加更多模型。"
           }
         }
       }
@@ -382886,6 +382927,34 @@
         }
       }
     },
+    "Who do you want to try next?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Wen möchtest du als Nächstes ausprobieren?"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다음에는 누구를 써 볼까요?"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Кого попробуете следующим?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "接下来想试试谁？"
+          }
+        }
+      }
+    },
     "Who drove this" : {
       "comment" : "A heading for the user who generated the log.",
       "isCommentAutoGenerated" : true
@@ -383422,6 +383491,9 @@
           }
         }
       }
+    },
+    "Windows PC" : {
+
     },
     "Wipes your signature, every agent address, and every access key, including the backup in your iCloud Keychain. Onboarding will start over." : {
       "localizations" : {
@@ -386614,6 +386686,9 @@
           }
         }
       }
+    },
+    "Write Down Your New Recovery Phrase" : {
+
     },
     "Write each header as Name: value, one per line." : {
       "localizations" : {
@@ -392419,6 +392494,9 @@
         }
       }
     },
+    "Your Devices Aren't Connecting" : {
+
+    },
     "Your files" : {
       "localizations" : {
         "de" : {
@@ -395036,6 +395114,414 @@
     },
     "Zoom Out (−)" : {
 
+    },
+    "%lld files failed to convert." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld Dateien konnten nicht konvertiert werden."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "파일 %lld개를 변환하지 못했습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось преобразовать файлы: %lld."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 个文件转换失败。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 個檔案轉換失敗。"
+          }
+        }
+      }
+    },
+    "1 file failed to convert." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 Datei konnte nicht konvertiert werden."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "파일 1개를 변환하지 못했습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось преобразовать 1 файл."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 个文件转换失败。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 個檔案轉換失敗。"
+          }
+        }
+      }
+    },
+    "Decrypted %lld files; now plaintext at rest." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld Dateien entschlüsselt; jetzt im Klartext gespeichert."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "파일 %lld개를 복호화했습니다. 이제 평문으로 저장됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Расшифровано файлов: %lld; теперь хранятся открытым текстом."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已解密 %lld 个文件；现以明文存储。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已解密 %lld 個檔案；現以明文儲存。"
+          }
+        }
+      }
+    },
+    "Decrypted 1 file; now plaintext at rest." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 Datei entschlüsselt; jetzt im Klartext gespeichert."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "파일 1개를 복호화했습니다. 이제 평문으로 저장됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Расшифрован 1 файл; теперь хранится открытым текстом."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已解密 1 个文件；现以明文存储。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已解密 1 個檔案；現以明文儲存。"
+          }
+        }
+      }
+    },
+    "Encrypted %lld files at rest." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld Dateien im Ruhezustand verschlüsselt."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "파일 %lld개를 저장 시 암호화했습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зашифровано файлов на диске: %lld."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已对 %lld 个文件启用静态加密。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已加密 %lld 個檔案。"
+          }
+        }
+      }
+    },
+    "Encrypted 1 file at rest." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 Datei im Ruhezustand verschlüsselt."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "파일 1개를 저장 시 암호화했습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Зашифрован 1 файл на диске."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已对 1 个文件启用静态加密。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已加密 1 個檔案。"
+          }
+        }
+      }
+    },
+    "Encryption is off. Nothing on disk needed converting." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verschlüsselung ist deaktiviert. Auf dem Datenträger musste nichts konvertiert werden."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "암호화가 꺼졌습니다. 디스크에서 변환할 항목이 없었습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Шифрование выключено. На диске ничего не нужно было преобразовывать."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "加密已关闭。磁盘上没有需要转换的内容。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "加密已關閉。磁碟上沒有需要轉換的內容。"
+          }
+        }
+      }
+    },
+    "Encryption is on. Nothing on disk needed converting." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Verschlüsselung ist aktiviert. Auf dem Datenträger musste nichts konvertiert werden."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "암호화가 켜졌습니다. 디스크에서 변환할 항목이 없었습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Шифрование включено. На диске ничего не нужно было преобразовывать."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "加密已开启。磁盘上没有需要转换的内容。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "加密已開啟。磁碟上沒有需要轉換的內容。"
+          }
+        }
+      }
+    },
+    "Encryption wasn't turned on because the storage key couldn't be created or read: %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Verschlüsselung wurde nicht aktiviert, weil der Speicherschlüssel nicht erstellt oder gelesen werden konnte: %@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "저장소 키를 만들거나 읽을 수 없어 암호화를 켜지 못했습니다: %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Шифрование не включено: не удалось создать или прочитать ключ хранилища: %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法创建或读取存储密钥，因此未开启加密：%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法建立或讀取儲存密鑰，因此未開啟加密：%@"
+          }
+        }
+      }
+    },
+    "Files couldn't be converted because the encryption key is unavailable." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dateien konnten nicht konvertiert werden, weil der Verschlüsselungsschlüssel nicht verfügbar ist."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "암호화 키를 사용할 수 없어 파일을 변환하지 못했습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось преобразовать файлы: ключ шифрования недоступен."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "加密密钥不可用，因此无法转换文件。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "加密密鑰無法使用，因此無法轉換檔案。"
+          }
+        }
+      }
+    },
+    "Synced conversations are always encrypted with their own key in your Keychain, whether or not this setting is on. The pre-sync chat history kept for import follows this setting." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Synchronisierte Unterhaltungen werden immer mit einem eigenen Schlüssel in deinem Schlüsselbund verschlüsselt, unabhängig von dieser Einstellung. Der ältere Chatverlauf, der für den Import aufbewahrt wird, folgt dieser Einstellung."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "동기화된 대화는 이 설정과 관계없이 항상 키체인에 있는 별도 키로 암호화됩니다. 가져오기용으로 보관된 동기화 이전 채팅 기록은 이 설정을 따릅니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Синхронизируемые разговоры всегда шифруются отдельным ключом в вашей связке ключей, независимо от этой настройки. Прежняя история чатов, сохранённая для импорта, следует этой настройке."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无论此设置是否开启，同步的对话始终使用钥匙串中的独立密钥加密。为导入而保留的同步前聊天记录遵循此设置。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無論此設定是否開啟，同步的對話一律使用鑰匙圈中的獨立密鑰加密。為匯入而保留的同步前聊天記錄遵循此設定。"
+          }
+        }
+      }
+    },
+    "The storage key can't be read from your Keychain, so encrypted stores and the search, memory, and tool indexes built on them are unavailable. Unlock or restore the Keychain item and relaunch Osaurus." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Der Speicherschlüssel kann nicht aus deinem Schlüsselbund gelesen werden, daher sind verschlüsselte Speicher sowie die darauf aufbauenden Such-, Gedächtnis- und Werkzeugindizes nicht verfügbar. Entsperre oder stelle den Schlüsselbundeintrag wieder her und starte Osaurus neu."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "키체인에서 저장소 키를 읽을 수 없어 암호화된 저장소와 이를 기반으로 하는 검색, 메모리, 도구 색인을 사용할 수 없습니다. 키체인 항목을 잠금 해제하거나 복원한 뒤 Osaurus를 다시 실행하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удаётся прочитать ключ хранилища из связки ключей, поэтому зашифрованные хранилища и построенные на них индексы поиска, памяти и инструментов недоступны. Разблокируйте или восстановите запись в связке ключей и перезапустите Osaurus."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法从钥匙串读取存储密钥，因此加密的存储以及基于它们的搜索、记忆和工具索引不可用。请解锁或恢复该钥匙串项目，然后重新启动 Osaurus。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "無法從鑰匙圈讀取儲存密鑰，因此加密的儲存以及以其為基礎的搜尋、記憶和工具索引無法使用。請解鎖或還原該鑰匙圈項目，然後重新啟動 Osaurus。"
+          }
+        }
+      }
     }
   },
   "version" : "1.1"

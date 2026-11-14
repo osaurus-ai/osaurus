@@ -2,17 +2,58 @@
 //  AgentCreatorPage.swift
 //  osaurus
 //
-//  Settings → Agents → New agent: the Configurator chat with the agent
-//  card beside it, under the Agents page's back line. Settings' sidebar
-//  collapses while it shows.
+//  The main window's New Agent page: the Configurator chat with the agent
+//  card beside it. The title bar's back button returns to wherever New
+//  Agent was opened from.
 //
 
 import SwiftUI
 
+/// The New Agent surface of a chat window. Create lands in a chat with the
+/// new agent; Discard goes back.
+struct AgentCreatorMainDestination: View {
+    @ObservedObject var windowState: ChatWindowState
+    @ObservedObject private var creator = AgentCreatorController.shared
+
+    var body: some View {
+        Group {
+            if let chat = creator.chat {
+                AgentCreatorPage(chat: chat, onDiscard: discard, onCreated: landOnCreatedAgent)
+                    .id(ObjectIdentifier(chat))
+            } else {
+                Color.clear.onAppear(perform: leave)
+            }
+        }
+        .background(windowState.theme.surface.canvas)
+        .environment(\.theme, windowState.theme)
+    }
+
+    private func discard() {
+        creator.discard()
+        leave()
+    }
+
+    /// Chat with the new agent; showing it runs its first-run setup check.
+    private func landOnCreatedAgent(_ agentId: UUID) {
+        creator.finish()
+        windowState.leaveNewAgent {
+            windowState.showMainSurface(.chat)
+            windowState.switchAgent(to: agentId)
+        }
+    }
+
+    /// Nothing left to show: back where New Agent was opened from.
+    private func leave() {
+        guard windowState.mainSurface == .newAgent else { return }
+        if !windowState.returnToPreviousSurface() {
+            windowState.leaveNewAgent { windowState.showMainSurface(.chat) }
+        }
+    }
+}
+
 struct AgentCreatorPage: View {
     @Environment(\.theme) private var theme
     @ObservedObject var chat: ChatWindowState
-    let onBack: () -> Void
     let onDiscard: () -> Void
     let onCreated: (UUID) -> Void
 
@@ -35,7 +76,6 @@ struct AgentCreatorPage: View {
                     }
                 }
             )
-            .settingsBackDestination(L("Agents"), verbatim: true, action: onBack)
 
             ChatView(windowState: chat, embedded: true, onAgentCreated: onCreated)
         }

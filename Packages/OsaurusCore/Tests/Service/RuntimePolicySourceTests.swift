@@ -334,7 +334,7 @@ struct RuntimePolicySourceTests {
 
         // The fail-closed guard and its error must exist.
         #expect(source.contains("case keyUnavailableForExistingData"))
-        #expect(source.contains("encryptedStorageExists()"))
+        #expect(source.contains("encryptedArtifactsExist()"))
 
         // The guard must sit *between* a missed key read and the
         // generate-and-persist fallback so a populated install can never re-key
@@ -347,9 +347,12 @@ struct RuntimePolicySourceTests {
         #expect(readBranch.lowerBound < failClosed.lowerBound)
         #expect(failClosed.lowerBound < generate.lowerBound)
 
-        // Existence is judged from real encrypted artifacts, not a single DB.
-        #expect(source.contains("OsaurusPaths.chatHistoryDatabaseFile()"))
-        #expect(source.contains("OsaurusPaths.memoryDatabaseFile()"))
+        // Existence is judged from files that are actually encrypted across
+        // the whole catalog, not from file size (a plaintext store isn't
+        // evidence of a key; see StorageEncryptionToggleTests).
+        #expect(source.contains("StorageDatabaseCatalog.databaseTargets()"))
+        #expect(source.contains("StorageFileFormat.detect(path: path) == .encrypted"))
+        #expect(!source.contains("attributesOfItem"))
     }
 
     @Test("startup avoids storage-key reads and background Keychain queries skip authentication UI")

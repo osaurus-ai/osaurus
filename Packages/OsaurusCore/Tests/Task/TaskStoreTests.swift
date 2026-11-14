@@ -204,6 +204,38 @@ struct TaskStoreTests {
         #expect(try database.originSessionIds() == [chat])
     }
 
+    /// Encrypting or decrypting with an older build reset `user_version` to
+    /// 0 on a current file. It still opens, keeps its rows, and is v3 again.
+    @Test func currentFileWithResetSchemaVersionStillOpens() throws {
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tasks-reset-\(UUID().uuidString).sqlite").path
+        defer { try? FileManager.default.removeItem(atPath: path) }
+        let chat = UUID()
+        var kept = Self.task(title: "Kept")
+        kept.originSessionId = chat
+
+        let first = TaskDatabase()
+        try first.openPlaintextForTesting(path: path)
+        try first.upsertTasks([kept])
+        first.close()
+        let reset = try EncryptedSQLiteOpener.open(path: path, key: nil, applyPerfPragmas: false)
+        #expect(sqlite3_exec(reset, "PRAGMA user_version = 0", nil, nil, nil) == SQLITE_OK)
+        sqlite3_close(reset)
+
+        let reopened = TaskDatabase()
+        try reopened.openPlaintextForTesting(path: path)
+        defer { reopened.close() }
+        #expect(try reopened.task(id: kept.id)?.originSessionId == chat)
+
+        let check = try EncryptedSQLiteOpener.open(path: path, key: nil, applyPerfPragmas: false)
+        defer { sqlite3_close(check) }
+        var stmt: OpaquePointer?
+        #expect(sqlite3_prepare_v2(check, "PRAGMA user_version", -1, &stmt, nil) == SQLITE_OK)
+        #expect(sqlite3_step(stmt) == SQLITE_ROW)
+        #expect(sqlite3_column_int(stmt, 0) == 3)
+        sqlite3_finalize(stmt)
+    }
+
     @Test func loadTaskReadsHistoryPastTheHotCache() async throws {
         let (store, database) = try await Self.persistentStore()
         var old = Self.task(title: "Old", state: .succeeded)

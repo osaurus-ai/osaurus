@@ -1945,7 +1945,7 @@ struct AgentToolLoopTests {
             result: ToolEnvelope.failure(
                 kind: .unavailable,
                 message:
-                    "No AppleScript model is installed. Download one in Settings → Computer Use → Models.",
+                    "No AppleScript model is installed. Download one in Settings → Local Models → AppleScript.",
                 tool: "mac_query",
                 retryable: false
             ),

@@ -145,14 +145,17 @@ telemetry, crash reports, updates and model downloads do not produce rows. The f
 
 ---
 
-## Server Explorer
+## Server and API Reference
 
-The **Server** tab provides an interactive API reference and testing interface.
+The **Server** page has three tabs: **Overview** (status and URL), **Server
+Settings**, and **API Reference**, the interactive endpoint catalog and
+testing interface described below.
 
-### Accessing Server Explorer
+### Opening the API Reference
 
 1. Open Settings… (`⌘ ,`)
 2. Click **Server** in the sidebar
+3. Choose the **API Reference** tab
 
 ### Features
 
@@ -237,7 +240,7 @@ Quick access to the full documentation at docs.osaurus.ai.
 
 ### Testing Tool Calling
 
-1. Open **Server Explorer**
+1. Open **Server → API Reference**
 2. Expand `/chat/completions`
 3. Modify the payload to include tools:
 
@@ -273,7 +276,7 @@ Quick access to the full documentation at docs.osaurus.ai.
 
 ### Verifying MCP Tools
 
-1. Open **Server Explorer**
+1. Open **Server → API Reference**
 2. Expand `GET /mcp/tools`
 3. Click **Send Request**
 4. Verify your expected tools are listed
@@ -308,7 +311,7 @@ Use the copy button to quickly grab response payloads for debugging in other too
 
 ### Keep Server Running
 
-The Server Explorer requires the server to be running. If endpoints show as disabled, start the server first.
+The API Reference requires the server to be running. If endpoints show as disabled, start the server first.
 
 ---
 

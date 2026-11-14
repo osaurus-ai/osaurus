@@ -23,6 +23,8 @@ struct SettingsBackButton: View {
 
     let title: String
     var verbatim: Bool = false
+    /// Nil where another back button on screen already owns ⌘[.
+    var shortcut: KeyboardShortcut? = KeyboardShortcut("[", modifiers: .command)
     let action: () -> Void
 
     var body: some View {
@@ -34,7 +36,7 @@ struct SettingsBackButton: View {
             }
         }
         .assignedSettingsButtonStyle(.tertiary, size: .small)
-        .keyboardShortcut("[", modifiers: .command)
+        .keyboardShortcut(shortcut)
         .accessibilityLabel(Text("Back to \(title)", bundle: .module))
     }
 

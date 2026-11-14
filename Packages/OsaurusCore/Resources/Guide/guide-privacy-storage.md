@@ -12,8 +12,8 @@ Osaurus is local-first: chats, memory, agents, and config all live under `~/.osa
 
 - Nothing conversation-related, unless you connect a cloud provider (then your prompts go to that provider) or enable server network exposure.
 - Anonymous usage analytics (Aptabase — no chats, prompts, or keys) and crash reports (Sentry) are consent-gated, each with its own switch: Settings → Privacy & Security → Data Collection → Share Anonymous Usage Data, and Send Crash Reports beside it.
-- The Privacy tab also offers an experimental Privacy Filter that scrubs sensitive text before cloud sends. Its Detection Rules ship international presets — national ID, tax, health and bank number formats for 100+ countries plus global finance, network and secret patterns. Presets for your Mac's locale region are on from the first launch; pick more countries under Privacy & Security → Detection Rules → My Regions.
-- To see exactly what did leave, open Settings → Insights: every model request, web search, URL fetch, MCP call, channel delivery and Router call is logged with a Local/Cloud badge, destination, bytes, and (for model requests) whether the Privacy Filter redacted anything. Retention and whether prompt/response bodies are stored: Settings → Privacy & Security → Activity Log. See the Insights topic.
+- Privacy & Security also offers a Privacy Filter that scrubs sensitive text before cloud sends. Its Detection Rules ship international presets — national ID, tax, health and bank number formats for 100+ countries plus global finance, network and secret patterns. Presets for your Mac's locale region are on from the first launch; pick more countries under Privacy & Security → Detection Rules → My Regions.
+- To see exactly what did leave, open Main window → Insights: every model request, web search, URL fetch, MCP call, channel delivery and Router call is logged with a Local/Cloud badge, destination, bytes, and (for model requests) whether the Privacy Filter redacted anything. Retention and whether prompt/response bodies are stored: Settings → Privacy & Security → Activity Log. See the Insights topic.
 
 ## Storage layout
 
@@ -41,7 +41,7 @@ A Space is a separate Osaurus environment with its own chats, agents, settings, 
 ## Backup and recovery
 
 - Privacy & Security → Data & Storage → **Export Plaintext Backup** copies databases, attachments, and config to a folder you choose (decrypting if needed). Do this before a macOS reinstall or Mac migration.
-- "Stores needing attention" lists degraded stores with Retry / Reset; Reset quarantines the file to `~/.osaurus/quarantine/` — nothing is deleted.
+- **Stores Needing Attention** lists degraded stores with **Retry** / **Reset…**; Reset quarantines the file to `~/.osaurus/quarantine/` — nothing is deleted.
 
 ## Secrets
 

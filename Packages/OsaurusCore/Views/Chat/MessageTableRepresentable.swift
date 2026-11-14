@@ -753,9 +753,12 @@ extension MessageTableRepresentable {
             }
             var rows = IndexSet()
             for id in pendingHeightNoteIds {
-                if let row = rowIndexByBlockId[id], row < tv.numberOfRows {
-                    rows.insert(row)
-                }
+                guard let row = rowIndexByBlockId[id], row < tv.numberOfRows else { continue }
+                // A cell can report a transient height mid-configure and its
+                // settled one at the end; if that settles back on what AppKit
+                // already has, re-noting the row only costs a table relayout.
+                if let h = heightCache[id], let shown = lastNotedHeight[id], abs(h - shown) <= 0.5 { continue }
+                rows.insert(row)
             }
             pendingHeightNoteIds.removeAll()
             guard !rows.isEmpty else { return }
@@ -1859,6 +1862,7 @@ extension MessageTableRepresentable {
 
             // return cached height if we have it
             if let cached = heightCache[block.id] {
+                lastNotedHeight[block.id] = cached
                 return cached
             }
 
@@ -1873,6 +1877,7 @@ extension MessageTableRepresentable {
                 fullWidthMessages: ctx.fullWidthMessages
             )
             heightCache.setEstimate(h, for: block.id)
+            lastNotedHeight[block.id] = h
             return h
         }
 

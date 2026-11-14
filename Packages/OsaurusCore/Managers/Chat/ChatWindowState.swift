@@ -403,8 +403,15 @@ final class ChatWindowState: ObservableObject {
     @Published var isFindBarVisible: Bool = false
 
     /// Main navigation is independent of the live chat/session lifecycle.
-    enum MainSurface: String { case chat, workflows, settings }
-    @Published var mainSurface: MainSurface = .chat
+    /// `newAgent` is the New Agent creator: no rail entry, reached from New
+    /// Agent buttons, with the way back in the title bar.
+    enum MainSurface: String { case chat, workflows, insights, newAgent, settings }
+    @Published var mainSurface: MainSurface = .chat {
+        willSet { recordSurfaceReturn(to: newValue) }
+    }
+    /// Insights, New Agent and Settings are full-window pages over the
+    /// window's chat: Cmd+F and Esc belong to the page, not that chat.
+    var showsPageSurface: Bool { mainSurface == .insights || mainSurface == .newAgent || mainSurface == .settings }
     @Published var showsWorkflowLibrary = true
     /// Retain the unsent workflow brief when switching between main destinations.
     /// This is the same chat-session model used by the shared composer, and is
@@ -573,12 +580,14 @@ final class ChatWindowState: ObservableObject {
         _ = workflowsPath.popLast()
     }
 
-    /// One level back, as the title bar's back button: out of the editor
-    /// to the Workflows page under it, else the top pushed page. False at
-    /// the top of the window (Chat, or the Workflows home), where there
-    /// is nothing to go back to.
+    /// One level back, as the title bar's back button: to the surface a
+    /// link came from, else out of the editor to the Workflows page under
+    /// it, else the top pushed page. False at the top of the window (Chat,
+    /// or the Workflows home), where there is nothing to go back to. On
+    /// Settings and Insights, Esc belongs to the page, so never here.
     @discardableResult
     func goBack() -> Bool {
+        if !showsPageSurface, surfaceBack != nil { return returnToPreviousSurface() }
         guard mainSurface == .workflows else { return false }
         if !showsWorkflowLibrary {
             showMainSurface(.workflows)
@@ -623,6 +632,13 @@ final class ChatWindowState: ObservableObject {
                 CrashReportingService.recordBreadcrumb(category: "navigation", message: "management.window \(tab.rawValue)")
                 FeatureTelemetry.settingsOpened(tab: tab)
             }
+        } else if surface == .insights {
+            if mainSurface != .insights {
+                // Keeps the `insights` token Settings used, so the series
+                // stays continuous now that Insights is its own surface.
+                CrashReportingService.recordBreadcrumb(category: "navigation", message: "insights.window")
+                FeatureTelemetry.settingsOpened(tab: .insights)
+            }
         } else if surface == .chat, activeTab?.workflowID != nil || agentId == Agent.architectId {
             if let recent = tabs.filter({ $0.workflowID == nil && $0.session.agentId != Agent.architectId })
                 .max(by: { $0.lastActivatedAt < $1.lastActivatedAt }) {
@@ -642,6 +658,138 @@ final class ChatWindowState: ObservableObject {
         case .run?: return "run"
         case .create?: return "new"
         }
+    }
+
+    // MARK: - Back across surfaces
+
+    /// The page a jump to another surface landed on. Workflows compares its
+    /// pages too: moving within Workflows hands back to its own back button
+    /// until the person is on this page again.
+    struct SurfaceLanding: Equatable {
+        let surface: MainSurface
+        let workflowsPath: [WorkflowsPage]
+        let showsWorkflowLibrary: Bool
+    }
+
+    /// Where a jump to another surface came from.
+    struct SurfaceReturn: Equatable {
+        let surface: MainSurface
+        let settingsTab: ManagementTab
+        let workflowsPath: [WorkflowsPage]
+        let showedWorkflowLibrary: Bool
+        let tabId: UUID?
+        let landed: SurfaceLanding
+
+        @MainActor var title: String {
+            switch surface {
+            case .chat: L("Chat")
+            case .insights: L("Insights")
+            case .newAgent: L("New Agent")
+            case .settings: settingsTab.label
+            case .workflows: showedWorkflowLibrary ? WorkflowsView.backTitle(to: workflowsPath.last) : L("Workflows")
+            }
+        }
+    }
+
+    /// Every surface change but the navigation rail (top level, which
+    /// clears this) and going back pushes where it came from, so a link
+    /// from a page on one surface always offers the way back.
+    @Published private(set) var surfaceReturns: [SurfaceReturn] = []
+    private var isReturningToSurface = false
+    private static let surfaceReturnLimit = 20
+
+    /// The way back, while the page the jump landed on is on screen.
+    var surfaceBack: SurfaceReturn? {
+        guard let last = surfaceReturns.last, last.landed == landing(on: mainSurface) else { return nil }
+        return last
+    }
+
+    private func landing(on surface: MainSurface) -> SurfaceLanding {
+        surface == .workflows
+            ? SurfaceLanding(surface: surface, workflowsPath: workflowsPath, showsWorkflowLibrary: showsWorkflowLibrary)
+            : SurfaceLanding(surface: surface, workflowsPath: [], showsWorkflowLibrary: true)
+    }
+
+    /// Runs from `mainSurface`'s willSet: Workflows' path and library flag
+    /// are already those of the page being opened.
+    private func recordSurfaceReturn(to newSurface: MainSurface) {
+        guard newSurface != mainSurface, !isReturningToSurface else { return }
+        let settingsTab = ManagementStateManager.shared.selectedTab
+        surfaceReturns.append(
+            SurfaceReturn(
+                surface: mainSurface,
+                settingsTab: ManagementTab.mainWindowCases.contains(settingsTab) ? .defaultTab : settingsTab,
+                workflowsPath: workflowsPath,
+                showedWorkflowLibrary: showsWorkflowLibrary,
+                tabId: activeTabId,
+                landed: landing(on: newSurface)
+            ))
+        if surfaceReturns.count > Self.surfaceReturnLimit { surfaceReturns.removeFirst() }
+    }
+
+    /// The navigation rail: a top-level destination, with no way back.
+    func showMainSurfaceFromRail(_ surface: MainSurface) {
+        surfaceReturns.removeAll()
+        isReturningToSurface = true
+        defer { isReturningToSurface = false }
+        if surface == .workflows, mainSurface == .workflows, showsWorkflowLibrary {
+            showWorkflowsHome()
+        } else {
+            showMainSurface(surface)
+        }
+    }
+
+    /// Back to the page the jump on screen came from. False when the
+    /// page on screen was not opened by one.
+    @discardableResult
+    func returnToPreviousSurface() -> Bool {
+        guard let back = surfaceBack else { return false }
+        surfaceReturns.removeLast()
+        isReturningToSurface = true
+        defer { isReturningToSurface = false }
+        switch back.surface {
+        case .settings:
+            showSettings(tab: back.settingsTab)
+        case .insights, .newAgent:
+            showMainSurface(back.surface)
+        case .workflows:
+            workflowsPath = back.workflowsPath
+            if !back.showedWorkflowLibrary, let id = back.tabId, tabs.contains(where: { $0.id == id }) {
+                selectTab(id: id)
+            } else {
+                showMainSurface(.workflows)
+            }
+        case .chat:
+            if let id = back.tabId, tabs.contains(where: { $0.id == id }) {
+                selectTab(id: id)
+            } else {
+                showMainSurface(.chat)
+            }
+        }
+        return true
+    }
+
+    /// Leaves New Agent once its draft is gone (created or discarded). Its
+    /// way back moves to where `navigate` lands, so back never reopens the
+    /// emptied creator.
+    func leaveNewAgent(_ navigate: () -> Void) {
+        guard mainSurface == .newAgent else { return }
+        let origin = surfaceBack
+        if origin != nil { surfaceReturns.removeLast() }
+        isReturningToSurface = true
+        navigate()
+        isReturningToSurface = false
+        guard let origin, mainSurface != .newAgent, origin.surface != mainSurface else { return }
+        let landed = landing(on: mainSurface)
+        surfaceReturns.append(
+            SurfaceReturn(
+                surface: origin.surface,
+                settingsTab: origin.settingsTab,
+                workflowsPath: origin.workflowsPath,
+                showedWorkflowLibrary: origin.showedWorkflowLibrary,
+                tabId: origin.tabId,
+                landed: landed
+            ))
     }
 
     /// Settings, on `tab` when given. The page on screen is app-wide

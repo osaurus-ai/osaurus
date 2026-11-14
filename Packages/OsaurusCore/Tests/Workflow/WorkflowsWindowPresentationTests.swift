@@ -229,6 +229,7 @@ struct WorkflowsWindowPresentationTests {
             }
             #expect(!window.goBack())
 
+            window.showMainSurfaceFromRail(.workflows)
             let workflowID = UUID()
             window.pushWorkflowsPage(.workflow(workflowID))
             window.showWorkflowRun(workflowID: workflowID, runID: nil)

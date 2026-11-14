@@ -104,6 +104,8 @@ struct StorageDatabaseCatalogTests {
                     "chat history",
                     "configuration history",
                     "file history",
+                    "knowledge",
+                    "knowledge write log",
                     "memory",
                     "methods",
                     "router billing",
@@ -114,5 +116,37 @@ struct StorageDatabaseCatalogTests {
                 ]
             )
         }
+    }
+
+    // MARK: - Completeness
+
+    /// Database path helpers that are deliberately not catalog targets.
+    /// `workDatabaseFile` names a pre-rename file nothing opens any more.
+    private static let uncataloguedDatabaseHelpers: Set<String> = ["workDatabaseFile"]
+
+    private static func coreSource(_ relativePath: String) throws -> String {
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()  // Storage/
+            .deletingLastPathComponent()  // Tests/
+            .deletingLastPathComponent()  // OsaurusCore/
+        return try String(contentsOf: packageRoot.appendingPathComponent(relativePath), encoding: .utf8)
+    }
+
+    /// A database the catalog doesn't list is skipped by convergence, key
+    /// rotation, plaintext export and the storage key's fail-closed guard, so
+    /// every `OsaurusPaths.*DatabaseFile` helper has to be in it.
+    @Test
+    func everyDatabasePathHelperIsCatalogued() throws {
+        let paths = try Self.coreSource("Utils/OsaurusPaths.swift")
+        let catalog = try Self.coreSource("Storage/StorageDatabaseCatalog.swift")
+        let regex = try NSRegularExpression(pattern: #"func (\w+DatabaseFile)\("#)
+        let helpers = regex.matches(in: paths, range: NSRange(paths.startIndex..., in: paths)).compactMap {
+            Range($0.range(at: 1), in: paths).map { String(paths[$0]) }
+        }
+        #expect(helpers.count >= 18, "helper scan found too few: \(helpers)")
+        let missing = helpers.filter {
+            !Self.uncataloguedDatabaseHelpers.contains($0) && !catalog.contains("OsaurusPaths.\($0)(")
+        }
+        #expect(missing.isEmpty, "database helpers missing from StorageDatabaseCatalog: \(missing)")
     }
 }

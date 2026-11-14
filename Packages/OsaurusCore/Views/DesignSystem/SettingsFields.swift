@@ -394,7 +394,7 @@ struct SettingsTextEditor: View {
                 lineHeight: theme.assignedLineHeight(textKey, fallback: theme.lineHeight(.bodySmall)),
                 tracking: theme.assignedTracking(textKey) ?? 0,
                 paragraphSpacing: theme.catalogLayoutMetric(prefix + "elements.layout.paragraphGap", inheriting: theme.assignedMetric(prefix + "gap", fallback: theme.space.s0)),
-                textColor: NSColor(ink), selectionColor: NSColor(theme.assignedColor(prefix + "selected", fallback: theme.surface.selected)),
+                textColor: NSColor(ink),
                 editable: isEnabled, onFocusChange: { nativeFocused = $0 },
                 accessibleName: fieldName, accessibleHelp: fieldAccessibility?.help)
                 .frame(height: min(maxHeight ?? .greatestFiniteMagnitude, max(theme.assignedMetric(prefix + "height", fallback: minHeight), contentHeight)))
@@ -419,7 +419,7 @@ struct SettingsTextEditor: View {
         .assignedDesignEffect("component.input.effect", theme: theme, radius: theme.assignedMetric("component.input.radius", fallback: theme.radius.medium))
         .preference(key: SettingsInputInvalidPreference.self, value: isInvalid)
         .preference(key: SettingsEditorPreference.self, value: true)
-        .nativeCatalogTarget(["background", "foreground", "disabledForeground", "padding", "radius", "border", "borderWidth", "error", "text", "gap", "height", "selected", "hover", "disabledBackground", "secondary", "accent"].map {
+        .nativeCatalogTarget(["background", "foreground", "disabledForeground", "padding", "radius", "border", "borderWidth", "error", "text", "gap", "height", "hover", "disabledBackground", "secondary", "accent"].map {
             CatalogElementAssignments.routed(prefix + $0, mappings: DesignThemeOverlay.shared.current()?.document.mappings ?? [:])
         }, "Multiline editor")
     }
