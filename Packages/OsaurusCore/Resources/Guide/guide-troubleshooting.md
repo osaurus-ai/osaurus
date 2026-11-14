@@ -25,6 +25,7 @@ order: 180
 ## Getting help
 
 - Ask this assistant — it can read the guide and inspect your configuration.
+- Tell the Osaurus team: Settings… (⌘,) → General → Help → **Report a Problem** (or the question mark icon in the main window rail). You see exactly what is sent, and the reply arrives on the same page under **Your Reports**. Needs an Osaurus ID.
 - README and docs: https://docs.osaurus.ai
 - Search GitHub issues (open and closed) for similar problems; file bugs with the "Bug report" template (steps, expected/actual, environment).
 - Feature ideas: the "Feature request" template. Questions: GitHub Discussions.

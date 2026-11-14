@@ -37,6 +37,7 @@ struct ManagementBadgeHeaderContractTests {
         .workspaces: ("Views/Workspaces/WorkspacesView.swift", "Workspaces"),
         .agentChannels: ("Views/Settings/AgentChannelConnectionCenterView.swift", "Channels"),
         .keys: ("Views/Credentials/KeysView.swift", "Vault"),
+        .help: ("Views/Support/HelpView.swift", "Help"),
     ]
 
     @Test func everyBadgedTabIsListed() throws {

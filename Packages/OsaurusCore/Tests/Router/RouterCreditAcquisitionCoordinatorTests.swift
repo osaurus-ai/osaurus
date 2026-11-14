@@ -36,6 +36,41 @@ struct RouterCreditAcquisitionCoordinatorTests {
         }
     }
 
+    /// Reporting a problem must work before the welcome choice is made: the
+    /// router does not count `/support/*` as the account's first action, so
+    /// letting it through cannot cost the user a first-time code.
+    @Test func freshInstallAllowsHelpRequestsBeforeTheWelcomeChoice() {
+        withCoordinator { coordinator, _ in
+            coordinator.prepareForLaunch(isFreshInstall: true)
+            #expect(coordinator.blocksGeneralSignedRequests)
+
+            for path in [
+                "/support/threads",
+                "/support/threads?limit=20",
+                "/support/threads/7d0f0c2e-0000-4000-8000-000000000001",
+                "/support/threads/7d0f0c2e-0000-4000-8000-000000000001/messages",
+                "/support/threads/7d0f0c2e-0000-4000-8000-000000000001/read",
+            ] {
+                #expect(coordinator.allowsSignedRequest(pathAndQuery: path), "blocked: \(path)")
+            }
+
+            // Only the `/support` segment, not anything that starts with it
+            // or merely mentions it.
+            #expect(!coordinator.allowsSignedRequest(pathAndQuery: "/supporters"))
+            #expect(!coordinator.allowsSignedRequest(pathAndQuery: "/support-export/threads"))
+            #expect(!coordinator.allowsSignedRequest(pathAndQuery: "/credits/balance?next=/support/threads"))
+            #expect(!coordinator.allowsSignedRequest(pathAndQuery: "/credits/support/threads"))
+        }
+    }
+
+    @Test func supportPathMatchesTheSegmentOnly() {
+        #expect(RouterCreditAcquisitionCoordinator.isSupportPath("/support"))
+        #expect(RouterCreditAcquisitionCoordinator.isSupportPath("/support/threads"))
+        #expect(!RouterCreditAcquisitionCoordinator.isSupportPath("/supportx"))
+        #expect(!RouterCreditAcquisitionCoordinator.isSupportPath("support/threads"))
+        #expect(!RouterCreditAcquisitionCoordinator.isSupportPath("/admin/support/threads"))
+    }
+
     @Test func welcomeSelectionKeepsGeneralTrafficBlockedUntilSettlement() {
         withCoordinator { coordinator, _ in
             coordinator.prepareForLaunch(isFreshInstall: true)

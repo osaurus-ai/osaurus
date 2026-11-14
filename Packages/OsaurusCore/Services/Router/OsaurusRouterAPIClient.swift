@@ -668,6 +668,45 @@ actor OsaurusRouterAPIClient {
         return try await get("/credits/web-usage", queryItems: queryItems)
     }
 
+    // MARK: - Help (`/support/*`)
+    //
+    // Bug reports and the two-way thread behind each one. Wallet-signed like
+    // `/credits/*`; the router deliberately does not count these as the
+    // wallet's first signed action, so they are also allowed while the
+    // welcome-credit choice is pending (see
+    // `RouterCreditAcquisitionCoordinator.allowsSignedRequest`).
+
+    /// `GET /support/threads` — the user's reports, newest first, plus the
+    /// unread count for the Help badge.
+    func supportThreads() async throws -> OsaurusRouterSupportThreadsResponse {
+        try await get("/support/threads", timeout: 15)
+    }
+
+    /// `POST /support/threads` — send a new report. `body.consent` must be
+    /// true; the router refuses anything else.
+    func createSupportThread(_ body: OsaurusRouterSupportReportBody) async throws -> OsaurusRouterSupportThread {
+        try await post("/support/threads", body: body)
+    }
+
+    /// `GET /support/threads/:id` — one report with its messages.
+    func supportThread(id: String) async throws -> OsaurusRouterSupportThread {
+        try await get("/support/threads/\(try routerPathComponent(id))", timeout: 15)
+    }
+
+    /// `POST /support/threads/:id/messages` — the user answers. Moves the
+    /// thread back to `open`, including from `closed`.
+    func replyToSupportThread(id: String, body: String) async throws -> OsaurusRouterSupportThread {
+        struct Body: Encodable { let body: String }
+        return try await post(
+            "/support/threads/\(try routerPathComponent(id))/messages", body: Body(body: body))
+    }
+
+    /// `POST /support/threads/:id/read` — clear the unread flag. Reading the
+    /// detail does not do this on its own.
+    func markSupportThreadRead(id: String) async throws -> OsaurusRouterSupportThread {
+        try await postEmpty("/support/threads/\(try routerPathComponent(id))/read")
+    }
+
     func signedJSONRequest(method: String, path: String, body: Data? = nil) async throws -> URLRequest {
         let url = try url(path: path)
         return try await signedJSONRequest(method: method, url: url, body: body)
@@ -800,6 +839,7 @@ actor OsaurusRouterAPIClient {
     /// "Credits balance" rather than a bare URL.
     nonisolated static func controlPlanePurpose(path: String) -> String {
         let p = path.lowercased()
+        if p.hasPrefix("/support") { return L("Help & feedback") }
         if p.contains("/workspace") { return L("Workspaces") }
         if p.contains("/credit") || p.contains("/balance") || p.contains("/billing") { return L("Credits") }
         if p.contains("/media") { return L("Media generation") }

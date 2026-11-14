@@ -47,7 +47,7 @@ public enum ManagementSection: String, CaseIterable, Identifiable, Sendable {
     public var tabs: [ManagementTab] {
         switch self {
         case .home: [.agents, .automations, .approvals]
-        case .general: [.settings, .chat, .keys, .identity, .privacy]
+        case .general: [.settings, .chat, .keys, .identity, .privacy, .help]
         case .sharing: [.workspaces, .access, .devices]
         case .models: [.models, .providers, .modelDefaults]
         case .capabilities:
@@ -104,6 +104,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     case connect
     case insights
     case keys
+    case help
 
     public var id: String { rawValue }
 
@@ -168,7 +169,8 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     /// file history (see `legacySubTab(from:)`), `"themes"` → General's
     /// Appearance, `"schedules"` / `"watchers"` / `"events"` → Automations,
     /// `"teams"` → Workspaces, `"sync"` → Devices, `"mobile"` → Devices →
-    /// Mobile, `"relays"` → Access).
+    /// Mobile, `"relays"` → Access), and plain-word aliases for Help
+    /// (`"support"`, `"feedback"`).
     /// The inner page a legacy tab id opens when it became a drill-in inside
     /// another tab. Pair with `resolved(from:)`.
     public static func legacySubTab(from rawValue: String) -> String? {
@@ -192,6 +194,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case "events", "schedules", "watchers": .automations
         case "defaults", "model-defaults": .modelDefaults
         case "needsYou", "needs-you", "inbox": .approvals
+        case "support", "feedback": .help
         default: ManagementTab(rawValue: rawValue)
         }
     }
@@ -237,6 +240,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .configurator: "gearshape.2.fill"
         case .delegation: "arrow.triangle.branch"
         case .keys: "key.fill"
+        case .help: "questionmark.circle.fill"
         }
     }
 
@@ -281,6 +285,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
         case .configurator: L("Configurator")
         case .delegation: L("Delegation")
         case .keys: L("Vault")
+        case .help: L("Help")
         }
     }
 

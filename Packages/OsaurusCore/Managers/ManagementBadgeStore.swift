@@ -112,6 +112,8 @@ public final class ManagementBadgeStore: ObservableObject {
             WorkspacesService.shared.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
             // Approvals: raised and settled attention items.
             AttentionCenter.shared.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
+            // Help: replies from the Osaurus team the user has not opened.
+            SupportService.shared.objectWillChange.map { _ in () }.eraseToAnyPublisher(),
         ]
         Publishers.MergeMany(publishers)
             .throttle(for: .milliseconds(150), scheduler: DispatchQueue.main, latest: true)
@@ -220,6 +222,9 @@ public final class ManagementBadgeStore: ObservableObject {
         let liveTasks = TaskStore.shared.live.values
         counts[.tasks] = liveTasks.count
         counts[.keys] = missingKeysCount
+        // Help counts unread replies only, the same number as the rail dot.
+        let unreadSupportReplies = SupportService.shared.unreadCount
+        counts[.help] = unreadSupportReplies
         let waitingApprovals = ApprovalPresentation.waiting(in: AttentionCenter.shared)
         counts[.approvals] = waitingApprovals.count
 
@@ -232,6 +237,9 @@ public final class ManagementBadgeStore: ObservableObject {
         }
         if workspacesActionPending {
             highlights.insert(.workspaces)
+        }
+        if unreadSupportReplies > 0 {
+            highlights.insert(.help)
         }
         // Knowledge highlight ("proposals awaiting review") is resolved
         // off-main below; carry the prior value so it doesn't flicker.

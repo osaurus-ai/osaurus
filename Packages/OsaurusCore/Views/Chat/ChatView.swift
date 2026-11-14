@@ -13761,6 +13761,7 @@ extension ChatView {
 /// Main destinations stay separate from the agent/conversation navigator.
 private struct MainNavigationRail: View {
     @ObservedObject var windowState: ChatWindowState
+    @ObservedObject private var management = ManagementStateManager.shared
     @Environment(\.theme) private var theme
 
     var body: some View {
@@ -13768,6 +13769,7 @@ private struct MainNavigationRail: View {
             destination(.chat, symbol: "message", label: "Chat")
             destination(.workflows, symbol: "point.forward.to.point.capsulepath", label: "Workflows")
             Spacer(minLength: 8)
+            NavigationHelpButton(windowState: windowState)
             NavigationUsageButton()
             destination(.insights, symbol: "chart.bar.doc.horizontal", label: "Insights")
             destination(.settings, symbol: "gearshape", label: "Settings")
@@ -13779,7 +13781,11 @@ private struct MainNavigationRail: View {
     }
 
     private func destination(_ surface: ChatWindowState.MainSurface, symbol: String, label: String) -> some View {
-        let isSelected = windowState.mainSurface == surface
+        // Help is a Settings page with its own rail button; while it is on
+        // screen that button is the selected one, not the gear.
+        let isSelected =
+            windowState.mainSurface == surface
+            && !(surface == .settings && management.selectedTab == .help)
         return SettingsIconButton(symbol, help: label, size: .regular, isActive: isSelected, role: .tertiary) {
             windowState.showMainSurfaceFromRail(surface)
         }

@@ -26,6 +26,14 @@ extends those policies. The in-app and marketing copy must match this posture �
 usage metadata needed to bill credits" — with upstream providers disclaimed
 rather than guaranteed.
 
+Help reports are the one exception, and only by the user's own action. A report
+sent from Settings → Help stores what the user wrote (the description and any
+later messages in that thread) on the router, together with the app and macOS
+version, the Mac's model, chip and memory, and a metadata-only diagnostics
+bundle. Nothing is sent until the user ticks the Terms and Privacy box for
+that report, and the form shows the exact attached JSON first. Chat content
+is never part of it. See [Help and Bug Reports](#help-and-bug-reports).
+
 ## Money Representation and Credits Display
 
 Money crosses the wire and moves through the app as integer **micro-USD**
@@ -336,6 +344,62 @@ pulled — without a release. `AnnouncementsService` owns the client side:
   the cached slugs, bypasses the throttles and runs the production presenter
   (point `ai.osaurus.router.baseURL` at staging to test a draft campaign).
 
+## Help and Bug Reports
+
+Settings → Help (also the question mark on the main window rail) lets a user
+report a problem to the Osaurus team and read the replies in the app. Each
+report is a two-way thread on the router; staff answer from the admin console
+(`/support`). `SupportService` owns the client side, `HelpView` /
+`HelpThreadView` the page.
+
+- Identity: every `/support/*` call is wallet-signed, like `/credits/*`. A
+  report belongs to the wallet that sent it; there is no email and no separate
+  account. Without an Osaurus ID the page explains that and links to Osaurus
+  ID instead of showing the form.
+- Endpoints: `GET /support/threads` (summaries plus `unread_count`),
+  `POST /support/threads` (new report), `GET /support/threads/:id` (with
+  messages), `POST /support/threads/:id/messages` (the user writes back, which
+  reopens a closed thread), `POST /support/threads/:id/read` (clears unread).
+- Consent: `consent` must be the literal `true`. The app sets it only in
+  `SupportReport.body(description:)`, which the form calls after the user
+  ticked the box for that report. The box resets after every send.
+- What is sent: the description (10 to 5,000 characters), `app` (version,
+  build, macOS version), `hardware` (model, chip, memory from `MacProfile`),
+  and `diagnostics`, the existing `SupportDiagnosticsBundle`: tool names, the
+  current agent's name and model id, and per-request metadata for the 25 most
+  recent requests (path, status, timing, token counts). No prompt, response,
+  wire body, tool argument, tool result or free-form error text, and stable
+  identifiers only as one-way fingerprints.
+- What you see is what is sent: `SupportReportBuilder` serializes the bundle
+  once into a `JSONValue`. The "What's Included" preview and the request body
+  are rendered from that same value, and the page sends the instance it
+  previewed.
+- Size: the router rejects diagnostics over 200 KB. The builder keeps 8 KB of
+  headroom, halves the recent-request list until the bundle fits, then drops
+  the full tool registry, and sends the report with no diagnostics if it
+  still does not fit. The preview says so when that happens.
+- Limits (router-enforced): 3 threads that are not closed per wallet, 5 new
+  threads per 24 hours, 30 messages per hour. The page hides the form at 3
+  open reports rather than letting the send fail.
+- Status wording: `open` is "Waiting for us", `answered` is "Replied",
+  `closed` is "Closed". Staff messages carry no author identity and render as
+  "Osaurus team".
+- Unread: a thread is unread when a staff message is newer than the last time
+  the user read or answered it. Opening a thread fetches it, then calls
+  `/read`; the count drives the dot on the rail's Help icon and the Help row
+  in the Settings sidebar. There is no push and no system notification.
+- First action: `/support/*` does not count as the account's first action on
+  the router, and `RouterCreditAcquisitionCoordinator.allowsSignedRequest`
+  lets `/support` through while the welcome choice is pending, so reporting a
+  problem never costs a first-time redeem code or the welcome credit.
+- Failure handling: background refresh failures keep the previous list and
+  show nothing. On the Help page, errors are mapped to plain sentences by
+  `SupportService.userMessage(for:)`; router error text is never shown.
+- Known limit: the app polls only while it knows of a report that is not
+  closed. A staff reply on a closed thread moves it to `answered`, but the
+  dot appears only after the user next opens Help.
+- Operator guide: `docs/support.md` in the router repository.
+
 ## Control-Plane Request Budget
 
 Every signed control-plane call shows up as a `routerControl` row in Insights,
@@ -367,6 +431,16 @@ something or opens a surface, not on a schedule.
   never fetches a second copy. The detail view's 30 s presence poll and the
   connect service's auto-connect sweep both read the roster the stream
   already delivered instead of fetching their own.
+- `/support/threads` (Help) is fetched on launch and on activation only while
+  `ai.osaurus.support.hasOpenThreads` is set, which happens once the account
+  is known to have a report that is not closed. Activation is throttled to
+  one fetch per 30 minutes, any two background attempts are at least 60 s
+  apart, a `429` is honored via `retry-after`, and nothing is fetched while
+  **Use Osaurus Router** is off. An account that never sent a report makes no
+  `/support` calls. Opening Help always fetches, and sending or replying works
+  with the switch off, so someone who turned the Router off because it is
+  broken can still say so. These rows are labeled "Help & feedback" in
+  Insights.
 
 ## Empty Stream Diagnostics
 
@@ -417,6 +491,16 @@ Keep tests close to the contract:
 - `RouterBillingDatabaseTests`, `RouterBillingLedgerTests`, and
   `RouterBillingOutcomeTests` cover local metadata persistence and outcome
   classification.
+- `SupportServiceTests` and `SupportReportBuilderTests` cover the Help request
+  budget (throttle, open-report flag, Router-off suppression), unread
+  counting, and the report's size cap and content rules. The signed
+  `/support/*` paths are covered in `OsaurusRouterAPIClientTests`, and the
+  welcome-choice allowlist in `RouterCreditAcquisitionCoordinatorTests`.
+  `SupportLiveRouterTests` runs the same client and service against a real
+  router (report, staff reply, unread, read, answer, close, reopen, the
+  open-report limit, wallet isolation, consent). It is skipped unless
+  `OSAURUS_SUPPORT_LIVE_ROUTER_URL` and `OSAURUS_SUPPORT_LIVE_ADMIN_KEY` are
+  set; point it at a local or staging router, never production.
 - `OsaurusWorkspacesTests` covers the Workspaces wire types, API client,
   service (create / Checkout / reactivate / return polling), and workspace-billed
   inference; see [Osaurus Workspaces](OSAURUS_WORKSPACES.md#regression-coverage).

@@ -246,6 +246,8 @@ private extension ManagementView {
             ConfigurationView()
         case .keys:
             KeysView()
+        case .help:
+            HelpView()
         }
     }
 }

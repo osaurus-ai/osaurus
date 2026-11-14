@@ -865,6 +865,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                         try? await Task.sleep(for: .seconds(2))
                         await AnnouncementsService.shared.refreshIfDue(trigger: .launch)
                         self?.presentAnnouncementIfEligible()
+                        // Help replies: a request only while the user has a
+                        // report that is not closed, so the rail's Help dot
+                        // is right without them opening the page.
+                        await SupportService.shared.refreshIfDue(trigger: .launch)
                     }
                 }
             }
@@ -1377,6 +1381,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             // switching never turns into a stream of feed requests.
             await AnnouncementsService.shared.refreshIfDue(trigger: .activation)
             self?.presentAnnouncementIfEligible()
+            // Same trigger, same 30 minute throttle, for replies to the
+            // user's open Help reports. No open report, no request.
+            await SupportService.shared.refreshIfDue(trigger: .activation)
         }
     }
 
