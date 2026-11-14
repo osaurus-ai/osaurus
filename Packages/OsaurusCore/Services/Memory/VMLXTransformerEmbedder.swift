@@ -313,7 +313,7 @@ public actor VMLXTransformerEmbedder: VecturaEmbedder {
         }
         // Normalize in float32: bf16 norms drift enough to reorder close neighbours.
         let norm = sqrt((pooled * pooled).sum(axis: -1, keepDims: true))
-        pooled = pooled / maximum(norm, MLXArray(Float(1e-12)))
+        pooled /= maximum(norm, MLXArray(Float(1e-12)))
         eval(pooled)
 
         let width = pooled.dim(-1)
