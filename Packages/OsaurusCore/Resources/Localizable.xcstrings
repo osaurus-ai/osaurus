@@ -344,6 +344,40 @@
         }
       }
     },
+    "%lld dimensions" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld Dimensionen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld차원"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Размерность: %lld"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 维"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 維"
+          }
+        }
+      }
+    },
     "-1001234567890 — one per line" : {
       "localizations" : {
         "de" : {
@@ -446,6 +480,40 @@
         }
       }
     },
+    "In Use" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "In Verwendung"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "사용 중"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Используется"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用中"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用中"
+          }
+        }
+      }
+    },
     "Lock Model" : {
       "localizations" : {
         "de" : {
@@ -476,6 +544,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "鎖定模型"
+          }
+        }
+      }
+    },
+    "Methods" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Methoden"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "메서드"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Методы"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "方法"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "方法"
           }
         }
       }
@@ -548,6 +650,176 @@
         }
       }
     },
+    "Models that turn text into vectors for memory, knowledge and capability search" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Modelle, die Text für die Suche in Erinnerungen, Wissen und Fähigkeiten in Vektoren umwandeln"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "메모리, 지식, 기능 검색을 위해 텍스트를 벡터로 변환하는 모델"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Модели, которые превращают текст в векторы для поиска по памяти, знаниям и возможностям"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将文本转换为向量，用于记忆、知识和能力搜索的模型"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "將文字轉換為向量，用於記憶、知識和能力搜尋的模型"
+          }
+        }
+      }
+    },
+    "Not Supported" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nicht unterstützt"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "지원되지 않음"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не поддерживается"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不支持"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不支援"
+          }
+        }
+      }
+    },
+    "Not supported" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nicht unterstützt"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "지원되지 않음"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не поддерживается"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不支持"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不支援"
+          }
+        }
+      }
+    },
+    "Osaurus is still using %@. Restart to switch to %@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus verwendet noch %@. Starte neu, um zu %@ zu wechseln."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus는 아직 %@ 모델을 사용 중입니다. %@(으)로 전환하려면 다시 시작하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus всё ещё использует %@. Перезапустите, чтобы переключиться на %@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 仍在使用 %@。重启以切换到 %@。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus 仍在使用 %@。重新啟動以切換到 %@。"
+          }
+        }
+      }
+    },
+    "Rebuilding search indexes with %@: %@. Search uses text matching until each finishes." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Suchindizes werden mit %@ neu aufgebaut: %@. Bis dahin nutzt die Suche Textabgleich."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 모델로 검색 인덱스를 다시 만드는 중: %@. 완료될 때까지 검색은 텍스트 일치를 사용합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поисковые индексы перестраиваются с %@: %@. До завершения поиск использует текстовое совпадение."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在使用 %@ 重建搜索索引：%@。完成前搜索将使用文本匹配。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在使用 %@ 重建搜尋索引：%@。完成前搜尋將使用文字比對。"
+          }
+        }
+      }
+    },
     "Replies show up here, and a dot on the Help icon means one is waiting." : {
       "localizations" : {
         "de" : {
@@ -578,6 +850,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "回覆會顯示在這裡，「幫助」圖示上的圓點表示有回覆在等你。"
+          }
+        }
+      }
+    },
+    "Semantic search stays off until Osaurus restarts with %@." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die semantische Suche bleibt aus, bis Osaurus mit %@ neu startet."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Osaurus가 %@(으)로 다시 시작될 때까지 의미 검색이 꺼져 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Семантический поиск отключён, пока Osaurus не перезапустится с %@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 Osaurus 使用 %@ 重启之前，语义搜索将保持关闭。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 Osaurus 使用 %@ 重新啟動之前，語意搜尋將保持關閉。"
           }
         }
       }
