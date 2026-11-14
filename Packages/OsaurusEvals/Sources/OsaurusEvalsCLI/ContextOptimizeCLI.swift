@@ -396,7 +396,8 @@ extension OsaurusEvalsCLI {
         }
         var environment = RunEnvironment.current(
             caseIDs: rows.map(\.id),
-            runModel: censusModelId
+            runModel: censusModelId,
+            embeddingModel: EvalBootstrap.embeddingModelLabel
         )
         if let profile {
             environment = environment.withExperiment(profile)

@@ -335,7 +335,8 @@ struct OsaurusEvalsCLI {
             // matching the report rows.
             var environment = RunEnvironment.current(
                 caseIDs: baseReport.cases.map(\.id),
-                runModel: baseReport.modelId
+                runModel: baseReport.modelId,
+                embeddingModel: EvalBootstrap.embeddingModelLabel
             )
             if let experimentProfile {
                 environment = environment.withExperiment(experimentProfile)

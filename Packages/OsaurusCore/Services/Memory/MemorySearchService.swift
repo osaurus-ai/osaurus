@@ -143,7 +143,23 @@ public actor MemorySearchService {
         // Never touch the shared/global bucket on a per-agent wipe.
         guard bucket != Self.sharedAgentBucket else { return }
         await evictAgent(agentId: agentId)
-        try? FileManager.default.removeItem(at: Self.storageDir(for: agentId))
+        // Every profile keeps its own copy of the agent's vectors.
+        for base in Self.allProfileBaseDirectories() {
+            try? FileManager.default.removeItem(at: base.appendingPathComponent(bucket, isDirectory: true))
+        }
+    }
+
+    /// The active profile's index root, `memory/<indexDirectoryName>/`.
+    private static func baseDirectory() -> URL {
+        OsaurusPaths.memory().appendingPathComponent(EmbeddingService.indexDirectoryName, isDirectory: true)
+    }
+
+    /// Index roots of every embedding profile used on this Mac.
+    private static func allProfileBaseDirectories() -> [URL] {
+        let root = OsaurusPaths.memory()
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? []
+        return names.filter { $0 == "vectura" || $0.hasPrefix("vectura-") }
+            .map { root.appendingPathComponent($0, isDirectory: true) }
     }
 
     private static let sharedAgentBucket = ""
@@ -155,7 +171,7 @@ public actor MemorySearchService {
 
     private static func storageDir(for agentId: String?) -> URL {
         let bucket = bucketKey(for: agentId)
-        let base = OsaurusPaths.memory().appendingPathComponent("vectura", isDirectory: true)
+        let base = baseDirectory()
         if bucket == sharedAgentBucket {
             return base.appendingPathComponent("_shared", isDirectory: true)
         }
@@ -179,7 +195,7 @@ public actor MemorySearchService {
     /// yet — preserving the legacy contract that index/search calls
     /// no-op until the host opts in.
     private func ensureVectorDB(for agentId: String?) async -> VecturaKit? {
-        guard isInitialized else { return nil }
+        guard isInitialized, EmbeddingService.vectorIndexesAvailable else { return nil }
         let bucket = Self.bucketKey(for: agentId)
         if let existing = vectorDBs[bucket] { return existing }
 
@@ -231,6 +247,11 @@ public actor MemorySearchService {
             MemoryLogger.search.warning("Skipping VecturaKit \(operation); disabled by environment")
             return false
         }
+        guard EmbeddingService.vectorIndexesAvailable else {
+            MemoryLogger.search.warning(
+                "Skipping VecturaKit \(operation); embedding model unavailable, using SQL text fallback")
+            return false
+        }
 
         let residentModels = await ModelRuntime.shared.cachedModelSummaries()
         guard residentModels.isEmpty else {
@@ -251,7 +272,7 @@ public actor MemorySearchService {
         else { return }
         guard let id = UUID(uuidString: fact.id) else { return }
         do {
-            _ = try await MediaActivityLogger.$embeddingPurpose.withValue("memory_index") { try await db.addDocument(text: fact.content, id: id) }
+            _ = try await MediaActivityLogger.withEmbedding(purpose: "memory_index", role: .document) { try await db.addDocument(text: fact.content, id: id) }
         } catch {
             MemoryLogger.search.error("indexPinnedFact failed for \(fact.id): \(error)")
             recordIndexFailure("indexPinnedFact")
@@ -265,7 +286,7 @@ public actor MemorySearchService {
         let id = TextSimilarity.deterministicUUID(from: "episode:\(episode.id)")
         do {
             let text = episode.summary + " — " + episode.topicsCSV
-            _ = try await MediaActivityLogger.$embeddingPurpose.withValue("memory_index") { try await db.addDocument(text: text, id: id) }
+            _ = try await MediaActivityLogger.withEmbedding(purpose: "memory_index", role: .document) { try await db.addDocument(text: text, id: id) }
             episodeKeyMap[id.uuidString] = episode.id
         } catch {
             MemoryLogger.search.error("indexEpisode failed for #\(episode.id): \(error)")
@@ -279,7 +300,7 @@ public actor MemorySearchService {
         else { return }
         let id = TextSimilarity.deterministicUUID(from: "transcript:\(turn.conversationId):\(turn.chunkIndex)")
         do {
-            _ = try await MediaActivityLogger.$embeddingPurpose.withValue("memory_index") { try await db.addDocument(text: turn.content, id: id) }
+            _ = try await MediaActivityLogger.withEmbedding(purpose: "memory_index", role: .document) { try await db.addDocument(text: turn.content, id: id) }
             transcriptKeyMap[id.uuidString] = (turn.conversationId, turn.chunkIndex)
         } catch {
             MemoryLogger.search.error("indexTranscriptTurn failed: \(error)")
@@ -341,7 +362,7 @@ public actor MemorySearchService {
         {
             do {
                 let fetchCount = Int(Double(topK) * Self.defaultFetchMultiplier)
-                let results = try await MediaActivityLogger.$embeddingPurpose.withValue("memory_search") {
+                let results = try await MediaActivityLogger.withEmbedding(purpose: "memory_search", role: .query) {
                     try await db.search(
                         query: .text(query),
                         numResults: fetchCount,
@@ -385,7 +406,7 @@ public actor MemorySearchService {
         {
             do {
                 let fetchCount = Int(Double(topK) * Self.defaultFetchMultiplier)
-                let results = try await MediaActivityLogger.$embeddingPurpose.withValue("memory_search") {
+                let results = try await MediaActivityLogger.withEmbedding(purpose: "memory_search", role: .query) {
                     try await db.search(
                         query: .text(query),
                         numResults: fetchCount,
@@ -452,7 +473,7 @@ public actor MemorySearchService {
         {
             do {
                 let fetchCount = Int(Double(topK) * Self.defaultFetchMultiplier)
-                let results = try await MediaActivityLogger.$embeddingPurpose.withValue("memory_search") {
+                let results = try await MediaActivityLogger.withEmbedding(purpose: "memory_search", role: .query) {
                     try await db.search(
                         query: .text(query),
                         numResults: fetchCount,
@@ -556,9 +577,10 @@ public actor MemorySearchService {
             }
         }
         // Drop the directory contents too so plaintext leftovers from
-        // a pre-encryption build don't persist.
-        let base = OsaurusPaths.memory().appendingPathComponent("vectura", isDirectory: true)
-        try? FileManager.default.removeItem(at: base)
+        // a pre-encryption build don't persist. Every profile's copy goes.
+        for base in Self.allProfileBaseDirectories() {
+            try? FileManager.default.removeItem(at: base)
+        }
         vectorDBs.removeAll()
         isInitialized = false
     }
@@ -587,8 +609,23 @@ public actor MemorySearchService {
     /// SQLite source of truth. Called by the storage migrator on
     /// first launch after upgrade so vectors land in their per-agent
     /// directories.
-    public func rebuildIndex() async {
-        guard await vectorWorkAllowed("rebuildIndex") else { return }
+    /// Rebuild after the embedding profile changed. Buckets that are not
+    /// open would otherwise keep vectors from an earlier pass under this
+    /// profile, so the profile's whole directory goes first.
+    @discardableResult
+    public func rebuildIndexFromScratch() async -> Bool {
+        guard await vectorWorkAllowed("rebuildIndexFromScratch"), isInitialized else { return false }
+        vectorDBs.removeAll()
+        try? FileManager.default.removeItem(at: Self.baseDirectory())
+        return await rebuildIndex()
+    }
+
+    /// Returns `false` when vector work was not allowed, so a caller that
+    /// needs the index complete can retry later.
+    @discardableResult
+    public func rebuildIndex() async -> Bool {
+        guard await vectorWorkAllowed("rebuildIndex") else { return false }
+        guard isInitialized else { return false }
 
         episodeKeyMap.removeAll()
         transcriptKeyMap.removeAll()
@@ -601,19 +638,20 @@ public actor MemorySearchService {
             try? await db.reset()
         }
 
+        var failures = 0
         let allPinned = (try? MemoryDatabase.shared.loadPinnedFacts(limit: 5000)) ?? []
         for fact in allPinned {
             guard let id = UUID(uuidString: fact.id),
                 let db = await ensureVectorDB(for: fact.agentId)
             else { continue }
-            _ = try? await MediaActivityLogger.$embeddingPurpose.withValue("memory_index") { try await db.addDocument(text: fact.content, id: id) }
+            do { _ = try await MediaActivityLogger.withEmbedding(purpose: "memory_index", role: .document) { try await db.addDocument(text: fact.content, id: id) } } catch { failures += 1 }
         }
 
         let allEpisodes = (try? MemoryDatabase.shared.loadEpisodes(limit: 5000)) ?? []
         for ep in allEpisodes {
             guard let db = await ensureVectorDB(for: ep.agentId) else { continue }
             let id = TextSimilarity.deterministicUUID(from: "episode:\(ep.id)")
-            _ = try? await MediaActivityLogger.$embeddingPurpose.withValue("memory_index") { try await db.addDocument(text: ep.summary + " — " + ep.topicsCSV, id: id) }
+            do { _ = try await MediaActivityLogger.withEmbedding(purpose: "memory_index", role: .document) { try await db.addDocument(text: ep.summary + " — " + ep.topicsCSV, id: id) } } catch { failures += 1 }
             episodeKeyMap[id.uuidString] = ep.id
         }
 
@@ -621,7 +659,7 @@ public actor MemorySearchService {
         for turn in allTranscripts {
             guard let db = await ensureVectorDB(for: turn.agentId) else { continue }
             let id = TextSimilarity.deterministicUUID(from: "transcript:\(turn.conversationId):\(turn.chunkIndex)")
-            _ = try? await MediaActivityLogger.$embeddingPurpose.withValue("memory_index") { try await db.addDocument(text: turn.content, id: id) }
+            do { _ = try await MediaActivityLogger.withEmbedding(purpose: "memory_index", role: .document) { try await db.addDocument(text: turn.content, id: id) } } catch { failures += 1 }
             transcriptKeyMap[id.uuidString] = (turn.conversationId, turn.chunkIndex)
         }
 
@@ -630,8 +668,9 @@ public actor MemorySearchService {
         let episodeCount = allEpisodes.count
         let transcriptCount = allTranscripts.count
         MemoryLogger.search.info(
-            "Index rebuilt across \(bucketCount) agent bucket(s): \(pinnedCount) pinned, \(episodeCount) episodes, \(transcriptCount) transcript turns"
+            "Index rebuilt across \(bucketCount) agent bucket(s): \(pinnedCount) pinned, \(episodeCount) episodes, \(transcriptCount) transcript turns, \(failures) failed"
         )
+        return failures == 0
     }
 
     // MARK: - MMR Reranking

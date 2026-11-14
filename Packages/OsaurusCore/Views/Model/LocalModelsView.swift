@@ -17,6 +17,7 @@ enum LocalModelKind: String, CaseIterable, Identifiable, Sendable, AnimatedTabIt
     case language
     case image
     case speech
+    case embedding
     case detection
     case appleScript
 
@@ -27,6 +28,7 @@ enum LocalModelKind: String, CaseIterable, Identifiable, Sendable, AnimatedTabIt
         case .language: L("Language")
         case .image: L("Image")
         case .speech: L("Speech")
+        case .embedding: L("Embedding")
         case .detection: L("Privacy Detection")
         case .appleScript: L("AppleScript")
         }
@@ -37,6 +39,7 @@ enum LocalModelKind: String, CaseIterable, Identifiable, Sendable, AnimatedTabIt
         case .language: "text.bubble"
         case .image: "photo.on.rectangle.angled"
         case .speech: "waveform"
+        case .embedding: "text.magnifyingglass"
         case .detection: "eye.slash"
         case .appleScript: "applescript"
         }
@@ -47,6 +50,7 @@ enum LocalModelKind: String, CaseIterable, Identifiable, Sendable, AnimatedTabIt
         case .language: L("Chat and vision models that run on this Mac")
         case .image: L("Image generation and editing bundles")
         case .speech: L("Speech-to-text models for voice input and transcription")
+        case .embedding: L("Models that turn text into vectors for memory, knowledge and capability search")
         case .detection: L("On-device models that find personal data before it leaves your Mac")
         case .appleScript: L("Models that write and run AppleScript to automate this Mac")
         }
