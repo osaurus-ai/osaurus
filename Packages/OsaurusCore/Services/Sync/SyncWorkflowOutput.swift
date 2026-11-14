@@ -113,8 +113,14 @@ enum SyncWorkflowOutput {
             files.append(.object(entry))
         }
         if !files.isEmpty { object["files"] = .array(files) }
-        let steps = run.nodes.enumerated().compactMap { index, node in
+        var steps = run.nodes.enumerated().compactMap { index, node in
             step(node, placed: { name, value in placed("step\(index)-\(name)", value, limit: stepInlineLimit) })
+        }
+        // The message is app data, which the sync core caps at 64 KB a write: past it the write fails and the
+        // phone never gets the output. Logs and tool calls are what can still grow past the caps: over
+        // `messageLimit`, the steps go without them.
+        if encodedSize(object.merging(["steps": .array(steps)]) { _, new in new }) > messageLimit {
+            steps = steps.map(Self.withoutLogsOrCalls)
         }
         // Always, an empty list too: a message without it was written before steps were sent (`workflow_step_details`).
         object["steps"] = .array(steps)
@@ -130,6 +136,24 @@ enum SyncWorkflowOutput {
 
     /// A step's input or output over this goes to a blob: lower than the run's own, as a run has many.
     static let stepInlineLimit = 4 * 1024
+    /// A step's log lines sent, the newest; each line's length; an error's is four lines'.
+    static let logLimit = 200
+    static let lineLimit = 500
+    /// Over this, the steps go without their logs and tool calls: under the sync core's 64 KB of app data a write.
+    static let messageLimit = 48 * 1024
+
+    /// `object` as JSON, in bytes.
+    private static func encodedSize(_ object: [String: JSONValue]) -> Int {
+        (try? JSONEncoder().encode(JSONValue.object(object)))?.count ?? 0
+    }
+
+    /// A step's entry without its log and tool calls, for a message that would be too big with them.
+    private static func withoutLogsOrCalls(_ step: JSONValue) -> JSONValue {
+        guard var entry = step.objectValue else { return step }
+        entry["logs"] = nil
+        entry["toolCalls"] = nil
+        return .object(entry)
+    }
 
     /// What the Mac's run view shows on opening a step (`WorkflowRunView.details`): its model, retries,
     /// tokens and time, its error, input and output (through `placed`, which may make either a blob), its
@@ -145,10 +169,13 @@ enum SyncWorkflowOutput {
         if let ms = node.durationMs { entry["durationMs"] = .number(Double(ms)) }
         if let tokens = node.inputTokens { entry["inputTokens"] = .number(Double(tokens)) }
         if let tokens = node.outputTokens { entry["outputTokens"] = .number(Double(tokens)) }
-        if let error = node.error, !error.isEmpty { entry["error"] = .string(error) }
+        if let error = node.error, !error.isEmpty { entry["error"] = .string(String(error.prefix(lineLimit * 4))) }
         if let input = node.input, !isEmpty(input) { entry["input"] = placed("input", input) }
         if let output = node.output, !isEmpty(output) { entry["output"] = placed("output", output) }
-        if !node.logs.isEmpty { entry["logs"] = .array(node.logs.map { .string($0) }) }
+        // The newest lines, each cut short: a step's log has no end of its own.
+        if !node.logs.isEmpty {
+            entry["logs"] = .array(node.logs.suffix(logLimit).map { .string(String($0.prefix(lineLimit))) })
+        }
         if !node.toolCallRecords.isEmpty {
             entry["toolCalls"] = .array(
                 node.toolCallRecords.map { record in
@@ -211,6 +238,8 @@ enum SyncWorkflowOutput {
             attachments: [], replyTo: nil, asAgent: nil, toolCallId: nil, toolName: nil, appData: [write])
         _ = try core.sendMessage(scope: scope, message: message)
         core.syncNow()
-        log.notice("wrote output of run \(payload.runId, privacy: .public): \(payload.blobs.count) blobs")
+        log.notice(
+            "wrote output of run \(payload.runId, privacy: .public): \(bytes.count) bytes, \(payload.blobs.count) blobs"
+        )
     }
 }

@@ -163,4 +163,38 @@ struct SyncWorkflowCardTests {
         run.nodes[0].logs.append("summarised")
         #expect(SyncWorkflowOutput.payload(for: run, staging: staging).digest != before.digest)
     }
+
+    @Test func aStepsLogIsCappedAndAnOversizedOutputGoesWithoutLogsOrToolCalls() throws {
+        let staging = FileManager.default.temporaryDirectory.appendingPathComponent("output-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: staging) }
+
+        var run = Self.run()
+        run.status = .completed
+        var chatty = NodeRun(nodeID: "chatty", status: .done)
+        // Many short lines and one long one, the newest.
+        chatty.logs = (0 ..< 1_000).map { "line \($0) " + String(repeating: "x", count: 80) }
+        chatty.logs.append(String(repeating: "y", count: 2_000))
+        run.nodes = [chatty]
+        let capped = try #require(
+            SyncWorkflowOutput.payload(for: run, staging: staging).object["steps"]?.arrayValue?.first?.objectValue)
+        let logs = try #require(capped["logs"]?.arrayValue)
+        #expect(logs.count == SyncWorkflowOutput.logLimit)
+        // The newest lines, cut short.
+        #expect(logs.dropLast().last?.stringValue?.hasPrefix("line 999 ") == true)
+        #expect(logs.allSatisfy { ($0.stringValue?.count ?? 0) <= SyncWorkflowOutput.lineLimit })
+
+        // Enough steps to pass the message limit even capped: none keeps its log, so the event stays small.
+        run.nodes = (0 ..< 20).map { index in
+            var node = chatty
+            node.nodeID = "step\(index)"
+            return node
+        }
+        let payload = SyncWorkflowOutput.payload(for: run, staging: staging)
+        let steps = try #require(payload.object["steps"]?.arrayValue)
+        #expect(steps.count == 20)
+        #expect(steps.allSatisfy { $0.objectValue?["logs"] == nil })
+        let size = try JSONEncoder().encode(JSONValue.object(payload.object)).count
+        #expect(size < SyncWorkflowOutput.messageLimit)
+    }
 }

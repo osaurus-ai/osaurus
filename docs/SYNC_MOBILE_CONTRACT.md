@@ -827,6 +827,9 @@ when a card changed.
   steps are left out; every field but `id` and `attempts` is optional. A step's `input` and `output` over
   4 KiB move to blobs the same way. A tool call's `arguments` (secrets scrubbed) and `result` are the Mac's
   previews, at most 4,000 characters each.
+  `logs` is the newest 200 lines, each at most 500 characters; `error` at most 2,000. The message is app data,
+  which the sync core caps at 64 KiB a write (past it the write fails and the output never arrives): past
+  48 KiB the steps are sent without `logs` and `toolCalls`.
   Sent on every message by a Mac with `workflow_step_details`, an empty list when no step ran. A message
   without it was written before: the iPhone asks again, and the Mac rewrites it.
 - A file over 10 MiB, or past 32 MiB for the run, is listed with `skipped: "tooLarge"`. A file that
