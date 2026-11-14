@@ -786,16 +786,21 @@ run. Fields left out keep their defaults, and the input is checked against the s
 - Errors: `workflow_not_found`, `needs_setup` and `invalid_input`, each with a message to show.
 - The run's forms come through the attention feed (§4) with no `session_id`.
 
-The Mac also writes `ai.osaurus.workflow-runs/1` on the manage conversation: its 20 most recent
-runs, newest first, whatever started them. A new list is written at most every 500 ms, and only
-when a card changed.
+The Mac also writes its recent runs on the manage conversation, whatever started them: each
+workflow's 10 newest, one conversation app data entry per run under
+`ai.osaurus.workflow-run/1/<runId>`. A run is rewritten at most every 500 ms, and only when its
+entry changed; a run no longer listed has its entry removed. Order runs by `startedMs`, newest first.
 
 ```json
-{ "v": 1, "runs": [ { "workflowId": "…", "caller": "user", "startedMs": 1767571260000,
-                      "card": { "runId": "…", "name": "Weekly Report", "status": "running", "steps": [] } } ],
-  "updatedMs": 1767571262500 }
+{ "workflowId": "…", "caller": "user", "startedMs": 1767571260000,
+  "card": { "runId": "…", "name": "Weekly Report", "status": "running", "steps": [] } }
 ```
 
+- One entry per run, not one list: the conversation's history keeps every value written, and a
+  list rewritten on each step change grew it by the whole list each time.
+- Macs before this wrote the whole list as `ai.osaurus.workflow-runs/1`
+  (`{ "v": 1, "runs": [entry, …], "updatedMs": … }`); a Mac writing entries clears it. Read the
+  list only when there are no entries.
 - `card` is the card of §3.2.
 - `finishedMs` is set once the run ends.
 - `caller` is `user`, `agent`, `orchestrator`, `workflow` or `event`. It is kept open.

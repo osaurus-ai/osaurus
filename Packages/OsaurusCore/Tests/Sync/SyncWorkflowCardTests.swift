@@ -197,4 +197,35 @@ struct SyncWorkflowCardTests {
         let size = try JSONEncoder().encode(JSONValue.object(payload.object)).count
         #expect(size < SyncWorkflowOutput.messageLimit)
     }
+
+    @Test
+    func eachRunIsItsOwnEntryWrittenOnlyWhenItChanges() async throws {
+        try await ChatHistoryTestStorage.run {
+            let core = try SyncService.shared.open()
+            defer { SyncService.shared.close() }
+            let scope = try core.createConversation(title: "Manage", replication: .synced)
+            func run(_ id: String, _ status: String) -> SyncDeviceFeedContract.WorkflowRunEntry {
+                SyncDeviceFeedContract.WorkflowRunEntry(
+                    workflowId: "w", card: SyncWorkflowCard(runId: id, name: "Report", status: status, steps: []),
+                    caller: "user", startedMs: 1, finishedMs: nil)
+            }
+            func write(_ runs: [SyncDeviceFeedContract.WorkflowRunEntry]) throws -> (Int, Int) {
+                let conversation = try #require(try core.conversation(scope: scope))
+                return try SyncWorkflowRunsFeed.write(runs, to: conversation, core: core)
+            }
+            // The old whole list, cleared on the first write.
+            try core.setConversationAppData(
+                scope: scope, namespace: SyncDeviceFeedContract.workflowRunsNamespace, bytes: Data("{}".utf8))
+
+            #expect(try write([run("a", "running"), run("b", "completed")]) == (2, 1))
+            // Nothing changed: nothing written.
+            #expect(try write([run("a", "running"), run("b", "completed")]) == (0, 0))
+            // One run moving on rewrites only that run; one no longer listed is removed.
+            #expect(try write([run("a", "completed")]) == (1, 1))
+            let conversation = try #require(try core.conversation(scope: scope))
+            let prefix = SyncDeviceFeedContract.workflowRunNamespacePrefix
+            #expect(conversation.appData.map(\.namespace).filter { $0.hasPrefix(prefix) } == [prefix + "a"])
+            #expect(conversation.appData(SyncDeviceFeedContract.workflowRunsNamespace) == nil)
+        }
+    }
 }

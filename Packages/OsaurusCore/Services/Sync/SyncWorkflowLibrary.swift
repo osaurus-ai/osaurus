@@ -16,8 +16,12 @@ import OsaurusSync
 import os
 
 extension SyncDeviceFeedContract {
-    /// Conversation app data on the manage conversation: recent runs, newest first.
+    /// Conversation app data on the manage conversation: recent runs, newest first. No longer
+    /// written (cleared once): every card change rewrote the whole list, and the conversation's
+    /// history keeps every value written.
     static let workflowRunsNamespace = "ai.osaurus.workflow-runs/1"
+    /// One recent run per entry, `<prefix><runId>`: a step changing rewrites only its run.
+    static let workflowRunNamespacePrefix = "ai.osaurus.workflow-run/1/"
 
     struct ManagedWorkflow: Codable, Equatable, Sendable {
         var id: String
@@ -466,12 +470,10 @@ final class SyncWorkflowRunsFeed {
                         Task { @MainActor in SyncWorkflowRunsFeed.shared.written = nil }
                         return
                     }
-                    try core.setConversationAppData(
-                        scope: conversation.scope,
-                        namespace: SyncDeviceFeedContract.workflowRunsNamespace,
-                        bytes: try SyncHostedRunContract.encode(state))
+                    let (changed, removed) = try Self.write(state.runs, to: conversation, core: core)
+                    guard changed + removed > 0 else { return }
                     core.syncNow()
-                    Self.trace("wrote \(state.runs.count) runs to \(conversation.scope.prefix(8))")
+                    Self.trace("wrote \(changed) runs, removed \(removed), on \(conversation.scope.prefix(8))")
                 }
             } catch SyncConversationStoreError.notOpen {
                 Self.trace("not written: the store isn't open")
@@ -480,6 +482,40 @@ final class SyncWorkflowRunsFeed {
                 Self.trace("write failed: \(error.syncLogDetail)")
             }
         }
+    }
+
+    /// Writes each run whose entry differs from the stored one, and removes runs no longer listed
+    /// and the old whole-list value. Compared with what the conversation holds, so a relaunch
+    /// rewrites nothing that didn't change.
+    nonisolated static func write(
+        _ runs: [SyncDeviceFeedContract.WorkflowRunEntry], to conversation: Conversation, core: SyncCore
+    ) throws -> (changed: Int, removed: Int) {
+        let prefix = SyncDeviceFeedContract.workflowRunNamespacePrefix
+        var stored: [String: Data] = [:]
+        for entry in conversation.appData where entry.namespace.hasPrefix(prefix) {
+            stored[entry.namespace] = entry.bytes
+        }
+        var wanted = Set<String>()
+        var changed = 0
+        for run in runs {
+            let namespace = prefix + run.card.runId
+            guard wanted.insert(namespace).inserted else { continue }
+            let bytes = try SyncHostedRunContract.encode(run)
+            if stored[namespace] == bytes { continue }
+            try core.setConversationAppData(scope: conversation.scope, namespace: namespace, bytes: bytes)
+            changed += 1
+        }
+        var removed = 0
+        for namespace in stored.keys where !wanted.contains(namespace) {
+            try core.setConversationAppData(scope: conversation.scope, namespace: namespace, bytes: nil)
+            removed += 1
+        }
+        if conversation.appData(SyncDeviceFeedContract.workflowRunsNamespace) != nil {
+            try core.setConversationAppData(
+                scope: conversation.scope, namespace: SyncDeviceFeedContract.workflowRunsNamespace, bytes: nil)
+            removed += 1
+        }
+        return (changed, removed)
     }
 
     /// Debug builds: to the console, so `tmp/osaurus.log` has it.
