@@ -100,6 +100,26 @@ final class ModelDownloadService: ObservableObject {
         let details: String
     }
 
+    /// Why a completed download can't run, or nil when it can. Embedding
+    /// bundles run on the embedding engine, so they are judged by its
+    /// support rules rather than the chat runtime's.
+    nonisolated static func postDownloadCompatibilityIssue(for model: MLXModel) -> String? {
+        if model.isEmbedding {
+            guard case .unsupported(let reason) = EmbeddingDetection.runtimeSupport(at: model.localDirectory)
+            else { return nil }
+            return "Compatibility preflight: Embedding model not supported. Osaurus can't run it because \(reason)"
+        }
+        let preflight = ModelCompatibilityDiagnostics.report(
+            modelId: model.id,
+            modelName: model.name,
+            modelTypeHint: model.modelType,
+            bundleURL: model.localDirectory,
+            externalSource: model.externalSource
+        ).preflight
+        guard preflight.blocksRuntimeLoad else { return nil }
+        return "Compatibility preflight: \(preflight.title). \(preflight.detail)"
+    }
+
     /// Build a categorised alert from a raw error message and the affected
     /// model. Routes well-known patterns (disk, network, gated, etc.) to
     /// friendlier titles. falls back to a generic one.
@@ -713,18 +733,12 @@ final class ModelDownloadService: ObservableObject {
                         "Download incomplete: \(missing.count) of \(files.count) files are missing or have wrong size"
                 )
             }
-            // Also detached: the report reads config/tokenizer files out
-            // of the bundle it diagnoses.
-            let compatibilityReport =
+            // Also detached: the check reads config/tokenizer files out of
+            // the bundle it diagnoses.
+            let compatibilityIssue: String? =
                 isComplete
                 ? await Task.detached(priority: .userInitiated) {
-                    ModelCompatibilityDiagnostics.report(
-                        modelId: model.id,
-                        modelName: model.name,
-                        modelTypeHint: model.modelType,
-                        bundleURL: model.localDirectory,
-                        externalSource: model.externalSource
-                    )
+                    Self.postDownloadCompatibilityIssue(for: model)
                 }.value
                 : nil
             await MainActor.run {
@@ -744,18 +758,15 @@ final class ModelDownloadService: ObservableObject {
                             ? L("All model files match Hugging Face. No repair was needed.")
                             : L("Repair complete. Restored \(filesToDownload.count) file(s).")
                     }
-                    if let compatibilityReport {
-                        if compatibilityReport.preflight.blocksRuntimeLoad {
-                            self.downloadAlert = Self.makeAlert(
-                                modelId: model.id,
-                                rawError:
-                                    "Compatibility preflight: \(compatibilityReport.preflight.title). \(compatibilityReport.preflight.detail)",
-                                stage: "compatibility-preflight"
-                            )
-                            ModelManager.invalidateLocalModelsCache()
-                            NotificationCenter.default.post(name: .localModelsChanged, object: nil)
-                            return
-                        }
+                    if let compatibilityIssue {
+                        self.downloadAlert = Self.makeAlert(
+                            modelId: model.id,
+                            rawError: compatibilityIssue,
+                            stage: "compatibility-preflight"
+                        )
+                        ModelManager.invalidateLocalModelsCache()
+                        NotificationCenter.default.post(name: .localModelsChanged, object: nil)
+                        return
                     }
                     NotificationService.shared.postModelReady(
                         modelId: model.id,

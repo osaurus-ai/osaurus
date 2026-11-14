@@ -2576,7 +2576,7 @@ final class PluginHostContext: @unchecked Sendable {
             }
 
             do {
-                let vectors = try await MediaActivityLogger.$embeddingPurpose.withValue("plugin_embed") {
+                let vectors = try await MediaActivityLogger.withEmbedding(purpose: "plugin_embed", role: .raw) {
                     try await EmbeddingService.shared.embed(texts: texts)
                 }
                 var embeddings: [[String: Any]] = []
@@ -2589,7 +2589,7 @@ final class PluginHostContext: @unchecked Sendable {
                 }
                 let tokenEstimate = texts.reduce(0) { $0 + TokenEstimator.estimate($1) }
                 let response: [String: Any] = [
-                    "model": json["model"] as? String ?? EmbeddingService.modelName,
+                    "model": EmbeddingService.modelName,
                     "data": embeddings,
                     "usage": ["prompt_tokens": tokenEstimate, "total_tokens": tokenEstimate],
                 ]
@@ -2632,15 +2632,17 @@ final class PluginHostContext: @unchecked Sendable {
                 ])
             }
 
-            // Local embedding model
-            models.append([
-                "id": EmbeddingService.modelName,
-                "name": "Potion Base 4M",
-                "provider": "local",
-                "type": "embedding",
-                "dimensions": 768,
-                "capabilities": ["embedding"],
-            ])
+            // Local embedding model: the profile this launch resolved.
+            if let profile = EmbeddingService.activeProfile {
+                models.append([
+                    "id": profile.apiName,
+                    "name": EmbeddingModelCatalog.entry(for: profile.modelId)?.name ?? profile.apiName,
+                    "provider": "local",
+                    "type": "embedding",
+                    "dimensions": profile.dimension,
+                    "capabilities": ["embedding"],
+                ])
+            }
 
             // Remote provider models
             let remoteModels = await MainActor.run {

@@ -3823,10 +3823,21 @@ public enum SettingsSearchIndex {
             tab: .models,
             title: "Model kind",
             keywords: [
-                "language models", "image models", "speech models", "privacy detection models",
+                "language models", "image models", "speech models", "embedding models", "privacy detection models",
                 "applescript models", "on device", "catalog", "whisper", "parakeet", "ideogram",
             ],
-            disambiguation: "Switches Local Models between Language, Image, Speech, Privacy Detection and AppleScript models."
+            disambiguation: "Switches Local Models between Language, Image, Speech, Embedding, Privacy Detection and AppleScript models."
+        ),
+        .init(
+            id: "models.embedding",
+            tab: .models,
+            title: "Embedding",
+            keywords: [
+                "embedding models", "download embedding model", "embedder", "vector model", "qwen3 embedding",
+                "bge", "mxbai", "modernbert", "e5", "minilm", "potion", "model2vec", "sentence transformers",
+            ],
+            subTab: "embedding",
+            disambiguation: "Downloads embedding models. The one in use is chosen in Model Defaults → Embedding Model."
         ),
 
         // MARK: Model Defaults (which model Osaurus uses for each kind of job)
@@ -3874,6 +3885,17 @@ public enum SettingsSearchIndex {
             section: "Speech",
             title: "Speech-to-Text Model",
             keywords: ["transcription model", "dictation model", "whisper", "parakeet", "default speech model"]
+        ),
+        .init(
+            id: "modelDefaults.embedding",
+            tab: .modelDefaults,
+            section: "Embedding",
+            title: "Embedding Model",
+            keywords: [
+                "embedding model", "embeddings", "embedder", "vector search", "semantic search", "memory search",
+                "knowledge search", "rag", "qwen3 embedding", "potion", "model2vec", "/v1/embeddings",
+            ],
+            disambiguation: "Chooses the model behind memory, knowledge, skill, method and tool search and the embeddings API. Applies after Osaurus restarts; indexes rebuild in the background. Download more in Local Models → Embedding."
         ),
         .init(
             id: "modelDefaults.detection",

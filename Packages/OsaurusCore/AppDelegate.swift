@@ -689,6 +689,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             }
         }
 
+        // Indexes built by a different embedding model than this launch's
+        // profile are rebuilt in the background; search uses text matching
+        // for a store until its rebuild lands.
+        Task { @MainActor in
+            await embeddingInitTask.value
+            await EmbeddingIndexMaintenance.shared.runAfterLaunch()
+        }
+
         Task { @MainActor in
             await embeddingInitTask.value
             // Watch before resuming: a resumed run that fails again counts

@@ -157,6 +157,8 @@ struct SettingsSearchSelfFindProbe {
             ("Image-to-Video Model", "modelDefaults.imageToVideo"),
             ("Image Model Load Policy", "imageGeneration.loadPolicy"),
             ("Speech-to-Text Model", "modelDefaults.speech"),
+            ("Embedding Model", "modelDefaults.embedding"),
+            ("Embedding", "models.embedding"),
             ("Detection Model", "modelDefaults.detection"),
             ("AppleScript Model", "modelDefaults.appleScript"),
             ("AppleScript Model Residency", "modelDefaults.appleScriptResidency"),

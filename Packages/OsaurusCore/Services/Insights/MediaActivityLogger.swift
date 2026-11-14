@@ -178,6 +178,21 @@ enum MediaActivityLogger {
     /// recorded in the embedding row's details.
     @TaskLocal static var embeddingPurpose: String?
 
+    /// Runs `operation` with the Insights purpose and the retrieval role the
+    /// embedder applies its query or document prompt for.
+    static func withEmbedding<T>(
+        purpose: String,
+        role: EmbeddingRole,
+        isolation: isolated (any Actor)? = #isolation,
+        _ operation: () async throws -> T
+    ) async rethrows -> T {
+        try await EmbeddingRole.$current.withValue(role) {
+            try await $embeddingPurpose.withValue(purpose) {
+                try await operation()
+            }
+        }
+    }
+
     /// One embedding batch. Metadata only.
     nonisolated static func logEmbedding(
         model: String,

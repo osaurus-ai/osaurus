@@ -1182,7 +1182,7 @@ struct APIEndpoint {
                 description: L("Generate text embeddings"),
                 compatibility: "OpenAI",
                 category: .embeddings,
-                examplePayload: "{\n  \"model\": \"potion-base-4M\",\n  \"input\": \"Hello world\"\n}"
+                examplePayload: "{\n  \"model\": \"\(EmbeddingService.modelName)\",\n  \"input\": \"Hello world\"\n}"
             ),
             APIEndpoint(
                 method: "POST",
@@ -1190,7 +1190,7 @@ struct APIEndpoint {
                 description: L("Generate text embeddings"),
                 compatibility: "Ollama",
                 category: .embeddings,
-                examplePayload: "{\n  \"model\": \"potion-base-4M\",\n  \"input\": \"Hello world\"\n}"
+                examplePayload: "{\n  \"model\": \"\(EmbeddingService.modelName)\",\n  \"input\": \"Hello world\"\n}"
             ),
             APIEndpoint(
                 method: "POST",
