@@ -1730,44 +1730,6 @@ extension Tool {
     }
 }
 
-/// Process-wide memo of `Tool.canonicalHashPayload()` keyed by tool value.
-/// Bounded: cleared wholesale once it exceeds `maxEntries`, which only costs a
-/// recompute on the next lookup.
-final class ToolCanonicalPayloadCache: @unchecked Sendable {
-    static let shared = ToolCanonicalPayloadCache()
-    static let maxEntries = 1024
-
-    private let lock = NSLock()
-    private var entries: [Tool: Data] = [:]
-
-    func payload(for tool: Tool) -> Data? {
-        lock.lock()
-        defer { lock.unlock() }
-        return entries[tool]
-    }
-
-    func store(_ data: Data, for tool: Tool) {
-        lock.lock()
-        defer { lock.unlock() }
-        if entries.count >= Self.maxEntries {
-            entries.removeAll(keepingCapacity: true)
-        }
-        entries[tool] = data
-    }
-
-    func removeAll() {
-        lock.lock()
-        defer { lock.unlock() }
-        entries.removeAll()
-    }
-
-    var count: Int {
-        lock.lock()
-        defer { lock.unlock() }
-        return entries.count
-    }
-}
-
 // Typed access preserves unknown template variables without coercing strings.
 extension JSONValue {
     var boolValue: Bool? { if case .bool(let value) = self { return value }; return nil }
