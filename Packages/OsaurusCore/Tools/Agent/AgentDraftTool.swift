@@ -359,6 +359,11 @@ final class AgentDraftTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
             "created": draft.isCreated,
         ]
         if !draft.reasons.isEmpty { out["reasons"] = draft.reasons }
+        if !draft.isCreated {
+            let blocked = createBlocker(draft)
+            out["can_create"] = blocked == nil
+            if let blocked { out["create_blocked"] = blocked }
+        }
         let queued = draft.queuedImports.filter { $0.kind != .manualStep }
         if !queued.isEmpty {
             out["installs_on_create"] = queued.map { ["kind": $0.kind.rawValue, "name": $0.name] }
@@ -368,6 +373,21 @@ final class AgentDraftTool: OsaurusTool, PermissionedTool, @unchecked Sendable {
             out["setup"] = setup.items.map { ["title": $0.title, "detail": $0.detail, "blocking": $0.isBlocking] }
         }
         return out
+    }
+
+    /// Why the card's Create Agent button is off, in the Configurator's terms;
+    /// nil when the user can create the draft.
+    @MainActor
+    static func createBlocker(_ draft: AgentDraft) -> String? {
+        let name = draft.agent.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if name.isEmpty { return "The draft has no name. Patch one." }
+        guard AgentManager.shared.isCustomAgentNameTaken(name) else { return nil }
+        let taken = "Another agent is already named \"\(name)\", so Create Agent is off. "
+        if draft.userEdited.contains(.name) {
+            return taken + "The user typed this name: tell them, suggest a different one, and patch it with "
+                + "`override_user_edits` once they agree."
+        }
+        return taken + "Patch a different name now and tell the user why it changed."
     }
 
     /// Capability keys on for the agent, with its Apple apps, in the patch

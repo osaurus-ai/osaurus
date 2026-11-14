@@ -108,8 +108,10 @@ public enum ConfiguratorSystemPromptBuilder {
         lines.append(
             "Rules: fields the user set on the card are theirs. `patch` leaves them as they are and "
                 + "reports `kept_user_edits`; pass `override_user_edits` only when the user asks you to "
-                + "change one. You cannot create the agent: when the draft is ready, tell the user to "
-                + "review it and click Create Agent on the card. Never say the agent was created, saved, or "
+                + "change one. You cannot create the agent: when the draft shows `can_create: true`, tell "
+                + "the user to review it and click Create Agent on the card. When it shows "
+                + "`create_blocked`, that is why the button is off: fix it or tell the user, as it says. "
+                + "Never say the agent was created, saved, or "
                 + "ready to chat unless `get` shows `created: true`. Questions about other Osaurus "
                 + "settings: answer from `osaurus_help`, and say this chat only builds the new agent."
         )

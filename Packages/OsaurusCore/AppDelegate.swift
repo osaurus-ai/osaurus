@@ -2957,6 +2957,10 @@ extension AppDelegate {
             ChatWindowManager.shared.showWorkflowsSurface()
             return
         }
+        if initialTab == .insights {
+            ChatWindowManager.shared.showInsightsSurface()
+            return
+        }
         let state = ManagementStateManager.shared
         if let deeplinkAgentId, AgentManager.shared.agent(for: deeplinkAgentId)?.isBuiltIn == false {
             state.pendingAgentDetailId = deeplinkAgentId

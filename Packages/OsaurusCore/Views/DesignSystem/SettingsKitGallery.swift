@@ -41,6 +41,7 @@
         @State private var picker = "balanced"
         @State private var searchablePick: String?
         @State private var filter: GalleryFilter? = nil
+        @State private var category: String? = nil
         @State private var chipSelected = true
         @State private var text = ""
         @State private var filledText = "osaurus"
@@ -123,6 +124,7 @@
                             pageChrome
                             buttons
                             chips
+                            filterChips
                             rows
                             controls
                             fields
@@ -159,7 +161,7 @@
             case 7: nativeNumberSamples
             case 8: nativeDateSamples
             case 9: nativeShortcut
-            case 10: chips
+            case 10: chips; filterChips
             case 11: nativeAvatars
             case 12: indicators; statusAndFindings
             case 13: appCardExample; nativeFeatureCards
@@ -857,6 +859,28 @@ HStack(spacing: theme.space.s8) {
                     }
                 }
 
+            }
+        }
+
+        private static let categories = [
+            "Development", "Productivity", "Database", "Monitoring", "Security", "Deployment",
+            "Design", "Automation", "Location", "Math", "Finance & Accounting", "Business Productivity",
+        ]
+
+        private var filterChips: some View {
+            SettingsSection(
+                title: "FilterChipRow · Local Models, Skills, Tools & MCP",
+                footer: "Outer chips keep their whole border. When the row overflows, a cut-off edge fades behind a chevron that pages the row, and a mouse wheel over the row scrolls it sideways.",
+                layout: .plain,
+                verbatimTitle: true
+            ) {
+                FilterChipRow(
+                    Self.categories,
+                    selection: $category,
+                    allCount: Self.categories.count * 9,
+                    title: { $0 },
+                    count: { $0.count }
+                )
             }
         }
 

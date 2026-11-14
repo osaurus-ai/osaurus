@@ -18,7 +18,7 @@ order: 180
 
 ## Diagnostics
 
-- Insights tab: the persisted activity log — every model request (local or cloud), web search, URL fetch, MCP call, channel delivery, Router call, inbound API request and plugin call, with Local/Cloud badges, filters, Verify and Export. Open a row's Overview tab for the plain-language summary and any error message. Retention: Privacy & Security → Activity Log.
+- Insights (main window rail): the persisted activity log — every model request (local or cloud), web search, URL fetch, MCP call, channel delivery, Router call, inbound API request and plugin call, with Local/Cloud badges, filters, Verify and Export. Open a row's Overview tab for the plain-language summary and any error message. Retention: Privacy & Security → Activity Log.
 - Memory → Diagnostics for the memory store; Developer Tools → Sandbox → Troubleshooting → Run Diagnostics for the sandbox VM.
 - CLI: `osaurus status`.
 

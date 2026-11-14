@@ -577,6 +577,18 @@ public final class AgentManager: ObservableObject {
         )
     }
 
+    /// Whether a custom agent already uses `name`, ignoring case and
+    /// surrounding whitespace. New Agent cannot create a second one.
+    func isCustomAgentNameTaken(_ name: String) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        return agents.contains {
+            !$0.isBuiltIn
+                && $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .caseInsensitiveCompare(trimmed) == .orderedSame
+        }
+    }
+
     /// Save a pre-built agent, refresh the list, and assign a cryptographic address.
     public func add(_ agent: Agent, telemetryOrigin: String? = nil) {
         AgentStore.save(agent)

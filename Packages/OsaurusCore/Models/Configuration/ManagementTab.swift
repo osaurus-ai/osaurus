@@ -53,7 +53,7 @@ public enum ManagementSection: String, CaseIterable, Identifiable, Sendable {
         case .capabilities:
             [.tools, .agentChannels, .agentRuntimes, .search, .voice, .imageGeneration, .computerUse]
         case .context: [.memory, .projects, .knowledge, .skills]
-        case .developers: [.server, .sandbox, .insights, .tasks]
+        case .developers: [.server, .sandbox, .tasks]
         }
     }
 }
@@ -124,7 +124,7 @@ public enum ManagementTab: String, CaseIterable, Identifiable, Sendable {
     /// Destinations that open as their own surface of the main window rather
     /// than a Settings sidebar row. Their raw values still deep-link and search
     /// still lands on them (`showManagementWindow` redirects).
-    public static let mainWindowCases: [ManagementTab] = [.workflows]
+    public static let mainWindowCases: [ManagementTab] = [.workflows, .insights]
 
     /// The category whose page lists this tab as an item. `nil` for sidebar
     /// categories.

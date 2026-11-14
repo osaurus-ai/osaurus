@@ -73,8 +73,6 @@ struct AgentsView: View {
     @State private var deeplinkTab: (agentId: UUID, tabRaw: String)?
     @ObservedObject private var creator = AgentCreatorController.shared
     @ObservedObject private var draftStore = AgentDraftStore.shared
-    /// The agent the creator just made: its page opens with a ready banner.
-    @State private var newlyCreatedAgentId: UUID?
 
     private var customAgents: [Agent] {
         agentManager.agents.filter { !$0.isBuiltIn }
@@ -102,39 +100,22 @@ struct AgentsView: View {
         return "\(local)|\(remote)"
     }
 
-    /// The New Agent creator covers the grid and any open detail page.
-    private var showsCreator: Bool { creator.isShowing && creator.chat != nil }
-
     var body: some View {
         ZStack {
-            if showsCreator, let chat = creator.chat {
-                AgentCreatorPage(
-                    chat: chat,
-                    onBack: { withAnimation(Self.navTransition) { creator.hide() } },
-                    onDiscard: { withAnimation(Self.navTransition) { creator.discard() } },
-                    onCreated: { landOnCreatedAgent($0) }
-                )
-                .id(ObjectIdentifier(chat))
-                .transition(.opacity)
-            }
-
-            if !showsCreator && detailAgent == nil && selectedRemoteAgentId == nil {
+            if detailAgent == nil && selectedRemoteAgentId == nil {
                 gridContent
                     .transition(.opacity)
             }
 
-            if !showsCreator, let agent = detailAgent {
+            if let agent = detailAgent {
                 // `.id(agent.id)` below makes SwiftUI tear down + recreate the
                 // detail view when the user switches agents, so all editable
                 // state reloads via onAppear without manual onChange wiring.
                 AgentDetailView(
                     agent: agent,
                     initialTab: deeplinkTab?.agentId == agent.id ? deeplinkTab?.tabRaw : nil,
-                    isNewlyCreated: newlyCreatedAgentId == agent.id,
-                    onDismissNewlyCreated: { withAnimation(theme.motion.standard) { newlyCreatedAgentId = nil } },
                     onBack: {
                         deeplinkTab = nil
-                        newlyCreatedAgentId = nil
                         withAnimation(Self.navTransition) { selectedAgent = nil }
                     },
                     onDelete: { p in
@@ -156,7 +137,7 @@ struct AgentsView: View {
                 .transition(.opacity)
             }
 
-            if !showsCreator, let remoteId = selectedRemoteAgentId {
+            if let remoteId = selectedRemoteAgentId {
                 RemoteAgentDetailView(
                     remoteId: remoteId,
                     onBack: {
@@ -294,14 +275,6 @@ struct AgentsView: View {
                 selectedRemoteAgentId = nil
                 section = .templates
             }
-        }
-        // A deep link or search landing that opens an agent steps the
-        // creator aside; it waits under the Agents list.
-        .onChange(of: selectedAgent?.id) { _, id in
-            if id != nil, creator.isShowing { creator.hide() }
-        }
-        .onChange(of: selectedRemoteAgentId) { _, id in
-            if id != nil, creator.isShowing { creator.hide() }
         }
         .onChange(of: agentManager.agents) { _, _ in
             // Agent list may load asynchronously after the view appears.
@@ -527,25 +500,10 @@ struct AgentsView: View {
         }
     }
 
-    /// After the creator's Create: the new agent's page, with the setup
-    /// wizard over it when something still needs the person.
     /// An onboarding example that opens the creator already asked to build it.
     private func exampleAgent(_ icon: String, _ title: String, _ description: String) -> SettingsEmptyState.Example {
         .init(icon: icon, title: title, description: description) {
             AgentCreatorLauncher.open(brief: L("Make me a \(title) agent: \(description)."), source: .agentsPage)
-        }
-    }
-
-    private func landOnCreatedAgent(_ agentId: UUID) {
-        newlyCreatedAgentId = agentId
-        withAnimation(Self.navTransition) {
-            creator.finish()
-            section = .agents
-            selectedRemoteAgentId = nil
-            selectedAgent = agentManager.agent(for: agentId)
-        }
-        if let agent = agentManager.agent(for: agentId), SetupChecker.check(agent).hasBlockers {
-            setupSubject = .saved(agentId)
         }
     }
 
@@ -568,7 +526,7 @@ struct AgentsView: View {
                     withAnimation(theme.motion.standard) { creator.discard(draft) }
                 }
                 SettingsButton(.secondary, L("Continue"), icon: "arrow.right", verbatim: true) {
-                    withAnimation(Self.navTransition) { creator.resume(draft) }
+                    AgentCreatorLauncher.resume(draft)
                 }
             }
             .padding(theme.space.s12)
@@ -1307,9 +1265,6 @@ struct AgentDetailView: View {
     /// shared agent switcher). The parent flips its `selectedRemoteAgentId`.
     let onSwitchRemoteAgent: (UUID) -> Void
     let showSuccess: (String) -> Void
-    /// Just made by the New Agent creator: a ready banner offers a chat.
-    let isNewlyCreated: Bool
-    let onDismissNewlyCreated: () -> Void
 
     init(
         agent: Agent,
@@ -1318,8 +1273,6 @@ struct AgentDetailView: View {
         // expose a private type. Deep-links already carry the tab as a raw
         // string; unknown values fall back to `.configure`.
         initialTab: String? = nil,
-        isNewlyCreated: Bool = false,
-        onDismissNewlyCreated: @escaping () -> Void = {},
         onBack: @escaping () -> Void,
         onDelete: @escaping (Agent) -> Void,
         onSwitchAgent: @escaping (Agent) -> Void,
@@ -1327,8 +1280,6 @@ struct AgentDetailView: View {
         showSuccess: @escaping (String) -> Void
     ) {
         self.agent = agent
-        self.isNewlyCreated = isNewlyCreated
-        self.onDismissNewlyCreated = onDismissNewlyCreated
         self.onBack = onBack
         self.onDelete = onDelete
         self.onSwitchAgent = onSwitchAgent
@@ -1810,13 +1761,6 @@ struct AgentDetailView: View {
         VStack(spacing: theme.space.s0) {
             detailHeaderBar
 
-            if isNewlyCreated {
-                newlyCreatedBanner
-                    .padding(.horizontal, theme.settingsPageInset)
-                    .padding(.bottom, theme.space.s12)
-                    .transition(.opacity)
-            }
-
             // Next Run panel (spec §9.4) sits above the tab strip for any
             // user-created agent that has self-scheduling switched on. The
             // panel renders one of three banner shapes — paused, scheduled,
@@ -2133,29 +2077,6 @@ struct AgentDetailView: View {
     /// Compact identity bar: back, avatar + name + optional description, actions.
     /// Tapping the identity block opens the agent switcher popover; editing the
     /// name / description happens inside the Configure tab's Identity section.
-    private var newlyCreatedBanner: some View {
-        HStack(spacing: theme.space.s12) {
-            Image(systemName: "checkmark.circle.fill")
-                .glyphSize(.medium, weight: .semibold)
-                .foregroundColor(theme.status.success.foreground)
-            SettingsRowText {
-                Text("\(currentAgent.name) is ready", bundle: .module)
-            } description: {
-                Text("Everything below can be changed any time.", bundle: .module)
-            }
-            Spacer(minLength: theme.space.s8)
-            SettingsButton(.primary, L("Start Chatting"), icon: "bubble.left", verbatim: true) {
-                ChatWindowManager.shared.openChat(withAgentId: agent.id)
-                onDismissNewlyCreated()
-            }
-            SettingsIconButton("xmark", help: "Dismiss", size: .small, role: .tertiary) {
-                onDismissNewlyCreated()
-            }
-        }
-        .padding(theme.space.s12)
-        .settingsChrome(.status(.success))
-    }
-
     private var detailHeaderBar: some View {
         let parent = pageParent
         return SettingsPageHeader(
