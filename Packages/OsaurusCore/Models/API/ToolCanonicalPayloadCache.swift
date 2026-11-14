@@ -17,6 +17,15 @@ import Foundation
 /// uncached `computeCanonicalHashPayload()` produced, so prefix-cache and
 /// static-prefix hash identity is unchanged.
 ///
+/// `strict` is part of the key but not of the payload, so it can only cause
+/// extra misses, never a wrong hit.
+///
+/// Known edge case: synthesized `Hashable` treats `JSONValue.number(-0.0)` and
+/// `.number(0.0)` as equal, while their canonical JSON bytes can differ, so a
+/// hit could return the other zero's bytes. Accepted because tool schemas do
+/// not carry signed zeros in practice; key on `Double.bitPattern` if that ever
+/// changes.
+///
 /// Bounded: cleared wholesale once it reaches `maxEntries`, which only costs a
 /// recompute on the next lookup.
 final class ToolCanonicalPayloadCache: @unchecked Sendable {
