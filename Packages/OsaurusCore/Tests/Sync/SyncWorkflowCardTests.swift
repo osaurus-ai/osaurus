@@ -228,4 +228,23 @@ struct SyncWorkflowCardTests {
             #expect(conversation.appData(SyncDeviceFeedContract.workflowRunsNamespace) == nil)
         }
     }
+
+    @Test
+    func pinsAreOneEntryPerWorkflowAndRunWritesLeaveThemAlone() async throws {
+        try await ChatHistoryTestStorage.run {
+            let core = try SyncService.shared.open()
+            defer { SyncService.shared.close() }
+            let scope = try core.createConversation(title: "Manage", replication: .synced)
+            func conversation() throws -> Conversation { try #require(try core.conversation(scope: scope)) }
+
+            try SyncWorkflowPins.set("A", pinned: true, nowMs: 10, conversation: conversation(), core: core)
+            try SyncWorkflowPins.set("b", pinned: true, nowMs: 20, conversation: conversation(), core: core)
+            #expect(SyncWorkflowPins.pins(in: try conversation()) == ["a": 10, "b": 20])
+
+            // Writing (and clearing) the recent runs leaves pins alone.
+            _ = try SyncWorkflowRunsFeed.write([], to: conversation(), core: core)
+            try SyncWorkflowPins.set("b", pinned: false, nowMs: 30, conversation: conversation(), core: core)
+            #expect(SyncWorkflowPins.pins(in: try conversation()) == ["a": 10])
+        }
+    }
 }

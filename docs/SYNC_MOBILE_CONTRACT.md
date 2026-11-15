@@ -779,6 +779,8 @@ The manage state lists the Mac's installed workflows, sorted by name (at most 10
     and standing folder permissions. `problem` marks what still has to be set up.
   - `source` is the installed version's file. `key` is present only when the file is signed.
     `fromStore` is true when it was installed from the registry.
+- `published` is true when the workflow is shared to the registry and still listed there. A phone uses it for its
+  Published tab; from a Mac that doesn't send it, a phone shows no Published workflows.
 
 `runWorkflow` (`workflowId`, `input`) starts one as the Mac's Run button does, as a background
 run. Fields left out keep their defaults, and the input is checked against the schema.
@@ -804,6 +806,20 @@ entry changed; a run no longer listed has its entry removed. Order runs by `star
 - `card` is the card of §3.2.
 - `finishedMs` is set once the run ends.
 - `caller` is `user`, `agent`, `orchestrator`, `workflow` or `event`. It is kept open.
+
+Pinned workflows are shared by the user's devices on the same manage conversation: one conversation app data
+entry per pinned workflow, `ai.osaurus.workflow-pin/1/<workflowId>` (the id lowercased), written by whichever
+device pinned it, and removed when it's unpinned.
+
+```json
+{ "pinnedMs": 1767571260000 }
+```
+
+- One entry per workflow, so two devices pinning different workflows never overwrite each other.
+- List pinned workflows most recently pinned first. Ignore a pin whose workflow isn't in the list (removed on
+  the Mac); the entry is kept, so the pin comes back if the workflow does.
+- The iPhone pins and unpins today. The Mac doesn't yet, but reads and writes the same entries
+  (`SyncWorkflowPins`) and never removes them, so pinning added there later keeps the phone's pins.
 
 ### 5.5 Run outputs (`workflow_outputs`)
 

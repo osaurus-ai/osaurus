@@ -22,6 +22,16 @@ extension SyncDeviceFeedContract {
     static let workflowRunsNamespace = "ai.osaurus.workflow-runs/1"
     /// One recent run per entry, `<prefix><runId>`: a step changing rewrites only its run.
     static let workflowRunNamespacePrefix = "ai.osaurus.workflow-run/1/"
+    /// A pinned workflow, `<prefix><workflowId>`, written by whichever of the user's devices pinned it; removed
+    /// when unpinned. One entry per workflow, so two devices pinning different workflows never overwrite each
+    /// other. The phone pins today; this Mac reads and writes them through `SyncWorkflowPins` once it pins too.
+    static let workflowPinNamespacePrefix = "ai.osaurus.workflow-pin/1/"
+
+    /// A workflow pin's value.
+    struct WorkflowPin: Codable, Equatable, Sendable {
+        /// When it was pinned: pinned workflows are listed most recent first.
+        var pinnedMs: Int64
+    }
 
     struct ManagedWorkflow: Codable, Equatable, Sendable {
         var id: String
@@ -46,6 +56,8 @@ extension SyncDeviceFeedContract {
         var access: WorkflowAccess?
         /// Where its file came from (the phone's About tab).
         var source: WorkflowSource?
+        /// Shared to the workflow registry and still listed there (the phone's Published tab).
+        var published: Bool?
     }
 
     /// A small labelled capsule. `tone`: neutral, success, warning (needs attention), caution,
@@ -157,7 +169,8 @@ enum SyncWorkflowLibrary {
                     steps: steps(workflow, catalog: catalog),
                     outputs: WorkflowSummary.outputs(workflow.definition),
                     access: access(workflow),
-                    source: source(workflow)
+                    source: source(workflow),
+                    published: WorkflowRegistryRecordStore.shared.record(for: workflow.templateID)?.isLive ?? false
                 )
             }
     }
@@ -529,5 +542,37 @@ final class SyncWorkflowRunsFeed {
     func reset() {
         written = nil
         schedule()
+    }
+}
+
+/// Workflow pins on the manage conversation (`workflow_library`, §5.4), shared by the user's devices.
+/// The iPhone pins today; nothing on this Mac pins yet. These keep its reads and writes to the same entries, so
+/// pinning added here later starts from the pins the phone already made instead of losing them.
+enum SyncWorkflowPins {
+    /// The pinned workflows by id, with when each was pinned. An unreadable entry is skipped.
+    nonisolated static func pins(in conversation: Conversation) -> [String: Int64] {
+        pins(conversation.appData.map { ($0.namespace, $0.bytes) })
+    }
+
+    nonisolated static func pins(_ entries: [(namespace: String, bytes: Data)]) -> [String: Int64] {
+        let prefix = SyncDeviceFeedContract.workflowPinNamespacePrefix
+        var pins: [String: Int64] = [:]
+        for entry in entries where entry.namespace.hasPrefix(prefix) {
+            let id = String(entry.namespace.dropFirst(prefix.count)).lowercased()
+            guard !id.isEmpty,
+                let pin = try? JSONDecoder().decode(SyncDeviceFeedContract.WorkflowPin.self, from: entry.bytes)
+            else { continue }
+            pins[id] = pin.pinnedMs
+        }
+        return pins
+    }
+
+    /// Pins or unpins `workflowId` on the manage conversation. Run inside `SyncConversationStore.performWrite`.
+    nonisolated static func set(
+        _ workflowId: String, pinned: Bool, nowMs: Int64, conversation: Conversation, core: SyncCore
+    ) throws {
+        let namespace = SyncDeviceFeedContract.workflowPinNamespacePrefix + workflowId.lowercased()
+        let bytes = try pinned ? JSONEncoder().encode(SyncDeviceFeedContract.WorkflowPin(pinnedMs: nowMs)) : nil
+        try core.setConversationAppData(scope: conversation.scope, namespace: namespace, bytes: bytes)
     }
 }
