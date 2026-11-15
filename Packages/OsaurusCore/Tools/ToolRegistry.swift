@@ -1037,30 +1037,34 @@ public final class ToolRegistry: ObservableObject {
             let isComputerUse = name == ComputerUseTool.toolName
             if isComputerUse { FeatureTelemetry.computerUseAttempt() }
 
-            // Check system permissions and prompt the user for any that are missing
+            // Ask for each missing system permission: macOS's own dialog
+            // when it can still show one, otherwise the Osaurus panel.
             let missingSystemPermissions = await SystemPermissionService.shared.missingPermissions(
                 from: requirements
             )
+            var stillMissing: [SystemPermission] = []
+            var unanswered = false
             for permission in missingSystemPermissions {
-                _ = await SystemPermissionService.shared.requestPermissionAndWait(permission)
+                let outcome = await SystemPermissionGate.ensure(permission, toolName: name)
+                guard !outcome.allowsCall else { continue }
+                stillMissing.append(permission)
+                if outcome == .notAnswered { unanswered = true }
             }
-            let stillMissing = await SystemPermissionService.shared.missingPermissions(
-                from: requirements
-            )
             if !stillMissing.isEmpty {
                 if isComputerUse {
                     FeatureTelemetry.computerUseRefused(stage: .permissionAccessibility)
                 }
                 let missingNames = stillMissing.map { $0.displayName }.joined(separator: ", ")
+                let message =
+                    unanswered
+                    ? "Missing system permissions for tool: \(name). Required: \(missingNames). Osaurus asked the user to turn it on and they did not answer. Tell them what needs it and where: System Settings → Privacy & Security → \(stillMissing[0].systemSettingsPath); then they can ask again."
+                    : "Missing system permissions for tool: \(name). Required: \(missingNames). Ask the user to grant it in System Settings → Privacy & Security (or Osaurus Settings → Privacy & Security → Permissions), then try again."
                 // Typed like `AppleToolError.permissionDenied`: the first
                 // missing permission's stable name and its System Settings
                 // pane ride along so the envelope tells the model exactly
                 // which grant is missing and where it lives (the Apple app
                 // tools hit this gate before their body runs).
-                var userInfo: [String: Any] = [
-                    NSLocalizedDescriptionKey:
-                        "Missing system permissions for tool: \(name). Required: \(missingNames). Ask the user to grant it in System Settings → Privacy & Security (or Osaurus Settings → Privacy & Security → Permissions), then try again."
-                ]
+                var userInfo: [String: Any] = [NSLocalizedDescriptionKey: message]
                 if let first = stillMissing.first {
                     userInfo[Self.missingPermissionUserInfoKey] = first.rawValue
                     if let url = first.systemSettingsURL?.absoluteString {
