@@ -138,6 +138,27 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         return createWindowInternal(agentId: agentId, sessionData: sessionData, showImmediately: showImmediately)
     }
 
+    /// "Open in New Window": move a conversation into a window of its own.
+    /// `createWindow(sessionData:)` focuses the tab that already holds a
+    /// chat, so the owning tab is released first; the new window then
+    /// hydrates the saved transcript, or re-attaches the live run the
+    /// registry adopted. A blank chat has nothing to move and gets a blank
+    /// window for its agent.
+    @discardableResult
+    func openSessionInNewWindow(_ sessionData: ChatSessionData, agentId: UUID? = nil) -> UUID {
+        let agentId = agentId ?? sessionData.agentId
+        guard let owner = windowStates.values.first(where: { state in
+            state.tabs.contains { $0.session.sessionId == sessionData.id }
+        }) else {
+            return createWindow(agentId: agentId, sessionData: sessionData)
+        }
+        guard owner.releaseTab(forSessionId: sessionData.id) else {
+            return createWindow(agentId: agentId)
+        }
+        let released = ChatSessionStore.load(id: sessionData.id) ?? sessionData
+        return createWindow(agentId: agentId, sessionData: released)
+    }
+
     /// Internal implementation for creating windows
     private func createWindowInternal(
         agentId: UUID?,

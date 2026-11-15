@@ -407,7 +407,14 @@ struct ChatSessionSidebar: View {
             prepareExport: { _ = savedConversation(chat) },
             onStop: onStop.map { stop in { stop(chat.id) } },
             onOpenInNewWindow: {
-                ChatWindowManager.shared.createWindow(agentId: agent?.id ?? chat.agentId, sessionData: savedConversation(chat))
+                let windowAgentId = agent?.id ?? chat.agentId
+                let tab = openChats.first { $0.id == chat.openTabId }
+                if let tab, !tab.isHibernated, tab.session.turns.isEmpty, !tab.session.isStreaming {
+                    ChatWindowManager.shared.createWindow(agentId: windowAgentId)
+                } else {
+                    ChatWindowManager.shared.openSessionInNewWindow(
+                        tab?.isHibernated == true ? metadata : savedConversation(chat), agentId: windowAgentId)
+                }
             },
             onOpenInNewTab: onOpenInNewTab.map { open in { open(savedConversation(chat)) } })
     }
