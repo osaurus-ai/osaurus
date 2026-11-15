@@ -75,7 +75,7 @@ struct ChatHistoryWindowActions {
 
     @MainActor
     func openInNewWindow(_ data: ChatSessionData) {
-        ChatWindowManager.shared.createWindow(agentId: data.agentId, sessionData: data)
+        ChatWindowManager.shared.openSessionInNewWindow(data)
     }
 }
 

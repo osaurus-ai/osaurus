@@ -2384,6 +2384,19 @@ final class ChatWindowState: ObservableObject {
         return true
     }
 
+    /// Close the tab showing `sessionId` so another window can become the
+    /// conversation's only owner ("Open in New Window"). Closing follows the
+    /// usual rules: idle → saved, mid-run → adopted by the background
+    /// registry. Returns false when no tab here shows it, or when that tab
+    /// is a blank chat with nothing to move.
+    @discardableResult
+    func releaseTab(forSessionId sessionId: UUID) -> Bool {
+        guard let tab = tabs.first(where: { $0.session.sessionId == sessionId }) else { return false }
+        if tab.kind == .chat, !tab.isHibernated, isBlank(tab.session) { return false }
+        closeTab(id: tab.id)
+        return !tabs.contains { $0.session.sessionId == sessionId }
+    }
+
     /// Bring a registry run's tab to the front (waking it if hibernated).
     /// Returns false when no tab here shows that run.
     @discardableResult

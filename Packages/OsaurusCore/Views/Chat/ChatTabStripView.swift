@@ -894,8 +894,7 @@ private struct ChatTabContextMenu {
         let isBlank = session.turns.isEmpty && !session.isStreaming
         if let persisted {
             add(to: menu, L("Open in New Window"), icon: "macwindow.badge.plus") {
-                ChatWindowManager.shared.createWindow(
-                    agentId: persisted.agentId, sessionData: persisted)
+                ChatWindowManager.shared.openSessionInNewWindow(persisted)
             }
             menu.addItem(.separator())
         } else if isBlank {
