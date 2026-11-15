@@ -176,4 +176,28 @@ struct CreditsAttentionTrackerTests {
         #expect(tracker.indicator == .none)
         #expect(harness.defaults.data(forKey: CreditsAttentionTracker.defaultsKey) != nil)
     }
+
+    /// Regression for APPLE-MACOS-3WQ: `OsaurusIdentity.setup()` posts the
+    /// identity notification from a background thread, and the upstream
+    /// transform must not assert main-actor isolation.
+    @Test func identityNotificationPostedOffMainResetsWithoutTrapping() async {
+        let harness = Harness()
+        let center = NotificationCenter()
+        let tracker = CreditsAttentionTracker(
+            snapshots: harness.snapshots.eraseToAnyPublisher(),
+            identityChanges: CreditsAttentionTracker.identityChangePublisher(center: center),
+            defaults: harness.defaults
+        )
+        harness.snapshots.send(snap(5_000_000))
+        await drainMain()
+        #expect(harness.defaults.data(forKey: CreditsAttentionTracker.defaultsKey) != nil)
+
+        await Task.detached {
+            #expect(!Thread.isMainThread)
+            center.post(name: .osaurusIdentityChanged, object: nil)
+        }.value
+        await drainMain()
+        #expect(tracker.indicator == .none)
+        #expect(harness.defaults.data(forKey: CreditsAttentionTracker.defaultsKey) == nil)
+    }
 }

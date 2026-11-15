@@ -141,19 +141,37 @@ final class CreditsAttentionTracker: ObservableObject {
         let account = OsaurusRouterAccountService.shared
         let snapshots = account.$lastFetchedBalance
             .combineLatest(account.$webSearchNeedsTopUp)
-            .map { balance, needsTopUp -> CreditsAttentionSnapshot? in
-                guard let balance else { return nil }
-                return CreditsAttentionSnapshot(
-                    balanceMicro: Int64(balance.balanceMicro) ?? 0,
-                    frozen: balance.frozen,
-                    webSearchNeedsTopUp: needsTopUp
-                )
-            }
+            .map(Self.snapshot(from:))
             .eraseToAnyPublisher()
         self.init(
             snapshots: snapshots,
-            identityChanges: NotificationCenter.default.publisher(for: .osaurusIdentityChanged)
-                .map { _ in () }.eraseToAnyPublisher()
+            identityChanges: Self.identityChangePublisher()
+        )
+    }
+
+    /// Upstream operators run on whichever thread emits, before the
+    /// `receive(on:)` hop in `init`. Closures written inline in this
+    /// `@MainActor` class are inferred main-actor-isolated and trap at
+    /// runtime when run elsewhere — `.osaurusIdentityChanged` is posted from
+    /// `OsaurusIdentity.setup()` on a cooperative-pool thread. Keep these
+    /// transforms `nonisolated` so they are safe on any thread.
+    nonisolated static func identityChangePublisher(
+        center: NotificationCenter = .default
+    ) -> AnyPublisher<Void, Never> {
+        center.publisher(for: .osaurusIdentityChanged)
+            .map { _ in () }
+            .eraseToAnyPublisher()
+    }
+
+    nonisolated static func snapshot(
+        from input: (balance: OsaurusRouterBalanceResponse?, needsTopUp: Bool)
+    ) -> CreditsAttentionSnapshot? {
+        let (balance, needsTopUp) = input
+        guard let balance else { return nil }
+        return CreditsAttentionSnapshot(
+            balanceMicro: Int64(balance.balanceMicro) ?? 0,
+            frozen: balance.frozen,
+            webSearchNeedsTopUp: needsTopUp
         )
     }
 
