@@ -212,6 +212,7 @@
       "architect.csv-reconcile-approval",
       "architect.edit-saved-workflow",
       "architect.flaky-api-fallback",
+      "architect.mail-tool-step",
       "architect.media-pipeline",
       "architect.multi-way-triage-join",
       "architect.order-total-code",
