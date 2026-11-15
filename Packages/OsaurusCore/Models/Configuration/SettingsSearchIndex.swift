@@ -4845,9 +4845,41 @@ public enum SettingsSearchIndex {
             title: "Share",
             keywords: [
                 "share workflow", "share online", "export", "export workflow", "save as a file", "save as file",
-                "share sheet", "share button", "two ways to share", "share a workflow",
+                "share sheet", "share button", "two ways to share", "share a workflow", "share the recipe",
+                "never your data",
             ],
-            disambiguation: "Share… is in a workflow's page footer; each row on the Workflows page carries Publish… (or Manage Published… once live) and Save as File… in its … menu. Share offers two ways: Save as a file (.osaurustemplate) or Publish to store.osaurus.ai. Once published, the row's Live badge shows who can see it and installs, and opens the published dashboard. Theme sharing lives in Themes."
+            disambiguation: "Share… is at the top of a workflow's page, and Share… is in its right-click menu in the Workflows sidebar (with Save as File… and Publish…, or Manage Published… once live). Share offers two ways: Save as a file (.osaurustemplate) or Publish to store.osaurus.ai; the sheet says You share the recipe, never your data. Once published, the row's Live badge shows who can see it and installs, and opens the published dashboard. Theme sharing lives in Themes."
+        ),
+        .init(
+            id: "workflows.shareSummary",
+            tab: .workflows,
+            section: "Share",
+            title: "What gets shared",
+            keywords: [
+                "what stays on your mac", "what gets shared", "what is shared", "privacy when sharing",
+                "results and run history", "accounts and sign-ins", "what it needs access to", "steps it follows",
+            ],
+            disambiguation: "In Share, both Save as a file and Publish to store.osaurus.ai show What gets shared (the steps it follows and what it needs access to) beside What stays on your Mac (your accounts and sign-ins, and your results and run history unless you add Example Runs). Folder paths under your home folder are kept as ~/… in the recipe, so files and folders are not listed as staying behind."
+        ),
+        .init(
+            id: "workflows.shareNudge",
+            tab: .workflows,
+            section: "Workflow Details",
+            title: "This one is working well",
+            keywords: ["share to the store", "share nudge", "suggest sharing", "working well", "others might want it"],
+            disambiguation: "On a workflow's page, under Recent runs, once a workflow you made (not from the Store, not a starter, not yet published) finished its last 10 runs across at least 5 days. Share to the Store opens Share; the close button keeps it away for that workflow. At most one workflow shows it in a week."
+        ),
+        .init(
+            id: "workflows.fromTheStore",
+            tab: .workflows,
+            section: "Home",
+            title: "From the Store",
+            keywords: [
+                "browse the store", "made something useful", "how to share", "shared by the people who made them",
+                "store shelf",
+            ],
+            subTab: "workflows",
+            disambiguation: "At the foot of Workflows Home: Browse the Store opens store.osaurus.ai in your browser, and Made something useful? explains how to share a workflow you made. The Osaurus Store row at the foot of the sidebar opens the same site."
         ),
         .init(
             id: "workflows.publish",

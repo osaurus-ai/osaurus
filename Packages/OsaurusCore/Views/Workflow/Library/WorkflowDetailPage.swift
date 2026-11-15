@@ -790,11 +790,26 @@ struct WorkflowDetailPage<Actions: View>: View {
                             recentRunRow(run)
                         }
                     }
+                    if showsShareNudge(workflow, runs: list) {
+                        WorkflowShareNudgeCard {
+                            onShare(workflow)
+                        } onDismiss: {
+                            try? store.dismissShareNudge(id: workflow.id)
+                        }
+                        .onAppear { ShareNudgeCap().recordShown(workflow.id) }
+                    }
                 }
                 .animation(theme.motion.quick, value: list.map(\.id))
             }
         }
         .settingsLandingAnchor("workflows.recentRuns")
+    }
+
+    private func showsShareNudge(_ workflow: InstalledWorkflow, runs: [WorkflowRun]) -> Bool {
+        ShareNudgeEligibility.isEligible(
+            workflow, runs: runs, isBuiltIn: WorkflowShareService.isBuiltInTemplate(workflow.templateID),
+            isPublished: registryRecords.record(for: workflow.templateID) != nil)
+            && ShareNudgeCap().allows(workflow.id)
     }
 
     /// "Today, 8:00 AM" over "On schedule, took 42 sec", and Open.

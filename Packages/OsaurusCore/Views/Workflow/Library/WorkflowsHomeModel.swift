@@ -15,6 +15,7 @@ import Foundation
 enum WorkflowsHomeSection {
     static let ways = "workflows.home.ways"
     static let runningOnTheirOwn = "workflows.home.runningOnTheirOwn"
+    static let fromTheStore = "workflows.home.fromTheStore"
 }
 
 struct WorkflowsHomeModel {

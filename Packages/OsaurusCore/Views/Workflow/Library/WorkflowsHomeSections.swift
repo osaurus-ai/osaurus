@@ -52,6 +52,7 @@ struct WorkflowsHomeSections: View {
             if !model.pinned.isEmpty { pinned(model.pinned) }
             if !model.groups.isEmpty || model.otherAutomationCount > 0 { runningOnTheirOwn(model) }
             ways(model.ways)
+            fromTheStore
         }
         .task { await runs.loadRecentRunsIfNeeded() }
         .sheet(item: $editorRequest) { request in
@@ -240,6 +241,28 @@ struct WorkflowsHomeSections: View {
         windowState.showWorkflowAutomation(workflowID: workflow.id, intent: .highlight(created.id))
     }
 
+    // MARK: From the Store
+
+    /// Listings wait for a registry list to show; until then, the way to
+    /// the Store and how to share there.
+    private var fromTheStore: some View {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            HStack(alignment: .firstTextBaseline) {
+                sectionTitle(L("From the Store"), subtitle: L("Shared by the people who made them"))
+                Spacer(minLength: theme.space.s8)
+                WorkflowTextLink(title: L("Browse the Store")) { NSWorkspace.shared.open(WorkflowsSidebar.storeURL) }
+            }
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 180), spacing: theme.space.s12, alignment: .top)],
+                alignment: .leading, spacing: theme.space.s12
+            ) {
+                WorkflowsShareInviteCard()
+            }
+        }
+        .id(WorkflowsHomeSection.fromTheStore)
+        .settingsLandingAnchor("workflows.fromTheStore")
+    }
+
     private func sectionTitle(_ title: String, subtitle: String) -> some View {
         VStack(alignment: .leading, spacing: theme.space.s2) {
             Text(verbatim: title)
@@ -380,6 +403,47 @@ private struct WorkflowsHomeAutomationRow: View {
         .pointingHandCursor()
         .accessibilityElement(children: .contain)
         .accessibilityAction(named: Text("Open the workflow", bundle: .module), onOpen)
+    }
+}
+
+/// "Made something useful?": a dashed card whose How to share explains
+/// where Share is and what it sends.
+private struct WorkflowsShareInviteCard: View {
+    @Environment(\.theme) private var theme
+    @State private var showsHow = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            Image(systemName: "square.and.arrow.up")
+                .glyphSize(.body, weight: .semibold)
+                .foregroundStyle(theme.text.secondary)
+                .accessibilityHidden(true)
+            Text("Made something useful?", bundle: .module)
+                .textStyle(.body, weight: 500)
+                .foregroundStyle(theme.text.primary)
+            Text("Share a workflow so others can use it.", bundle: .module)
+                .font(SettingsFont.footnote)
+                .foregroundStyle(theme.text.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: theme.space.s0)
+            WorkflowTextLink(title: L("How to share")) { showsHow = true }
+                .popover(isPresented: $showsHow, arrowEdge: .bottom) {
+                    Text(
+                        "Open a workflow you made and choose Share, then Publish to store.osaurus.ai and pick who can see it. You share the recipe, never your data: your results and accounts stay on your Mac.",
+                        bundle: .module
+                    )
+                    .font(SettingsFont.compactLabel)
+                    .foregroundStyle(theme.text.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(width: theme.space.s64 * 4 + theme.space.s32)
+                    .padding(theme.space.s16)
+                }
+        }
+        .padding(theme.space.s12)
+        .frame(maxWidth: .infinity, minHeight: theme.space.s64 + theme.space.s48, alignment: .topLeading)
+        .overlay(
+            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                .strokeBorder(theme.border.strong, style: StrokeStyle(lineWidth: theme.stroke.default, dash: [5, 4])))
     }
 }
 

@@ -137,6 +137,9 @@ public struct InstalledWorkflow: Codable, Equatable, Sendable, Identifiable {
     public var isPinned: Bool
     /// When it was pinned; pinned workflows list oldest pin first.
     public var pinnedAt: Date?
+    /// The person closed the "This one is working well" card under Recent
+    /// runs, so it stays away for this workflow. Never exported.
+    public var shareNudgeDismissed: Bool
     /// The template name the person chose not to take on ("Keep" on the
     /// name notice), so the notice stays quiet until the template is
     /// renamed again.
@@ -171,6 +174,7 @@ public struct InstalledWorkflow: Codable, Equatable, Sendable, Identifiable {
         self.tags = Self.normalizedTags(tags)
         self.isPinned = false
         self.pinnedAt = nil
+        self.shareNudgeDismissed = false
         self.formerNames = []
         self.template = template
         self.createdAt = Date()
@@ -271,6 +275,7 @@ public struct InstalledWorkflow: Codable, Equatable, Sendable, Identifiable {
         case formerNames = "former_names"
         case isPinned = "is_pinned"
         case pinnedAt = "pinned_at"
+        case shareNudgeDismissed = "share_nudge_dismissed"
         case source
         case createdAt = "created_at"
         case updatedAt = "updated_at"
@@ -294,6 +299,7 @@ public struct InstalledWorkflow: Codable, Equatable, Sendable, Identifiable {
         formerNames = try c.decodeIfPresent([String].self, forKey: .formerNames) ?? []
         isPinned = try c.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
         pinnedAt = try c.decodeIfPresent(Date.self, forKey: .pinnedAt)
+        shareNudgeDismissed = try c.decodeIfPresent(Bool.self, forKey: .shareNudgeDismissed) ?? false
         source = try c.decodeIfPresent(Source.self, forKey: .source)
         template = try c.decode(Template.self, forKey: .template)
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
