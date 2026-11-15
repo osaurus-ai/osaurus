@@ -305,6 +305,31 @@ evals-architect:
 		$(if $(FILTER),--filter $(FILTER),) \
 		--out build/evals/architect/$(ARCHITECT_LABEL).json
 
+# Every walkthrough ask and the common typed first questions, on the local
+# first-run model and on Osaurus Cloud. floors.json#modelSuitePassRates pins
+# FirstRun at 1.0, so one miss on either lane fails the target. The cloud lane
+# needs the Osaurus account signed in; skip it with FIRSTRUN_FRONTIER_MODEL=.
+#   make evals-firstrun LABEL=before-release
+FIRSTRUN_LOCAL_MODEL ?= OsaurusAI/Raptor-0.7-4B-JANG_6M
+FIRSTRUN_FRONTIER_MODEL ?= osaurus/deepseek-v4-1-flash
+FIRSTRUN_LABEL ?= $(if $(LABEL),$(LABEL),$(shell date -u +%Y%m%dT%H%M%SZ))
+.PHONY: evals-firstrun
+evals-firstrun: evals-prep
+	@mkdir -p build/evals/firstrun
+	@rc=0; for model in $(FIRSTRUN_LOCAL_MODEL) $(FIRSTRUN_FRONTIER_MODEL); do \
+		echo ""; \
+		echo "── FirstRun on $$model ──"; \
+		swift run --package-path Packages/OsaurusEvals osaurus-evals run \
+			--suite $(EVALS_ROOT)/FirstRun \
+			--model $$model \
+			--fail-on-floor \
+			--transcripts \
+			$(if $(FILTER),--filter $(FILTER),) \
+			--out build/evals/firstrun/$(FIRSTRUN_LABEL)-$$(echo $$model | tr '/' '_').json \
+			|| rc=$$?; \
+	done; \
+	exit $$rc
+
 # Discover installed bundles using the same Core scanner as the app; each
 # image-capable bundle runs the strict real-media suite in an isolated process.
 VISION_EVALS_OUT ?= build/evals/vision-$(shell date -u +%Y%m%dT%H%M%SZ)

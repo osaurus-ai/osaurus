@@ -521,8 +521,12 @@ struct OsaurusEvalsCLI {
             return result
         }
 
+        // `modelSuitePassRates` gates model-driven suites the same way but is
+        // kept out of `suitePassRates`, which the model-free CI lane derives
+        // its suite list from.
         var suitePassRates: [String: Double] = [:]
-        if let rates = root["suitePassRates"] as? [String: Any] {
+        for key in ["suitePassRates", "modelSuitePassRates"] {
+            guard let rates = root[key] as? [String: Any] else { continue }
             for (suiteName, raw) in rates {
                 if suiteName.hasPrefix("_") { continue }
                 if let rate = raw as? Double {
