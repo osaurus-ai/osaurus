@@ -459,6 +459,61 @@ struct FileReadImageAndFormatContractTests {
         ])
         #expect(known.map(\.path) == ["small.txt"])
     }
+
+    // MARK: - FileDiff grounding caps huge reads before stripping (APPLE-MACOS-2YA)
+
+    @Test func fileDiffGroundingCapsHugeLineFormattedReads() {
+        // Comfortably past the cap (~560KB of `N|line` rows) so the cut lands
+        // mid-payload; production reads can reach 5MB.
+        let rows = (1...20_000).map { "\($0)|line number \($0) payload" }
+        let text = rows.joined(separator: "\n")
+        #expect(text.count > ContentBlock.knownFileContentCap)
+        let result = ToolEnvelope.success(
+            tool: "file_read",
+            result: ["kind": "file", "path": "big.txt", "source": "raw_text", "text": text, "line_format": "N|"]
+        )
+        let turn = ChatTurn(role: .assistant, content: "")
+        turn.toolCalls = [
+            ToolCall(
+                id: "big",
+                type: "function",
+                function: ToolCallFunction(name: "file_read", arguments: #"{"path":"big.txt"}"#)
+            )
+        ]
+        turn.toolResults = ["big": result]
+
+        let known = ContentBlock.knownFileContents(in: [turn])
+        let content = known.first?.content ?? ""
+        #expect(known.map(\.path) == ["big.txt"])
+        #expect(content.count <= ContentBlock.knownFileContentCap)
+        #expect(content.hasPrefix("line number 1 payload\nline number 2 payload"))
+        // Display prefixes are stripped and no cut-off final row survives.
+        #expect(!content.contains("|"))
+        #expect(content.split(separator: "\n").allSatisfy { $0.hasPrefix("line number ") && $0.hasSuffix(" payload") })
+    }
+
+    @Test func fileDiffGroundingCapsWrittenAndAppendedContent() throws {
+        let big = String(repeating: "x", count: ContentBlock.knownFileContentCap + 10)
+        func writeTurn(id: String, mode: String?) throws -> ChatTurn {
+            var args: [String: Any] = ["path": "w.txt", "content": big]
+            if let mode { args["mode"] = mode }
+            let data = try JSONSerialization.data(withJSONObject: args)
+            let turn = ChatTurn(role: .assistant, content: "")
+            turn.toolCalls = [
+                ToolCall(
+                    id: id,
+                    type: "function",
+                    function: ToolCallFunction(name: "file_write", arguments: String(decoding: data, as: UTF8.self))
+                )
+            ]
+            return turn
+        }
+        let known = ContentBlock.knownFileContents(in: [
+            try writeTurn(id: "1", mode: nil),
+            try writeTurn(id: "2", mode: "append"),
+        ])
+        #expect(known.first?.content.count == ContentBlock.knownFileContentCap)
+    }
 }
 
 // MARK: - Fixtures
