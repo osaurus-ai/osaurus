@@ -83,6 +83,7 @@ Sharing (`Views/Template/ShareWorkflowSheet.swift`) offers two ways: save as a f
 Entry points:
 
 - **Workflow tab** in a chat window (`Views/Workflow/WorkflowRunTabView.swift`), also `/` in chat.
+- **Workflows destination** (`Views/Workflow/Library/WorkflowsView.swift`): Run on a row of its sidebar (`WorkflowsSidebar`, listed by `WorkflowsSidebarModel` from the installed workflows, hosted links, drafts, workspaces and the automations `WorkflowsOverviewModel` loads) or on a workflow's page. A row's few words come from `AutomationSentence` (schedules read through `ScheduleCronShape`); pins are `InstalledWorkflow.pinnedAt` and `HostedWorkflowLink.pinnedAt`, kept on this Mac and never exported. The layout and its rules are in `docs/design/workflows-redesign.md`.
 - **Agent tools**: each workflow an agent has turned on is a tool `workflow_<slug>`; the Orchestrator uses `run_workflow` for workflows marked **Osaurus can run this for you** (`Tools/Workflow/WorkflowTools.swift`). While the call waits, `WorkflowCallFeed` registers a `SubagentFeed` under the tool-call id so the chat's tool card shows each step, the running model step's streamed text, and the outcome.
 - **Background tasks** park on a form and resume with the result.
 - **Automations** (`docs/AUTOMATIONS.md`): an automation (an *event* in code) whose action is a workflow starts it when its schedule, folder, webhook or channel message fires. `WorkflowRunWorker.workflowInput` evaluates the event's input mapping against the payload (`WorkflowInputMapper`, coercing to the schema's field types), validates it with `JSONSchemaValidator`, and starts the run with caller kind `event` (`isExternalSurface` for webhook and remote-channel fires, `isUnattendedDispatch` for local source fires). The event settles when the run ends; a run parked on a form frees the event's lane and the ledger row follows it. Channel events can reply with the output (`WorkflowRunWorker.replyText`).
@@ -130,7 +131,7 @@ The Architect also gets `clarify` and `osaurus_inspect` limited to the `models`,
 | Templates | `Models/Template/Template.swift`, `TemplateRequirements.swift`, `Services/Template/SetupChecker.swift`, `MCPServerResolution.swift` |
 | Runtime | `Services/Workflow/WorkflowRunner.swift`, `WorkflowRunService.swift`, `WorkflowRunStore.swift`, `WorkflowNodeExecutor.swift` and the per-kind executors, `WorkflowStateStore.swift`, `WorkflowConnections.swift`, `WorkflowCallFeed.swift`, `WorkflowTrust.swift`, `Storage/WorkflowRunDatabase.swift` |
 | Architect | `Services/Chat/ArchitectSystemPromptBuilder.swift`, `Services/Workflow/WorkflowDraftStore.swift`, `WorkflowDraftSaver.swift`, `WorkflowDraftTester.swift`, `WorkflowSelfHealMonitor.swift`, `WorkflowRepetitionDetector.swift`, `Tools/Workflow/*` |
-| UI | `Views/Workflow/` (run tab, run view, detail sheet, setup wizard, connections sheet, Architect sidebar and graph) |
+| UI | `Views/Workflow/` (run tab, run view, detail sheet, setup wizard, connections sheet, Architect sidebar and graph); `Views/Workflow/Library/` (the Workflows destination: sidebar, Home, a workflow's page, workspace pages) |
 | Keychain | `Services/Credentials/Consumers/WorkflowCredentials.swift`; `Services/Keychain/WorkflowSecretsKeychain.swift` (legacy values, read until imported) |
 
 ## Tests and evals

@@ -218,6 +218,13 @@ struct WorkflowsSidebarModelTests {
         #expect(row.subtitle == link.hostLabel)
         #expect(!row.canAutomate)
         #expect(model.all.first { $0.name == "Alpha" }?.canAutomate == true)
+
+        var pinnedLink = link
+        pinnedLink.pinnedAt = Date(timeIntervalSince1970: 100)
+        let older = Self.workflow("Zed", pinnedAt: Date(timeIntervalSince1970: 50))
+        let pinned = WorkflowsSidebarModel.make(workflows: [older], hostedLinks: [pinnedLink], style: us)
+        #expect(pinned.pinned.map(\.name) == ["Zed", "Team Report"], "a teammate's workflow pins too, by pin date")
+        #expect(pinned.all.isEmpty)
     }
 
     @Test

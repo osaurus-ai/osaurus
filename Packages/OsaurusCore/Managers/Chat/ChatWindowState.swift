@@ -299,6 +299,7 @@ final class ChatWindowState: ObservableObject {
         shellBreakpoint = breakpoint
         guard crossesCompact else { return }
         isCompactSidebarPresented = false
+        isWorkflowsDrawerPresented = false
         if breakpoint == .compact {
             contextPanelWantedBeforeCompact = inspectorPane != nil
             inspectorPane = nil
@@ -318,6 +319,12 @@ final class ChatWindowState: ObservableObject {
     @Published var isSettingsSidebarCollapsed = false
     private var settingsSidebarCollapsedBeforeCompact: Bool?
 
+    /// The Workflows destination's own sidebar, docked in regular and wide
+    /// windows. Separate from the chat sidebar's choice.
+    @Published var showWorkflowsSidebar = true
+    /// The Workflows sidebar drawer over a compact window's content.
+    @Published var isWorkflowsDrawerPresented = false
+
     /// Whether the docked context panel was wanted when the window
     /// narrowed into compact, so widening brings it back.
     private var contextPanelWantedBeforeCompact = false
@@ -330,6 +337,10 @@ final class ChatWindowState: ObservableObject {
         guard shellBreakpoint == .compact else { return false }
         if isCompactSidebarPresented {
             isCompactSidebarPresented = false
+            return true
+        }
+        if isWorkflowsDrawerPresented {
+            isWorkflowsDrawerPresented = false
             return true
         }
         if inspectorPane != nil {
@@ -353,6 +364,10 @@ final class ChatWindowState: ObservableObject {
     /// visible and leave the button looking broken. In a compact window it
     /// opens or closes the drawer, which replaces any open context overlay.
     func toggleSidebar() {
+        if mainSurface == .workflows {
+            if shellBreakpoint == .compact { isWorkflowsDrawerPresented.toggle() } else { showWorkflowsSidebar.toggle() }
+            return
+        }
         if shellBreakpoint == .compact {
             isCompactSidebarPresented.toggle()
             if isCompactSidebarPresented { inspectorPane = nil }
@@ -434,47 +449,49 @@ final class ChatWindowState: ObservableObject {
         /// New Workflow: describe a task to the Architect, or add a
         /// ready-made workflow.
         case create
+        /// What one workspace this Mac belongs to shares.
+        case workspace(String)
 
         var workflowID: UUID? {
             switch self {
             case .workflow(let id): return id
             case .run(let id, _, _): return id
-            case .create: return nil
+            case .create, .workspace: return nil
             }
         }
     }
 
-    /// The Workflows home's tabs over its one list: every installed
-    /// workflow, unfinished drafts, and what this Mac has published.
+    /// The tabs the Workflows home had before its sidebar. Kept so old
+    /// `osaurus://workflows/<tab>` links and search rows still land.
     enum WorkflowsTab: String, CaseIterable { case all, drafts, published, workspaces }
 
-    static let workflowsTabDefaultsKey = "WorkflowsWindow.tab"
-
-    /// The tab last chosen; nil until one is. See `workflowsTab(chosen:hasDrafts:hasPublished:)`.
-    @Published var workflowsTab: WorkflowsTab? =
-        WorkflowsTab(rawValue: UserDefaults.standard.string(forKey: workflowsTabDefaultsKey) ?? "")
-    {
-        didSet { UserDefaults.standard.set(workflowsTab?.rawValue, forKey: Self.workflowsTabDefaultsKey) }
+    /// What the Workflows sidebar marks as on screen.
+    enum WorkflowsSidebarSelection: Equatable, Hashable {
+        case home
+        case workflow(UUID)
+        case workspace(String)
+        case create
     }
 
-    /// The tab the home shows: the one last chosen while it has anything,
-    /// else All. With drafts and nothing installed, Drafts. Workspaces is
-    /// offered while this Mac belongs to one.
-    static func workflowsTab(
-        chosen: WorkflowsTab?, hasInstalled: Bool, hasDrafts: Bool, hasPublished: Bool, hasWorkspaces: Bool = false
-    ) -> WorkflowsTab {
-        switch chosen {
-        case .drafts? where hasDrafts: return .drafts
-        case .published? where hasPublished: return .published
-        case .workspaces? where hasWorkspaces: return .workspaces
-        default: return !hasInstalled && hasDrafts ? .drafts : .all
+    /// From the page on top: a run counts as its workflow.
+    static func workflowsSidebarSelection(_ path: [WorkflowsPage]) -> WorkflowsSidebarSelection {
+        switch path.last {
+        case nil: return .home
+        case .workflow(let id)?, .run(let id, _, _)?: return .workflow(id)
+        case .workspace(let id)?: return .workspace(id)
+        case .create?: return .create
         }
     }
 
+    var workflowsSidebarSelection: WorkflowsSidebarSelection { Self.workflowsSidebarSelection(workflowsPath) }
+
+    /// What the Workflows sidebar, Home and Activity know about automations.
+    lazy var workflowsOverview = WorkflowsOverviewModel()
+
     /// Pages pushed over the home, oldest first; empty shows the home.
     @Published var workflowsPath: [WorkflowsPage] = []
-    /// The workspace the Workspaces tab scrolls to, once.
-    @Published var workflowsWorkspaceFocus: String?
+    /// The sidebar section an old link asked to scroll to, once.
+    @Published var workflowsSidebarScrollTarget: String?
     /// The run the Workflows home last started, so its row opens to show it.
     @Published var workflowsSpotlightRunID: UUID?
 
@@ -490,12 +507,13 @@ final class ChatWindowState: ObservableObject {
     }
 
     /// Where a Settings search row's `subTab` lands in the Workflows window:
-    /// `workflows` or `workflows.<tab>` for the home on a tab,
-    /// `workflows.workspaces.<id>` for one workspace's section, `new` for
-    /// the New Workflow page.
+    /// `workflows` or `workflows.<tab>` for the home (an old tab name),
+    /// `workflows.workspaces.<id>` for one workspace, `workflows.workflow.<id>`
+    /// for one workflow's page, `new` for the New Workflow page.
     enum WorkflowsDestination: Equatable {
         case home(WorkflowsTab?)
         case workspace(String)
+        case workflow(UUID)
         case newWorkflow
 
         init?(subTab: String) {
@@ -509,6 +527,11 @@ final class ChatWindowState: ObservableObject {
                 self = .home(nil)
                 return
             }
+            if parts[1] == "workflow" {
+                guard parts.count == 3, let id = UUID(uuidString: parts[2]) else { return nil }
+                self = .workflow(id)
+                return
+            }
             guard let tab = WorkflowsTab(rawValue: parts[1]) else { return nil }
             if parts.count == 3 {
                 guard tab == .workspaces, !parts[2].isEmpty else { return nil }
@@ -518,7 +541,8 @@ final class ChatWindowState: ObservableObject {
             self = .home(tab)
         }
 
-        /// `osaurus://workflows[/<tab>[/<workspace id>]]`.
+        /// `osaurus://workflows[/<tab>[/<workspace id>]]`, or
+        /// `osaurus://workflows/workflow/<id>`.
         init?(url: URL) {
             guard url.scheme == "osaurus", url.host == "workflows" else { return nil }
             let path = url.pathComponents.filter { $0 != "/" }
@@ -527,25 +551,47 @@ final class ChatWindowState: ObservableObject {
     }
 
     /// Fires before any of what the Workflows window reads from this state
-    /// changes: its tab, its pages, the run it spotlights, the workspace
-    /// it scrolls to, and the window's agent. This state publishes on every chat change; the
-    /// Workflows window listens to this instead.
+    /// changes: its pages, the run it spotlights, the sidebar section it
+    /// scrolls to, and the window's agent. This state publishes on every
+    /// chat change; the Workflows window listens to this instead.
     var workflowsRouteWillChange: AnyPublisher<Void, Never> {
-        Publishers.Merge(
-            Publishers.Merge4(
-                $workflowsTab.removeDuplicates().dropFirst().map { _ in () },
-                $workflowsPath.removeDuplicates().dropFirst().map { _ in () },
-                $workflowsSpotlightRunID.removeDuplicates().dropFirst().map { _ in () },
-                $agentId.removeDuplicates().dropFirst().map { _ in () }),
-            $workflowsWorkspaceFocus.removeDuplicates().dropFirst().map { _ in () })
+        Publishers.Merge4(
+            $workflowsPath.removeDuplicates().dropFirst().map { _ in () },
+            $workflowsSpotlightRunID.removeDuplicates().dropFirst().map { _ in () },
+            $agentId.removeDuplicates().dropFirst().map { _ in () },
+            $workflowsSidebarScrollTarget.removeDuplicates().dropFirst().map { _ in () })
             .eraseToAnyPublisher()
     }
 
-    /// The Workflows home (on `tab` when given), with nothing pushed.
+    /// The Workflows home, with nothing pushed. An old tab name still
+    /// lands: Drafts scrolls the sidebar to its drafts, Workspaces opens
+    /// the first workspace, All and Published are the home.
     func showWorkflowsHome(tab: WorkflowsTab? = nil) {
-        if let tab { workflowsTab = tab }
-        workflowsPath = []
+        switch tab {
+        case .workspaces?:
+            if let first = WorkspacesService.shared.workspaces.first {
+                selectWorkflowsPage(.workspace(first.id))
+                return
+            }
+        case .drafts?:
+            workflowsSidebarScrollTarget = WorkflowsSidebarSection.drafts
+        case .all?, .published?, nil:
+            break
+        }
+        selectWorkflowsPage(nil)
+    }
+
+    /// What the sidebar picked: replaces the pages on screen instead of
+    /// pushing onto them, and gets a compact window's drawer out of the way.
+    func selectWorkflowsPage(_ page: WorkflowsPage?) {
+        workflowsPath = page.map { [$0] } ?? []
+        isWorkflowsDrawerPresented = false
         showMainSurface(.workflows)
+    }
+
+    /// Whether the Workflows sidebar is on screen.
+    var isWorkflowsSidebarVisible: Bool {
+        shellBreakpoint == .compact ? isWorkflowsDrawerPresented : showWorkflowsSidebar
     }
 
     /// New Workflow (⌘N): its page over the home, its composer focused.
@@ -566,9 +612,8 @@ final class ChatWindowState: ObservableObject {
         switch destination {
         case .newWorkflow?: showNewWorkflow()
         case .home(let tab)?: showWorkflowsHome(tab: tab)
-        case .workspace(let id)?:
-            workflowsWorkspaceFocus = id
-            showWorkflowsHome(tab: .workspaces)
+        case .workspace(let id)?: selectWorkflowsPage(.workspace(id))
+        case .workflow(let id)?: selectWorkflowsPage(.workflow(id))
         case nil: showMainSurface(.workflows)
         }
     }
@@ -663,6 +708,7 @@ final class ChatWindowState: ObservableObject {
         case .workflow?: return "workflow"
         case .run?: return "run"
         case .create?: return "new"
+        case .workspace?: return "workspace"
         }
     }
 

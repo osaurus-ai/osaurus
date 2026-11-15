@@ -323,6 +323,11 @@ struct InstalledWorkflowCard: View {
     /// Reuse the card's actions and confirmation state as a lone ⋯ button
     /// (the workflow page header).
     var isDetailActionMenu = false
+    /// Draws this label with the card's menu as its context menu, keeping
+    /// the confirmations (a Workflows sidebar row).
+    var contextMenuLabel: AnyView? = nil
+    /// Entries above the card's own in the menu.
+    var leadingMenuItems: AnyView? = nil
     var menuButtonSize: SettingsButtonSize = .standard
     var onDetails: (() -> Void)? = nil
     let onOpen: () -> Void
@@ -413,6 +418,8 @@ struct InstalledWorkflowCard: View {
                 .buttonStyle(SettingsIconButtonStyle(size: menuButtonSize, role: .tertiary))
                 .fixedSize()
                 .help(L("Workflow actions"))
+            } else if let contextMenuLabel {
+                contextMenuLabel.assignedContextMenu { menuItems }
             } else if let row {
                 WorkflowHomepageRow(
                     title: workflow.name, summary: row.summary ?? workflow.summary ?? "",
@@ -444,6 +451,10 @@ struct InstalledWorkflowCard: View {
     @ViewBuilder
     private var menuItems: some View {
         Group {
+            if let leadingMenuItems {
+                leadingMenuItems
+                Divider()
+            }
             Button(action: onRun) { Label(L("Run…"), systemImage: "play") }
             Button(action: onEdit) { Label(L("Edit with the Architect"), systemImage: "pencil.and.outline") }
             if update != nil {

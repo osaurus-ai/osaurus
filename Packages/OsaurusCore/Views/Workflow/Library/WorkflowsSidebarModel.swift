@@ -105,19 +105,19 @@ struct WorkflowsSidebarModel: Equatable {
         }
 
         var model = WorkflowsSidebarModel()
-        let shown = workflows.filter { matches($0.searchText) }
-        model.pinned = shown.filter(\.isPinned).sorted(by: pinOrder).map(row)
-        var unpinned = shown.filter { !$0.isPinned }.map(row)
+        var pinned: [(row: Row, at: Date?)] = []
+        var unpinned: [Row] = []
+        for workflow in workflows where matches(workflow.searchText) {
+            if workflow.isPinned { pinned.append((row(workflow), workflow.pinnedAt)) } else { unpinned.append(row(workflow)) }
+        }
         for link in hostedLinks where matches(link.name) {
-            unpinned.append(
-                Row(
-                    kind: .hosted(link.id), name: link.name, subtitle: link.hostLabel, status: .manual,
-                    isPinned: false, isPublished: false))
+            let row = Row(
+                kind: .hosted(link.id), name: link.name, subtitle: link.hostLabel, status: .manual,
+                isPinned: link.isPinned, isPublished: false)
+            if link.isPinned { pinned.append((row, link.pinnedAt)) } else { unpinned.append(row) }
         }
-        model.all = unpinned.sorted { lhs, rhs in
-            let order = lhs.name.localizedStandardCompare(rhs.name)
-            return order == .orderedSame ? lhs.sortKey < rhs.sortKey : order == .orderedAscending
-        }
+        model.pinned = pinned.sorted { pinOrder($0.at, $0.row, $1.at, $1.row) }.map(\.row)
+        model.all = unpinned.sorted(by: nameOrder)
         model.drafts = drafts.sorted { $0.updatedAt > $1.updatedAt }.compactMap { draft in
             let name = draft.name.isEmpty ? L("Untitled Workflow") : draft.name
             return matches(name) ? DraftRow(id: draft.id, name: name) : nil
@@ -126,13 +126,19 @@ struct WorkflowsSidebarModel: Equatable {
         return model
     }
 
-    /// Oldest pin first; a pin with no date (written before dates) first.
-    static func pinOrder(_ lhs: InstalledWorkflow, _ rhs: InstalledWorkflow) -> Bool {
-        switch (lhs.pinnedAt, rhs.pinnedAt) {
+    /// By name; the same name keeps a stable order.
+    static func nameOrder(_ lhs: Row, _ rhs: Row) -> Bool {
+        let order = lhs.name.localizedStandardCompare(rhs.name)
+        return order == .orderedSame ? lhs.sortKey < rhs.sortKey : order == .orderedAscending
+    }
+
+    /// Oldest pin first; a pin with no date first.
+    static func pinOrder(_ lhsAt: Date?, _ lhs: Row, _ rhsAt: Date?, _ rhs: Row) -> Bool {
+        switch (lhsAt, rhsAt) {
         case let (l?, r?) where l != r: return l < r
         case (nil, _?): return true
         case (_?, nil): return false
-        default: return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
+        default: return nameOrder(lhs, rhs)
         }
     }
 

@@ -47,6 +47,9 @@ public struct HostedWorkflowLink: Codable, Equatable, Sendable, Identifiable {
     public var inputs: JSONValue
     public var orchestratorVisible: Bool
     public var addedAt: Date
+    /// When the person pinned it in the Workflows sidebar; nil while not.
+    public var pinnedAt: Date?
+    var isPinned: Bool { pinnedAt != nil }
 
     init(offer: HostedWorkflowOffer, name: String, id: UUID = UUID(), addedAt: Date = Date()) {
         self.id = id
@@ -87,6 +90,7 @@ public struct HostedWorkflowLink: Codable, Equatable, Sendable, Identifiable {
         case templateID = "template_id"
         case orchestratorVisible = "orchestrator_visible"
         case addedAt = "added_at"
+        case pinnedAt = "pinned_at"
     }
 }
 
@@ -155,6 +159,12 @@ final class HostedWorkflowLinkStore: ObservableObject {
             AgentManager.shared.updateEnabledWorkflowIDs(
                 agent.settings.enabledWorkflowIDs.filter { $0 != id }, for: agent.id)
         }
+    }
+
+    func setPinned(_ pinned: Bool, id: UUID) {
+        guard let index = links.firstIndex(where: { $0.id == id }), links[index].isPinned != pinned else { return }
+        links[index].pinnedAt = pinned ? Date() : nil
+        persist()
     }
 
     func setOrchestratorVisible(_ visible: Bool, id: UUID) {
