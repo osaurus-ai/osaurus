@@ -313,7 +313,7 @@ Use the "Feature request" issue template and describe:
 
 ## Localization
 
-Osaurus ships English (source), German, Simplified Chinese, Korean, Russian, and community-maintained Traditional Chinese, and we're actively seeking help with **Spanish and Japanese** (already enabled in Xcode and ready to translate). All UI strings live in the OsaurusCore string catalog; see **[LOCALIZATION.md](LOCALIZATION.md)** for how to add strings, add languages, and run validation. To pick up a language and get credited on the contributor leaderboard, see **[TRANSLATORS.md](TRANSLATORS.md)**.
+Osaurus ships English (source), German, Simplified Chinese, Korean, Russian, and community-maintained Traditional Chinese. Every one of them has untranslated screens and a backlog of machine-assisted strings awaiting native review, and **Spanish and Japanese** are enabled in Xcode but not started. All UI strings live in the OsaurusCore string catalog; see **[LOCALIZATION.md](LOCALIZATION.md)** for how to add strings, add languages, and run validation. For live per-language status, ways to help (reviewing counts), and the contributor leaderboard, see **[TRANSLATORS.md](TRANSLATORS.md)**.
 
 ## Security
 

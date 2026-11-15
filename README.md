@@ -176,7 +176,7 @@ Build and run the `osaurus` scheme. Requires Xcode 26+ and [Git LFS](https://git
 We welcome bug fixes, plugins, documentation, UI/UX improvements, and testing. Start with [Good First Issues](https://github.com/osaurus-ai/osaurus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22), read the [Contributing Guide](docs/CONTRIBUTING.md), or join us on [Discord](https://discord.gg/osaurus).
 
 > [!NOTE]
-> **Help translate Osaurus.** We're looking for contributors to localize the app into **Spanish** and **Japanese**. These locales are already set up in Xcode, so you can start translating right away. See [docs/TRANSLATORS.md](docs/TRANSLATORS.md).
+> **Help translate Osaurus.** Native speakers of **German, Chinese, Korean, and Russian**: about a quarter of the app is still in English, and thousands of machine-assisted strings need a review. We're also looking for people to start **Spanish** and **Japanese**. No Swift needed, and small PRs are welcome. See [docs/TRANSLATORS.md](docs/TRANSLATORS.md).
 
 ## Community
 

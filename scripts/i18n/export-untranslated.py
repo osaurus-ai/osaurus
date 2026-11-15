@@ -2,8 +2,9 @@
 """Export catalog strings missing a target locale into batched JSON files.
 
 Used to hand bulk translation off to LLM translators. For every "maintained"
-key (one that already has all --reference-locales) that lacks --locale and is
-translatable, this emits the English source text plus any comment context.
+key (one that already has all --reference-locales) that lacks --locale, is
+translatable, and is not stale, this emits the English source text plus any
+comment context.
 
 Keys with ``shouldTranslate: false`` are reported in the manifest under
 ``verbatim_keys`` and are NOT emitted for translation -- they should be copied
@@ -61,7 +62,7 @@ def main() -> int:
     skipped_unmaintained = 0
 
     for key, entry in strings.items():
-        if not key.strip():
+        if not key.strip() or entry.get("extractionState") == "stale":
             continue
         locs = entry.get("localizations") or {}
         if refs and not all(r in locs for r in refs):
