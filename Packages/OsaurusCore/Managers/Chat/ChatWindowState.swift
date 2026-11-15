@@ -451,12 +451,14 @@ final class ChatWindowState: ObservableObject {
         case create
         /// What one workspace this Mac belongs to shares.
         case workspace(String)
+        /// Everything workflows did, newest first.
+        case activity
 
         var workflowID: UUID? {
             switch self {
             case .workflow(let id): return id
             case .run(let id, _, _): return id
-            case .create, .workspace: return nil
+            case .create, .workspace, .activity: return nil
             }
         }
     }
@@ -471,6 +473,7 @@ final class ChatWindowState: ObservableObject {
         case workflow(UUID)
         case workspace(String)
         case create
+        case activity
     }
 
     /// From the page on top: a run counts as its workflow.
@@ -480,6 +483,7 @@ final class ChatWindowState: ObservableObject {
         case .workflow(let id)?, .run(let id, _, _)?: return .workflow(id)
         case .workspace(let id)?: return .workspace(id)
         case .create?: return .create
+        case .activity?: return .activity
         }
     }
 
@@ -497,6 +501,7 @@ final class ChatWindowState: ObservableObject {
     /// What a workflow's page opens doing, asked for from outside it (the
     /// automate popover, Home); taken once.
     private var workflowsAutomationIntent: WorkflowAutomationIntent?
+    private var workflowsActivityRequest: WorkflowActivityRequest?
     /// Home's section a link asked to scroll to, once.
     private(set) var workflowsHomeScrollTarget: String?
 
@@ -544,12 +549,14 @@ final class ChatWindowState: ObservableObject {
     /// Where a Settings search row's `subTab` lands in the Workflows window:
     /// `workflows` or `workflows.<tab>` for the home (an old tab name),
     /// `workflows.workspaces.<id>` for one workspace, `workflows.workflow.<id>`
-    /// for one workflow's page, `new` for the New Workflow page.
+    /// for one workflow's page, `workflows.activity` for Activity, `new` for
+    /// the New Workflow page.
     enum WorkflowsDestination: Equatable {
         case home(WorkflowsTab?)
         case workspace(String)
         case workflow(UUID)
         case newWorkflow
+        case activity
 
         init?(subTab: String) {
             if subTab == "new" {
@@ -560,6 +567,11 @@ final class ChatWindowState: ObservableObject {
             guard parts.first == "workflows" else { return nil }
             guard parts.count >= 2 else {
                 self = .home(nil)
+                return
+            }
+            if parts[1] == "activity" {
+                guard parts.count == 2 else { return nil }
+                self = .activity
                 return
             }
             if parts[1] == "workflow" {
@@ -576,8 +588,8 @@ final class ChatWindowState: ObservableObject {
             self = .home(tab)
         }
 
-        /// `osaurus://workflows[/<tab>[/<workspace id>]]`, or
-        /// `osaurus://workflows/workflow/<id>`.
+        /// `osaurus://workflows[/<tab>[/<workspace id>]]`,
+        /// `osaurus://workflows/workflow/<id>`, or `osaurus://workflows/activity`.
         init?(url: URL) {
             guard url.scheme == "osaurus", url.host == "workflows" else { return nil }
             let path = url.pathComponents.filter { $0 != "/" }
@@ -649,8 +661,26 @@ final class ChatWindowState: ObservableObject {
         case .home(let tab)?: showWorkflowsHome(tab: tab)
         case .workspace(let id)?: selectWorkflowsPage(.workspace(id))
         case .workflow(let id)?: selectWorkflowsPage(.workflow(id))
+        case .activity?: showWorkflowsActivity()
         case nil: showMainSurface(.workflows)
         }
+    }
+
+    /// Activity, filtered as `request` asks. On Activity already, the page
+    /// takes the new request in place.
+    func showWorkflowsActivity(_ request: WorkflowActivityRequest = .init()) {
+        workflowsActivityRequest = request
+        if workflowsPath == [.activity], mainSurface == .workflows {
+            NotificationCenter.default.post(name: .workflowsActivityRequest, object: nil)
+        } else {
+            selectWorkflowsPage(.activity)
+        }
+    }
+
+    /// The filter Activity was opened with, once.
+    func takeWorkflowsActivityRequest() -> WorkflowActivityRequest? {
+        defer { workflowsActivityRequest = nil }
+        return workflowsActivityRequest
     }
 
     func pushWorkflowsPage(_ page: WorkflowsPage) {
@@ -744,6 +774,7 @@ final class ChatWindowState: ObservableObject {
         case .run?: return "run"
         case .create?: return "new"
         case .workspace?: return "workspace"
+        case .activity?: return "activity"
         }
     }
 

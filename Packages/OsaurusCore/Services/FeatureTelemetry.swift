@@ -930,7 +930,7 @@ enum FeatureTelemetry {
     }
 
     /// The Workflows surface came on screen. `page` is `home`, `workflow`,
-    /// `run`, or `new`.
+    /// `run`, `new`, `workspace`, or `activity`.
     static func workflowsOpened(page: String, service: TelemetryService = .shared) {
         service.track("workflows_opened", ["page": page])
     }

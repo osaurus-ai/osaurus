@@ -8,6 +8,7 @@
 //  workflow you pick. Each hides when it has nothing to show.
 //
 
+import AppKit
 import SwiftUI
 
 /// "4 run on their own. 1 needs your attention." under Home's title.
@@ -32,6 +33,7 @@ struct WorkflowsHomeSections: View {
     @ObservedObject private var runs = WorkflowRunStore.shared
 
     let onRun: (InstalledWorkflow) -> Void
+    let onSetUp: (InstalledWorkflow) -> Void
     let onAllActivity: () -> Void
 
     @State private var editorRequest: EventEditorRequest?
@@ -41,7 +43,12 @@ struct WorkflowsHomeSections: View {
             workflows: installed.workflows, automations: overview.automationFacts,
             eventRuns: overview.recentRuns, workflowRuns: runs.recentRuns(),
             otherAutomationCount: overview.otherAutomationCount)
+        let attention = WorkflowActivityFeed.attention(
+            workflows: installed.workflows, automations: overview.automationFacts,
+            latestSettled: overview.latestSettled, run: { runs.run(id: $0) },
+            targetProblem: { EventInspection.targetProblem($0)?.message })
         VStack(alignment: .leading, spacing: theme.space.s32) {
+            if !attention.isEmpty { needsAttention(attention) }
             if !model.pinned.isEmpty { pinned(model.pinned) }
             if !model.groups.isEmpty || model.otherAutomationCount > 0 { runningOnTheirOwn(model) }
             ways(model.ways)
@@ -57,6 +64,34 @@ struct WorkflowsHomeSections: View {
                 },
                 onCancel: { editorRequest = nil })
         }
+    }
+
+    // MARK: Needs attention
+
+    private func needsAttention(_ all: [WorkflowAttention]) -> some View {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            WorkflowSectionHeader(title: L("Needs attention"), count: all.count) {
+                if all.count > WorkflowActivityFeed.attentionLimit {
+                    WorkflowTextLink(title: L("Show all in Activity")) {
+                        windowState.showWorkflowsActivity(.init(filter: .needsAttention))
+                    }
+                }
+            }
+            ForEach(all.prefix(WorkflowActivityFeed.attentionLimit)) { item in
+                WorkflowsAttentionBanner(
+                    item: item,
+                    onRemedy: { remedy in
+                        switch remedy {
+                        case .fix(let fix): fix.perform(over: NSApp.keyWindow)
+                        case .signInAgain: if let workflow = installed.workflow(id: item.workflowID) { onSetUp(workflow) }
+                        }
+                    },
+                    onSeeWhatHappened: {
+                        windowState.showWorkflowsActivity(.init(workflowID: item.itemID == nil ? item.workflowID : nil, focusItemID: item.itemID))
+                    })
+            }
+        }
+        .settingsLandingAnchor("workflows.needsAttention")
     }
 
     // MARK: Pinned
@@ -220,6 +255,43 @@ struct WorkflowsHomeSections: View {
 
 // MARK: - Tiles and rows
 
+/// "Mail Triage could not run yesterday", what happened, and what to do.
+private struct WorkflowsAttentionBanner: View {
+    @Environment(\.theme) private var theme
+    let item: WorkflowAttention
+    let onRemedy: (WorkflowActivityRemedy) -> Void
+    let onSeeWhatHappened: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: theme.space.s12) {
+            Image(systemName: "exclamationmark.triangle")
+                .glyphSize(.body, weight: .semibold)
+                .foregroundStyle(theme.statusInk(.error))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: theme.space.s8) {
+                Text(verbatim: L("\(item.workflowName) could not run \(WorkflowRunWords.day(item.date))"))
+                    .textStyle(.body, weight: 600)
+                    .foregroundStyle(theme.text.primary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(verbatim: item.explanation.sentence)
+                    .font(SettingsFont.footnote)
+                    .foregroundStyle(theme.text.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: theme.space.s8) {
+                    if let remedy = item.explanation.remedy {
+                        SettingsButton(.primary, remedy.title, size: .small, verbatim: true) { onRemedy(remedy) }
+                    }
+                    SettingsButton(.secondary, "See what happened", size: .small, action: onSeeWhatHappened)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(theme.space.s16)
+        .settingsChrome(.status(.error))
+        .accessibilityElement(children: .contain)
+    }
+}
+
 private struct WorkflowsPinnedTile: View {
     @Environment(\.theme) private var theme
     let tile: WorkflowsHomeModel.Tile
@@ -254,7 +326,7 @@ private struct WorkflowsPinnedTile: View {
         }
         .padding(theme.space.s12)
         .frame(maxWidth: .infinity, minHeight: theme.space.s64 + theme.space.s32, alignment: .topLeading)
-        .settingsChrome(isHovered ? .hover : .card)
+        .settingsChrome(isHovered ? .cardHover : .card)
         .contentShape(Rectangle())
         .onTapGesture(perform: onOpen)
         .onHover { hovering in withAnimation(theme.motion.quick) { isHovered = hovering } }
@@ -340,7 +412,7 @@ private struct WorkflowsWayCard: View {
         }
         .padding(theme.space.s12)
         .frame(maxWidth: .infinity, minHeight: theme.space.s64 + theme.space.s48, alignment: .topLeading)
-        .settingsChrome(isHovered ? .hover : .card)
+        .settingsChrome(isHovered ? .cardHover : .card)
         .contentShape(Rectangle())
         .onHover { hovering in withAnimation(theme.motion.quick) { isHovered = hovering } }
         .pointingHandCursor()

@@ -4553,7 +4553,7 @@ public enum SettingsSearchIndex {
                 "my workflows",
             ],
             subTab: "workflows",
-            disambiguation: "Main window ▸ Workflows: a sidebar (search, Home, Pinned, All workflows, Drafts, Workspaces, then New workflow and Osaurus Store) beside the page picked there. Home has Import and New Workflow (⌘N) in its header with how many workflows run on their own, then Running now while anything runs, Pinned tiles, Running on their own, Ways to automate, and your author page at the foot. Picking a workflow opens its page; a row's Run starts it at once when it needs nothing, else asks for its input. The toolbar's sidebar button (⌘B) hides or shows the sidebar. With no workflows and no drafts the page is New Workflow alone, without a sidebar."
+            disambiguation: "Main window ▸ Workflows: a sidebar (search, Home, Activity, Pinned, All workflows, Drafts, Workspaces, then New workflow and Osaurus Store) beside the page picked there. Home has Import and New Workflow (⌘N) in its header with how many workflows run on their own, then Running now while anything runs, Pinned tiles, Running on their own, Ways to automate, and your author page at the foot. Picking a workflow opens its page; a row's Run starts it at once when it needs nothing, else asks for its input. The toolbar's sidebar button (⌘B) hides or shows the sidebar. With no workflows and no drafts the page is New Workflow alone, without a sidebar."
         ),
         .init(
             id: "workflows.runningNow",
@@ -4566,6 +4566,31 @@ public enum SettingsSearchIndex {
             ],
             subTab: "workflows",
             disambiguation: "On Workflows Home, under the title, while any workflow is running: each run with its step progress, who started it (you, an agent, or an automation, with a bolt), Stop, and Respond when it waits on a form. Shown only while something runs."
+        ),
+        .init(
+            id: "workflows.activity",
+            tab: .workflows,
+            section: "Sidebar",
+            title: "Activity",
+            keywords: [
+                "everything your workflows did", "workflow history", "run history", "all runs", "failed runs", "what happened",
+                "needs attention", "ran on their own", "run by me", "run again", "ask osaurus to fix it", "technical details",
+                "open result", "issues",
+            ],
+            subTab: "workflows.activity",
+            disambiguation: "Main window ▸ Workflows ▸ Activity in the sidebar (also osaurus://workflows/activity): every run of your workflows, newest first, by day, with All, Needs attention, Ran on their own and Run by me, and a menu for one workflow. A failure the workflow hasn't finished a run since opens with What happened, its steps, the fix when there is one, Run again (from the failed step), Ask Osaurus to fix it (the Architect), and Technical details (the run page). The sidebar row shows how many workflows have an issue. Settings → Automations → History still lists every automation run."
+        ),
+        .init(
+            id: "workflows.needsAttention",
+            tab: .workflows,
+            section: "Workflows",
+            title: "Needs attention",
+            keywords: [
+                "could not run", "workflow failed", "broken workflow", "see what happened", "show all in activity",
+                "sign in again", "choose folder", "choose a model", "open system settings",
+            ],
+            subTab: "workflows",
+            disambiguation: "On Workflows Home, at the top while a workflow's automation failed or can't start it: one card per workflow (at most three, then Show all in Activity) saying what happened, with the fix when there is one and See what happened. It clears once the workflow finishes a run."
         ),
         .init(
             id: "workflows.runningOnTheirOwn",
@@ -5054,7 +5079,7 @@ public enum SettingsSearchIndex {
                 "workflow runs", "run history", "last runs", "did it work", "health", "failed runs", "see all runs",
                 "open a run", "try it now",
             ],
-            disambiguation: "Per installed workflow, on its page (beside the rest when the window is wide): a bar for each of the last 14 runs, how they went, runs going now, and the last five, each with Open. See all lists every run of it."
+            disambiguation: "Per installed workflow, on its page (beside the rest when the window is wide): a bar for each of the last 14 runs, how they went, runs going now, and the last five, each with Open. See all opens Activity for this workflow."
         ),
         .init(
             id: "workflows.storedData",

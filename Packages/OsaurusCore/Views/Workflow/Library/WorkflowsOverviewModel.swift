@@ -29,6 +29,9 @@ final class WorkflowsOverviewModel: ObservableObject {
     /// Automations that run an agent or a prompt instead of a workflow,
     /// not counting channel messages.
     @Published private(set) var otherAutomationCount = 0
+    /// When each workflow last started a run that finished, from the recent
+    /// runs. A failure before it is resolved.
+    @Published private(set) var lastFinishedRun: [UUID: Date] = [:]
 
     private let events: EventManager
     private var cancellables: Set<AnyCancellable> = []
@@ -43,9 +46,18 @@ final class WorkflowsOverviewModel: ObservableObject {
             .sink { [weak self] _ in DispatchQueue.main.async { self?.refreshTargets() } }
             .store(in: &cancellables)
         NotificationCenter.default.publisher(for: .workflowRunFinished)
-            .sink { [weak self] _ in Task { @MainActor in self?.reloadRuns(force: true) } }
+            .sink { [weak self] _ in
+                Task { @MainActor in
+                    self?.refreshFinishedRuns()
+                    self?.reloadRuns(force: true)
+                }
+            }
             .store(in: &cancellables)
         refresh()
+        Task { [weak self] in
+            await WorkflowRunStore.shared.loadRecentRunsIfNeeded()
+            self?.refreshFinishedRuns()
+        }
     }
 
     deinit { loadTask?.cancel() }
@@ -58,9 +70,24 @@ final class WorkflowsOverviewModel: ObservableObject {
             .sorted { $0.createdAt < $1.createdAt }
     }
 
-    /// The latest fire that settled (succeeded or failed).
+    /// The latest fire that settled (succeeded or failed). A failure the
+    /// workflow has since finished a run after is resolved: nil.
     func latestSettled(_ eventID: UUID) -> EventRun? {
-        recentRuns[eventID]?.first { $0.status == .succeeded || $0.status == .failed }
+        guard let fire = recentRuns[eventID]?.first(where: { $0.status == .succeeded || $0.status == .failed }) else {
+            return nil
+        }
+        if fire.status == .failed,
+            let workflowID = workflowEvents.first(where: { $0.id == eventID })?.action.workflow?.workflowID,
+            Self.isResolved(fire, lastFinishedRun: lastFinishedRun[workflowID])
+        {
+            return nil
+        }
+        return fire
+    }
+
+    static func isResolved(_ fire: EventRun, lastFinishedRun: Date?) -> Bool {
+        guard fire.status == .failed, let lastFinishedRun else { return false }
+        return lastFinishedRun > fire.firedAt
     }
 
     /// What the sidebar model needs, by workflow.
@@ -99,6 +126,14 @@ final class WorkflowsOverviewModel: ObservableObject {
         if others != otherAutomationCount { otherAutomationCount = others }
         refreshTargets()
         reloadRuns(force: false)
+    }
+
+    private func refreshFinishedRuns() {
+        var latest: [UUID: Date] = [:]
+        for run in WorkflowRunStore.shared.recentRuns() where run.status == .completed && run.caller.kind != .workflow {
+            if run.startedAt > latest[run.workflowID] ?? .distantPast { latest[run.workflowID] = run.startedAt }
+        }
+        if latest != lastFinishedRun { lastFinishedRun = latest }
     }
 
     private func refreshTargets() {

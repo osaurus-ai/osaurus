@@ -63,6 +63,7 @@ struct WorkflowsSidebar: View {
                         destinationRow(L("Home"), icon: "house", isSelected: selection == .home) {
                             windowState.selectWorkflowsPage(nil)
                         }
+                        activityRow
                         list(model)
                     }
                     .padding(.horizontal, theme.space.s16)
@@ -97,6 +98,24 @@ struct WorkflowsSidebar: View {
     }
 
     // MARK: Lists
+
+    /// Activity, with how many workflows need attention.
+    private var activityRow: some View {
+        let issues = Self.issueCount(workflows: installed.workflows, automations: overview.automationFacts)
+        return WorkflowsSidebarDestinationRow(
+            title: L("Activity"), icon: "waveform.path.ecg", isSelected: selection == .activity,
+            badge: issues > 0 ? L("\(issues) issues") : nil
+        ) {
+            windowState.selectWorkflowsPage(.activity)
+        }
+    }
+
+    /// Workflows whose automation's latest run failed or can't start it.
+    static func issueCount(
+        workflows: [InstalledWorkflow], automations: [UUID: [WorkflowsSidebarModel.AutomationFacts]]
+    ) -> Int {
+        workflows.filter { WorkflowsSidebarModel.status($0, automations: automations[$0.id] ?? []) == .problem }.count
+    }
 
     @ViewBuilder
     private func list(_ model: WorkflowsSidebarModel) -> some View {
@@ -248,6 +267,8 @@ private struct WorkflowsSidebarDestinationRow: View {
     let title: String
     let icon: String
     let isSelected: Bool
+    /// "1 issue", in the error tone.
+    var badge: String? = nil
     let action: () -> Void
     @State private var isHovered = false
 
@@ -263,6 +284,9 @@ private struct WorkflowsSidebarDestinationRow: View {
                 .foregroundStyle(theme.text.primary)
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
+            if let badge {
+                StatusChip(badge, tone: .error)
+            }
         }
         .padding(.horizontal, theme.space.s10)
         .padding(.vertical, theme.space.s8)
@@ -272,7 +296,7 @@ private struct WorkflowsSidebarDestinationRow: View {
         .onHover { hovering in withAnimation(theme.motion.quick) { isHovered = hovering } }
         .help(title)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(verbatim: title))
+        .accessibilityLabel(Text(verbatim: badge.map { "\(title), \($0)" } ?? title))
         .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
         .accessibilityAction { action() }
     }

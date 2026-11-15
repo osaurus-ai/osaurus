@@ -20,7 +20,8 @@ extension WorkflowsView {
                 onRun: { workflow in
                     if workflow.needsSetup { setupSubject = .setup(workflow) } else { play(workflow) }
                 },
-                onAllActivity: { TaskControl.showHistory(.automations) })
+                onSetUp: { setupSubject = .setup($0) },
+                onAllActivity: { windowState.showWorkflowsActivity(.init(filter: .ranOnTheirOwn)) })
             PublishedByYouLine(kind: .workflow, anchor: "workflows.publishedByYou")
         }
     }

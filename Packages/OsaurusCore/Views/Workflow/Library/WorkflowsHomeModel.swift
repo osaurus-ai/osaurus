@@ -108,7 +108,7 @@ struct WorkflowsHomeModel {
             guard let workflow = byID[workflowID], !facts.isEmpty else { return nil }
             let rows = facts.sorted { $0.event.createdAt < $1.event.createdAt }.map { fact in
                 let runs = eventRuns[fact.event.id] ?? []
-                let latest = runs.first { $0.status == .succeeded || $0.status == .failed }
+                let latest = fact.latestSettled == nil ? nil : runs.first { $0.status == .succeeded || $0.status == .failed }
                 let state = WorkflowAutomationState.line(
                     fact.event, latestSettled: latest, needsSetup: workflow.needsSetup,
                     hasTargetProblem: fact.hasTargetProblem, now: now, style: style)

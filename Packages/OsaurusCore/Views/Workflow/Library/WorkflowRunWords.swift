@@ -140,13 +140,18 @@ enum WorkflowRunWords {
 
     /// "took 42 sec", "took 3 min", "took 1 hr 5 min".
     static func took(_ seconds: TimeInterval) -> String {
+        L("took \(duration(seconds))")
+    }
+
+    /// "42 sec", "3 min", "1 hr 5 min".
+    static func duration(_ seconds: TimeInterval) -> String {
         let whole = max(0, Int(seconds.rounded()))
-        if whole < 60 { return L("took \(max(1, whole)) sec") }
+        if whole < 60 { return L("\(max(1, whole)) sec") }
         let minutes = whole / 60
-        if minutes < 60 { return L("took \(minutes) min") }
+        if minutes < 60 { return L("\(minutes) min") }
         let hours = minutes / 60
         let rest = minutes % 60
-        return rest == 0 ? L("took \(hours) hr") : L("took \(hours) hr \(rest) min")
+        return rest == 0 ? L("\(hours) hr") : L("\(hours) hr \(rest) min")
     }
 
     /// "On schedule, took 42 sec"; a run still going says only how it started.

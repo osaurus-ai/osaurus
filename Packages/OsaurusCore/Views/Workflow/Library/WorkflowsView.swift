@@ -281,7 +281,7 @@ struct WorkflowsView: View {
                 onShare: { share($0.template, entry: shareEntry(for: $0.templateID)) },
                 onEdit: { ArchitectLauncher.edit($0, in: windowState) },
                 onDone: { windowState.popWorkflowsPage() },
-                onSeeAllRuns: { TaskControl.showHistory(.workflow($0.id)) },
+                onSeeAllRuns: { windowState.showWorkflowsActivity(.init(workflowID: $0.id)) },
                 takeIntent: { windowState.takeWorkflowsAutomationIntent() },
                 actionMenu: { workflow in installedCard(workflow, detailActionMenu: true) }
             )
@@ -305,6 +305,15 @@ struct WorkflowsView: View {
             workspacePage(id)
                 .id("workspace-\(id)")
                 .transition(.opacity)
+        case .activity?:
+            WorkflowsActivityPage(
+                windowState: windowState, overview: windowState.workflowsOverview,
+                onRun: { workflow in
+                    if workflow.needsSetup { setupSubject = .setup(workflow) } else { play(workflow) }
+                },
+                onSetUp: { setupSubject = .setup($0) })
+            .id("activity")
+            .transition(.opacity)
         case nil:
             home
                 .transition(.opacity)
@@ -325,6 +334,7 @@ struct WorkflowsView: View {
         case .run?: return L("Run")
         case .create?: return L("New Workflow")
         case .workspace(let id)?: return WorkspacesService.shared.workspaces.first { $0.id == id }?.name ?? L("Workspace")
+        case .activity?: return L("Activity")
         case nil: return L("Workflows")
         }
     }
