@@ -274,7 +274,7 @@ struct CatalogContentView: View {
     @State var snapshotName = ""
     @State var feedback = "Try a live button to see its response."
     @State var snapshotSheet = false
-    @AppStorage("designInspector.previewCreditsData") private var previewCreditsData = true
+    @AppStorage("designInspector.previewCreditsData") private var previewCreditsData = false
     @State private var reviewingExport = false
     @State private var showingAppControls = false
     @State private var appControlFamily: Int?
