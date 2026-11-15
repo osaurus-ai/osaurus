@@ -1910,6 +1910,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             { SubagentConfigurationStore.flushPendingWrites() },
             { ConfigDiskWriter.flushPendingWrites(timeout: 2.5) },
             { WorkflowDraftStore.flushPendingWrites(timeout: 2.5) },
+            { WorkflowRunStore.flushPendingWrites(timeout: 2.5) },
             { Keychain.flushPendingWrites(timeout: 2.5) },
             {
                 try? SyncConversationStore.shared.performWrite { SyncAgentDirectory.writePresence(.quitting, core: $0) }

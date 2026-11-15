@@ -2462,14 +2462,29 @@ final class ChatSession: ObservableObject {
             result.insert(.onboardingPanel(turnId: turnId, panel: panel), at: index + 1)
             return result
         }
-        var result = withoutAuthoredActions(blocks)
+        let stripped = withoutAuthoredActions(blocks)
         let streamingId = isStreaming ? turns.last?.id : nil
-        for turn in turns.reversed() where turn.role == .assistant && turn.id != streamingId {
-            guard let location = turn.runLocation,
-                let index = result.lastIndex(where: { $0.turnId == turn.id })
-            else { continue }
+        var labels: [UUID: ContentBlock] = [:]
+        for turn in turns where turn.role == .assistant && turn.id != streamingId {
+            guard let location = turn.runLocation else { continue }
             let label = location.label(tokensPerSecond: turn.generationTokensPerSecond)
-            result.insert(.runLocation(turnId: turn.id, text: label), at: index + 1)
+            labels[turn.id] = .runLocation(turnId: turn.id, text: label)
+        }
+        // Each label goes right after its turn's last block, in one pass
+        // (this runs on every streaming delta).
+        var lastIndexByTurn: [UUID: Int] = [:]
+        if !labels.isEmpty {
+            for (index, block) in stripped.enumerated() where labels[block.turnId] != nil {
+                lastIndexByTurn[block.turnId] = index
+            }
+        }
+        var result: [ContentBlock] = []
+        result.reserveCapacity(stripped.count + lastIndexByTurn.count + 1)
+        for (index, block) in stripped.enumerated() {
+            result.append(block)
+            if lastIndexByTurn[block.turnId] == index, let label = labels[block.turnId] {
+                result.append(label)
+            }
         }
         // After the walkthrough, this chat can hold a discovery's panel too.
         if let (turnId, panel) = OnboardingFirstRun.shared.panel(for: self) ?? DiscoveryCenter.shared.panel(for: self),
@@ -8334,6 +8349,8 @@ final class ChatSession: ObservableObject {
                     // through the post-tool recovery path.
                     var hasStructuredToolWorkThisRun = false
 
+                    let attachmentMessages = TurnAttachmentMessageCache()
+
                     /// Convert a single turn to a ChatMessage (returns nil if should be skipped)
                     @MainActor
                     func turnToMessage(_ t: ChatTurn, isLastTurn: Bool, isLatestUserTurn: Bool) -> ChatMessage? {
@@ -8349,20 +8366,24 @@ final class ChatSession: ObservableObject {
                             // on a picture) ride as multimodal tool messages
                             // for vision models. Same helper as warm-up so
                             // both serialise byte-identical history.
-                            return ToolResultMediaBridge.toolMessage(
-                                content: t.content,
-                                toolCallId: t.toolCallId,
-                                attachments: t.attachments,
-                                supportsImages: turnSupportsImages
-                            )
+                            return attachmentMessages.message(for: t) {
+                                ToolResultMediaBridge.toolMessage(
+                                    content: t.content,
+                                    toolCallId: t.toolCallId,
+                                    attachments: t.attachments,
+                                    supportsImages: turnSupportsImages
+                                )
+                            }
                         case .user:
-                            let base = Self.buildUserChatMessage(
-                                content: t.content,
-                                attachments: t.attachments,
-                                supportsImages: turnSupportsImages,
-                                supportsAudio: turnSupportsAudio,
-                                supportsVideo: turnSupportsVideo
-                            )
+                            let base = attachmentMessages.message(for: t) {
+                                Self.buildUserChatMessage(
+                                    content: t.content,
+                                    attachments: t.attachments,
+                                    supportsImages: turnSupportsImages,
+                                    supportsAudio: turnSupportsAudio,
+                                    supportsVideo: turnSupportsVideo
+                                )
+                            }
                             // Replay the frozen memory / screen-context block
                             // this turn was originally sent with, so its wire
                             // bytes never change once it has been part of a

@@ -15,12 +15,20 @@ final class ChatSessionsManager: ObservableObject {
     static let shared = ChatSessionsManager()
 
     /// All sessions sorted by updatedAt (most recent first)
-    @Published private(set) var sessions: [ChatSessionData] = []
+    @Published private(set) var sessions: [ChatSessionData] = [] {
+        didSet { sessionsRevision &+= 1 }
+    }
 
     /// Currently selected session ID
     @Published var currentSessionId: UUID?
 
     private var cancellables: Set<AnyCancellable> = []
+
+    /// Bumped on every change to `sessions`, so a background reload can tell
+    /// a local mutation landed while it read.
+    private var sessionsRevision = 0
+    private var backgroundRefresh: Task<Void, Never>?
+    private var backgroundRefreshQueued = false
 
     /// Whether `shared` has been created (and its synchronous first load
     /// paid). Lets the launch prewarm decide to warm the read path first
@@ -66,7 +74,7 @@ final class ChatSessionsManager: ObservableObject {
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] _ in
                     ChatSessionStore.flushPendingSaves()
-                    self?.refresh()
+                    self?.refreshInBackground()
                 }
                 .store(in: &cancellables)
 
@@ -76,7 +84,7 @@ final class ChatSessionsManager: ObservableObject {
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] _ in
                     ChatSessionStore.flushPendingSaves()
-                    self?.refresh()
+                    self?.refreshInBackground()
                 }
                 .store(in: &cancellables)
 
@@ -97,7 +105,7 @@ final class ChatSessionsManager: ObservableObject {
             NotificationCenter.default.publisher(for: SyncService.didReplaceIdentityNotification)
                 .receive(on: DispatchQueue.main)
                 .sink { [weak self] _ in
-                    self?.refresh()
+                    self?.refreshInBackground()
                 }
                 .store(in: &cancellables)
 
@@ -110,7 +118,7 @@ final class ChatSessionsManager: ObservableObject {
                 .receive(on: DispatchQueue.main)
                 .debounce(for: .milliseconds(250), scheduler: DispatchQueue.main)
                 .sink { [weak self] _ in
-                    self?.refresh()
+                    self?.refreshInBackground()
                 }
                 .store(in: &cancellables)
         }
@@ -121,6 +129,36 @@ final class ChatSessionsManager: ObservableObject {
     /// Full reload from disk — prefer `save()`/`delete()` for single-session mutations.
     func refresh() {
         sessions = ChatSessionStore.loadAll()
+    }
+
+    /// `refresh()` with the read off the main actor, for notification-driven
+    /// reloads. Calls while one runs collapse into one more reload after it.
+    func refreshInBackground() {
+        if backgroundRefresh != nil {
+            backgroundRefreshQueued = true
+            return
+        }
+        backgroundRefresh = Task {
+            repeat {
+                backgroundRefreshQueued = false
+                await reloadSessionsInBackground()
+            } while backgroundRefreshQueued
+            backgroundRefresh = nil
+        }
+    }
+
+    /// A list read before a local mutation would drop it, so a read that a
+    /// mutation overlapped is read again.
+    private func reloadSessionsInBackground() async {
+        for _ in 0 ..< 3 {
+            let revision = sessionsRevision
+            let loaded = await ChatSessionStore.loadAllAsync()
+            if sessionsRevision == revision {
+                sessions = loaded
+                return
+            }
+        }
+        refresh()
     }
 
     /// Create a new session and return its ID

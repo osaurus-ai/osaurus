@@ -879,14 +879,9 @@ public final class ToolRegistry: ObservableObject {
         // A rejection is not thrown here — `execute` re-runs preflight and
         // returns the structured envelope — so this only decides what the
         // user is shown.
-        let normalized = tool.normalizeArgumentsBeforeValidation(argumentsJSON)
-        guard case .ready(let effectiveArgumentsJSON) = Self.preflight(
-            argumentsJSON: normalized,
-            schema: tool.parameters,
-            toolName: name,
-            hint: tool.argumentHint,
-            preservingEmpty: tool.preservedEmptyStringArguments
-        ) else { return }
+        guard case .ready(let effectiveArgumentsJSON) = await Self.preflight(
+            tool: tool, name: name, argumentsJSON: argumentsJSON)
+        else { return }
         try await runPermissionGate(
             tool: tool,
             name: name,
@@ -1554,14 +1549,7 @@ public final class ToolRegistry: ObservableObject {
         // It also closes a consent gap: the gate now sees the SAME coerced
         // arguments the tool body will receive, so an approval card cannot
         // preview one thing while execution does another.
-        let normalizedArguments = tool.normalizeArgumentsBeforeValidation(argumentsJSON)
-        switch Self.preflight(
-            argumentsJSON: normalizedArguments,
-            schema: tool.parameters,
-            toolName: name,
-            hint: tool.argumentHint,
-            preservingEmpty: tool.preservedEmptyStringArguments
-        ) {
+        switch await Self.preflight(tool: tool, name: name, argumentsJSON: argumentsJSON) {
         case .rejected(let envelopeJSON):
             return envelopeJSON
         case .ready(let effectiveArgumentsJSON):
@@ -1942,22 +1930,35 @@ public final class ToolRegistry: ObservableObject {
             )
         }
 
-        // Try to detect "coercion changed the shape" via canonicalised
-        // JSON byte equality. When the bytes match, hand back the
-        // original literal; otherwise re-serialise so the tool body
-        // gets native types.
-        let opts: JSONSerialization.WritingOptions = [.sortedKeys]
-        guard let coercedData = try? JSONSerialization.data(withJSONObject: coerced, options: opts),
-            let originalData = try? JSONSerialization.data(withJSONObject: parsed, options: opts)
+        // When coercion left the arguments as parsed, hand back the
+        // original literal; otherwise re-serialise so the tool body gets
+        // native types. Coercion only converts strings, renames keys and
+        // drops empty optionals, so Foundation equality sees every change,
+        // and unchanged values compare by identity instead of serialising
+        // a large payload twice.
+        if (coerced as AnyObject).isEqual(parsed) {
+            return .ready(argumentsJSON: argumentsJSON)
+        }
+        guard let coercedData = try? JSONSerialization.data(withJSONObject: coerced, options: [.sortedKeys]),
+            let coercedJSON = String(data: coercedData, encoding: .utf8)
         else { return .ready(argumentsJSON: argumentsJSON) }
-
-        if coercedData == originalData {
-            return .ready(argumentsJSON: argumentsJSON)
-        }
-        guard let coercedJSON = String(data: coercedData, encoding: .utf8) else {
-            return .ready(argumentsJSON: argumentsJSON)
-        }
         return .ready(argumentsJSON: coercedJSON)
+    }
+
+    /// The dispatcher's `preflight`, off the main actor: parsing, coercing
+    /// and validating a large payload (a whole file in `file_write`) would
+    /// otherwise run on the UI thread.
+    @concurrent
+    nonisolated static func preflight(tool: any OsaurusTool, name: String, argumentsJSON: String) async
+        -> PreflightOutcome
+    {
+        preflight(
+            argumentsJSON: tool.normalizeArgumentsBeforeValidation(argumentsJSON),
+            schema: tool.parameters,
+            toolName: name,
+            hint: tool.argumentHint,
+            preservingEmpty: tool.preservedEmptyStringArguments
+        )
     }
 
     /// Registry-boundary result normalization, applied to EVERY executed

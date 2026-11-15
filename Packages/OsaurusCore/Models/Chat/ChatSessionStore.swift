@@ -26,7 +26,22 @@ enum ChatSessionStore {
     /// Only metadata is loaded (turns are empty). Use `load(id:)` for full session data.
     static func loadAll() -> [ChatSessionData] {
         ensureOpen()
-        var sessions = store.loadAllMetadata()
+        return overlayingPendingSaves(on: store.loadAllMetadata())
+    }
+
+    /// `loadAll()` with the store read off the main actor, for refreshes the
+    /// UI doesn't wait on. The read queues behind the store's writes, which
+    /// can take a while during a long chat's saves.
+    static func loadAllAsync() async -> [ChatSessionData] {
+        ensureOpen()
+        guard didOpen else { return loadAll() }
+        let db = store
+        let rows = await Task.detached(priority: .userInitiated, operation: { db.loadAllMetadata() }).value
+        return overlayingPendingSaves(on: rows)
+    }
+
+    private static func overlayingPendingSaves(on rows: [ChatSessionData]) -> [ChatSessionData] {
+        var sessions = rows
         // Overlay writes still deferred behind a closed/rotating DB so a
         // notification-driven refresh can't drop a chat the user just
         // created: the disk snapshot doesn't have the row yet, but the

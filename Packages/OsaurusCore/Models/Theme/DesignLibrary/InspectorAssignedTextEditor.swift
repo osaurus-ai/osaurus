@@ -16,6 +16,10 @@ struct InspectorAssignedTextEditor: NSViewRepresentable {
     var onFocusChange: (Bool) -> Void
     var accessibleName: String? = nil
     var accessibleHelp: String? = nil
+    /// Owned by the caller when it sizes the editor to its text: an auto-hiding
+    /// legacy scroller narrows the text, which changes the height that decided
+    /// whether the scroller shows, and the editor oscillates by a line.
+    var showsVerticalScroller = true
 
     func makeNSView(context: Context) -> InspectorEditorScrollView {
         let scroll = InspectorEditorScrollView()
@@ -48,6 +52,7 @@ struct InspectorAssignedTextEditor: NSViewRepresentable {
     func updateNSView(_ scroll: InspectorEditorScrollView, context: Context) {
         context.coordinator.parent = self
         guard let view = scroll.documentView as? InspectorMultilineTextView else { return }
+        if scroll.hasVerticalScroller != showsVerticalScroller { scroll.hasVerticalScroller = showsVerticalScroller }
         view.isEditable = editable
         view.isSelectable = true
         view.setAccessibilityLabel(accessibleName ?? L("Multiline editor"))

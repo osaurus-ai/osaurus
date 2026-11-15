@@ -1948,10 +1948,12 @@ final class ChatWindowState: ObservableObject {
             return
         }
         TTSService.shared.stop()
+        // Read the target before queueing the outgoing chat's save: reads
+        // wait behind the store's queued writes, and that save can be long.
+        let resolvedData = ChatSessionStore.load(id: sessionData.id) ?? sessionData
         if !session.turns.isEmpty { session.save() }
         flushCurrentSession()
 
-        let resolvedData = ChatSessionStore.load(id: sessionData.id) ?? sessionData
         let me = SyncService.shared.core?.deviceKey()
         let targetAgentId = Self.windowAgentId(
             agentId: resolvedData.agentId,

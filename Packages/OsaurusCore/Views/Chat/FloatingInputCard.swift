@@ -7764,7 +7764,7 @@ private struct WalletPopover: View {
     }
 
     /// `provider/model` → `model`; the full id stays in the row's tooltip.
-    private static func modelName(_ identifier: String) -> String {
+    fileprivate static func modelName(_ identifier: String) -> String {
         identifier.split(separator: "/", maxSplits: 1).last.map(String.init) ?? identifier
     }
 
@@ -8475,12 +8475,13 @@ private struct FloatingCreditsChip: View {
     }
 
     private var balanceLevel: BalanceLevel {
-        if let value = inspectionBalance { return value <= 0 ? .empty : value < 1_000_000 ? .low : .healthy }
+        let lowMicro = CreditsAttentionState.lowBalanceMicro
+        if let value = inspectionBalance { return value <= 0 ? .empty : Int64(value) < lowMicro ? .low : .healthy }
         let micro = accountService.balanceMicroValue
         if micro <= 0 || accountService.isFrozen {
             return .empty
         }
-        if micro < 1_000_000 {  // < 10,000 credits ($1.00)
+        if micro < lowMicro {
             return .low
         }
         return .healthy
@@ -9261,17 +9262,36 @@ struct InspectorComposerChipVerification: View {
 /// Outside-click, Escape, the trigger or an action closes the panel.
 struct NavigationUsageButton: View {
     @ObservedObject private var account = OsaurusRouterAccountService.shared
+    @ObservedObject private var attention = CreditsAttentionTracker.shared
+    @ObservedObject private var remoteProviders = RemoteProviderManager.shared
     @Environment(\.theme) private var environmentTheme
     private var theme: any ThemeProtocol { environmentTheme }
     @State private var interaction = ClickMenuInteraction()
-    @AppStorage("designInspector.previewCreditsData") private var previewCreditsData = true
-    private var usesPreviewData: Bool {
-        previewCreditsData
+    #if OSAURUS_DESIGN_INSPECTOR
+    @AppStorage("designInspector.previewCreditsData") private var previewCreditsData = false
+    private var usesPreviewData: Bool { previewCreditsData }
+    #else
+    private var usesPreviewData: Bool { false }
+    #endif
+    private var walletAvailable: Bool {
+        remoteProviders.isOsaurusRouterEnabled && !remoteProviders.isOffline && OsaurusIdentity.existsCached()
     }
     private var balanceTitle: String {
         if usesPreviewData { return "138,376 credits · Preview" }
-        return account.balance == nil ? L("Usage unavailable") : account.formattedBalanceValue + " " + L("credits")
+        if account.balance == nil {
+            return account.isLoadingBalance ? L("Loading usage…") : L("Usage unavailable")
+        }
+        return account.formattedBalanceValue + " " + L("credits")
     }
+    private var attentionReason: CreditsAttentionReason? {
+        guard !usesPreviewData, let balance = account.balance else { return nil }
+        return CreditsAttentionSnapshot(
+            balanceMicro: Int64(balance.balanceMicro) ?? 0,
+            frozen: balance.frozen,
+            webSearchNeedsTopUp: account.webSearchNeedsTopUp
+        ).reason
+    }
+    private var indicator: CreditsAttentionIndicator { usesPreviewData ? .none : attention.indicator }
     @State private var showTopUp = false
 
     private var rows: [WalletActivityRow] {
@@ -9294,8 +9314,27 @@ struct NavigationUsageButton: View {
             interaction.clickTrigger()
         }
         .frame(width: 32, height: 32)
-
-        .anchoredCard(isPresented: $interaction.isPresented, size: CGSize(width: 240, height: 217),
+        .overlay(alignment: .topTrailing) {
+            if let dotColor {
+                Circle()
+                    .fill(dotColor)
+                    .frame(width: theme.space.s8, height: theme.space.s8)
+                    .overlay(Circle().strokeBorder(theme.surface.canvas, lineWidth: theme.stroke.default))
+                    .padding(theme.space.s2)
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                    .transition(.opacity)
+            }
+        }
+        .animation(theme.motion.quick, value: indicator)
+        .accessibilityValue(accessibilityValue)
+        .task(id: walletAvailable) {
+            if walletAvailable, !usesPreviewData {
+                await account.refreshBalance(ifOlderThan: 300)
+            }
+        }
+        .anchoredCard(isPresented: $interaction.isPresented,
+                      size: CGSize(width: 240, height: attentionReason == nil ? 217 : 245),
                       alignment: .leading, besideAnchor: true, constrainToWindow: true, takesFocus: interaction.takesFocus,
                       shadowPadding: 18, accessibilityLabel: L("Usage")) {
             VStack(spacing: theme.space.s12) {
@@ -9304,8 +9343,20 @@ struct NavigationUsageButton: View {
                     .foregroundStyle(theme.text.primary)
                     .frame(maxWidth: .infinity, minHeight: 30)
                     .background(theme.surface.subtle, in: RoundedRectangle(cornerRadius: theme.radius.small))
+                if let attentionReason {
+                    Label {
+                        Text(attentionMessage(attentionReason)).lineLimit(1).truncationMode(.tail)
+                    } icon: {
+                        Image(systemName: "exclamationmark.circle.fill")
+                    }
+                    .textStyle(.caption)
+                    .foregroundStyle(theme.status.warning.foreground)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, theme.space.s8)
+                    .help(attentionMessage(attentionReason))
+                }
                 if rows.isEmpty {
-                    Text(account.balance == nil ? L("Connect to view your usage") : L("No activity yet"))
+                    Text(verbatim: emptyMessage)
                         .componentInspectionText(51, role: .caption, fallback: .caption, theme: theme)
                         .foregroundStyle(theme.text.secondary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -9313,7 +9364,7 @@ struct NavigationUsageButton: View {
                     VStack(spacing: theme.space.s8) {
                         ForEach(rows) { row in
                             HStack(spacing: theme.space.s8) {
-                                Text(verbatim: row.title).lineLimit(1).truncationMode(.middle)
+                                rowTitle(row).lineLimit(1).truncationMode(.middle)
                                 Spacer(minLength: 4)
                                 Text(verbatim: row.amountLabel.replacingOccurrences(of: " credits", with: ""))
                                     .monospacedDigit().fixedSize()
@@ -9353,12 +9404,66 @@ struct NavigationUsageButton: View {
                 await account.refreshTransactions(reset: true)
                 await account.refreshWebUsage(reset: true)
             }
+            .onChange(of: account.usageRevision) { _, _ in
+                guard !usesPreviewData else { return }
+                Task { await account.refreshUsage(reset: true) }
+            }
         }
         .onChange(of: interaction.isPresented) { _, shown in
-            if !shown { interaction.didDismiss() }
+            if shown {
+                if !usesPreviewData { attention.acknowledge() }
+            } else {
+                interaction.didDismiss()
+            }
+        }
+        .onChange(of: attention.indicator) { _, _ in
+            if interaction.isPresented, !usesPreviewData { attention.acknowledge() }
         }
         .onDisappear { interaction.didDismiss() }
         .sheet(isPresented: $showTopUp) { CreditsTopUpSheet() }
+    }
+
+    private var dotColor: Color? {
+        switch indicator {
+        case .none: return nil
+        case .newCredits: return theme.action.primary.default.background
+        case .attention: return theme.status.warning.foreground
+        }
+    }
+
+    private var accessibilityValue: Text {
+        switch indicator {
+        case .none: return Text(verbatim: "")
+        case .newCredits: return Text("New credits", bundle: .module)
+        case .attention: return Text("Needs attention", bundle: .module)
+        }
+    }
+
+    private var emptyMessage: String {
+        if account.balance == nil {
+            return account.isLoadingBalance ? "" : L("Connect to view your usage")
+        }
+        let loading = account.isLoadingUsage || account.isLoadingTransactions || account.isLoadingWebUsage
+        return loading ? "" : L("No activity yet")
+    }
+
+    private func attentionMessage(_ reason: CreditsAttentionReason) -> String {
+        switch reason {
+        case .lowBalance: return L("Low balance")
+        case .outOfCredits: return L("Out of credits")
+        case .frozen: return L("Account paused - add credits to resume.")
+        case .webSearchNeedsTopUp: return L("Web search paused. Add credits to resume.")
+        }
+    }
+
+    @ViewBuilder private func rowTitle(_ row: WalletActivityRow) -> some View {
+        // Model ids render verbatim: LocalizedStringKey would read underscores
+        // as markdown emphasis.
+        if row.kind == .usage {
+            Text(verbatim: WalletPopover.modelName(row.title)).help(Text(verbatim: row.title))
+        } else {
+            Text(LocalizedStringKey(row.title), bundle: .module)
+        }
     }
 
 }

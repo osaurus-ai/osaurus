@@ -226,7 +226,10 @@ struct FileDiff: Equatable {
     /// labeled with the wrong file.
     static func inferredEditPath(
         partialArgs: String,
-        knownFiles: [(path: String, content: String)]
+        // Autoclosure: building the known-files index parses every file_read
+        // envelope in the transcript, so only pay for it once an excerpt long
+        // enough to identify a file has actually streamed.
+        knownFiles: @autoclosure () -> [(path: String, content: String)]
     ) -> String? {
         // Same per-delta scan budget as the live preview: this runs on every
         // streaming delta too, and both the arg scan and the `contains`
@@ -237,7 +240,7 @@ struct FileDiff: Equatable {
             excerpt.count >= inferenceMinExcerptLength
         else { return nil }
         var match: String?
-        for (path, content) in knownFiles where content.contains(excerpt) {
+        for (path, content) in knownFiles() where content.contains(excerpt) {
             if match != nil { return nil }  // ambiguous — never label on a coin flip
             match = path
         }
