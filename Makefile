@@ -316,9 +316,11 @@ FIRSTRUN_LABEL ?= $(if $(LABEL),$(LABEL),$(shell date -u +%Y%m%dT%H%M%SZ))
 .PHONY: evals-firstrun
 evals-firstrun: evals-prep
 	@mkdir -p build/evals/firstrun
+	swift build --package-path Packages/OsaurusCore --product osaurus-js-host
 	@rc=0; for model in $(FIRSTRUN_LOCAL_MODEL) $(FIRSTRUN_FRONTIER_MODEL); do \
 		echo ""; \
 		echo "── FirstRun on $$model ──"; \
+		OSAURUS_JS_HOST_PATH=$$(swift build --package-path Packages/OsaurusCore --show-bin-path)/osaurus-js-host \
 		swift run --package-path Packages/OsaurusEvals osaurus-evals run \
 			--suite $(EVALS_ROOT)/FirstRun \
 			--model $$model \

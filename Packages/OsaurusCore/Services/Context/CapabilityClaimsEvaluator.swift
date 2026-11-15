@@ -816,9 +816,18 @@ public enum CapabilityClaimsEvaluator {
     /// tools already bounded), so the per-call live-service cap would
     /// abandon a healthy run; it gets the handoff's own wall clock instead.
     static func harnessTimeout(for tool: String, default bound: TimeInterval?) -> TimeInterval? {
-        guard let bound, tool == ConfiguratorHandoffTool.toolName else { return bound }
-        return max(bound, ConfiguratorHandoffTool.wallClockSeconds)
+        guard let bound else { return nil }
+        switch tool {
+        case ConfiguratorHandoffTool.toolName: return max(bound, ConfiguratorHandoffTool.wallClockSeconds)
+        case RunWorkflowTool.toolName: return max(bound, delegatedRunSeconds)
+        default: return bound
+        }
     }
+
+    /// `run_workflow` waits for a whole teammate turn and has no per-call
+    /// bound in the app (`bypassRegistryTimeout`); on a local model that
+    /// turn alone runs past the live-service bound.
+    static let delegatedRunSeconds: TimeInterval = 300
 
     /// Execute one tool call through `ToolRegistry`, optionally bounding it
     /// with a wall-clock `timeout`.

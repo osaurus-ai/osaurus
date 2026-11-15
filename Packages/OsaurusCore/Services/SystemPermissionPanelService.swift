@@ -80,7 +80,11 @@ enum SystemPermissionPanelService {
     /// grant for **Try Again** and when the person comes back to Osaurus.
     static func ask(_ request: Request, recheck: @escaping Recheck) async -> Answer {
         let presenter = presentationOverrideForTests
-        if presenter == nil, RuntimeEnvironment.isUnderTests { return .notNow }
+        // The eval harness binds auto-approve because it has no UI run loop:
+        // a panel there would wait for nobody.
+        if presenter == nil, RuntimeEnvironment.isUnderTests || ChatExecutionContext.autoApproveToolPrompts {
+            return .notNow
+        }
         // A paired phone or a synced device has nobody at this Mac's screen.
         guard ToolPermissionPromptService.Requester.current == .thisMac else { return .notNow }
         let timeout = timeoutOverrideForTests ?? Self.timeout
