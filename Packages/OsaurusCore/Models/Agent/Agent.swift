@@ -1515,6 +1515,13 @@ public struct AgentSettings: Codable, Sendable, Equatable {
     /// search it, and no tool writes, edits, copies, undoes, redacts, or
     /// runs a command there. Default off.
     public var workingFolderReadOnly: Bool = false
+    /// Whether this agent's `.ask` tools show the approval card. Default
+    /// `.useGlobal` follows the Auto-Allow All Tool Calls switch. Resolved by
+    /// `ToolApprovalResolver`; never applies inside a workflow run.
+    public var toolApprovalMode: AgentToolApprovalMode = .useGlobal
+    /// Per-tool policy overrides for this agent, replacing the global
+    /// Auto / Ask / Deny for its own chats. A global Deny still wins.
+    public var toolPolicies: [String: ToolPermissionPolicy] = [:]
 
     public init(
         dbEnabled: Bool,
@@ -1557,12 +1564,16 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         taskChecklistEnabled: Bool = true,
         clarifyEnabled: Bool = true,
         artifactsEnabled: Bool = true,
-        workingFolderReadOnly: Bool = false
+        workingFolderReadOnly: Bool = false,
+        toolApprovalMode: AgentToolApprovalMode = .useGlobal,
+        toolPolicies: [String: ToolPermissionPolicy] = [:]
     ) {
         self.dbEnabled = dbEnabled
         self.schedule = schedule
         self.limits = limits
         self.workingFolderReadOnly = workingFolderReadOnly
+        self.toolApprovalMode = toolApprovalMode
+        self.toolPolicies = toolPolicies
         self.showResponseMetrics = showResponseMetrics
         self.renderChartEnabled = renderChartEnabled
         self.speakEnabled = speakEnabled
@@ -1717,6 +1728,12 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         clarifyEnabled = try c.decodeIfPresent(Bool.self, forKey: .clarifyEnabled) ?? true
         artifactsEnabled = try c.decodeIfPresent(Bool.self, forKey: .artifactsEnabled) ?? true
         workingFolderReadOnly = try c.decodeIfPresent(Bool.self, forKey: .workingFolderReadOnly) ?? false
+        // Lenient: an unknown mode or policy falls back to the default rather
+        // than discarding the agent, and never to a looser value.
+        toolApprovalMode =
+            (try? c.decodeIfPresent(AgentToolApprovalMode.self, forKey: .toolApprovalMode)) ?? .useGlobal
+        let rawPolicies = (try? c.decodeIfPresent([String: String].self, forKey: .toolPolicies)) ?? [:]
+        toolPolicies = rawPolicies.compactMapValues(ToolPermissionPolicy.init(rawValue:))
     }
 
     /// Trim values and drop blank entries so a cleared override (empty string)
@@ -1790,6 +1807,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         case clarifyEnabled
         case artifactsEnabled
         case workingFolderReadOnly
+        case toolApprovalMode
+        case toolPolicies
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -1842,6 +1861,8 @@ public struct AgentSettings: Codable, Sendable, Equatable {
         try c.encode(clarifyEnabled, forKey: .clarifyEnabled)
         try c.encode(artifactsEnabled, forKey: .artifactsEnabled)
         if workingFolderReadOnly { try c.encode(workingFolderReadOnly, forKey: .workingFolderReadOnly) }
+        if toolApprovalMode != .useGlobal { try c.encode(toolApprovalMode, forKey: .toolApprovalMode) }
+        if !toolPolicies.isEmpty { try c.encode(toolPolicies, forKey: .toolPolicies) }
     }
 
     /// Default settings for newly created agents (and for back-compat decoding of

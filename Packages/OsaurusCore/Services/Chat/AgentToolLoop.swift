@@ -1861,12 +1861,13 @@ enum AgentToolLoop {
                 continue
             }
             do {
-                try await scoped {
+                let skipReason = try await scoped {
                     try await ToolRegistry.shared.resolvePermissionGate(
                         name: call.invocation.toolName,
                         argumentsJSON: call.invocation.jsonArguments
                     )
                 }
+                ToolApprovalAudit.record(skipReason, callId: call.callId)
                 approved.append((slot, call.invocation, call.callId))
             } catch {
                 executions[slot] = AgentLoopToolExecution(

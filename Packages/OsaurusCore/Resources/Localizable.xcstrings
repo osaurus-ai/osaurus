@@ -344,6 +344,74 @@
         }
       }
     },
+    "%@ is set to Never Ask, so tool calls run without an approval card." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ steht auf „Nie fragen“, daher laufen Tool-Aufrufe ohne Genehmigungskarte."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@이(가) '묻지 않기'로 설정되어 있어 도구 호출이 승인 카드 없이 실행됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для агента %@ выбрано «Никогда не спрашивать», поэтому вызовы инструментов выполняются без карточки одобрения."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 设为“从不询问”，因此工具调用无需审批卡片即可运行。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 設為「從不詢問」，因此工具呼叫無需審批卡片即可執行。"
+          }
+        }
+      }
+    },
+    "%@ will run tools without showing an approval card, in chats and in its scheduled and watcher runs. Tools can run code and modify files, so use this only for an agent whose tools you trust." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ führt Tools ohne Genehmigungskarte aus, in Chats sowie in geplanten und Watcher-Läufen. Tools können Code ausführen und Dateien ändern, nutze dies also nur für einen Agenten, dessen Tools du vertraust."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@은(는) 채팅과 예약·감시 실행에서 승인 카드 없이 도구를 실행합니다. 도구는 코드를 실행하고 파일을 수정할 수 있으므로 도구를 신뢰하는 에이전트에만 사용하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ будет запускать инструменты без карточки одобрения — в чатах, а также в запусках по расписанию и по наблюдению. Инструменты могут запускать код и изменять файлы, поэтому используйте это только для агента, инструментам которого доверяете."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 将在不显示审批卡片的情况下运行工具，包括聊天以及其定时运行和监视运行。工具可以运行代码和修改文件，因此仅对你信任其工具的智能体使用此功能。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 將在不顯示審批卡片的情況下執行工具，包括聊天以及其排程執行和監視執行。工具可以執行程式碼和修改檔案，因此僅對你信任其工具的智能體使用此功能。"
+          }
+        }
+      }
+    },
     "%lld dimensions" : {
       "localizations" : {
         "de" : {
@@ -374,6 +442,40 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%lld 維"
+          }
+        }
+      }
+    },
+    "%lld tools have their own policy for this agent. A tool set to Deny for every agent stays denied." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld Tools haben eine eigene Richtlinie für diesen Agenten. Ein Tool, das für alle Agenten auf „Ablehnen“ steht, bleibt abgelehnt."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "도구 %lld개에 이 에이전트 전용 정책이 있습니다. 모든 에이전트에 대해 거부로 설정된 도구는 계속 거부됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Инструментов со своим правилом для этого агента: %lld. Инструмент, запрещённый для всех агентов, остаётся запрещённым."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有 %lld 个工具为此智能体单独设置了策略。对所有智能体设为“拒绝”的工具仍会被拒绝。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有 %lld 個工具為此智能體單獨設定了策略。對所有智能體設為「拒絕」的工具仍會被拒絕。"
           }
         }
       }
@@ -446,6 +548,176 @@
         }
       }
     },
+    "1 tool has its own policy for this agent. A tool set to Deny for every agent stays denied." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "1 Tool hat eine eigene Richtlinie für diesen Agenten. Ein Tool, das für alle Agenten auf „Ablehnen“ steht, bleibt abgelehnt."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "도구 1개에 이 에이전트 전용 정책이 있습니다. 모든 에이전트에 대해 거부로 설정된 도구는 계속 거부됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "У 1 инструмента есть своё правило для этого агента. Инструмент, запрещённый для всех агентов, остаётся запрещённым."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有 1 个工具为此智能体单独设置了策略。对所有智能体设为“拒绝”的工具仍会被拒绝。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "有 1 個工具為此智能體單獨設定了策略。對所有智能體設為「拒絕」的工具仍會被拒絕。"
+          }
+        }
+      }
+    },
+    "Always Allow \"%@\" for %@?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "„%1$@“ für %2$@ immer erlauben?"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%2$@에서 \"%1$@\"을(를) 항상 허용할까요?"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Всегда разрешать «%1$@» для %2$@?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "对 %2$@ 始终允许“%1$@”？"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "對 %2$@ 始終允許「%1$@」？"
+          }
+        }
+      }
+    },
+    "Always Allow \"%@\" for Every Agent?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "„%@“ für alle Agenten immer erlauben?"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모든 에이전트에서 \"%@\"을(를) 항상 허용할까요?"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Всегда разрешать «%@» для всех агентов?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "对所有智能体始终允许“%@”？"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "對所有智能體始終允許「%@」？"
+          }
+        }
+      }
+    },
+    "Always Allow for %@…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Für %@ immer erlauben…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@에서 항상 허용…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Всегда разрешать для %@…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "对 %@ 始终允许…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "對 %@ 始終允許…"
+          }
+        }
+      }
+    },
+    "Always Allow for Every Agent…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Für alle Agenten immer erlauben…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모든 에이전트에서 항상 허용…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Всегда разрешать для всех агентов…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "对所有智能体始终允许…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "對所有智能體始終允許…"
+          }
+        }
+      }
+    },
     "Announcements" : {
       "localizations" : {
         "de" : {
@@ -476,6 +748,380 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "公告"
+          }
+        }
+      }
+    },
+    "Approval" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Genehmigung"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "승인"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Одобрение"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "审批"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "審批"
+          }
+        }
+      }
+    },
+    "Approval cards are skipped for this agent. %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Für diesen Agenten werden Genehmigungskarten übersprungen. %@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 에이전트에서는 승인 카드를 건너뜁니다. %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для этого агента карточки одобрения пропускаются. %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此智能体会跳过审批卡片。%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此智能體會略過審批卡片。%@"
+          }
+        }
+      }
+    },
+    "Approvals are off" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Genehmigungen sind aus"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "승인이 꺼져 있음"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Одобрения отключены"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已关闭审批"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已關閉審批"
+          }
+        }
+      }
+    },
+    "Approvals Off" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Genehmigungen aus"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "승인 꺼짐"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Одобрения выкл."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "审批已关闭"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "審批已關閉"
+          }
+        }
+      }
+    },
+    "Auto-Allow All Tool Calls is on, so approval cards are skipped. %@" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "„Alle Tool-Aufrufe automatisch erlauben“ ist aktiviert, daher werden Genehmigungskarten übersprungen. %@"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "'모든 도구 호출 자동 허용'이 켜져 있어 승인 카드를 건너뜁니다. %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включено «Автоматически разрешать все вызовы инструментов», поэтому карточки одобрения пропускаются. %@"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“自动允许所有工具调用”已开启，因此会跳过审批卡片。%@"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「自動允許所有工具呼叫」已開啟，因此會略過審批卡片。%@"
+          }
+        }
+      }
+    },
+    "Auto-Allow All Tool Calls is on, so tool calls run without an approval card." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "„Alle Tool-Aufrufe automatisch erlauben“ ist aktiviert, daher laufen Tool-Aufrufe ohne Genehmigungskarte."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "'모든 도구 호출 자동 허용'이 켜져 있어 도구 호출이 승인 카드 없이 실행됩니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включено «Автоматически разрешать все вызовы инструментов», поэтому вызовы выполняются без карточки одобрения."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“自动允许所有工具调用”已开启，因此工具调用无需审批卡片即可运行。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「自動允許所有工具呼叫」已開啟，因此工具呼叫無需審批卡片即可執行。"
+          }
+        }
+      }
+    },
+    "Auto-Allow All Tool Calls is on." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "„Alle Tool-Aufrufe automatisch erlauben“ ist aktiviert."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "'모든 도구 호출 자동 허용'이 켜져 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Включено «Автоматически разрешать все вызовы инструментов»."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“自动允许所有工具调用”已开启。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「自動允許所有工具呼叫」已開啟。"
+          }
+        }
+      }
+    },
+    "Blocked for every agent under Tools & MCP → All Tools" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Unter Tools & MCP → All Tools für alle Agenten blockiert"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "도구 및 MCP → All Tools에서 모든 에이전트에 대해 차단됨"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Заблокировано для всех агентов в разделе «Инструменты и MCP» → All Tools"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已在“工具与 MCP → 所有工具”中对所有智能体禁用"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已在「工具與 MCP → 所有工具」中對所有智能體停用"
+          }
+        }
+      }
+    },
+    "Configuration changes, which show their own review card." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Konfigurationsänderungen, die eine eigene Prüfkarte zeigen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "설정 변경은 자체 검토 카드를 표시합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Изменения конфигурации — для них показывается своя карточка проверки."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "配置更改，会显示单独的审查卡片。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設定變更，會顯示單獨的審查卡片。"
+          }
+        }
+      }
+    },
+    "Delegating to other agents, image and video costs, AppleScript confirmation, and Computer or Browser Use." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Delegieren an andere Agenten, Kosten für Bilder und Videos, AppleScript-Bestätigung sowie Computer Use oder Browser Use."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다른 에이전트에 위임, 이미지 및 동영상 비용, AppleScript 확인, 컴퓨터 제어 또는 Browser Use."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Делегирование другим агентам, расходы на изображения и видео, подтверждение AppleScript, использование компьютера или браузера."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "委派给其他智能体、图片和视频费用、AppleScript 确认，以及电脑操控或浏览器使用。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "委派給其他智能體、圖片和影片費用、AppleScript 確認，以及電腦操作或瀏覽器使用。"
+          }
+        }
+      }
+    },
+    "Deny, send and delete, configuration changes, delegation, media costs, AppleScript, and Computer or Browser Use still ask." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "„Ablehnen“, Senden und Löschen, Konfigurationsänderungen, Delegierung, Medienkosten, AppleScript sowie Computer Use oder Browser Use fragen weiterhin."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "거부, 보내기 및 삭제, 설정 변경, 위임, 미디어 비용, AppleScript, 컴퓨터 제어 또는 Browser Use는 계속 묻습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запреты, отправка и удаление, изменения конфигурации, делегирование, расходы на медиа, AppleScript и использование компьютера или браузера по-прежнему спрашиваются."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“拒绝”、发送和删除、配置更改、委派、媒体费用、AppleScript，以及电脑操控或浏览器使用仍会询问。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "「拒絕」、傳送和刪除、設定變更、委派、媒體費用、AppleScript，以及電腦操作或瀏覽器使用仍會詢問。"
           }
         }
       }
@@ -718,6 +1364,108 @@
         }
       }
     },
+    "Never Ask" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nie fragen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "묻지 않기"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Никогда не спрашивать"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "从不询问"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "從不詢問"
+          }
+        }
+      }
+    },
+    "Never Ask for %@?" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Für %@ nie fragen?"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@에서 묻지 않을까요?"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Никогда не спрашивать для %@?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "对 %@ 从不询问？"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "對 %@ 從不詢問？"
+          }
+        }
+      }
+    },
+    "Never Ask for %@…" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Für %@ nie fragen…"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@에서 묻지 않기…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Никогда не спрашивать для %@…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "对 %@ 从不询问…"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "對 %@ 從不詢問…"
+          }
+        }
+      }
+    },
     "New credits" : {
       "localizations" : {
         "de" : {
@@ -854,6 +1602,142 @@
         }
       }
     },
+    "Per-Tool Policies" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Richtlinien pro Tool"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "도구별 정책"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Правила для отдельных инструментов"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "按工具设置的策略"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "按工具設定的策略"
+          }
+        }
+      }
+    },
+    "Ran without an approval card." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ohne Genehmigungskarte ausgeführt."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "승인 카드 없이 실행되었습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выполнено без карточки одобрения."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未显示审批卡片即已运行。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未顯示審批卡片即已執行。"
+          }
+        }
+      }
+    },
+    "Ran without asking" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ohne Nachfrage ausgeführt"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "묻지 않고 실행됨"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выполнено без запроса"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未询问即运行"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未詢問即執行"
+          }
+        }
+      }
+    },
+    "Ran without asking." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ohne Nachfrage ausgeführt."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "묻지 않고 실행되었습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выполнено без запроса."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未询问即运行。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未詢問即執行。"
+          }
+        }
+      }
+    },
     "Out of credits" : {
       "localizations" : {
         "de" : {
@@ -956,6 +1840,40 @@
         }
       }
     },
+    "Run tool calls without showing an approval card. %@ Tools can run code and modify files, so enable this only if you trust the tools you have installed. To change this for one agent, use Tool Approvals on that agent's Tools tab." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tool-Aufrufe ohne Genehmigungskarte ausführen. %@ Tools können Code ausführen und Dateien ändern, aktiviere dies also nur, wenn du den installierten Tools vertraust. Um dies für einen einzelnen Agenten zu ändern, nutze die Tool-Genehmigungen im Tab „Tools“ dieses Agenten."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "승인 카드를 표시하지 않고 도구 호출을 실행합니다. %@ 도구는 코드를 실행하고 파일을 수정할 수 있으므로 설치한 도구를 신뢰하는 경우에만 켜세요. 특정 에이전트에서만 바꾸려면 해당 에이전트의 도구 탭에서 도구 승인을 사용하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выполнять вызовы инструментов без карточки одобрения. %@ Инструменты могут запускать код и изменять файлы, поэтому включайте это, только если доверяете установленным инструментам. Чтобы изменить это для одного агента, используйте «Одобрение инструментов» на вкладке «Инструменты» этого агента."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "运行工具调用时不显示审批卡片。%@ 工具可以运行代码和修改文件，因此仅在你信任已安装的工具时才开启。若只想更改某个智能体，请在该智能体的“工具”标签页中使用“工具审批”。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "執行工具呼叫時不顯示審批卡片。%@ 工具可以執行程式碼和修改檔案，因此僅在你信任已安裝的工具時才開啟。若只想變更某個智能體，請在該智能體的「工具」分頁中使用「工具審批」。"
+          }
+        }
+      }
+    },
     "Semantic search stays off until Osaurus restarts with %@." : {
       "localizations" : {
         "de" : {
@@ -986,6 +1904,176 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在 Osaurus 使用 %@ 重新啟動之前，語意搜尋將保持關閉。"
+          }
+        }
+      }
+    },
+    "Sending messages or mail, and deleting events, reminders or knowledge. These ask every time." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Nachrichten oder E-Mails senden sowie Termine, Erinnerungen oder Wissen löschen. Hier wird jedes Mal gefragt."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "메시지나 메일 보내기, 일정·미리 알림·지식 삭제. 이 작업은 매번 묻습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Отправка сообщений или писем и удаление событий, напоминаний или знаний. Это спрашивается каждый раз."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "发送消息或邮件，以及删除日程、提醒事项或知识。这些操作每次都会询问。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "傳送訊息或郵件，以及刪除行程、提醒事項或知識。這些操作每次都會詢問。"
+          }
+        }
+      }
+    },
+    "Set Auto, Ask or Deny for this agent with the menu on an enabled tool's row." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Lege über das Menü in der Zeile eines aktivierten Tools „Auto“, „Fragen“ oder „Ablehnen“ für diesen Agenten fest."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "활성화된 도구 행의 메뉴에서 이 에이전트에 대해 자동, 묻기 또는 거부를 설정하세요."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выберите «Авто», «Просить» или «Отрицать» для этого агента в меню в строке включённого инструмента."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在已启用工具所在行的菜单中，为此智能体设置“自动”“询问”或“拒绝”。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在已啟用工具所在列的選單中，為此智能體設定「自動」「詢問」或「拒絕」。"
+          }
+        }
+      }
+    },
+    "Still asks:" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Fragt weiterhin:"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "계속 묻는 항목:"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "По-прежнему спрашивается:"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仍会询问："
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "仍會詢問："
+          }
+        }
+      }
+    },
+    "Teammates and remote callers on a shared agent." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Teammitglieder und entfernte Aufrufer bei einem geteilten Agenten."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "공유된 에이전트의 팀원과 원격 호출자."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Участники команды и удалённые вызовы общего агента."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "共享智能体上的队友和远程调用方。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "共享智能體上的隊友和遠端呼叫方。"
+          }
+        }
+      }
+    },
+    "This Agent" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieser Agent"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 에이전트"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот агент"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此智能体"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此智能體"
           }
         }
       }
@@ -1092,6 +2180,176 @@
         }
       }
     },
+    "This agent's policy for this tool is Auto." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Richtlinie dieses Agenten für dieses Tool ist „Auto“."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 에이전트에서 이 도구의 정책은 '자동'입니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Правило этого агента для этого инструмента — «Авто»."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此智能体对该工具的策略为“自动”。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此智能體對該工具的策略為「自動」。"
+          }
+        }
+      }
+    },
+    "This agent's Tool Approvals is set to Never Ask." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Die Tool-Genehmigungen dieses Agenten stehen auf „Nie fragen“."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 에이전트의 도구 승인이 '묻지 않기'로 설정되어 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для этого агента в «Одобрении инструментов» выбрано «Никогда не спрашивать»."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此智能体的工具审批设为“从不询问”。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此智能體的工具審批設為「從不詢問」。"
+          }
+        }
+      }
+    },
+    "This tool will run without asking for every agent. You can change this under Tools & MCP → All Tools." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieses Tool läuft für alle Agenten ohne Nachfrage. Du kannst das unter Tools & MCP → All Tools ändern."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 도구는 모든 에이전트에서 묻지 않고 실행됩니다. 도구 및 MCP → All Tools에서 변경할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот инструмент будет выполняться без запроса для всех агентов. Изменить это можно в разделе «Инструменты и MCP» → All Tools."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此工具将对所有智能体直接运行，无需询问。你可以在“工具与 MCP → 所有工具”中更改。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此工具將對所有智能體直接執行，無需詢問。你可以在「工具與 MCP → 所有工具」中變更。"
+          }
+        }
+      }
+    },
+    "This tool will run without asking in %@'s chats and runs. Other agents still ask. You can change this on %@'s Tools tab." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dieses Tool läuft in den Chats und Läufen von %1$@ ohne Nachfrage. Andere Agenten fragen weiterhin. Du kannst das im Tab „Tools“ von %2$@ ändern."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 도구는 %1$@의 채팅과 실행에서 묻지 않고 실행됩니다. 다른 에이전트는 계속 묻습니다. %2$@의 도구 탭에서 변경할 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Этот инструмент будет выполняться без запроса в чатах и запусках агента %1$@. Другие агенты по-прежнему спрашивают. Изменить это можно на вкладке «Инструменты» агента %2$@."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此工具将在 %1$@ 的聊天和运行中直接运行，无需询问。其他智能体仍会询问。你可以在 %2$@ 的“工具”标签页中更改。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此工具將在 %1$@ 的聊天和執行中直接執行，無需詢問。其他智能體仍會詢問。你可以在 %2$@ 的「工具」分頁中變更。"
+          }
+        }
+      }
+    },
+    "This turns off Auto-Allow All Tool Calls for every agent." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Dadurch wird „Alle Tool-Aufrufe automatisch erlauben“ für alle Agenten deaktiviert."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모든 에이전트에 대해 '모든 도구 호출 자동 허용'이 꺼집니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Это отключит «Автоматически разрешать все вызовы инструментов» для всех агентов."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "这会为所有智能体关闭“自动允许所有工具调用”。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "這會為所有智能體關閉「自動允許所有工具呼叫」。"
+          }
+        }
+      }
+    },
     "Tick the box above to send." : {
       "localizations" : {
         "de" : {
@@ -1122,6 +2380,244 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "勾選上方的核取方塊即可傳送。"
+          }
+        }
+      }
+    },
+    "Tool Approvals" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tool-Genehmigungen"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "도구 승인"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Одобрение инструментов"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工具审批"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工具審批"
+          }
+        }
+      }
+    },
+    "Tool calls will run without showing an approval card, including tools that can run code, modify files, or send data. %@ You can turn this off at any time under Tools & MCP → All Tools." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tool-Aufrufe laufen ohne Genehmigungskarte, auch Tools, die Code ausführen, Dateien ändern oder Daten senden können. %@ Du kannst dies jederzeit unter Tools & MCP → All Tools deaktivieren."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "코드를 실행하거나 파일을 수정하거나 데이터를 보낼 수 있는 도구를 포함해 도구 호출이 승인 카드 없이 실행됩니다. %@ 언제든지 도구 및 MCP → All Tools에서 끌 수 있습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вызовы инструментов будут выполняться без карточки одобрения, включая инструменты, которые могут запускать код, изменять файлы или отправлять данные. %@ Это можно отключить в любой момент в разделе «Инструменты и MCP» → All Tools."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工具调用将在不显示审批卡片的情况下运行，包括可以运行代码、修改文件或发送数据的工具。%@ 你可以随时在“工具与 MCP → 所有工具”中关闭此功能。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工具呼叫將在不顯示審批卡片的情況下執行，包括可以執行程式碼、修改檔案或傳送資料的工具。%@ 你可以隨時在「工具與 MCP → 所有工具」中關閉此功能。"
+          }
+        }
+      }
+    },
+    "Tools set to Ask always show an approval card for this agent, even when Auto-Allow All Tool Calls is on." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tools mit „Fragen“ zeigen für diesen Agenten immer eine Genehmigungskarte, auch wenn „Alle Tool-Aufrufe automatisch erlauben“ aktiviert ist."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "묻기로 설정된 도구는 '모든 도구 호출 자동 허용'이 켜져 있어도 이 에이전트에서 항상 승인 카드를 표시합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Для этого агента инструменты с «Просить» всегда показывают карточку одобрения, даже если включено «Автоматически разрешать все вызовы инструментов»."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "即使开启了“自动允许所有工具调用”，设为“询问”的工具也始终会为此智能体显示审批卡片。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "即使開啟了「自動允許所有工具呼叫」，設為「詢問」的工具也始終會為此智能體顯示審批卡片。"
+          }
+        }
+      }
+    },
+    "Tools set to Ask show an approval card, as set under Tools & MCP → All Tools." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tools mit „Fragen“ zeigen eine Genehmigungskarte, wie unter Tools & MCP → All Tools festgelegt."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "묻기로 설정된 도구는 도구 및 MCP → All Tools의 설정에 따라 승인 카드를 표시합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Инструменты с «Просить» показывают карточку одобрения, как задано в разделе «Инструменты и MCP» → All Tools."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "设为“询问”的工具会按“工具与 MCP → 所有工具”中的设置显示审批卡片。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設為「詢問」的工具會按「工具與 MCP → 所有工具」中的設定顯示審批卡片。"
+          }
+        }
+      }
+    },
+    "Tools set to Deny, which never run." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Tools mit „Ablehnen“, die nie ausgeführt werden."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "거부로 설정된 도구는 실행되지 않습니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Инструменты с «Отрицать» — они никогда не выполняются."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "设为“拒绝”的工具，永远不会运行。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "設為「拒絕」的工具，永遠不會執行。"
+          }
+        }
+      }
+    },
+    "Use Global Setting" : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Globale Einstellung verwenden"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "전역 설정 사용"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Использовать общую настройку"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用全局设置"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用全域設定"
+          }
+        }
+      }
+    },
+    "Workflow runs keep their own approvals." : {
+      "localizations" : {
+        "de" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Workflow-Läufe behalten ihre eigenen Genehmigungen."
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "워크플로 실행은 자체 승인 설정을 유지합니다."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запуски рабочих процессов сохраняют собственные одобрения."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工作流运行保留各自的审批设置。"
+          }
+        },
+        "zh-Hant" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工作流程執行保留各自的審批設定。"
           }
         }
       }

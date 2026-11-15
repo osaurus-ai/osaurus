@@ -1005,7 +1005,9 @@ public enum SettingsSearchIndex {
                 "tool permission", "tool permissions", "approve tools",
                 "approval", "always allow", "never ask", "tool prompt",
             ],
-            subTab: "All"
+            subTab: "All",
+            disambiguation:
+                "Global switch for every agent: tools set to Ask run without an approval card. Tools set to Deny, sends and deletes, configuration changes, delegation, image and video costs, AppleScript confirmation, Computer or Browser Use, and teammates on a shared agent still ask. To turn approvals off or keep them on for one custom agent instead, use Tool Approvals on that agent's Tools tab, which can override this switch either way."
         ),
         .init(
             id: "settings.chat.spellCheck",
@@ -3643,6 +3645,36 @@ public enum SettingsSearchIndex {
             subTab: "capabilities",
             disambiguation:
                 "Per-custom-agent switch in Abilities → Tools. Off: the agent sees every installed skill. On: only the ticked skills appear in its prompt, capabilities_load and slash commands. Installing skill content is Skills in the sidebar, not this card. Declarative: agents[].skills (omit = unchanged, null = all skills, list = only these).",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.toolApprovals",
+            tab: .agents,
+            section: "Abilities → Tools",
+            title: "Tool Approvals",
+            keywords: [
+                "tool approvals", "approval", "approvals", "never ask", "don't ask", "stop asking",
+                "disable approvals", "turn off approvals", "skip approval", "approval card",
+                "permission prompt", "auto approve", "auto-approve", "per agent approvals",
+                "tool_approvals", "use global setting",
+            ],
+            subTab: "capabilities",
+            disambiguation:
+                "At the top of a custom agent's Tools tab: Use Global Setting (follows Auto-Allow All Tool Calls under Tools & MCP → All Tools), Ask (always show approval cards for this agent, even with that switch on), or Never Ask (skip approval cards for this agent, after a confirmation). Never Ask skips only the standard card: tools set to Deny, sends and deletes, configuration changes, delegation, image and video costs, AppleScript confirmation, Computer or Browser Use, and teammates on a shared agent still ask. Does not apply inside workflow runs or to built-in agents. Turning on Never Ask through a configuration change is marked high risk on its review card.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.toolPolicies",
+            tab: .agents,
+            section: "Abilities → Tools",
+            title: "Per-Tool Policies",
+            keywords: [
+                "tool policy", "tool policies", "per tool policy", "auto ask deny", "block tool",
+                "deny tool", "always allow for agent", "agent tool permission", "tools.policies",
+            ],
+            subTab: "capabilities",
+            disambiguation:
+                "Auto, Ask or Deny for one tool in one custom agent, from the policy menu on an enabled tool's row in that agent's Tools tab (Default follows the policy under Tools & MCP → All Tools). Reset All clears them. A Deny under Tools & MCP → All Tools always wins, and send and delete tools ask every time whatever is set. Does not apply inside workflow runs. Setting a tool to Auto through a configuration change is marked high risk on its review card.",
             declarativeSection: "agents"
         ),
 

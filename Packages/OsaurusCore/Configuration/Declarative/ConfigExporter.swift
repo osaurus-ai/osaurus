@@ -228,6 +228,12 @@ enum ConfigExporter {
         entry.runtime = ConfigHarness.runtimeKey(for: agent.runtime)
         entry.claudeCode = agent.claudeCode.map { ConfigHarness.export($0, includeConfigWrites: false) }
         entry.sharedToolApproval = agent.sharedToolApproval
+        entry.toolApprovals = agent.settings.toolApprovalMode == .useGlobal ? nil : agent.settings.toolApprovalMode
+        if !agent.settings.toolPolicies.isEmpty {
+            var tools = entry.tools ?? AgentToolsEntry()
+            tools.policies = agent.settings.toolPolicies.mapValues(\.rawValue)
+            entry.tools = tools
+        }
         return entry
     }
 

@@ -141,6 +141,9 @@ enum CapabilityRowBuilder {
         /// macOS permissions an enabled Apple app still lacks; drives the
         /// "Permission needed" badge on that app's header.
         var appleAppMissingPermissions: [AppleApp: [SystemPermission]] = [:]
+        /// The saved custom agent whose own tool policies the enabled rows
+        /// show and edit. Nil for drafts and built-in agents.
+        var policyAgentId: UUID? = nil
     }
 
     /// Badge text on Apple rows explaining why one switch flips six tools.
@@ -269,24 +272,33 @@ enum CapabilityRowBuilder {
 
             for tool in toolsForRows {
                 let availability = availability(forTool: tool, input: input)
+                let enabled = input.enabledToolNames.contains(tool.name)
                 rows.append(
                     .tool(
                         id: "\(groupId)::tool::\(tool.name)",
                         name: tool.name,
                         description: tool.description,
-                        enabled: input.enabledToolNames.contains(tool.name),
+                        enabled: enabled,
                         availability: availability,
                         // Informational sources were filtered above; every
                         // tool that reaches this point is toggleable — Apple
                         // rows flip their whole app and say so.
                         groupToggleLabel: source.togglesAsGroup ? appleGroupToggleLabel : nil,
                         catalogTokens: tool.estimatedTokens,
-                        estimatedTokens: tool.estimatedTokens
+                        estimatedTokens: tool.estimatedTokens,
+                        policy: enabled ? toolPolicy(tool.name, agentId: input.policyAgentId) : nil
                     )
                 )
             }
         }
         return rows
+    }
+
+    static func toolPolicy(_ toolName: String, agentId: UUID?) -> CapabilityToolPolicy? {
+        guard let agentId, let info = ToolRegistry.shared.policyInfo(for: toolName, agentId: agentId) else {
+            return nil
+        }
+        return CapabilityToolPolicy(agentId: agentId, override: info.configuredPolicy, effective: info.effectivePolicy)
     }
 
     /// "Permission needed" on an enabled Apple app whose macOS grant is
@@ -591,6 +603,10 @@ struct AgentCapabilityManagerView: View {
                 filterChips
             }
 
+            if case .live(let agentId) = source, agentManager.agent(for: agentId)?.isBuiltIn == false {
+                AgentToolApprovalsCard(agentId: agentId)
+            }
+
             autoDiscoverCard
 
             if case .live(let agentId) = source, agentId != Agent.defaultId {
@@ -748,9 +764,17 @@ struct AgentCapabilityManagerView: View {
                 filter: filter,
                 expandedGroups: expandedGroups,
                 includesAppleApps: includesAppleApps,
-                appleAppMissingPermissions: appleAppMissingPermissions
+                appleAppMissingPermissions: appleAppMissingPermissions,
+                policyAgentId: policyAgentId
             )
         )
+    }
+
+    private var policyAgentId: UUID? {
+        guard case .live(let agentId) = source, agentManager.agent(for: agentId)?.isBuiltIn == false else {
+            return nil
+        }
+        return agentId
     }
 
     /// Permissions each enabled Apple app still lacks, from the permission

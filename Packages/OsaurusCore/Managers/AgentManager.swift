@@ -2172,4 +2172,27 @@ extension AgentManager {
         update(agent)
     }
 
+    /// Custom agents only: built-in agents always follow the global approval
+    /// settings (`ToolApprovalResolver.scope`).
+    public func updateToolApprovalMode(for agentId: UUID, mode: AgentToolApprovalMode) {
+        guard var agent = agent(for: agentId), !agent.isBuiltIn, agent.settings.toolApprovalMode != mode else { return }
+        agent.settings.toolApprovalMode = mode
+        update(agent)
+    }
+
+    /// Sets or, with nil, clears this agent's own policy for one tool.
+    public func updateToolPolicy(for agentId: UUID, tool: String, policy: ToolPermissionPolicy?) {
+        guard var agent = agent(for: agentId), !agent.isBuiltIn, agent.settings.toolPolicies[tool] != policy else {
+            return
+        }
+        agent.settings.toolPolicies[tool] = policy
+        update(agent)
+    }
+
+    public func resetToolPolicies(for agentId: UUID) {
+        guard var agent = agent(for: agentId), !agent.isBuiltIn, !agent.settings.toolPolicies.isEmpty else { return }
+        agent.settings.toolPolicies = [:]
+        update(agent)
+    }
+
 }

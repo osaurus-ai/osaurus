@@ -31,6 +31,9 @@ struct ToolCallItem: Equatable {
     /// there would vanish from history as soon as the next send began).
     /// A repeating loop should be VISIBLE, not just internally counted.
     var repeatCount: Int = 1
+    /// Why the call ran without its approval card; shown as "Ran without
+    /// asking". Nil when it asked or never needed to.
+    var approvalSkip: ToolApprovalSkipReason? = nil
 
     static func == (lhs: ToolCallItem, rhs: ToolCallItem) -> Bool {
         lhs.call.id == rhs.call.id && lhs.call.type == rhs.call.type
@@ -38,6 +41,7 @@ struct ToolCallItem: Equatable {
             && lhs.call.function.arguments == rhs.call.function.arguments
             && lhs.result == rhs.result && lhs.duration == rhs.duration
             && lhs.repeatCount == rhs.repeatCount && lhs.unobservedResult == rhs.unobservedResult
+            && lhs.approvalSkip == rhs.approvalSkip
     }
 }
 
@@ -978,7 +982,8 @@ extension ContentBlock {
                             ToolCallItem(
                                 call: call, result: result,
                                 duration: turn.toolCallDurations[call.id],
-                                repeatCount: repeatCounts?[call.id] ?? 1)
+                                repeatCount: repeatCounts?[call.id] ?? 1,
+                                approvalSkip: turn.toolCallApprovalSkips[call.id])
                         )
                         flushRegularItems()
                         turnBlocks.append(
@@ -1006,7 +1011,8 @@ extension ContentBlock {
                             ToolCallItem(
                                 call: call, result: result,
                                 duration: turn.toolCallDurations[call.id],
-                                repeatCount: repeatCounts?[call.id] ?? 1)
+                                repeatCount: repeatCounts?[call.id] ?? 1,
+                                approvalSkip: turn.toolCallApprovalSkips[call.id])
                         )
                         flushRegularItems()
                         turnBlocks.append(
@@ -1045,7 +1051,8 @@ extension ContentBlock {
                             ToolCallItem(
                                 call: call, result: result,
                                 duration: turn.toolCallDurations[call.id],
-                                repeatCount: repeatCounts?[call.id] ?? 1)
+                                repeatCount: repeatCounts?[call.id] ?? 1,
+                                approvalSkip: turn.toolCallApprovalSkips[call.id])
                         )
                     }
                 }

@@ -15,7 +15,7 @@ import os
 
 @testable import OsaurusCore
 
-@Suite(.serialized)
+@Suite(.serialized, .toolPermissionPromptQueue)
 @MainActor
 struct SyncHostedRunTests {
     private final class Recorder<T>: @unchecked Sendable {

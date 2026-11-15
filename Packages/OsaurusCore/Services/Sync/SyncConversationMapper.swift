@@ -76,7 +76,7 @@ enum SyncConversationMapper {
     /// Turn app data fields this version writes.
     static let turnOwnedKeys: Set<String> = [
         "v", "id", "role", "thinking", "thinkingDuration", "toolCalls", "toolResults", "toolCallDurations",
-        "attachments", "sharedArtifacts", "createdAt", "completedAt", "lastOutputAt", "requestedAt",
+        "toolCallApprovalSkips", "attachments", "sharedArtifacts", "createdAt", "completedAt", "lastOutputAt", "requestedAt",
         "generationTokenCount", "inputTokenCount", "cachedInputTokenCount", "timeToFirstToken",
         "generationTokensPerSecond", "modelLoadSeconds", "terminalStopReason", "reasoningItemId",
         "reasoningEncrypted", "responsesOutputItems", "modelContextExcluded", "routerBilling",

@@ -87,9 +87,18 @@ struct MenuPill<MenuContent: View, Label: View>: View {
 
 /// Reusable permission-behavior selector menu for a single tool entry.
 struct ToolPolicyMenu: View {
+    /// Where the choice is stored. `agent` writes the agent's own policy
+    /// (`AgentSettings.toolPolicies`) and adds **Default**, which clears it;
+    /// `info` must then come from `policyInfo(for:agentId:)`.
+    enum Scope: Equatable {
+        case global
+        case agent(UUID)
+    }
+
     @Environment(\.theme) private var theme
     let toolName: String
     let info: ToolRegistry.ToolPolicyInfo
+    var scope: Scope = .global
     let onChange: () -> Void
 
     private var color: Color {
@@ -103,21 +112,53 @@ struct ToolPolicyMenu: View {
         ToolRegistry.shared.requiresPerCallApproval(toolName) ? [.ask, .deny] : [.auto, .ask, .deny]
     }
 
+    /// In agent scope `defaultPolicy` is the global effective policy. A
+    /// global Deny cannot be loosened by an agent.
+    private var globalDenies: Bool { scope != .global && info.defaultPolicy == .deny }
+
+    private func isSelected(_ policy: ToolPermissionPolicy) -> Bool {
+        scope == .global ? policy == info.effectivePolicy : policy == info.configuredPolicy
+    }
+
+    private func choose(_ policy: ToolPermissionPolicy?) {
+        switch scope {
+        case .global:
+            if let policy { ToolRegistry.shared.setPolicy(policy, for: toolName) }
+        case .agent(let agentId):
+            AgentManager.shared.updateToolPolicy(for: agentId, tool: toolName, policy: policy)
+        }
+        onChange()
+    }
+
     var body: some View {
         MenuPill {
-            ForEach(offeredPolicies, id: \.self) { policy in
+            if scope != .global {
                 Button {
-                    ToolRegistry.shared.setPolicy(policy, for: toolName)
-                    onChange()
+                    choose(nil)
                 } label: {
                     HStack {
-                        Image(systemName: ToolPolicyStyle.icon(for: policy))
-                        Text(ToolPolicyStyle.title(for: policy))
-                        if policy == info.effectivePolicy {
+                        Text(
+                            "Default (\(ToolPolicyStyle.title(for: info.defaultPolicy)))", bundle: .module)
+                        if info.configuredPolicy == nil {
                             Image(systemName: "checkmark")
                         }
                     }
                 }
+                Divider()
+            }
+            ForEach(offeredPolicies, id: \.self) { policy in
+                Button {
+                    choose(policy)
+                } label: {
+                    HStack {
+                        Image(systemName: ToolPolicyStyle.icon(for: policy))
+                        Text(ToolPolicyStyle.title(for: policy))
+                        if isSelected(policy) {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+                .disabled(globalDenies && policy != .deny)
             }
         } label: {
             HStack(spacing: theme.space.s4) {
@@ -133,13 +174,25 @@ struct ToolPolicyMenu: View {
             .foregroundStyle(color)
         }
         .fixedSize()
-        .help(Text("Choose whether this tool runs automatically, asks first, or is blocked", bundle: .module))
+        .help(helpText)
         .accessibilityLabel(
             Text(
                 "Permission behavior for \(toolName): \(ToolPolicyStyle.title(for: info.effectivePolicy))",
                 bundle: .module
             )
         )
+    }
+
+    private var helpText: Text {
+        if globalDenies {
+            return Text("Blocked for every agent under Tools & MCP → All Tools", bundle: .module)
+        }
+        if scope != .global {
+            return Text(
+                "Choose whether this tool runs automatically, asks first, or is blocked for this agent. Default follows Tools & MCP → All Tools.",
+                bundle: .module)
+        }
+        return Text("Choose whether this tool runs automatically, asks first, or is blocked", bundle: .module)
     }
 }
 

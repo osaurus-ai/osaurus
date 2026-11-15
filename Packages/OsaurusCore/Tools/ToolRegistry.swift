@@ -857,7 +857,14 @@ public final class ToolRegistry: ObservableObject {
     /// Used by parallel tool batches: approvals resolve serially in model
     /// order first, then the approved set executes concurrently with
     /// `execute(..., permissionGateResolved: true)`.
-    func resolvePermissionGate(name rawName: String, argumentsJSON: String) async throws {
+    ///
+    /// Returns why the call will run without its approval card, if a
+    /// setting skipped one; the batch records it against its call id.
+    @discardableResult
+    func resolvePermissionGate(
+        name rawName: String,
+        argumentsJSON: String
+    ) async throws -> ToolApprovalSkipReason? {
         let name = resolvedRegisteredName(for: rawName)
         // External-surface deny happens BEFORE the gate so a denied tool
         // can never pop an approval prompt from an external request.
@@ -871,8 +878,8 @@ public final class ToolRegistry: ObservableObject {
                 ]
             )
         }
-        guard dynamicGrantRefusal(for: name) == nil, readOnlyFolderRefusal(for: name) == nil else { return }
-        guard let tool = toolsByName[name] else { return }
+        guard dynamicGrantRefusal(for: name) == nil, readOnlyFolderRefusal(for: name) == nil else { return nil }
+        guard let tool = toolsByName[name] else { return nil }
         // Preflight first, mirroring `execute`: a batch member that cannot
         // pass schema validation must not raise an approval card, and the
         // card must show the coerced arguments the body will receive.
@@ -881,8 +888,8 @@ public final class ToolRegistry: ObservableObject {
         // user is shown.
         guard case .ready(let effectiveArgumentsJSON) = await Self.preflight(
             tool: tool, name: name, argumentsJSON: argumentsJSON)
-        else { return }
-        try await runPermissionGate(
+        else { return nil }
+        return try await runPermissionGate(
             tool: tool,
             name: name,
             argumentsJSON: effectiveArgumentsJSON
@@ -974,11 +981,20 @@ public final class ToolRegistry: ObservableObject {
     /// The permission gate shared by `execute` and `resolvePermissionGate`:
     /// system-permission prompts, the per-tool ask/deny/auto policy
     /// (including the user approval prompt), and `.auto` grant backfill.
-    private func runPermissionGate(tool: OsaurusTool, name: String, argumentsJSON: String) async throws {
+    /// Returns why the call ran without its approval card, when a user or
+    /// agent setting skipped one, for the audit marker.
+    @discardableResult
+    private func runPermissionGate(
+        tool: OsaurusTool,
+        name: String,
+        argumentsJSON: String
+    ) async throws -> ToolApprovalSkipReason? {
         let approvalArgumentsJSON = SecretArgumentScrubber.recordedArguments(
             toolName: name,
             argumentsJSON: argumentsJSON
         )
+        let agentScope = ToolApprovalResolver.currentScope
+        var skipReason: ToolApprovalSkipReason?
         if let permissioned = tool as? PermissionedTool {
             let requirements = permissioned.requirements
             // Computer Use funnel: this gate is the one chokepoint every real
@@ -1023,17 +1039,20 @@ public final class ToolRegistry: ObservableObject {
             }
 
             let defaultPolicy = permissioned.defaultPermissionPolicy
-            var effectivePolicy = configuration.policy[name] ?? defaultPolicy
+            let globalPolicy = configuration.policy[name] ?? defaultPolicy
+            var effectivePolicy = ToolApprovalResolver.policy(tool: name, global: globalPolicy, scope: agentScope)
             // Argument-aware narrowing (strictest wins): a contextual tool
             // resolves this specific invocation's policy from its arguments
             // (e.g. the destination binding's outbound mode for
             // `agent_channel_publish`). The configured/user policy can narrow
             // the contextual result and the contextual result can narrow the
             // configured policy; neither can loosen the other.
+            var contextualPolicy: ToolPermissionPolicy?
             if let contextual = tool as? ContextualPermissionedTool {
                 let resolved = await contextual.resolveContextualPermissionPolicy(
                     argumentsJSON: argumentsJSON
                 )
+                contextualPolicy = resolved
                 effectivePolicy = ToolPermissionPolicy.strictest(effectivePolicy, resolved)
             }
             // A per-call tool refuses every pre-grant: the run lease and the
@@ -1129,12 +1148,16 @@ public final class ToolRegistry: ObservableObject {
                     // moves into the outbox rather than blocking the run on a
                     // card nobody can answer.
                     approved = true
-                } else if ToolApprovalSettings.autoAllowAll, !perCallApproval {
-                    // User opted into the global auto-allow chat setting: skip
-                    // the interactive card. Only reachable where a card would
-                    // have been shown, so external/headless denials above win.
-                    // A per-call tool opts out: "auto-allow tools" is not
-                    // consent to destroy a knowledge collection unseen.
+                } else if let reason = ToolApprovalResolver.cardSkipReason(
+                    scope: agentScope, perCallApproval: perCallApproval)
+                {
+                    // The global auto-allow switch, or this agent's Never
+                    // Ask: skip the interactive card. Only reachable where a
+                    // card would have been shown, so external/headless
+                    // denials above win. A per-call tool opts out: "auto-allow
+                    // tools" is not consent to destroy a knowledge collection
+                    // unseen.
+                    skipReason = reason
                     approved = true
                 } else {
                     // A knowledge write renders paths + diffs instead of the
@@ -1143,6 +1166,7 @@ public final class ToolRegistry: ObservableObject {
                     let writePreview =
                         await (tool as? KnowledgeWritePreviewingTool)?
                         .approvalPreview(argumentsJSON: approvalArgumentsJSON)
+                    let settled = SilentSettleNote()
                     let outcome = await ToolPermissionPromptService.requestApprovalOutcome(
                         toolName: name,
                         description: tool.description,
@@ -1150,8 +1174,17 @@ public final class ToolRegistry: ObservableObject {
                         argumentsJSON: approvalArgumentsJSON,
                         knowledgeWritePreview: writePreview,
                         perCallApprovalOnly: perCallApproval,
-                        executionSurface: executionSurface(for: name, argumentsJSON: argumentsJSON)
+                        executionSurface: executionSurface(for: name, argumentsJSON: argumentsJSON),
+                        agentChoice: perCallApproval ? nil : agentScope?.approvalChoice,
+                        revalidate: queuedCardRevalidation(
+                            name: name,
+                            defaultPolicy: defaultPolicy,
+                            contextualPolicy: contextualPolicy,
+                            perCallApproval: perCallApproval,
+                            note: settled
+                        )
                     )
+                    skipReason = settled.reason
                     switch outcome {
                     case .denied:
                         approved = false
@@ -1183,6 +1216,8 @@ public final class ToolRegistry: ObservableObject {
                     )
                 }
             case .auto:
+                skipReason = ToolApprovalResolver.policySkipReason(
+                    tool: name, global: globalPolicy, effective: effectivePolicy, scope: agentScope)
                 // Filter out system permissions from per-tool grant requirements
                 let nonSystemRequirements = requirements.filter { !SystemPermissionService.isSystemPermission($0) }
                 // Auto-grant missing requirements when policy is .auto
@@ -1196,7 +1231,10 @@ public final class ToolRegistry: ObservableObject {
             }
         } else {
             // Default for tools without requirements: auto-run unless explicitly denied
-            let effectivePolicy = configuration.policy[name] ?? .auto
+            let globalPolicy = configuration.policy[name] ?? .auto
+            let effectivePolicy = ToolApprovalResolver.policy(tool: name, global: globalPolicy, scope: agentScope)
+            skipReason = ToolApprovalResolver.policySkipReason(
+                tool: name, global: globalPolicy, effective: effectivePolicy, scope: agentScope)
             if effectivePolicy == .deny {
                 throw NSError(
                     domain: "ToolRegistry",
@@ -1211,16 +1249,29 @@ public final class ToolRegistry: ObservableObject {
                     // Headless eval with no UI: deny instead of hanging on an
                     // approval card nobody can click (see task-local doc).
                     approved = false
-                } else if ToolApprovalSettings.autoAllowAll {
+                } else if let reason = ToolApprovalResolver.cardSkipReason(
+                    scope: agentScope, perCallApproval: false)
+                {
+                    skipReason = reason
                     approved = true
                 } else {
+                    let settled = SilentSettleNote()
                     approved = await ToolPermissionPromptService.requestApproval(
                         toolName: name,
                         description: tool.description,
                         descriptionIsForModel: true,
                         argumentsJSON: approvalArgumentsJSON,
-                        executionSurface: executionSurface(for: name, argumentsJSON: argumentsJSON)
+                        executionSurface: executionSurface(for: name, argumentsJSON: argumentsJSON),
+                        agentChoice: agentScope?.approvalChoice,
+                        revalidate: queuedCardRevalidation(
+                            name: name,
+                            defaultPolicy: .auto,
+                            contextualPolicy: nil,
+                            perCallApproval: false,
+                            note: settled
+                        )
                     )
+                    skipReason = settled.reason
                 }
                 if !approved {
                     throw NSError(
@@ -1229,6 +1280,52 @@ public final class ToolRegistry: ObservableObject {
                         userInfo: [NSLocalizedDescriptionKey: "User denied execution for tool: \(name)"]
                     )
                 }
+            }
+        }
+        return skipReason
+    }
+
+    /// Why a queued card settled without being shown, for the audit marker.
+    @MainActor private final class SilentSettleNote {
+        var reason: ToolApprovalSkipReason?
+    }
+
+    /// Re-runs the gate's policy steps right before a queued card would show,
+    /// so an answer given while it waited (Always Allow, an agent entry, a
+    /// run lease, a policy changed to Deny) settles it without a second card.
+    /// Per-call tools always show theirs.
+    private func queuedCardRevalidation(
+        name: String,
+        defaultPolicy: ToolPermissionPolicy,
+        contextualPolicy: ToolPermissionPolicy?,
+        perCallApproval: Bool,
+        note: SilentSettleNote
+    ) -> ToolPermissionPromptService.Revalidation? {
+        guard !perCallApproval else { return nil }
+        let agentId = ChatExecutionContext.currentAgentId
+        let inWorkflowRun = ChatExecutionContext.currentWorkflowRunId != nil
+        let runScope = ChatExecutionContext.toolPermissionRunScope
+        return { @MainActor [weak self] () -> ToolPermissionPromptService.PromptResolution? in
+            guard let self else { return nil }
+            let global = self.configuration.policy[name] ?? defaultPolicy
+            let scope = ToolApprovalResolver.scope(agentId: agentId, inWorkflowRun: inWorkflowRun)
+            var policy = ToolApprovalResolver.policy(tool: name, global: global, scope: scope)
+            if let contextualPolicy {
+                policy = ToolPermissionPolicy.strictest(policy, contextualPolicy)
+            }
+            switch policy {
+            case .deny:
+                return .denied
+            case .auto:
+                note.reason = ToolApprovalResolver.policySkipReason(
+                    tool: name, global: global, effective: policy, scope: scope)
+                return .allowOnce
+            case .ask:
+                if runScope?.allows(name) == true { return .allowOnce }
+                guard let reason = ToolApprovalResolver.cardSkipReason(scope: scope, perCallApproval: false)
+                else { return nil }
+                note.reason = reason
+                return .allowOnce
             }
         }
     }
@@ -1558,10 +1655,13 @@ public final class ToolRegistry: ObservableObject {
             // serially in model order BEFORE executing concurrently, so
             // approval prompts never stack or race).
             if !permissionGateResolved {
-                try await runPermissionGate(
-                    tool: tool,
-                    name: name,
-                    argumentsJSON: effectiveArgumentsJSON
+                try await ToolApprovalAudit.record(
+                    runPermissionGate(
+                        tool: tool,
+                        name: name,
+                        argumentsJSON: effectiveArgumentsJSON
+                    ),
+                    callId: ChatExecutionContext.currentToolCallId
                 )
             }
             // Approval can suspend while the user revokes the capability.
@@ -2541,6 +2641,30 @@ public final class ToolRegistry: ObservableObject {
     }
 
     /// Returns policy and requirements information for a given tool
+    /// What the gate does for this tool in one custom agent's runs: the
+    /// agent's own policy replaces the global one unless that is Deny.
+    /// `configuredPolicy` is the agent's override; nil means Default.
+    func policyInfo(for name: String, agentId: UUID) -> ToolPolicyInfo? {
+        guard let global = policyInfo(for: name) else { return nil }
+        let scope = ToolApprovalResolver.scope(agentId: agentId, inWorkflowRun: false)
+        let override = scope?.policies[name]
+        var effective = ToolApprovalResolver.policy(
+            tool: name, global: configuration.policy[name] ?? global.defaultPolicy, scope: scope)
+        if effective == .auto, requiresPerCallApproval(name) {
+            effective = .ask
+        }
+        return ToolPolicyInfo(
+            isPermissioned: global.isPermissioned,
+            defaultPolicy: global.effectivePolicy,
+            configuredPolicy: override,
+            effectivePolicy: effective,
+            requirements: global.requirements,
+            grantsByRequirement: global.grantsByRequirement,
+            systemPermissions: global.systemPermissions,
+            systemPermissionStates: global.systemPermissionStates
+        )
+    }
+
     func policyInfo(for name: String) -> ToolPolicyInfo? {
         guard let tool = toolsByName[name] else { return nil }
         let isPermissioned = (tool as? PermissionedTool) != nil

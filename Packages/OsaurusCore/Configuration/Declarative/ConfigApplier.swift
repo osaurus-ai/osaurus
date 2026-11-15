@@ -793,7 +793,18 @@ enum ConfigApplier {
         }
         let name = entry.name.trimmingCharacters(in: .whitespacesAndNewlines)
         if !name.isEmpty { agent.name = name }
-        return patch(&agent, from: entry)
+        // Loosening approvals is high risk and a draft skips the plan
+        // review that flags it, so it is set on the saved agent instead.
+        let approvalsRequested = entry.toolApprovals != nil || entry.tools?.policies?.isEmpty == false
+        entry.toolApprovals = nil
+        entry.tools?.policies = nil
+        var outcome = patch(&agent, from: entry)
+        if approvalsRequested {
+            outcome.notes.append(
+                "tool_approvals / tools.policies: not set on a draft. After creating the agent, "
+                    + "set them on its Tools tab or with osaurus_config.")
+        }
+        return outcome
     }
 
     @MainActor
@@ -848,6 +859,11 @@ enum ConfigApplier {
         patchRuntime(&agent, from: entry, outcome: &outcome)
         if let policy = entry.sharedToolApproval {
             agent.sharedToolApproval = policy == .deny ? nil : policy
+        }
+        if let mode = entry.toolApprovals { agent.settings.toolApprovalMode = mode }
+        for (tool, raw) in entry.tools?.policies ?? [:] {
+            guard let value = AgentToolPolicyValue(raw) else { continue }
+            agent.settings.toolPolicies[tool] = value.policy
         }
         guard let caps = entry.capabilities else { return outcome }
         patchCapabilities(&agent, from: caps)

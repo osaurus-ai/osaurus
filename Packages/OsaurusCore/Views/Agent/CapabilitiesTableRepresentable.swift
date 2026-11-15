@@ -64,15 +64,27 @@ enum CapabilityRow: Equatable, Identifiable {
         /// host maps it onto the group.
         groupToggleLabel: String?,
         catalogTokens: Int,
-        estimatedTokens: Int
+        estimatedTokens: Int,
+        /// The agent's policy menu; nil hides it (tool off, draft agent, or
+        /// built-in agent).
+        policy: CapabilityToolPolicy? = nil
     )
 
     var id: String {
         switch self {
         case .groupHeader(let id, _, _, _, _, _, _): return "gh-\(id)"
-        case .tool(let id, _, _, _, _, _, _, _): return "tool-\(id)"
+        case .tool(let id, _, _, _, _, _, _, _, _): return "tool-\(id)"
         }
     }
+}
+
+/// A custom agent's own policy for one enabled tool, as the row shows it.
+/// Carried by value so a policy change re-renders the row.
+struct CapabilityToolPolicy: Equatable {
+    let agentId: UUID
+    /// The agent's override; nil is Default.
+    let override: ToolPermissionPolicy?
+    let effective: ToolPermissionPolicy
 }
 
 /// Bundles all per-render context the coordinator needs to configure cells.
@@ -466,7 +478,8 @@ extension CapabilitiesTableRepresentable {
                     let availability,
                     let groupToggleLabel,
                     let catalogTokens,
-                    let estimatedTokens
+                    let estimatedTokens,
+                    let policy
                 ) = row, let theme = ctx?.theme
             else { return nil }
             return ThemedContent(
@@ -480,6 +493,7 @@ extension CapabilitiesTableRepresentable {
                     groupToggleLabel: groupToggleLabel,
                     catalogTokens: catalogTokens,
                     estimatedTokens: estimatedTokens,
+                    policy: policy,
                     isHovered: isHovered,
                     onToggle: { [weak self] in self?.ctx?.onToggleTool?(id, enabled) }
                 )
@@ -759,6 +773,7 @@ struct ToolRowCell: View {
     let groupToggleLabel: String?
     let catalogTokens: Int
     let estimatedTokens: Int
+    var policy: CapabilityToolPolicy? = nil
     let isHovered: Bool
     let onToggle: () -> Void
 
@@ -800,6 +815,10 @@ struct ToolRowCell: View {
             }.catalogLayoutTarget("component.library.48.elements.layout.toolRowCell.body.verticalGap")
 
             Spacer()
+
+            if let policy, let info = ToolRegistry.shared.policyInfo(for: name, agentId: policy.agentId) {
+                ToolPolicyMenu(toolName: name, info: info, scope: .agent(policy.agentId), onChange: {})
+            }
 
             TokenBadge(count: catalogTokens)
                 .help(

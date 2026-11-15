@@ -599,8 +599,35 @@ public struct AgentCapabilitiesEntry: Codable, Equatable, Sendable {
 public struct AgentToolsEntry: Codable, Equatable, Sendable {
     public var mode: String?
     public var enabled: [String]?
+    /// Tool name → this agent's own policy (`auto | ask | deny`, or
+    /// `default` to clear it). Only the listed tools change. A global Deny
+    /// still wins; `auto` is high risk.
+    public var policies: [String: String]?
 
     public init() {}
+}
+
+/// One `agents[].tools.policies` value: a policy, or `default` to clear the
+/// agent's own policy so the global one applies.
+enum AgentToolPolicyValue: Equatable {
+    case policy(ToolPermissionPolicy)
+    case clear
+
+    init?(_ raw: String) {
+        let value = raw.lowercased()
+        if value == "default" {
+            self = .clear
+        } else if let policy = ToolPermissionPolicy(rawValue: value) {
+            self = .policy(policy)
+        } else {
+            return nil
+        }
+    }
+
+    var policy: ToolPermissionPolicy? {
+        if case .policy(let policy) = self { return policy }
+        return nil
+    }
 }
 
 /// Named group enablement (MCP servers by name, plugins by registry id).
@@ -704,6 +731,10 @@ public struct AgentEntry: Equatable, Sendable {
     /// What an `.ask` tool does when someone other than the owner drives
     /// this shared agent: `deny` (default) or `ask_owner`.
     public var sharedToolApproval: SharedToolApprovalPolicy?
+    /// Approval cards for this agent's `.ask` tools
+    /// (`AgentSettings.toolApprovalMode`): `use_global`, `ask`, or
+    /// `never_ask` (high risk). Absent preserves it.
+    public var toolApprovals: AgentToolApprovalMode?
     /// Read only when the entry creates the agent: `false` keeps the new
     /// agent out of the Orchestrator's spawn pool. Patching an existing
     /// agent ignores it, so the user's Settings → Subagents choice stays.
@@ -740,6 +771,7 @@ extension AgentEntry: Codable {
         case runtime
         case claudeCode = "claude_code"
         case sharedToolApproval = "shared_tool_approval"
+        case toolApprovals = "tool_approvals"
         case orchestratorSpawnable = "orchestrator_spawnable"
     }
 
@@ -772,6 +804,7 @@ extension AgentEntry: Codable {
         runtime = try c.decodeIfPresent(String.self, forKey: .runtime)
         claudeCode = try c.decodeIfPresent(AgentClaudeCodeEntry.self, forKey: .claudeCode)
         sharedToolApproval = try c.decodeIfPresent(SharedToolApprovalPolicy.self, forKey: .sharedToolApproval)
+        toolApprovals = try c.decodeIfPresent(AgentToolApprovalMode.self, forKey: .toolApprovals)
         orchestratorSpawnable = try c.decodeIfPresent(Bool.self, forKey: .orchestratorSpawnable)
     }
 
@@ -804,6 +837,7 @@ extension AgentEntry: Codable {
         try c.encodeIfPresent(runtime, forKey: .runtime)
         try c.encodeIfPresent(claudeCode, forKey: .claudeCode)
         try c.encodeIfPresent(sharedToolApproval, forKey: .sharedToolApproval)
+        try c.encodeIfPresent(toolApprovals, forKey: .toolApprovals)
         try c.encodeIfPresent(orchestratorSpawnable, forKey: .orchestratorSpawnable)
     }
 }

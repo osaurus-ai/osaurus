@@ -1407,7 +1407,8 @@ private struct OverviewTab: View {
                 ForEach(tools) { call in
                     DetailRow(
                         label: Text(verbatim: call.name),
-                        value: [call.arguments, call.result].compactMap { $0 }.joined(separator: "\n→ "),
+                        value: [call.arguments, call.result].compactMap { $0 }.joined(separator: "\n→ ")
+                            + (call.approvalSkip.map { "\n" + L("Ran without asking.") + " " + $0.displayDetail } ?? ""),
                         valueColor: call.isError ? theme.status.error.foreground : nil
                     )
                 }
@@ -1499,6 +1500,12 @@ private struct OverviewTab: View {
             if let t = details["transport"] { DetailRow(label: Text("Transport", bundle: .module), value: t) }
             if let h = details["execution_host"] { DetailRow(label: Text("Runs in", bundle: .module), value: h) }
             if let c = details["command"] { DetailRow(label: Text("Command", bundle: .module), value: c) }
+            if let skip = log.toolCalls?.lazy.compactMap(\.approvalSkip).first {
+                DetailRow(
+                    label: Text("Approval", bundle: .module),
+                    value: L("Ran without asking.") + " " + skip.displayDetail
+                )
+            }
         }
         if let args = details["arguments"], !args.isEmpty {
             codeBlock(icon: "arrow.up.circle", title: Text("Arguments sent", bundle: .module), code: args)
@@ -1794,6 +1801,11 @@ private struct OverviewTab: View {
                                     .foregroundColor(theme.text.secondary)
                                     .textSelection(.enabled)
                                     .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            if let skip = tool.approvalSkip {
+                                Text(verbatim: L("Ran without asking.") + " " + skip.displayDetail)
+                                    .textStyle(.footnote)
+                                    .foregroundColor(theme.text.tertiary)
                             }
                         }
                         Spacer()

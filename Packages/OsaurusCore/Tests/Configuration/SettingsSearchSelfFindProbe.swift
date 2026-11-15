@@ -662,6 +662,11 @@ struct SettingsSearchSelfFindProbe {
             // Agents → Abilities → Tools: the per-agent skill allow-list card.
             ("Limit to selected skills", "agents.skills"),
             ("skill allow-list", "agents.skills"),
+            // Agents → Abilities → Tools: per-agent approvals and policies.
+            ("Tool Approvals", "agents.toolApprovals"),
+            ("Use Global Setting", "agents.toolApprovals"),
+            ("never ask", "agents.toolApprovals"),
+            ("Per-Tool Policies", "agents.toolPolicies"),
             // Agents → Abilities → Overview: optional built-in tool cards.
             ("Calculator", "agents.calculator"),
             ("Redaction Tools", "agents.redactionTools"),
