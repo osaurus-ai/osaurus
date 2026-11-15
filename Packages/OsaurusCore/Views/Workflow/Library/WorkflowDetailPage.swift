@@ -2,14 +2,16 @@
 //  WorkflowDetailPage.swift
 //  osaurus
 //
-//  Workflows → one workflow, pushed over the home. One
-//  installed workflow on this Mac, runs first: what it is and whether it
-//  can run, its runs (live ones at the top, each opening on its run page),
-//  then what it does (what you give, the steps, what you get), what it
-//  needs before it runs, who can start it, tags, and saved answers. Share
-//  saves it as a file or publishes it to the store registry; once
-//  published, Manage Published opens its dashboard.
-//  The tool name agents call it by sits under Advanced.
+//  Workflows → one workflow. The header says whether it runs on its own
+//  and when next, with Pin, Edit, Share and Run now. Then when it runs
+//  (each automation as a sentence you change in place), what it does
+//  (what you give, the steps, what you get), what it needs before it
+//  runs, who can start it, tags, and saved answers. Recent runs sit in a
+//  column beside them when the window is wide, below when it is not: how
+//  the last runs went, then each run opening on its run page. Share saves
+//  it as a file or publishes it to the store registry; once published,
+//  Manage Published opens its dashboard. Rename is in the … menu; the
+//  tool name agents call it by sits under Advanced.
 //
 
 import SwiftUI
@@ -28,21 +30,33 @@ struct WorkflowDetailPage<Actions: View>: View {
     let onOpenRun: (UUID) -> Void
     /// Share: the chooser before publishing, the dashboard after.
     let onShare: (InstalledWorkflow) -> Void
-    let onRename: (InstalledWorkflow) -> Void
     /// Opens it in the Architect.
     let onEdit: (InstalledWorkflow) -> Void
     /// Back to the library.
     let onDone: () -> Void
+    /// Every run of it (Activity, filtered to this workflow).
+    let onSeeAllRuns: (InstalledWorkflow) -> Void
+    /// An automation added just before the page opened (the automate
+    /// popover, Home), shown in edit state once.
+    var takeHighlight: () -> UUID? = { nil }
     let actionMenu: (InstalledWorkflow) -> Actions
 
-    @State private var showsAllRuns = false
     /// Recorded runs, read when the page opens and when one of its runs
     /// ends; runs going now come from the store's live list.
     @State private var recordedRuns: [WorkflowRun] = []
     @State private var tagText = ""
     @State private var editingTags = false
+    @State private var highlightedAutomation: UUID?
+    @State private var pageWidth: CGFloat = 0
 
-    private static var collapsedRunCount: Int { 5 }
+    private static var shownRunCount: Int { 5 }
+    private static var healthRunCount: Int { 14 }
+    private static var runsColumnWidth: CGFloat { 300 }
+
+    /// Room for the reading column and the runs column beside it.
+    private var isWide: Bool {
+        pageWidth >= WorkflowLibraryLayout.columnWidth + Self.runsColumnWidth + theme.space.s24 * 3
+    }
 
     var body: some View {
         VStack(spacing: theme.space.s0) {
@@ -52,24 +66,36 @@ struct WorkflowDetailPage<Actions: View>: View {
                     VStack(alignment: .leading, spacing: theme.space.s24) {
                         hero(workflow, report: report)
                         nameNotice(workflow)
-                        recentRuns(workflow)
-                        whatItDoes(workflow)
-                        beforeItRuns(workflow, report: report)
-                        whoCanStart(workflow)
-                        tags(workflow)
-                        SavedAnswersSection(workflowID: workflow.id, definition: workflow.definition)
-                            .background(theme.surface.canvas)
-                        WorkflowStoredDataSection(workflowID: workflow.id, definition: workflow.definition)
-                            .background(theme.surface.canvas)
-                        advanced(workflow)
+                        HStack(alignment: .top, spacing: theme.space.s24) {
+                            VStack(alignment: .leading, spacing: theme.space.s24) {
+                                WorkflowAutomationsSection(workflow: workflow, highlighted: $highlightedAutomation)
+                                if !isWide { recentRuns(workflow) }
+                                whatItDoes(workflow)
+                                beforeItRuns(workflow, report: report)
+                                whoCanStart(workflow)
+                                tags(workflow)
+                                SavedAnswersSection(workflowID: workflow.id, definition: workflow.definition)
+                                    .background(theme.surface.canvas)
+                                WorkflowStoredDataSection(workflowID: workflow.id, definition: workflow.definition)
+                                    .background(theme.surface.canvas)
+                                advanced(workflow)
+                            }
+                            .frame(maxWidth: WorkflowLibraryLayout.columnWidth, alignment: .leading)
+                            if isWide {
+                                recentRuns(workflow)
+                                    .frame(width: Self.runsColumnWidth)
+                            }
+                        }
                     }
-                    .frame(maxWidth: WorkflowLibraryLayout.columnWidth, alignment: .leading)
+                    .frame(
+                        maxWidth: WorkflowLibraryLayout.columnWidth + (isWide ? Self.runsColumnWidth + theme.space.s24 : 0),
+                        alignment: .leading)
                     .padding(.horizontal, theme.space.s24)
                     .padding(.top, WorkflowLibraryLayout.pageTopInset(theme))
-                    .padding(.bottom, theme.space.s24)
+                    .padding(.bottom, theme.space.s48)
                     .frame(maxWidth: .infinity)
                 }
-                footer(workflow)
+                .onGeometryChange(for: CGFloat.self, of: \.size.width) { pageWidth = $0 }
             } else {
                 Spacer()
                 SettingsEmptyState(
@@ -83,7 +109,10 @@ struct WorkflowDetailPage<Actions: View>: View {
         .background { if !sharedGrid { theme.surface.canvas } }
         // The home's recent runs first, so the page opens filled in; then
         // the full record, read off the main actor.
-        .onAppear { recordedRuns = runs.recentRuns().filter { $0.workflowID == workflowID } }
+        .onAppear {
+            recordedRuns = runs.recentRuns().filter { $0.workflowID == workflowID }
+            if let highlight = takeHighlight() { highlightedAutomation = highlight }
+        }
         .task(id: endedLiveRuns) {
             // Architect tests and eval runs are not what the workflow did for anyone.
             let loaded = await runs.loadRuns(workflowID: workflowID, limit: 50, includeTests: false)
@@ -107,9 +136,34 @@ struct WorkflowDetailPage<Actions: View>: View {
 
     // MARK: - Hero
 
-    /// Name, one-line summary, and the facts a person checks first:
-    /// can it run, how big is it, where does it run.
+    /// Name, one-line summary, whether it runs on its own, and the facts a
+    /// person checks first: can it run, how big is it, where does it run.
     private func hero(_ workflow: InstalledWorkflow, report: SetupReport) -> some View {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            header(workflow, report: report)
+            statusLine(workflow, report: report)
+        }
+    }
+
+    /// "On. Next run tomorrow at 8:00 AM." / "Only runs when you click Run."
+    private func statusLine(_ workflow: InstalledWorkflow, report: SetupReport) -> some View {
+        let line = WorkflowStatusLine.line(
+            needsSetup: report.hasBlockers,
+            automations: EventManager.shared.events(forWorkflowID: workflow.id),
+            lastRun: allRuns.first { $0.status.isTerminal })
+        return HStack(spacing: theme.space.s6) {
+            Circle()
+                .fill(line.tone.map(theme.statusInk) ?? theme.text.tertiary)
+                .frame(width: theme.space.s6, height: theme.space.s6)
+                .accessibilityHidden(true)
+            Text(verbatim: line.text)
+                .font(SettingsFont.rowDescription)
+                .foregroundStyle(line.tone == .warning || line.tone == .error ? line.tone.map(theme.statusInk) ?? theme.text.secondary : theme.text.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func header(_ workflow: InstalledWorkflow, report: SetupReport) -> some View {
         SettingsDetailHeader(
             icon: "flowchart",
             title: workflow.name,
@@ -154,7 +208,27 @@ struct WorkflowDetailPage<Actions: View>: View {
                 }
             }
         } actions: {
+            SettingsButton(
+                .secondary, workflow.isPinned ? "Pinned" : "Pin", icon: workflow.isPinned ? "pin.fill" : "pin",
+                help: workflow.isPinned ? "Remove it from Pinned in the sidebar" : "Keep it at the top of the sidebar"
+            ) {
+                WorkflowErrorText.saving(L("Couldn’t save the setting")) { try store.setPinned(!workflow.isPinned, id: workflow.id) }
+            }
+            SettingsButton(.secondary, "Edit", icon: "pencil.and.outline", help: "Edit with the Architect") {
+                onEdit(workflow)
+            }
+            .settingsLandingAnchor("workflows.edit")
+            let published = registryRecords.record(for: workflow.templateID)
+            SettingsButton(
+                .secondary, published != nil ? "Manage Published…" : "Share…",
+                icon: published != nil ? "globe" : "square.and.arrow.up",
+                help: published != nil
+                    ? "Stats, who can see it, versions, take down" : "Save a file, or publish a page you control"
+            ) { onShare(workflow) }
+            SettingsButton(.primary, "Run now", icon: "play.fill", help: "Run now (⌘Return)") { onRun(workflow) }
+                .keyboardShortcut(.return, modifiers: .command)
             actionMenu(workflow)
+                .settingsLandingAnchor("workflows.rename")
         }
     }
 
@@ -680,39 +754,75 @@ struct WorkflowDetailPage<Actions: View>: View {
 
     // MARK: - Recent Runs
 
-    /// Every run, live ones filling in as they go; each opens its run page.
+    /// How the last runs went, the ones going now, then the last few, each
+    /// opening its run page.
     private func recentRuns(_ workflow: InstalledWorkflow) -> some View {
         let list = allRuns
-        let shown = showsAllRuns ? list : Array(list.prefix(Self.collapsedRunCount))
-        return card("Runs", icon: "clock") {
-            SettingsButton(.tertiary, "All Tasks", size: .compact) {
-                TaskControl.showHistory(.workflow(workflow.id))
-            }
-            .help(L("Every run of this workflow in Tasks → History"))
-            if list.count > Self.collapsedRunCount {
-                SettingsButton(
-                    .tertiary, showsAllRuns ? L("Show Less") : L("Show All \(list.count)"), size: .compact,
-                    verbatim: true
-                ) {
-                    withAnimation(theme.motion.quick) { showsAllRuns.toggle() }
-                }
+        let going = list.filter { !$0.status.isTerminal }
+        let finished = Array(list.filter(\.status.isTerminal).prefix(Self.shownRunCount))
+        let bars = WorkflowHealth.bars(newestFirst: WorkflowHealth.outcomes(list), count: Self.healthRunCount)
+        return WorkflowPageCard(title: L("Recent runs"), icon: "clock") {
+            if !list.isEmpty {
+                WorkflowTextLink(title: L("See all")) { onSeeAllRuns(workflow) }
+                    .help(L("Every run of this workflow"))
             }
         } content: {
             if list.isEmpty {
-                SettingsEmptyState(
-                    inline: "clock", title: "No runs yet",
-                    hint: "Press Run to try it. Runs agents and automations start show up here too.")
+                VStack(alignment: .leading, spacing: theme.space.s10) {
+                    note(L("No runs yet. Try it once to see what you get."))
+                    SettingsButton(.secondary, "Try it now", icon: "play", size: .small) { onRun(workflow) }
+                }
             } else {
-                VStack(alignment: .leading, spacing: theme.space.s2) {
-                    ForEach(shown) { run in
-                        WorkflowRunCompactRow(run: run, definition: workflow.definition) { onOpenRun(run.id) }
-                            .transition(.opacity.combined(with: .move(edge: .top)))
+                VStack(alignment: .leading, spacing: theme.space.s12) {
+                    VStack(alignment: .leading, spacing: theme.space.s6) {
+                        WorkflowHealthStripView(bars: bars)
+                        if let summary = WorkflowHealth.summary(bars) { note(summary) }
+                    }
+                    if !going.isEmpty {
+                        VStack(alignment: .leading, spacing: theme.space.s2) {
+                            ForEach(going) { run in
+                                WorkflowRunCompactRow(run: run, definition: workflow.definition) { onOpenRun(run.id) }
+                                    .transition(.opacity.combined(with: .move(edge: .top)))
+                            }
+                        }
+                        .padding(.horizontal, -theme.space.s8)
+                    }
+                    VStack(alignment: .leading, spacing: theme.space.s0) {
+                        ForEach(Array(finished.enumerated()), id: \.element.id) { index, run in
+                            if index > 0 { ThemeHairlineDivider() }
+                            recentRunRow(run)
+                        }
                     }
                 }
-                .padding(.horizontal, -theme.space.s8)
-                .animation(theme.motion.quick, value: shown.map(\.id))
+                .animation(theme.motion.quick, value: list.map(\.id))
             }
         }
+        .settingsLandingAnchor("workflows.recentRuns")
+    }
+
+    /// "Today, 8:00 AM" over "On schedule, took 42 sec", and Open.
+    private func recentRunRow(_ run: WorkflowRun) -> some View {
+        let event = run.caller.eventID.flatMap { EventManager.shared.event(for: $0) }
+        let failed = run.status == .failed || run.status == .needsSetup
+        return HStack(spacing: theme.space.s8) {
+            Image(systemName: failed ? "xmark.circle.fill" : run.status == .cancelled ? "minus.circle" : "checkmark.circle.fill")
+                .glyphSize(.caption, weight: .semibold)
+                .foregroundStyle(failed ? theme.statusInk(.error) : run.status == .cancelled ? theme.text.tertiary : theme.statusInk(.success))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                Text(verbatim: WorkflowRunWords.when(run.startedAt))
+                    .font(SettingsFont.compactLabel)
+                    .foregroundStyle(theme.text.primary)
+                Text(verbatim: WorkflowRunWords.detail(run, event: event) { agents.agent(for: $0)?.displayName })
+                    .font(SettingsFont.footnote)
+                    .foregroundStyle(theme.text.secondary)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: theme.space.s8)
+            SettingsButton(.tertiary, "Open", size: .small) { onOpenRun(run.id) }
+        }
+        .padding(.vertical, theme.space.s8)
+        .accessibilityElement(children: .combine)
     }
 
     // MARK: - Advanced
@@ -804,54 +914,5 @@ struct WorkflowDetailPage<Actions: View>: View {
     private func commitTags(_ workflow: InstalledWorkflow) {
         WorkflowErrorText.saving(L("Couldn’t save the tags")) { try store.setTags(InstalledWorkflow.parseTags(tagText), id: workflow.id) }
         editingTags = false
-    }
-
-    // MARK: - Footer
-
-    private func footer(_ workflow: InstalledWorkflow) -> some View {
-        VStack(spacing: theme.space.s0) {
-            ThemeHairlineDivider()
-            HStack(spacing: theme.space.s10) {
-                let published = registryRecords.record(for: workflow.templateID)
-                Button {
-                    onShare(workflow)
-                } label: {
-                    Label {
-                        if published != nil {
-                            Text("Manage Published…", bundle: .module)
-                        } else {
-                            Text("Share…", bundle: .module)
-                        }
-                    } icon: {
-                        Image(systemName: published != nil ? "globe" : "square.and.arrow.up")
-                    }
-                }
-                .assignedSettingsButtonStyle(.secondary)
-                .help(
-                    published != nil
-                        ? Text("Stats, who can see it, versions, take down", bundle: .module)
-                        : Text("Save a file, or publish a page you control", bundle: .module))
-                Button {
-                    onRename(workflow)
-                } label: {
-                    Text("Rename…", bundle: .module)
-                }
-                .assignedSettingsButtonStyle(.secondary)
-                .help(Text("Change the name agents and the Orchestrator call this workflow by", bundle: .module))
-                .settingsLandingAnchor("workflows.rename")
-                Spacer()
-                SettingsButton(.secondary, "Edit", icon: "pencil.and.outline", help: "Edit with the Architect") {
-                    onEdit(workflow)
-                }
-                .settingsLandingAnchor("workflows.edit")
-                SettingsButton(.primary, "Run", icon: "play.fill", help: "Run (⌘Return)") { onRun(workflow) }
-                    .keyboardShortcut(.return, modifiers: .command)
-            }
-            .frame(maxWidth: WorkflowLibraryLayout.columnWidth)
-            .padding(.horizontal, theme.space.s24)
-            .padding(.vertical, theme.space.s16)
-            .frame(maxWidth: .infinity)
-            .background(theme.surface.canvas)
-        }
     }
 }

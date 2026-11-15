@@ -4994,7 +4994,7 @@ public enum SettingsSearchIndex {
                 "rename workflow", "workflow name", "change name", "tool name", "workflow_", "name differs",
                 "old name", "keep name", "use new name",
             ],
-            disambiguation: "Per installed workflow: in its page's footer and its … menu. The name is what Settings shows and what agents and the Orchestrator call (workflow_<name>), separate from the template. Saving a renamed draft in the Architect renames it too; an update never does on its own, so a version with another name shows a notice offering Use or Keep. Old names keep working for steps that call it. Renaming a workflow template that is not installed is the template card's Rename…."
+            disambiguation: "Per installed workflow: in the … menu at the top of its page and on its sidebar row. The name is what Settings shows and what agents and the Orchestrator call (workflow_<name>), separate from the template. Saving a renamed draft in the Architect renames it too; an update never does on its own, so a version with another name shows a notice offering Use or Keep. Old names keep working for steps that call it. Renaming a workflow template that is not installed is the template card's Rename…."
         ),
         .init(
             id: "workflows.edit",
@@ -5005,7 +5005,31 @@ public enum SettingsSearchIndex {
                 "edit workflow", "change workflow", "modify workflow", "edit with the architect", "change steps",
                 "edit steps",
             ],
-            disambiguation: "Per installed workflow: Edit in its page's footer, beside Run, and Edit with the Architect near the top of its … menu. Both open the workflow as a draft in the Architect; nothing changes until you save it there. Building a new workflow is New Workflow instead."
+            disambiguation: "Per installed workflow: Edit at the top of its page, beside Share and Run now, and Edit with the Architect near the top of its … menu. Both open the workflow as a draft in the Architect; nothing changes until you save it there. Building a new workflow is New Workflow instead."
+        ),
+        .init(
+            id: "workflows.automate.schedule",
+            tab: .workflows,
+            section: "Workflow Details",
+            title: "When should this run?",
+            keywords: [
+                "want this to run on its own", "run on its own", "run automatically", "automate workflow", "schedule workflow", "every weekday",
+                "every morning", "run at a time", "when a file shows up", "watch a folder", "when osaurus opens",
+                "when a site posts", "feed", "also run it", "more ways", "turn off automation", "remove automation",
+                "what should it use each time", "workflow inputs for automation",
+            ],
+            disambiguation: "Per installed workflow, on its page: each automation that starts it, as a sentence. Click the day or time of a schedule, the folder, or the site to change it in place; Custom… and Change… open the full editor from Settings → Automations. Also run it adds another way. An automation whose workflow needs an input with no default stays off and shows What should it use each time? until it is filled. Every automation also lists in Settings → Automations."
+        ),
+        .init(
+            id: "workflows.recentRuns",
+            tab: .workflows,
+            section: "Workflow Details",
+            title: "Recent runs",
+            keywords: [
+                "workflow runs", "run history", "last runs", "did it work", "health", "failed runs", "see all runs",
+                "open a run", "try it now",
+            ],
+            disambiguation: "Per installed workflow, on its page (beside the rest when the window is wide): a bar for each of the last 14 runs, how they went, runs going now, and the last five, each with Open. See all lists every run of it."
         ),
         .init(
             id: "workflows.storedData",

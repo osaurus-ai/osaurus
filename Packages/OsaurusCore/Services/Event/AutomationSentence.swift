@@ -177,6 +177,145 @@ enum AutomationSentence {
         }
     }
 
+    /// The long form as a sentence of its own: "Runs every weekday at 8:00 AM."
+    static func sentence(_ event: OsaurusEvent, style: Style = .current) -> String {
+        capitalizedFirst(long(event, style: style), locale: style.locale) + "."
+    }
+
+    static func capitalizedFirst(_ text: String, locale: Locale) -> String {
+        guard let first = text.first else { return text }
+        return String(first).uppercased(with: locale) + text.dropFirst()
+    }
+
+    // MARK: Next run
+
+    /// "today at 8:00 AM", "tomorrow at 8:00 AM", "Friday at 8:00 AM",
+    /// "Nov 20 at 8:00 AM": what follows "Next run" in a sentence.
+    static func nextRun(_ date: Date, now: Date = Date(), style: Style = .current) -> String {
+        let calendar = style.calendar
+        let time = style.time(date)
+        if calendar.isDate(date, inSameDayAs: now) { return L("today at \(time)") }
+        if let tomorrow = calendar.date(byAdding: .day, value: 1, to: now), calendar.isDate(date, inSameDayAs: tomorrow) {
+            return L("tomorrow at \(time)")
+        }
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: now), to: calendar.startOfDay(for: date)).day ?? 0
+        if days > 0, days < 7 {
+            return L("\(style.date(date, template: "EEEE")) at \(time)")
+        }
+        return L("\(style.date(date, template: "MMMd")) at \(time)")
+    }
+
+    // MARK: Editable parts
+
+    /// The day word of a schedule sentence, as the day menu offers it.
+    enum DayChoice: Hashable, Sendable {
+        case everyDay
+        case weekdays
+        /// `ScheduleFrequency.weekly`'s day: 1 = Sunday … 7 = Saturday.
+        case weekday(Int)
+        case everyHour
+        case every30Minutes
+        case firstOfMonth
+        /// Anything the menu can't say; the full editor changes it.
+        case custom
+
+        /// Whether a time word follows it.
+        var hasTime: Bool {
+            switch self {
+            case .everyDay, .weekdays, .weekday, .firstOfMonth: return true
+            case .everyHour, .every30Minutes, .custom: return false
+            }
+        }
+    }
+
+    /// The day menu, in order. `Custom…` follows it in the view.
+    static func dayMenu(style: Style = .current) -> [DayChoice] {
+        let first = style.calendar.firstWeekday
+        let week = (0..<7).map { (first - 1 + $0) % 7 + 1 }
+        return [.everyDay, .weekdays] + week.map(DayChoice.weekday) + [.everyHour, .every30Minutes, .firstOfMonth]
+    }
+
+    struct ScheduleParts: Equatable, Sendable {
+        var day: DayChoice
+        var hour: Int
+        var minute: Int
+    }
+
+    /// What a card can edit word by word.
+    enum Parts: Equatable, Sendable {
+        case schedule(ScheduleParts)
+        /// The folder's name; the word opens the folder picker.
+        case folder(String)
+        /// The site; the word opens a field for the feed's address.
+        case feed(String)
+        /// A sentence the card can't edit in place ("Runs when Osaurus opens.").
+        case fixed(String)
+    }
+
+    static func parts(_ event: OsaurusEvent, style: Style = .current) -> Parts {
+        switch event.source {
+        case .schedule(let schedule): return .schedule(scheduleParts(schedule.frequency))
+        case .folder(let folder): return .folder(folderName(folder))
+        case .rss(let rss): return .feed(siteName(rss))
+        default: return .fixed(sentence(event, style: style))
+        }
+    }
+
+    /// A time the menu falls back to when the schedule has none.
+    static let defaultTime = (hour: 9, minute: 0)
+
+    static func scheduleParts(_ frequency: ScheduleFrequency) -> ScheduleParts {
+        let fallback = defaultTime
+        if case .weekdays(let hour, let minute)? = ScheduleCronShape.recognize(frequency) {
+            return ScheduleParts(day: .weekdays, hour: hour, minute: minute)
+        }
+        switch frequency {
+        case .daily(let hour, let minute):
+            return ScheduleParts(day: .everyDay, hour: hour, minute: minute)
+        case .weekly(let day, let hour, let minute):
+            return ScheduleParts(day: .weekday(max(1, min(7, day))), hour: hour, minute: minute)
+        case .hourly:
+            return ScheduleParts(day: .everyHour, hour: fallback.hour, minute: fallback.minute)
+        case .everyNMinutes(30):
+            return ScheduleParts(day: .every30Minutes, hour: fallback.hour, minute: fallback.minute)
+        case .monthly(1, let hour, let minute):
+            return ScheduleParts(day: .firstOfMonth, hour: hour, minute: minute)
+        case .monthly(_, let hour, let minute), .yearly(_, _, let hour, let minute):
+            return ScheduleParts(day: .custom, hour: hour, minute: minute)
+        case .everyNMinutes, .once, .cron:
+            return ScheduleParts(day: .custom, hour: fallback.hour, minute: fallback.minute)
+        }
+    }
+
+    /// The schedule the words say; nil for `.custom`, which only the full
+    /// editor writes.
+    static func frequency(_ parts: ScheduleParts) -> ScheduleFrequency? {
+        let hour = max(0, min(23, parts.hour))
+        let minute = max(0, min(59, parts.minute))
+        switch parts.day {
+        case .everyDay: return .daily(hour: hour, minute: minute)
+        case .weekdays: return ScheduleCronShape.weekdays(hour: hour, minute: minute).frequency
+        case .weekday(let day): return .weekly(dayOfWeek: max(1, min(7, day)), hour: hour, minute: minute)
+        case .everyHour: return .hourly(minute: 0)
+        case .every30Minutes: return .everyNMinutes(minutes: 30)
+        case .firstOfMonth: return .monthly(dayOfMonth: 1, hour: hour, minute: minute)
+        case .custom: return nil
+        }
+    }
+
+    /// The day word: "Every weekday", "Every Monday", "Every hour".
+    static func dayLabel(_ choice: DayChoice, style: Style = .current) -> String {
+        switch choice {
+        case .everyDay: return L("Every day")
+        case .weekdays: return L("Every weekday")
+        case .weekday(let day): return L("Every \(style.weekdayName(day))")
+        case .everyHour: return L("Every hour")
+        case .every30Minutes: return L("Every 30 minutes")
+        case .firstOfMonth: return L("On the 1st of the month")
+        case .custom: return L("On a custom schedule")
+        }
+    }
+
     // MARK: Words
 
     /// The watched folder's last path component.

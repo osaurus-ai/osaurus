@@ -279,9 +279,10 @@ struct WorkflowsView: View {
                     windowState.showWorkflowRun(workflowID: id, runID: runID, agentId: windowState.agentId)
                 },
                 onShare: { share($0.template, entry: shareEntry(for: $0.templateID)) },
-                onRename: { renamingInstalled = $0 },
                 onEdit: { ArchitectLauncher.edit($0, in: windowState) },
                 onDone: { windowState.popWorkflowsPage() },
+                onSeeAllRuns: { TaskControl.showHistory(.workflow($0.id)) },
+                takeHighlight: { windowState.takeWorkflowsAutomationHighlight() },
                 actionMenu: { workflow in installedCard(workflow, detailActionMenu: true) }
             )
             .id("workflow-\(id)")

@@ -1,0 +1,119 @@
+//
+//  WorkflowRunWords.swift
+//  osaurus
+//
+//  One run in plain words, for the workflow's page and Activity: when it
+//  ran ("Today, 8:00 AM"), how it started ("On schedule", "You ran it",
+//  "Scout ran it", "A file was added to Downloads") and how long it took.
+//
+
+import Foundation
+
+/// The line under a workflow's name on its page, and the dot beside it
+/// (nil tone: neutral).
+enum WorkflowStatusLine {
+    static func line(
+        needsSetup: Bool, automations: [OsaurusEvent], lastRun: WorkflowRun?, now: Date = Date(),
+        style: AutomationSentence.Style = .current
+    ) -> (text: String, tone: ThemeStatusKind?) {
+        if needsSetup { return (L("Finish setup to run."), .warning) }
+        if let lastRun, lastRun.status == .failed { return (L("The last run failed."), .error) }
+        let on = automations.filter(\.isEnabled)
+        if !on.isEmpty {
+            if let next = on.compactMap({ $0.nextFireDate(asOf: now) }).min() {
+                return (L("On. Next run \(AutomationSentence.nextRun(next, now: now, style: style))."), .success)
+            }
+            return (L("On. \(AutomationSentence.sentence(on[0], style: style))"), .success)
+        }
+        guard let lastRun else { return (L("Only runs when you click Run. Not run yet."), nil) }
+        let when = WorkflowRunWords.lastRan(lastRun.finishedAt ?? lastRun.startedAt, now: now, style: style)
+        return (L("Only runs when you click Run. Last ran \(when)."), nil)
+    }
+}
+
+enum WorkflowRunWords {
+    /// "Today, 8:00 AM", "Yesterday, 8:00 AM", "Friday, 8:00 AM", "Nov 3, 8:00 AM".
+    static func when(_ date: Date, now: Date = Date(), style: AutomationSentence.Style = .current) -> String {
+        let calendar = style.calendar
+        let time = style.time(date)
+        if calendar.isDate(date, inSameDayAs: now) { return L("Today, \(time)") }
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(date, inSameDayAs: yesterday) {
+            return L("Yesterday, \(time)")
+        }
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: now)).day ?? 0
+        if days > 0, days < 7 { return L("\(style.date(date, template: "EEEE")), \(time)") }
+        return L("\(style.date(date, template: "MMMd")), \(time)")
+    }
+
+    /// "today at 8:00 AM", "yesterday at 8:00 AM", "Monday at 8:00 AM",
+    /// "Nov 2 at 8:00 AM": what follows "Last ran" in a sentence.
+    static func lastRan(_ date: Date, now: Date = Date(), style: AutomationSentence.Style = .current) -> String {
+        let calendar = style.calendar
+        let time = style.time(date)
+        if calendar.isDate(date, inSameDayAs: now) { return L("today at \(time)") }
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(date, inSameDayAs: yesterday) {
+            return L("yesterday at \(time)")
+        }
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: now)).day ?? 0
+        if days > 0, days < 7 { return L("\(style.date(date, template: "EEEE")) at \(time)") }
+        return L("\(style.date(date, template: "MMMd")) at \(time)")
+    }
+
+    /// How a run started. `event` is the automation that fired it, when it
+    /// still exists; `agentName` resolves an agent's current name.
+    static func howItStarted(
+        _ caller: WorkflowCaller, event: OsaurusEvent?, agentName: (UUID) -> String? = { _ in nil }
+    ) -> String {
+        switch caller.kind {
+        case .user:
+            if let person = caller.onBehalfOf?.displayName { return L("\(person) ran it") }
+            return L("You ran it")
+        case .agent, .orchestrator:
+            let name = caller.agentID.flatMap(agentName) ?? caller.agentName
+            if let name, !name.isEmpty { return L("\(name) ran it") }
+            return caller.kind == .orchestrator ? L("Osaurus ran it") : L("An agent ran it")
+        case .event:
+            guard let event else { return L("Ran on its own") }
+            return automationPhrase(event)
+        case .workflow: return L("Another workflow ran it")
+        case .test: return L("A test run")
+        }
+    }
+
+    /// What the automation saw, as the reason a run started.
+    static func automationPhrase(_ event: OsaurusEvent) -> String {
+        switch event.source {
+        case .schedule: return L("On schedule")
+        case .folder(let folder): return L("A file was added to \(AutomationSentence.folderName(folder))")
+        case .rss(let rss): return L("\(AutomationSentence.siteName(rss)) posted something new")
+        case .runFailed: return L("Another workflow failed")
+        case .app: return L("Osaurus opened")
+        case .webhook(let webhook):
+            guard let provider = AutomationSentence.providerName(webhook.provider) else { return L("Ran on its own") }
+            return L("\(provider) had news")
+        case .sse: return L("Ran on its own")
+        case .email: return L("New mail arrived")
+        case .channelMessage: return L("A message arrived")
+        }
+    }
+
+    /// "took 42 sec", "took 3 min", "took 1 hr 5 min".
+    static func took(_ seconds: TimeInterval) -> String {
+        let whole = max(0, Int(seconds.rounded()))
+        if whole < 60 { return L("took \(max(1, whole)) sec") }
+        let minutes = whole / 60
+        if minutes < 60 { return L("took \(minutes) min") }
+        let hours = minutes / 60
+        let rest = minutes % 60
+        return rest == 0 ? L("took \(hours) hr") : L("took \(hours) hr \(rest) min")
+    }
+
+    /// "On schedule, took 42 sec"; a run still going says only how it started.
+    static func detail(
+        _ run: WorkflowRun, event: OsaurusEvent?, agentName: (UUID) -> String? = { _ in nil }
+    ) -> String {
+        let started = howItStarted(run.caller, event: event, agentName: agentName)
+        guard run.status.isTerminal, let finished = run.finishedAt else { return started }
+        return L("\(started), \(took(finished.timeIntervalSince(run.startedAt)))")
+    }
+}

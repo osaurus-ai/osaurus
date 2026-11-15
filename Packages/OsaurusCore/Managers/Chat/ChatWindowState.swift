@@ -494,6 +494,20 @@ final class ChatWindowState: ObservableObject {
     @Published var workflowsSidebarScrollTarget: String?
     /// The run the Workflows home last started, so its row opens to show it.
     @Published var workflowsSpotlightRunID: UUID?
+    /// An automation just added from outside a workflow's page; the page
+    /// opens with its card ready to change.
+    private var workflowsAutomationHighlight: UUID?
+
+    /// Opens `workflowID`'s page with `automationID`'s card ready to change.
+    func showWorkflowAutomation(workflowID: UUID, automationID: UUID) {
+        workflowsAutomationHighlight = automationID
+        selectWorkflowsPage(.workflow(workflowID))
+    }
+
+    func takeWorkflowsAutomationHighlight() -> UUID? {
+        defer { workflowsAutomationHighlight = nil }
+        return workflowsAutomationHighlight
+    }
 
     /// Set by New Workflow until the Architect composer on screen takes
     /// focus; the composer may appear only after it is set.
