@@ -1225,6 +1225,7 @@ struct FloatingInputCard: View {
                 if isShowing {
                     pauseTimerCancellable = Timer.publish(every: 0.1, on: .main, in: .common)
                         .autoconnect()
+                        .receive(on: DispatchQueue.main)
                         .sink { [self] _ in
                             checkForPause()
                             checkForSilenceTimeout()

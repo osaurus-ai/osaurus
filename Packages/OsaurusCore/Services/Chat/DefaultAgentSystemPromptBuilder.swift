@@ -11,8 +11,6 @@
 //  `ConfiguratorSystemPromptBuilder`, not here.
 //
 //  The text is the seven rules, each one testable, plus the routing table.
-//  The `state` rule rides at the end of each turn's injected block
-//  (`OrchestratorTurnBlock.injectedBlock`), where small models attend to it.
 //  Each variant is memoized, so every turn with the same exposure sees
 //  byte-identical text and the prompt prefix stays in the KV cache.
 //
@@ -23,13 +21,12 @@ import Foundation
 public enum DefaultAgentSystemPromptBuilder {
     private static var cache: [String: String] = [:]
 
-    /// Tools every rendered variant, with the injected block's `state`
-    /// line, tells the model to call. A prompt that
+    /// Tools every rendered variant tells the model to call. A prompt that
     /// names these while the request's tool scope refuses them sets up a
     /// `tool_not_found` loop; the schema resolver keeps them exposed for the
     /// Default agent, and tests pin it with `missingRequiredToolNames`.
     nonisolated public static let orchestratorRequiredToolNames: Set<String> = [
-        StatusTool.toolName, StateTool.toolName, ConfiguratorHandoffTool.toolName, ArchitectHandoffTool.toolName,
+        StatusTool.toolName, ConfiguratorHandoffTool.toolName, ArchitectHandoffTool.toolName,
     ]
 
     /// The required names that `exposed` does NOT contain; empty when the
@@ -113,9 +110,9 @@ public enum DefaultAgentSystemPromptBuilder {
         lines.append("Routes:")
         lines.append(
             "- Anything about Osaurus itself (how a feature works, where a setting is, what is "
-                + "configured, or a change to models, agents, providers, tools, automations, or "
-                + "settings, including installing what a shared link, snippet, or install command "
-                + "sets up) → `configurator_handoff`."
+                + "configured, or a change to models, agents, providers, tools, automations, "
+                + "settings, or how you behave from now on, including installing what a shared "
+                + "link, snippet, or install command sets up) → `configurator_handoff`."
         )
         if exposure.runWorkflowAvailable {
             lines.append(
@@ -141,8 +138,12 @@ public enum DefaultAgentSystemPromptBuilder {
             exposure.folderBound
                 ? "- A working folder is attached. Work on its files goes to a worker; its result "
                     + "names the files it wrote."
-                : "- No working folder is attached. For a task on files, tell the user to pick a "
-                    + "folder with the Folder chip."
+                : "- No working folder is attached. Work on the user's project or folder files needs "
+                    + "one: tell the user to pick a folder with the Folder chip above the chat input."
+                    + (exposure.runWorkflowAvailable
+                        ? " A teammate that works in its own folder or app (its summary says which) "
+                            + "still takes its requests."
+                        : "")
         )
         lines.append("")
         lines.append("Rules:")

@@ -33,26 +33,28 @@ struct ChatViewSandboxTests {
 
     @Test
     func buildSystemPrompt_includesSandboxContextOnlyWhenExpected() async {
-        let standardCtx = await SystemPromptComposer.composeChatContext(
-            agentId: Agent.defaultId,
-            executionMode: .none
-        )
-        let sandboxCtx = await SystemPromptComposer.composeChatContext(
-            agentId: Agent.defaultId,
-            executionMode: .sandbox(hostRead: nil)
-        )
-        let standardPrompt = standardCtx.prompt
-        let sandboxPrompt = sandboxCtx.prompt
+        await withSandboxAgent { agentId in
+            let standardCtx = await SystemPromptComposer.composeChatContext(
+                agentId: agentId,
+                executionMode: .none
+            )
+            let sandboxCtx = await SystemPromptComposer.composeChatContext(
+                agentId: agentId,
+                executionMode: .sandbox(hostRead: nil)
+            )
+            let standardPrompt = standardCtx.prompt
+            let sandboxPrompt = sandboxCtx.prompt
 
-        #expect(standardPrompt.contains(SystemPromptTemplates.sandboxSectionHeading) == false)
-        #expect(sandboxPrompt.contains("## Working directory"))
-        #expect(sandboxPrompt.contains("Host folders are unavailable"))
-        #expect(sandboxPrompt.contains("## Host workspace (read-only)") == false)
-        #expect(sandboxPrompt.contains("## Files") == false)
-        #expect(sandboxPrompt.contains("capability ids are separate from sandbox programs"))
-        #expect(sandboxPrompt.contains("sandbox_install"))
-        for privateName in ToolRegistry.sandboxBackendAdapterToolNames {
-            #expect(!sandboxPrompt.contains(privateName))
+            #expect(standardPrompt.contains(SystemPromptTemplates.sandboxSectionHeading) == false)
+            #expect(sandboxPrompt.contains("## Working directory"))
+            #expect(sandboxPrompt.contains("Host folders are unavailable"))
+            #expect(sandboxPrompt.contains("## Host workspace (read-only)") == false)
+            #expect(sandboxPrompt.contains("## Files") == false)
+            #expect(sandboxPrompt.contains("capability ids are separate from sandbox programs"))
+            #expect(sandboxPrompt.contains("sandbox_install"))
+            for privateName in ToolRegistry.sandboxBackendAdapterToolNames {
+                #expect(!sandboxPrompt.contains(privateName))
+            }
         }
     }
 
@@ -61,21 +63,23 @@ struct ChatViewSandboxTests {
     /// there. Pins both the prompt env-block and the threaded home path.
     @Test
     func buildSystemPrompt_sandboxStatesAbsoluteHomeAndCwdDefault() async {
-        let sandboxCtx = await SystemPromptComposer.composeChatContext(
-            agentId: Agent.defaultId,
-            executionMode: .sandbox(hostRead: nil)
-        )
-        let prompt = sandboxCtx.prompt
+        await withSandboxAgent { agentId in
+            let sandboxCtx = await SystemPromptComposer.composeChatContext(
+                agentId: agentId,
+                executionMode: .sandbox(hostRead: nil)
+            )
+            let prompt = sandboxCtx.prompt
 
-        let expectedHome = OsaurusPaths.inContainerAgentHome(
-            SandboxAgentProvisioner.linuxName(for: Agent.defaultId.uuidString)
-        )
-        #expect(expectedHome.isEmpty == false)
-        // The absolute home path is named verbatim in the env block...
-        #expect(prompt.contains(expectedHome))
-        #expect(prompt.contains("Use paths relative to this directory."))
-        #expect(prompt.contains("Host folders are unavailable."))
-        #expect(prompt.contains("complete requested work now"))
+            let expectedHome = OsaurusPaths.inContainerAgentHome(
+                SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
+            )
+            #expect(expectedHome.isEmpty == false)
+            // The absolute home path is named verbatim in the env block...
+            #expect(prompt.contains(expectedHome))
+            #expect(prompt.contains("Use paths relative to this directory."))
+            #expect(prompt.contains("Host folders are unavailable."))
+            #expect(prompt.contains("complete requested work now"))
+        }
     }
 
     @Test
@@ -89,18 +93,20 @@ struct ChatViewSandboxTests {
             isGitRepo: false,
             contextFiles: nil
         )
-        let combinedCtx = await SystemPromptComposer.composeChatContext(
-            agentId: Agent.defaultId,
-            executionMode: .sandbox(hostRead: folder)
-        )
-        let prompt = combinedCtx.prompt
+        await withSandboxAgent { agentId in
+            let combinedCtx = await SystemPromptComposer.composeChatContext(
+                agentId: agentId,
+                executionMode: .sandbox(hostRead: folder)
+            )
+            let prompt = combinedCtx.prompt
 
-        #expect(prompt.contains("## Working directory"))
-        #expect(prompt.contains("Host folders are unavailable"))
-        #expect(prompt.contains(folder.rootPath.path) == false)
-        #expect(prompt.contains("## Host workspace") == false)
-        for privateName in ToolRegistry.sandboxBackendAdapterToolNames {
-            #expect(!prompt.contains(privateName))
+            #expect(prompt.contains("## Working directory"))
+            #expect(prompt.contains("Host folders are unavailable"))
+            #expect(prompt.contains(folder.rootPath.path) == false)
+            #expect(prompt.contains("## Host workspace") == false)
+            for privateName in ToolRegistry.sandboxBackendAdapterToolNames {
+                #expect(!prompt.contains(privateName))
+            }
         }
     }
 
@@ -115,17 +121,19 @@ struct ChatViewSandboxTests {
             isGitRepo: false,
             contextFiles: nil
         )
-        let ctx = await SystemPromptComposer.composeChatContext(
-            agentId: Agent.defaultId,
-            executionMode: .sandbox(hostRead: folder, hostWrite: true)
-        )
-        let prompt = ctx.prompt
+        await withSandboxAgent { agentId in
+            let ctx = await SystemPromptComposer.composeChatContext(
+                agentId: agentId,
+                executionMode: .sandbox(hostRead: folder, hostWrite: true)
+            )
+            let prompt = ctx.prompt
 
-        #expect(prompt.contains("Host folders are unavailable"))
-        #expect(prompt.contains(folder.rootPath.path) == false)
-        #expect(prompt.contains("## Host workspace") == false)
-        for privateName in ToolRegistry.sandboxBackendAdapterToolNames {
-            #expect(!prompt.contains(privateName))
+            #expect(prompt.contains("Host folders are unavailable"))
+            #expect(prompt.contains(folder.rootPath.path) == false)
+            #expect(prompt.contains("## Host workspace") == false)
+            for privateName in ToolRegistry.sandboxBackendAdapterToolNames {
+                #expect(!prompt.contains(privateName))
+            }
         }
     }
 
@@ -365,6 +373,29 @@ struct ChatViewSandboxTests {
 
     // Chat session budget estimation is covered indirectly via
     // SystemPromptComposer + ContextBudgetManager tests.
+}
+
+/// A custom agent with sandbox execution on and its built-ins registered.
+/// The Default agent never runs in the sandbox, so it is not the fixture.
+@MainActor
+private func withSandboxAgent(_ body: @MainActor @Sendable (UUID) async -> Void) async {
+    await SandboxTestLock.runWithStoragePaths {
+        let manager = AgentManager.shared
+        let agent = Agent(
+            name: "Sandbox Prompt",
+            agentAddress: "test-sandbox-prompt-\(UUID().uuidString)",
+            autonomousExec: AutonomousExecConfig(enabled: true)
+        )
+        manager.add(agent)
+        BuiltinSandboxTools.register(
+            agentId: agent.id.uuidString,
+            agentName: agent.name,
+            config: AutonomousExecConfig(enabled: true)
+        )
+        await body(agent.id)
+        ToolRegistry.shared.unregisterAllSandboxTools()
+        _ = await manager.delete(id: agent.id)
+    }
 }
 
 @MainActor

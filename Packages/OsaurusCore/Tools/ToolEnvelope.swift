@@ -321,17 +321,13 @@ public enum ToolEnvelope {
                 )
             case .binaryContent(let path, let ext, let detail):
                 let extLabel = ext.map { " (.\($0))" } ?? ""
-                // Combined mode has no `shell_run` — the fail-forward path
-                // is `file_copy` into the sandbox, then `sandbox_exec`.
-                // Without this the model dead-ends on binaries (observed
-                // live: a PDF-to-PNG request flailed for turns).
-                let combinedMode = ChatExecutionContext.hostReadOnlyScope != nil
+                // A read-only folder strips `shell_run` from the schema, so
+                // the shell pivot is offered only when the turn can call it.
+                // An unscoped surface gates its own tools; keep the pivot.
+                let hasShell = ChatExecutionContext.toolExecutionScope?.permits("shell_run") ?? true
                 var message = detail.explanation(path: path, extLabel: extLabel)
-                if detail.suggestsShellPivot {
-                    let pivot =
-                        combinedMode
-                        ? "copy it into the sandbox with `file_copy` (a `/workspace/...` destination) and process it there with `sandbox_exec` (e.g. `unzip`, `pdftotext`, `file`)"
-                        : "process it with shell_run and an appropriate tool (e.g. `unzip`, `pdftotext`, `file`)"
+                if detail.suggestsShellPivot, hasShell {
+                    let pivot = "process it with shell_run and an appropriate tool (e.g. `unzip`, `pdftotext`, `file`)"
                     let connector: String
                     if case .unsupportedFormat = detail {
                         connector = ", or "
@@ -342,13 +338,7 @@ public enum ToolEnvelope {
                 } else {
                     message += "."
                 }
-                if var pivotTail = detail.pivotHint {
-                    if combinedMode {
-                        pivotTail = pivotTail.replacingOccurrences(
-                            of: "shell_run",
-                            with: "`file_copy` + `sandbox_exec`"
-                        )
-                    }
+                if let pivotTail = detail.pivotHint(hasShell: hasShell) {
                     message += " \(pivotTail)"
                 }
                 var metadata: [String: String] = ["readable_formats": WorkspaceFileFormatPolicy.readableFormatsSummary]

@@ -180,7 +180,7 @@ struct ConfigAppCoveragePlannerTests {
 
     /// `spawnable_agents` is a replace-list: `[]` wipes the pool. With a
     /// member in the pool the plan must carry a named high-risk line so the
-    /// approval card says the Orchestrator loses `spawn_agent` — the silent
+    /// approval card says the Orchestrator can't hand work to a custom agent — the silent
     /// empty-pool state found live on a 14-agent Mac.
     @Test
     func emptyingTheSpawnPool_isFlaggedHighRisk() async throws {

@@ -1008,6 +1008,11 @@ public struct SystemPromptComposer: Sendable {
             let capabilityNames = Self.capabilityToolNames(inSchema: resolvedNames)
             var sandboxStateSection: String?
             var agentDBSchemaSection: String?
+            // The working-directory framing tells the model to use the
+            // workspace tools, so it renders only when the schema has one.
+            // The Orchestrator with a folder attached has none: its addendum
+            // says the folder exists and that a worker does the file work.
+            let hasWorkspaceTools = !resolvedNames.isDisjoint(with: ToolRegistry.coreWorkspaceToolNames)
 
             if executionMode.usesSandboxTools, let soulSection {
                 composer.append(
@@ -1021,7 +1026,7 @@ public struct SystemPromptComposer: Sendable {
                     )
                 )
             }
-            if !effectiveToolsOff, executionMode.usesSandboxTools {
+            if !effectiveToolsOff, hasWorkspaceTools, executionMode.usesSandboxTools {
                 let home = OsaurusPaths.inContainerAgentHome(
                     SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
                 )
@@ -1054,7 +1059,7 @@ public struct SystemPromptComposer: Sendable {
                 if !state.isEmpty {
                     sandboxStateSection = state
                 }
-            } else if !effectiveToolsOff, let folder = executionMode.folderContext {
+            } else if !effectiveToolsOff, hasWorkspaceTools, let folder = executionMode.folderContext {
                 composer.append(
                     .static(
                         id: "folderContext",
@@ -1254,7 +1259,8 @@ public struct SystemPromptComposer: Sendable {
             let familyGuidance = ModelFamilyGuidance.guidance(
                 forModelId: snapshot.model,
                 modelType: snapshot.modelType,
-                compact: toolset.prefersCompactPrompt
+                compact: toolset.prefersCompactPrompt,
+                workspaceTools: !resolvedNames.isDisjoint(with: ToolRegistry.coreWorkspaceToolNames)
             )
         {
             composer.append(
@@ -1493,13 +1499,9 @@ public struct SystemPromptComposer: Sendable {
                 .static(
                     id: "agentLoopGuidance",
                     label: L("Agent Loop"),
-                    // The `share_artifact` bullet rides only when the tool
-                    // actually resolved — the orchestrator surface excludes
-                    // it (workers deliver artifacts), and naming an
-                    // uncallable tool is the recitation-loop trap.
                     content: SystemPromptTemplates.agentLoopGuidance(
                         compact: toolset.prefersCompactPrompt,
-                        includeShareArtifact: resolvedNames.contains("share_artifact")
+                        toolNames: resolvedNames
                     )
                 )
             )

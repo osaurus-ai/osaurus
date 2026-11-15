@@ -116,8 +116,7 @@ final class PhoneChatHandoff {
     private func startTimer() {
         guard timer == nil, tracker.isWatching else { return }
         let timer = Timer(timeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
-            // Scheduled on the main run loop, so this is the main actor.
-            MainActor.assumeIsolated { self?.tick() }
+            onMainRunLoopTick { self?.tick() }
         }
         timer.tolerance = 1
         RunLoop.main.add(timer, forMode: .common)

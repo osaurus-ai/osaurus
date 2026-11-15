@@ -17,13 +17,11 @@ struct RuntimePolicySourceTests {
         return try String(contentsOf: url, encoding: .utf8)
     }
 
-    /// The chat loop's tool_choice comes only from `ChatToolChoicePolicy`:
-    /// its forced `state` step when one is due, otherwise `resolve`.
+    /// The chat loop's tool_choice comes only from `ChatToolChoicePolicy.resolve`.
     private static func chatToolChoiceComesFromPolicy(_ chatView: String) -> Bool {
         chatView.range(
-            of: #"let requestedToolChoice =\s*forcedStateStep\?\.choice\s*\?\? ChatToolChoicePolicy\.resolve\("#,
+            of: #"let requestedToolChoice =\s*ChatToolChoicePolicy\.resolve\("#,
             options: .regularExpression) != nil
-            && chatView.contains("forcedStateStep = ChatToolChoicePolicy.forceStateIfMissing(")
     }
 
     private static func functionBody(_ signature: String, in source: String) throws -> String {
@@ -847,7 +845,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "1bcd74ad182103a3b83941f61e57ee0bac23b330"
+        let expectedRuntimeHardenedRevision = "2073a764e61e6efad2322684720c8716ac92f4ff"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)

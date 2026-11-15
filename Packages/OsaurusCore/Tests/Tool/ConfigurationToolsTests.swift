@@ -11,7 +11,7 @@
 //     `unavailable` envelope regardless of how malformed the JSON is (and
 //     regardless of which `action`, since the gate runs first).
 //   * Calling from a non-default agent yields the same gate rejection
-//     ("only available to the Default agent").
+//     ("can't change Osaurus settings").
 //
 //  These tests deliberately avoid touching `AgentManager`,
 //  `RemoteProviderManager`, `ModelManager`, etc. — the gate runs first so
@@ -72,8 +72,8 @@ struct ConfigurationToolsGateContractTests {
         )
         #expect(ToolEnvelope.isError(result), "osaurus_config should gate-fail from a custom agent")
         #expect(
-            result.contains("Default agent"),
-            "osaurus_config gate message should name the Default agent; got \(result)"
+            result.contains("main Osaurus chat"),
+            "osaurus_config gate message should send the user to the main chat; got \(result)"
         )
     }
 
@@ -95,7 +95,7 @@ struct ConfigurationToolsGateContractTests {
             args: "{\"action\": \"status\"}"
         )
         #expect(ToolEnvelope.isError(result))
-        #expect(result.contains("Default agent"))
+        #expect(result.contains("main Osaurus chat"))
     }
 
     /// `/mcp/call` binds `harnessTokenAgentId` only after a live agent token
@@ -113,19 +113,19 @@ struct ConfigurationToolsGateContractTests {
         }
 
         let help = try await run(OsaurusHelpTool(), args: #"{"action":"topics"}"#, tokenAgent: agentId)
-        #expect(!help.contains("only available to the Default agent"), "got \(help)")
+        #expect(!help.contains("can't change Osaurus settings"), "got \(help)")
         let inspect = try await run(
             OsaurusInspectTool(),
             args: #"{"action":"list","scope":"commands"}"#,
             tokenAgent: agentId
         )
-        #expect(!inspect.contains("only available to the Default agent"), "got \(inspect)")
+        #expect(!inspect.contains("can't change Osaurus settings"), "got \(inspect)")
 
         let config = try await run(OsaurusConfigTool(), args: #"{"action":"apply"}"#, tokenAgent: agentId)
-        #expect(config.contains("only available to the Default agent"))
+        #expect(config.contains("can't change Osaurus settings"))
 
         let mismatched = try await run(OsaurusHelpTool(), args: #"{"action":"topics"}"#, tokenAgent: UUID())
-        #expect(mismatched.contains("only available to the Default agent"))
+        #expect(mismatched.contains("can't change Osaurus settings"))
     }
 
     @Test
@@ -135,7 +135,7 @@ struct ConfigurationToolsGateContractTests {
             args: "{\"action\": \"list\", \"scope\": \"providers\"}"
         )
         #expect(ToolEnvelope.isError(result))
-        #expect(result.contains("Default agent"))
+        #expect(result.contains("main Osaurus chat"))
     }
 
     @Test
@@ -145,7 +145,7 @@ struct ConfigurationToolsGateContractTests {
             args: "{\"action\": \"describe\", \"scope\": \"providers\", \"id\": \"x\"}"
         )
         #expect(ToolEnvelope.isError(result))
-        #expect(result.contains("Default agent"))
+        #expect(result.contains("main Osaurus chat"))
     }
 }
 

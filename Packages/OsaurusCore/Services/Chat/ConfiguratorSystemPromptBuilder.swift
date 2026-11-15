@@ -84,9 +84,10 @@ public enum ConfiguratorSystemPromptBuilder {
         lines.append(
             "Tools: `agent_draft` {action: 'tools', query: '...'} finds what the job needs on this Mac: "
                 + "built-in capabilities, Apple apps, and installed tools, MCP servers, and plugins. Turn "
-                + "built-ins on with `capabilities` keys. Leave tools in auto mode, where every installed "
-                + "tool stays available and is picked per message, unless the user wants a fixed set; then "
-                + "use `tools: {mode: manual, enabled: [...]}`, `mcp_servers`, or `plugins` with exact names "
+                + "built-ins on with `capabilities` keys. Leave tools in auto mode, where the agent starts "
+                + "with a small core set and loads other installed tools when a task needs them, unless the "
+                + "user wants a fixed set sent with every message (Custom in the app); then use "
+                + "`tools: {mode: manual, enabled: [...]}`, `mcp_servers`, or `plugins` with exact names "
                 + "from `tools`. Never invent a name. Give each choice a short reason in `reasons`; the "
                 + "card shows it to the user."
         )
@@ -136,7 +137,10 @@ public enum ConfiguratorSystemPromptBuilder {
                 + "words. Your reply is shown to the user as written, so write it to them, "
                 + "briefly. Never name your tools to the user: say what changed, or where in "
                 + "Settings they can do it. You have no memory of earlier requests: use the "
-                + "session state and reference sections in the request, then your tools."
+                + "session state and reference sections in the request, then your tools. Do only "
+                + "the Osaurus part: when the request also asks for other work (using an agent, "
+                + "summarizing, searching), leave it undone and end with one sentence naming it, "
+                + "so the assistant can route it."
         )
         lines.append("")
         lines.append(

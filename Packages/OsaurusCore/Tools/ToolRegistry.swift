@@ -397,11 +397,10 @@ public final class ToolRegistry: ObservableObject {
             WorkflowProposeSaveTool(),
             ArchitectHandoffTool(),
             // The Orchestrator's way to the hidden Configurator, and its
-            // two session tools. Each refuses outside an Orchestrator turn;
+            // session tool. Each refuses outside an Orchestrator turn;
             // the composer strips them from every other agent.
             ConfiguratorHandoffTool(),
             StatusTool(),
-            StateTool(),
             // The Configurator's New Agent draft. Refuses outside a
             // Configurator turn; the composer strips it from every other
             // agent (`agentCreationToolNames`).
@@ -776,7 +775,9 @@ public final class ToolRegistry: ObservableObject {
                 "'\(tool)' belongs to the built-in \(app.displayName) app and only runs inside an Osaurus agent that has \(app.displayName) enabled."
         } else if agentId == Agent.defaultId {
             message =
-                "'\(tool)' belongs to the built-in \(app.displayName) app. The Default agent never uses Apple app tools; enable \(app.displayName) on a custom agent (`osaurus_config` → capabilities.apple_apps) and delegate to it."
+                "'\(tool)' belongs to the built-in \(app.displayName) app, which the Orchestrator never uses itself. "
+                + "Call \(RunWorkflowTool.toolName) with a teammate that has \(app.displayName) on (`status` lists "
+                + "them). If none does, call \(ConfiguratorHandoffTool.toolName) to turn \(app.displayName) on for one."
         } else {
             message =
                 "'\(tool)' belongs to the built-in \(app.displayName) app, which is off for this agent. It cannot be loaded with capabilities_load. Ask the user to turn on \(app.displayName) under this agent's Abilities → Tools → Apple Apps (or have the Orchestrator set capabilities.apple_apps), then retry."
@@ -1298,8 +1299,7 @@ public final class ToolRegistry: ObservableObject {
                 reason:
                     "There is no '\(name)' tool. The tool you mean is named '\(intended)' — "
                     + "call it with that exact name\(schemaHint(for: intended)).",
-                toolName: name,
-                retryable: true
+                toolName: name
             ).toJSONString()
         }
 
@@ -1317,8 +1317,7 @@ public final class ToolRegistry: ObservableObject {
                     "There is no '\(name)' tool. To fetch a web page, call search_and_extract "
                     + "with {\"urls\": [\"<url>\"]} — it fetches the pages and returns their "
                     + "readable content. To find sources first, call web_search.",
-                toolName: name,
-                retryable: true
+                toolName: name
             ).toJSONString()
         }
 
@@ -1377,6 +1376,20 @@ public final class ToolRegistry: ObservableObject {
             // The refusal stands — no execution boundary moves. Naming the
             // Folder chip leaks nothing: it is public UX.
             if Self.coreWorkspaceToolNames.contains(name) {
+                // The Orchestrator never holds folder tools, with or without
+                // a folder; attaching one would not make this call succeed.
+                if ChatExecutionContext.currentAgentId == Agent.defaultId,
+                    scope.permits(RunWorkflowTool.toolName)
+                {
+                    return ToolErrorEnvelope(
+                        kind: .toolNotFound,
+                        reason:
+                            "\(name) is folder work, which the Orchestrator hands off. Call "
+                            + "\(RunWorkflowTool.toolName) with workflow \"\(BuiltInWorker.files.displayName)\" "
+                            + "and input {\"\(AgentWrapperCatalog.taskInput)\": \"<the request>\"}.",
+                        toolName: name
+                    ).toJSONString()
+                }
                 if let refusal = Self.sandboxNotReadyRefusal(tool: name, agentId: ChatExecutionContext.currentAgentId) {
                     return ToolEnvelope.failure(
                         kind: .unavailable,
@@ -1393,8 +1406,9 @@ public final class ToolRegistry: ObservableObject {
                         + PromptWorkingFolderTool.attachFolderSteer
                         + " An attached folder also becomes the agent's Working Folder for "
                         + "future chats and background runs; enabling Autonomous execution is "
-                        + "the other option. Until then, deliver file content with "
-                        + "share_artifact and say why.",
+                        + "the other option."
+                        + (scope.permits("share_artifact")
+                            ? " Until then, deliver file content with share_artifact and say why." : ""),
                     toolName: name,
                     retryable: false
                 ).toJSONString()
@@ -1419,6 +1433,20 @@ public final class ToolRegistry: ObservableObject {
                 !isNonLoadableBuiltIn
                 && (ChatExecutionContext.currentAgentId != Agent.defaultId
                     || Self.configureWriteToolNames.contains(name))
+            // The Orchestrator holds no loader: its configure writes go
+            // through the Configurator, never a capabilities load.
+            if ChatExecutionContext.currentAgentId == Agent.defaultId, Self.configureToolNames.contains(name),
+                !scope.permits("capabilities"), !scope.permits("capabilities_load"),
+                scope.permits(ConfiguratorHandoffTool.toolName)
+            {
+                return ToolErrorEnvelope(
+                    kind: .toolNotFound,
+                    reason:
+                        "Osaurus settings belong to the Configurator. "
+                        + "Call \(ConfiguratorHandoffTool.toolName) with the user's request instead.",
+                    toolName: name
+                ).toJSONString()
+            }
             if loadGateAllows, loadableCodes.isSuperset(of: toolAvailability.reasonCodes) {
                 // Name the loader tool this request actually exposes. Chat
                 // surfaces publish the merged `capabilities` gateway and NOT
@@ -3794,12 +3822,11 @@ extension ToolRegistry {
         "get_current_time", "calculate", "share_artifact",
     ]
 
-    /// The Orchestrator's routing surface: read status, keep session state,
-    /// hand Osaurus questions and changes to the Configurator, hand new
+    /// The Orchestrator's routing surface: read status, hand Osaurus questions and changes to the Configurator, hand new
     /// workflows to the Architect, run an installed workflow, or ask one
     /// question.
     nonisolated static let orchestratorRoutingToolNames: Set<String> = [
-        StatusTool.toolName, StateTool.toolName, ConfiguratorHandoffTool.toolName,
+        StatusTool.toolName, ConfiguratorHandoffTool.toolName,
         ArchitectHandoffTool.toolName, RunWorkflowTool.toolName, "clarify",
     ]
 

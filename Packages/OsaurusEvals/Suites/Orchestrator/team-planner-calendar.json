@@ -1,0 +1,35 @@
+{
+  "id": "orchestrator.team-planner-calendar",
+  "domain": "orchestrator",
+  "label": "orchestrator • a calendar question goes to Planner",
+  "query": "What's on my calendar tomorrow, and do I have any reminders due?",
+  "notes": "Routing on, with the day-one team (Planner, Courier, Keeper, Scout) created from the bundled templates in a scratch folder. Planner owns Calendar and Reminders, so the Orchestrator calls `run_workflow` with \"Planner\".",
+  "fixtures": {
+    "seedTeammates": [
+      "planner",
+      "courier",
+      "keeper",
+      "scout"
+    ]
+  },
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "run_workflow"
+      ],
+      "mustNotCallTools": [
+        "architect_handoff",
+        "configurator_handoff"
+      ],
+      "argsMustContain": [
+        {
+          "tool": "run_workflow",
+          "args": {
+            "workflow": "Planner"
+          }
+        }
+      ],
+      "maxIterations": 6
+    }
+  }
+}

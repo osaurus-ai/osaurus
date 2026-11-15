@@ -110,14 +110,16 @@ enum FolderToolError: LocalizedError {
             }
         }
 
-        var pivotHint: String? {
+        func pivotHint(hasShell: Bool) -> String? {
             switch self {
             case .imageOnlyPdf:
-                return
-                    "Use an OCR tool (e.g. `ocrmypdf`, `tesseract`) via shell_run to recover the text."
+                return hasShell
+                    ? "Use an OCR tool (e.g. `ocrmypdf`, `tesseract`) via shell_run to recover the text."
+                    : "It is a scanned PDF with no text layer; tell the user it can't be read here."
             case .image:
-                return
-                    "Ask the user to attach the image to chat for a vision model, or use an OCR tool via shell_run."
+                return hasShell
+                    ? "Ask the user to attach the image to chat for a vision model, or use an OCR tool via shell_run."
+                    : "Ask the user to attach the image to chat for a vision model."
             case .parseFailed, .unsupportedFormat, .nulByte, .decodeFailed:
                 return nil
             }
@@ -3279,7 +3281,7 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
                     + "complete new content (\(target.contentHint); any length), or assemble the text in a workspace "
                     + "file first and render the document from it with `source_path`.",
                 field: "mode",
-                expected: "omit `mode` (or `write`) for .\(ext); documents are regenerated whole",
+                expected: "omit `mode` (or `overwrite`) for .\(ext); documents are regenerated whole",
                 tool: name,
                 retryable: false
             )
@@ -3381,9 +3383,13 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
         }
         var warnings: [String] = []
         if existed {
-            // Only promise an undo when this call is inside a journal capture.
-            warnings.append(
+            // Only promise an undo when this call is inside a journal capture
+            // and the turn can call `file_undo` (sandbox mode hides it).
+            let canUndo =
                 ChatExecutionContext.currentChangeSetId != nil
+                && (ChatExecutionContext.toolExecutionScope?.permits("file_undo") ?? true)
+            warnings.append(
+                canUndo
                     ? "Overwrites the existing .\(ext) at '\(relativePath)' (previous bytes are captured for `file_undo`)."
                     : "Overwrites the existing .\(ext) at '\(relativePath)'."
             )

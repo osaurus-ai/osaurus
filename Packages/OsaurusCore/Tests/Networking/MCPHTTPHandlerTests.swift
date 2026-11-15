@@ -590,9 +590,17 @@ struct MCPHTTPHandlerTests {
 
             // Register a tool whose name is on the external deny list; it
             // must be filtered from the /mcp/tools listing.
+            // The registry is process-wide: put back the real folder
+            // `shell_run` this echo displaces, or every later suite loses it.
+            let displacedShellRun = ToolRegistry.shared.registeredToolNames().contains("shell_run")
             ToolRegistry.shared.register(NamedEchoTool(name: "shell_run"))
             ToolRegistry.shared.setEnabled(true, for: "shell_run")
-            defer { ToolRegistry.shared.unregister(names: ["shell_run"]) }
+            defer {
+                ToolRegistry.shared.unregister(names: ["shell_run"])
+                if displacedShellRun, let shell = FolderToolFactory.buildCoreTools().first(where: { $0.name == "shell_run" }) {
+                    ToolRegistry.shared.register(shell)
+                }
+            }
 
             let server = try await startTestServer()
             defer { Task { await server.shutdown() } }

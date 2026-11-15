@@ -51,9 +51,10 @@ final class AskOwnerTool: OsaurusTool, @unchecked Sendable {
         }
         guard let route = ChatExecutionContext.ownerApprovalRoute else {
             return ToolEnvelope.failure(
-                kind: .permissionDenied,
+                kind: .unavailable,
                 message: "ask_owner is only available when someone else is using a shared agent set to ask its owner.",
-                tool: name
+                tool: name,
+                retryable: false
             )
         }
         let callId = ChatExecutionContext.currentToolCallId

@@ -34,7 +34,6 @@ final class AgentTodoRunScope: @unchecked Sendable {
     /// so they must not count as work toward a newly checked item.
     static let loopControlToolNames: Set<String> = [
         "todo", "complete", "clarify", "share_artifact", PromptWorkingFolderTool.toolName,
-        StateTool.toolName,
     ]
 
     var hasCurrentRunTodo: Bool {

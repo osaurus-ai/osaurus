@@ -1,15 +1,14 @@
 {
-  "id": "orchestrator.route-settings-change-calls-state",
+  "id": "orchestrator.route-settings-change",
   "domain": "orchestrator",
-  "label": "orchestrator • a settings change goes to the Configurator, then state is written",
+  "label": "orchestrator • a settings change goes to the Configurator",
   "query": "Stop suggesting follow-up questions after your answers.",
-  "notes": "Rule 4 (never apply a change yourself) and rule 6 (call state once per turn). The handoff runs the real Configurator, whose apply auto-approves in this headless lane.",
+  "notes": "Rule 4 (never apply a change yourself). The handoff runs the real Configurator, whose apply auto-approves in this headless lane. Session state is the harness's (extraction after the turn), so no `state` call is expected.",
   "fixtures": {},
   "expect": {
     "defaultAgent": {
       "mustCallTools": [
-        "configurator_handoff",
-        "state"
+        "configurator_handoff"
       ],
       "mustNotCallTools": [
         "architect_handoff",

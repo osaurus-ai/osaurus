@@ -128,9 +128,10 @@ struct ConfigurationDomainRegistryTests {
     @Test
     func orchestratorAllowedToolNames_isTheRoutingSurfacePlusLegacyQuickTools() {
         // The orchestrator (Default agent) baseline is a hard product
-        // contract: the routing surface (`status`, `state`, the Configurator
-        // and Architect handoffs, `run_workflow` — dropped by the composer
-        // when no workflow is Orchestrator-visible — and `clarify`). The
+        // contract: the routing surface (`status`, the Configurator and
+        // Architect handoffs, `run_workflow` — dropped by the composer when
+        // no workflow is Orchestrator-visible — and `clarify`). Session
+        // state is harness-owned, so there is no `state` tool. The
         // agent-loop pair, time, arithmetic, and the native search pair are
         // the legacy set it never holds. No configure tool: Osaurus
         // itself goes through `configurator_handoff`. Changing this set
@@ -141,7 +142,7 @@ struct ConfigurationDomainRegistryTests {
         defer { ConfigurationDomainBootstrap._resetForTests() }
 
         let routing: Set<String> = [
-            "status", "state", "configurator_handoff", "architect_handoff", "run_workflow", "clarify",
+            "status", "configurator_handoff", "architect_handoff", "run_workflow", "clarify",
         ]
         let legacy: Set<String> = [
             "todo", "complete", "get_current_time", "calculate", "web_search", "search_and_extract",

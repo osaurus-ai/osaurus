@@ -366,9 +366,11 @@ let package = Package(
         // old image-conditioned KV under a versioned unified-only cache identity.
         // Gemma QAT tied heads keep their loaded activation precision, and seeded
         // DFlash chain sampling is isolated per request.
+        // vmlx-swift#772 keeps a declared string argument's edge whitespace in
+        // GLM4/Spark2.5 tool calls (a `file_write` append lost its blank line).
         .package(
             url: "https://github.com/osaurus-ai/vmlx-swift",
-            revision: "1bcd74ad182103a3b83941f61e57ee0bac23b330"
+            revision: "2073a764e61e6efad2322684720c8716ac92f4ff"
         ),
         // FluidAudio 0.14.3 added a breaking `language:` parameter to TTS
         // calls that osaurus's `TTSService` doesn't pass. Pinning to the

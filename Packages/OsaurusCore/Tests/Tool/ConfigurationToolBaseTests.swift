@@ -35,7 +35,8 @@ struct ConfigurationToolBaseGateTests {
         }
         let envelope = try #require(result)
         #expect(ToolEnvelope.isError(envelope))
-        #expect(envelope.contains("Default agent"))
+        #expect(envelope.contains("main Osaurus chat"))
+        #expect(!envelope.contains("Switch to the Default agent"))
     }
 
     @Test
