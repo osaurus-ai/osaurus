@@ -4,7 +4,8 @@ Status: PARTIAL. The bar was at least 0.95 per suite at repeat 5 with no case
 below 0.8. Onboarding, ToolResultGrounding and Workflow meet it; the other
 suites do not. Every row below the bar is attributed. The live app run
 covers routing, settle, state, continuity and relaunch; Effort None in the
-live app is not proven.
+live app is not proven. `make ci-test` passes; SwiftPM `make test` aborts
+in the MLX harness, as it does on other branches on this machine.
 
 ## Setup
 
@@ -286,7 +287,32 @@ tok/s.
   picker, which is a separate popover window that background automation could
   not click. The eval self-judge runs with thinking off and gets visible
   JSON, which covers the boundary for structured requests but not chat.
-- `make test` on the final source.
+
+## Unit tests
+
+`make test` (SwiftPM) did not finish. After 10,827 test starts it aborted
+with `MLX error: Failed to load the default metallib`, raised by a test that
+reaches MLX inside the SwiftPM harness. Other branches on this machine hit the
+same abort, so the CI-mirroring lane was used as the full-suite gate. It ran
+with the keychain-disabled test environment forwarded as `TEST_RUNNER_*`.
+
+- `make ci-test` at `0c610ec5`: 15,160 passed, 67 skipped, 23 failed. 21
+  were this branch's. `ConfigurationDomainRegistryTests` still expected the
+  removed `state` tool. In 20 composer, sandbox and surface tests,
+  `shell_run` was missing from the registry. `MCPHTTPHandlerTests`
+  registers an echo tool named `shell_run` and then unregisters the name,
+  which removes the real folder tool for the rest of the process. This
+  branch stopped `FolderToolRegistrationTests` from tearing folder tools
+  down, and that teardown had been re-registering `shell_run` as a side
+  effect. The other 2 failures were timing-sensitive tests in suites this
+  branch does not touch (`CodeNodeExecutorTests` runaway allocation hit the
+  3-minute allowance; `LoginShellPathTests` could not find its pid file).
+- `11f3094b` fixes both causes in the tests: the routing contract drops
+  `state`, and the MCP test restores the `shell_run` it displaced.
+- `make ci-test` at `11f3094b`: 15,183 passed, 67 skipped, 0 failed.
+
+Since `336bab72`, the commits change only tests and docs, so the eval matrix
+and live run apply to the shipped source unchanged.
 
 ## Evidence
 
