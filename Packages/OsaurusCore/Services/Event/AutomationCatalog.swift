@@ -47,8 +47,8 @@ enum AutomationCatalog {
         }
     }
 
-    /// Workflow automations of this kind that are on.
-    static func enabledCount(_ entry: Entry, in events: [OsaurusEvent]) -> Int {
-        events.filter { $0.isEnabled && $0.action.workflow != nil && self.entry(for: $0) == entry }.count
+    /// How many workflows have an automation of this kind that is on.
+    static func enabledWorkflowCount(_ entry: Entry, in events: [OsaurusEvent]) -> Int {
+        Set(events.filter { $0.isEnabled && self.entry(for: $0) == entry }.compactMap(\.action.workflow?.workflowID)).count
     }
 }

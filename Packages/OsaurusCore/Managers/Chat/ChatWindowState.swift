@@ -494,19 +494,40 @@ final class ChatWindowState: ObservableObject {
     @Published var workflowsSidebarScrollTarget: String?
     /// The run the Workflows home last started, so its row opens to show it.
     @Published var workflowsSpotlightRunID: UUID?
-    /// An automation just added from outside a workflow's page; the page
-    /// opens with its card ready to change.
-    private var workflowsAutomationHighlight: UUID?
+    /// What a workflow's page opens doing, asked for from outside it (the
+    /// automate popover, Home); taken once.
+    private var workflowsAutomationIntent: WorkflowAutomationIntent?
+    /// Home's section a link asked to scroll to, once.
+    private(set) var workflowsHomeScrollTarget: String?
 
-    /// Opens `workflowID`'s page with `automationID`'s card ready to change.
-    func showWorkflowAutomation(workflowID: UUID, automationID: UUID) {
-        workflowsAutomationHighlight = automationID
-        selectWorkflowsPage(.workflow(workflowID))
+    /// Opens `workflowID`'s page doing `intent`.
+    func showWorkflowAutomation(workflowID: UUID, intent: WorkflowAutomationIntent) {
+        workflowsAutomationIntent = intent
+        if workflowsPath.last == .workflow(workflowID) {
+            NotificationCenter.default.post(name: .workflowAutomationIntent, object: workflowID)
+        } else {
+            selectWorkflowsPage(.workflow(workflowID))
+        }
     }
 
-    func takeWorkflowsAutomationHighlight() -> UUID? {
-        defer { workflowsAutomationHighlight = nil }
-        return workflowsAutomationHighlight
+    func takeWorkflowsAutomationIntent() -> WorkflowAutomationIntent? {
+        defer { workflowsAutomationIntent = nil }
+        return workflowsAutomationIntent
+    }
+
+    /// Home, scrolled to `section`.
+    func showWorkflowsHome(scrolledTo section: String) {
+        workflowsHomeScrollTarget = section
+        if workflowsPath.isEmpty {
+            NotificationCenter.default.post(name: .workflowsHomeScroll, object: nil)
+        } else {
+            selectWorkflowsPage(nil)
+        }
+    }
+
+    func takeWorkflowsHomeScrollTarget() -> String? {
+        defer { workflowsHomeScrollTarget = nil }
+        return workflowsHomeScrollTarget
     }
 
     /// Set by New Workflow until the Architect composer on screen takes

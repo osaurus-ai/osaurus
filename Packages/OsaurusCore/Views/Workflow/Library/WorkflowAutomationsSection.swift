@@ -13,14 +13,34 @@
 import AppKit
 import SwiftUI
 
+/// What a workflow's page opens doing when the automate popover or Home
+/// sent the person there.
+enum WorkflowAutomationIntent: Equatable {
+    /// This automation was just added: its card opens ready to change.
+    case highlight(UUID)
+    /// A new feed card, waiting for the address.
+    case addFeed
+    /// The full editor, on this kind, with the workflow picked.
+    case openEditor(EventSourceTemplate)
+}
+
+extension Notification.Name {
+    /// A `WorkflowAutomationIntent` for the workflow page already on screen
+    /// (`object` is the workflow id).
+    static let workflowAutomationIntent = Notification.Name("WorkflowAutomationIntent")
+    /// Home is on screen and a link asked to scroll it.
+    static let workflowsHomeScroll = Notification.Name("WorkflowsHomeScroll")
+}
+
 struct WorkflowAutomationsSection: View {
     @Environment(\.theme) private var theme
 
     let workflow: InstalledWorkflow
-    /// An automation just added (here, the automate popover, Home): its
-    /// card opens with the words to change it.
-    @Binding var highlighted: UUID?
+    /// What the page was opened to do; taken on appear.
+    var takeIntent: () -> WorkflowAutomationIntent? = { nil }
 
+    /// An automation just added: its card opens with the words to change it.
+    @State private var highlighted: UUID?
     @State private var editorRequest: EventEditorRequest?
     @State private var removing: OsaurusEvent?
     @State private var addingFeed = false
@@ -44,7 +64,7 @@ struct WorkflowAutomationsSection: View {
                     ForEach(automations) { event in
                         WorkflowAutomationCard(
                             event: event, workflow: workflow,
-                            isHighlighted: highlighted == event.id,
+                            isHighlighted: highlighted == event.id, needsSetup: workflow.needsSetup,
                             onChange: { editorRequest = EventEditorRequest(existing: $0) },
                             onRemove: { removing = $0 })
                     }
@@ -61,6 +81,11 @@ struct WorkflowAutomationsSection: View {
             }
         }
         .settingsLandingAnchor("workflows.automate.schedule")
+        .onAppear { apply(takeIntent()) }
+        .onReceive(NotificationCenter.default.publisher(for: .workflowAutomationIntent)) { note in
+            guard note.object as? UUID == workflow.id else { return }
+            apply(takeIntent())
+        }
         .sheet(item: $editorRequest) { request in
             EventEditorSheet(
                 request: request,
@@ -89,7 +114,8 @@ struct WorkflowAutomationsSection: View {
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: theme.space.s12) {
             SettingsRow(
-                title: "Want this to run on its own?", description: "Right now it only runs when you click Run."
+                title: "Want this to run on its own?",
+                description: "Pick a moment. You can change it or turn it off anytime."
             ) { EmptyView() }
             HStack(alignment: .top, spacing: theme.space.s8) {
                 if let suggested = AutomationPresets.presets(name: workflow.name, summary: workflow.summary)
@@ -154,16 +180,20 @@ struct WorkflowAutomationsSection: View {
         Text(verbatim: L("Also run it"))
             .font(SettingsFont.rowDescription)
             .foregroundStyle(theme.text.secondary)
-        SettingsButton(.secondary, "at another time", icon: "plus", size: .small) {
-            add(AutomationDefaults.schedule)
-        }
+        WorkflowDashedChip(title: L("at another time")) { add(AutomationDefaults.schedule) }
         if !hasAppLaunch {
-            SettingsButton(.secondary, "when Osaurus opens", icon: "plus", size: .small) {
-                add(AutomationDefaults.appLaunch)
-            }
+            WorkflowDashedChip(title: L("when Osaurus opens")) { add(AutomationDefaults.appLaunch) }
         }
-        SettingsButton(.secondary, "when a file shows up", icon: "plus", size: .small) { addFolder() }
-        SettingsMenuButton(.secondary, "more ways", size: .small) { happeningsMenu }
+        WorkflowDashedChip(title: L("when a file shows up")) { addFolder() }
+        Menu {
+            happeningsMenu
+        } label: {
+            WorkflowDashedChipLabel(title: L("more ways"), icon: "ellipsis")
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .fixedSize()
     }
 
     /// Every way the catalog offers but a schedule.
@@ -189,6 +219,15 @@ struct WorkflowAutomationsSection: View {
     }
 
     // MARK: Actions
+
+    private func apply(_ intent: WorkflowAutomationIntent?) {
+        switch intent {
+        case .highlight(let id)?: withAnimation(theme.motion.standard) { highlighted = id }
+        case .addFeed?: addingFeed = true
+        case .openEditor(let template)?: openEditor(template)
+        case nil: break
+        }
+    }
 
     private func apply(_ kind: AutomationPresets.Kind) {
         switch kind {
@@ -248,6 +287,7 @@ struct WorkflowAutomationCard: View {
     let event: OsaurusEvent
     let workflow: InstalledWorkflow
     let isHighlighted: Bool
+    var needsSetup = false
     let onChange: (OsaurusEvent) -> Void
     let onRemove: (OsaurusEvent) -> Void
 
@@ -271,9 +311,12 @@ struct WorkflowAutomationCard: View {
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: theme.space.s4) {
                     sentence
-                    Text(verbatim: statusLine(missing: missing))
+                    let state = WorkflowAutomationState.line(
+                        event, needsSetup: needsSetup, inputsMissing: !missing.isEmpty,
+                        hasTargetProblem: EventInspection.targetProblem(event) != nil)
+                    Text(verbatim: state.text)
                         .font(SettingsFont.footnote)
-                        .foregroundStyle(missing.isEmpty ? theme.text.secondary : theme.statusInk(.warning))
+                        .foregroundStyle(state.tone.map(theme.statusInk) ?? theme.text.secondary)
                 }
                 Spacer(minLength: theme.space.s8)
                 if !inputFields.isEmpty {
@@ -364,18 +407,6 @@ struct WorkflowAutomationCard: View {
             .font(SettingsFont.rowTitle)
             .foregroundStyle(theme.text.primary)
             .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private func statusLine(missing: [DialogField]) -> String {
-        if !missing.isEmpty { return L("Off until you fill in what it uses.") }
-        guard event.isEnabled else {
-            if case .schedule(let schedule) = event.source, case .once = schedule.frequency, event.lastFiredAt != nil {
-                return L("Ran once. It won't run again.")
-            }
-            return L("Off")
-        }
-        if let next = event.nextFireDate() { return L("Next: \(AutomationSentence.nextRun(next))") }
-        return L("On")
     }
 
     // MARK: Changes

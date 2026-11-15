@@ -26,7 +26,8 @@ final class WorkflowsOverviewModel: ObservableObject {
     @Published private(set) var recentRuns: [UUID: [EventRun]] = [:]
     /// Automation ids whose target is missing or can't run.
     @Published private(set) var targetProblems: Set<UUID> = []
-    /// Automations that run an agent or a prompt instead of a workflow.
+    /// Automations that run an agent or a prompt instead of a workflow,
+    /// not counting channel messages.
     @Published private(set) var otherAutomationCount = 0
 
     private let events: EventManager
@@ -94,7 +95,7 @@ final class WorkflowsOverviewModel: ObservableObject {
         let all = events.events
         let workflow = all.filter { $0.action.workflow != nil }
         if workflow != workflowEvents { workflowEvents = workflow }
-        let others = all.count - workflow.count
+        let others = all.filter { $0.action.workflow == nil && $0.sourceKind != .channelMessage }.count
         if others != otherAutomationCount { otherAutomationCount = others }
         refreshTargets()
         reloadRuns(force: false)

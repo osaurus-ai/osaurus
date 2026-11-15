@@ -226,15 +226,17 @@ struct AutomationCatalogTests {
         #expect(AutomationCatalog.items.first { $0.entry == .kind(.folder) }?.title == "When a file shows up")
     }
 
-    @Test func countsOnlyWorkflowAutomationsThatAreOn() {
+    @Test func countsWorkflowsWithAnAutomationThatIsOn() {
+        let shared = UUID()
         let events = [
-            event(AutomationDefaults.schedule),
+            event(AutomationDefaults.schedule, workflowID: shared),
+            event(.schedule(ScheduleSourceConfig(frequency: AutomationDefaults.scheduleFrequency)), workflowID: shared),
             event(AutomationDefaults.schedule, enabled: false),
             event(.webhook(WebhookSourceConfig(provider: .github))),
             event(.webhook(WebhookSourceConfig())),
         ]
-        #expect(AutomationCatalog.enabledCount(.kind(.schedule), in: events) == 1)
-        #expect(AutomationCatalog.enabledCount(.appNews, in: events) == 1)
+        #expect(AutomationCatalog.enabledWorkflowCount(.kind(.schedule), in: events) == 1)
+        #expect(AutomationCatalog.enabledWorkflowCount(.appNews, in: events) == 1)
     }
 }
 
@@ -330,5 +332,121 @@ struct WorkflowDetailStatusLineTests {
             needsSetup: false, automations: [event(AutomationDefaults.schedule)], lastRun: run(.failed), now: wednesday, style: us)
         #expect(line.text == "The last run failed.")
         #expect(line.tone == .error)
+    }
+}
+
+private func fire(_ status: EventRunStatus, for event: OsaurusEvent, at date: Date) -> EventRun {
+    EventRun(
+        eventId: event.id, eventName: event.name, sourceKind: event.sourceKind, actionKind: .workflow,
+        firedAt: date, status: status)
+}
+
+struct WorkflowAutomationStateTests {
+    @Test func offAndRanOnce() {
+        #expect(WorkflowAutomationState.line(event(AutomationDefaults.schedule, enabled: false), now: wednesday, style: us).text == "Off")
+        var once = event(.schedule(ScheduleSourceConfig(frequency: .once(date: wednesday))), enabled: false)
+        once.lastFiredAt = wednesday
+        #expect(WorkflowAutomationState.line(once, now: wednesday, style: us).text == "Ran once on Nov 18")
+    }
+
+    @Test func whatNeedsDoingComesFirst() {
+        let on = event(AutomationDefaults.schedule)
+        let missing = WorkflowAutomationState.line(on, inputsMissing: true, now: wednesday, style: us)
+        #expect(missing.text == "Off until you fill in what it uses.")
+        #expect(missing.tone == .warning)
+        #expect(WorkflowAutomationState.line(on, needsSetup: true, now: wednesday, style: us).text == "Finish setup to run")
+        let target = WorkflowAutomationState.line(on, hasTargetProblem: true, now: wednesday, style: us)
+        #expect(target.tone == .error)
+    }
+
+    @Test func aFailureSaysWhichDay() {
+        let on = event(AutomationDefaults.appLaunch)
+        let failed = fire(.failed, for: on, at: wednesday.addingTimeInterval(-86_400))
+        let line = WorkflowAutomationState.line(on, latestSettled: failed, now: wednesday, style: us)
+        #expect(line.text == "Last run failed yesterday")
+        #expect(line.tone == .error)
+    }
+
+    @Test func watchingAndOn() {
+        let folder = event(.folder(FolderSourceConfig(path: "/Users/me/Downloads")))
+        #expect(WorkflowAutomationState.line(folder, now: wednesday, style: us).text == "Watching.")
+        let ran = fire(.succeeded, for: folder, at: wednesday)
+        #expect(WorkflowAutomationState.line(folder, latestSettled: ran, now: wednesday, style: us).text == "Watching. Last ran today")
+        #expect(WorkflowAutomationState.line(event(AutomationDefaults.appLaunch), now: wednesday, style: us).text == "On")
+    }
+
+    @Test func dayWords() {
+        #expect(WorkflowRunWords.day(wednesday, now: wednesday, style: us) == "today")
+        #expect(WorkflowRunWords.day(wednesday.addingTimeInterval(-86_400), now: wednesday, style: us) == "yesterday")
+        #expect(WorkflowRunWords.day(wednesday.addingTimeInterval(-3 * 86_400), now: wednesday, style: us) == "Sunday")
+        #expect(WorkflowRunWords.day(wednesday.addingTimeInterval(-10 * 86_400), now: wednesday, style: us) == "Nov 8")
+    }
+}
+
+struct WorkflowsHomeModelTests {
+    private static func workflow(_ name: String, pinned: Bool = false) -> InstalledWorkflow {
+        var w = InstalledWorkflow(template: WF.template(WF.intake(), name: name), bindings: InstallBindings())
+        if pinned {
+            w.isPinned = true
+            w.pinnedAt = wednesday
+        }
+        return w
+    }
+
+    private static func facts(_ event: OsaurusEvent, failed: Bool = false) -> WorkflowsSidebarModel.AutomationFacts {
+        .init(event: event, latestSettled: failed ? .failed : nil)
+    }
+
+    @Test func subtitleCountsWhatRunsOnItsOwn() {
+        #expect(WorkflowsHomeModel.subtitle(runOnOwn: 0, attention: 0) == "Nothing runs on its own yet.")
+        #expect(WorkflowsHomeModel.subtitle(runOnOwn: 4, attention: 0) == "4 run on their own.")
+        #expect(WorkflowsHomeModel.subtitle(runOnOwn: 4, attention: 1) == "4 run on their own. 1 needs your attention.")
+    }
+
+    @Test func countsGroupsAndWays() {
+        let brief = Self.workflow("Morning Brief")
+        let triage = Self.workflow("Inbox Triage")
+        let manual = Self.workflow("By Hand")
+        let briefOn = event(AutomationDefaults.schedule, workflowID: brief.id)
+        let briefLaunch = event(AutomationDefaults.appLaunch, workflowID: brief.id)
+        let triageOn = event(AutomationDefaults.schedule, workflowID: triage.id)
+        let orphan = event(AutomationDefaults.schedule)
+        let model = WorkflowsHomeModel.make(
+            workflows: [brief, triage, manual],
+            automations: [
+                brief.id: [Self.facts(briefOn), Self.facts(briefLaunch)],
+                triage.id: [Self.facts(triageOn, failed: true)],
+                orphan.action.workflow!.workflowID: [Self.facts(orphan)],
+            ],
+            eventRuns: [triageOn.id: [fire(.failed, for: triageOn, at: wednesday), fire(.succeeded, for: triageOn, at: wednesday)]],
+            otherAutomationCount: 3, now: wednesday, style: us)
+
+        #expect(model.runOnOwnCount == 2)
+        #expect(model.attentionCount == 1)
+        #expect(model.groups.map(\.name) == ["Inbox Triage", "Morning Brief"])
+        #expect(model.groups.last?.rows.count == 2)
+        #expect(model.automationCount == 3)
+        #expect(model.otherAutomationCount == 3)
+        let triageRow = model.groups.first?.rows.first
+        #expect(triageRow?.bars.count == WorkflowsHomeModel.healthRunCount)
+        #expect(triageRow?.stateTone == .error)
+        let schedule = model.ways.first { $0.item.entry == .kind(.schedule) }
+        #expect(schedule?.state == "On for 2 workflows")
+        let folder = model.ways.first { $0.item.entry == .kind(.folder) }
+        #expect(folder?.state == "Set up")
+    }
+
+    @Test func pinnedTilesSayHowTheLastRunWent() {
+        let brief = Self.workflow("Morning Brief", pinned: true)
+        var ran = run(.completed)
+        ran.workflowID = brief.id
+        let model = WorkflowsHomeModel.make(
+            workflows: [brief, Self.workflow("Unpinned")], automations: [:], workflowRuns: [ran], now: wednesday, style: us)
+        #expect(model.pinned.map(\.name) == ["Morning Brief"])
+        #expect(plain(model.pinned.first?.lastRun ?? "") == "Ran today, 10:00 AM")
+        #expect(WorkflowsHomeModel.lastRunLine(nil) == "Not run yet")
+        var failed = run(.failed, started: wednesday.addingTimeInterval(-86_400))
+        failed.workflowID = brief.id
+        #expect(WorkflowsHomeModel.lastRunLine(failed, now: wednesday, style: us) == "Failed yesterday")
     }
 }

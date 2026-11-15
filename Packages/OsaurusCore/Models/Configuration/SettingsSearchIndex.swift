@@ -4553,7 +4553,7 @@ public enum SettingsSearchIndex {
                 "my workflows",
             ],
             subTab: "workflows",
-            disambiguation: "Main window ▸ Workflows: a sidebar (search, Home, Pinned, All workflows, Drafts, Workspaces, then New workflow and Osaurus Store) beside the page picked there. Home has Import and New Workflow (⌘N) in its header, Running now while anything runs, and your author page at the foot. Picking a workflow opens its page; a row's Run starts it at once when it needs nothing, else asks for its input. The toolbar's sidebar button (⌘B) hides or shows the sidebar. With no workflows and no drafts the page is New Workflow alone, without a sidebar."
+            disambiguation: "Main window ▸ Workflows: a sidebar (search, Home, Pinned, All workflows, Drafts, Workspaces, then New workflow and Osaurus Store) beside the page picked there. Home has Import and New Workflow (⌘N) in its header with how many workflows run on their own, then Running now while anything runs, Pinned tiles, Running on their own, Ways to automate, and your author page at the foot. Picking a workflow opens its page; a row's Run starts it at once when it needs nothing, else asks for its input. The toolbar's sidebar button (⌘B) hides or shows the sidebar. With no workflows and no drafts the page is New Workflow alone, without a sidebar."
         ),
         .init(
             id: "workflows.runningNow",
@@ -4566,6 +4566,31 @@ public enum SettingsSearchIndex {
             ],
             subTab: "workflows",
             disambiguation: "On Workflows Home, under the title, while any workflow is running: each run with its step progress, who started it (you, an agent, or an automation, with a bolt), Stop, and Respond when it waits on a form. Shown only while something runs."
+        ),
+        .init(
+            id: "workflows.runningOnTheirOwn",
+            tab: .workflows,
+            section: "Workflows",
+            title: "Running on their own",
+            keywords: [
+                "automations", "what runs on its own", "automated workflows", "scheduled workflows", "turn off automation",
+                "pause automation", "how the last runs went", "all activity", "other automations", "run agents",
+            ],
+            subTab: "workflows",
+            disambiguation: "On Workflows Home: every automation that starts a workflow, grouped by workflow, with when it runs, how it is doing, a bar for each of its last 7 runs, and a switch to turn it on or off. Click a row to open the workflow's page with that automation highlighted. Automations that run an agent instead are counted below, with Open Automations to see them in Settings → Automations."
+        ),
+        .init(
+            id: "workflows.waysToAutomate",
+            tab: .workflows,
+            section: "Workflows",
+            title: "Ways to automate",
+            keywords: [
+                "pick a moment", "automate a workflow", "at a set time", "when a file shows up", "when an app has news",
+                "when a site posts something new", "when something goes wrong", "when osaurus opens", "see all ways to automate",
+                "custom trigger", "webhook", "event stream", "advanced automations",
+            ],
+            subTab: "workflows",
+            disambiguation: "On Workflows Home, at the bottom: one card per way to start a workflow on its own, with how many workflows already use it. Pick a card, then pick a workflow; the automation is made and its page opens with it highlighted. Webhooks and event streams stay in Settings → Automations, under Advanced (Open Advanced). The bolt beside a workflow in the sidebar offers the same ways for that one workflow."
         ),
         .init(
             id: "workflows.all",
@@ -4632,9 +4657,9 @@ public enum SettingsSearchIndex {
             tab: .workflows,
             section: "Sidebar",
             title: "Pinned",
-            keywords: ["pin", "unpin", "pin workflow", "favorite workflows", "keep at the top"],
+            keywords: ["pin", "unpin", "pin workflow", "favorite workflows", "keep at the top", "one click to run", "pinned tiles"],
             subTab: "workflows",
-            disambiguation: "Right-click a workflow in the Workflows sidebar and choose Pin: it moves to Pinned at the top, oldest pin first, with a filled Run button. Unpin moves it back to All workflows. Pins stay on this Mac, survive relaunch and updates, and are never exported or shared. A teammate's workflow can be pinned too."
+            disambiguation: "Right-click a workflow in the Workflows sidebar and choose Pin, or click Pin at the top of its page: it moves to Pinned at the top, oldest pin first, with a filled Run button, and shows as a tile with Run on Workflows Home (One click to run). Unpin moves it back to All workflows. Pins stay on this Mac, survive relaunch and updates, and are never exported or shared. A teammate's workflow can be pinned too."
         ),
         .init(
             id: "workflows.store",
@@ -5018,7 +5043,7 @@ public enum SettingsSearchIndex {
                 "when a site posts", "feed", "also run it", "more ways", "turn off automation", "remove automation",
                 "what should it use each time", "workflow inputs for automation",
             ],
-            disambiguation: "Per installed workflow, on its page: each automation that starts it, as a sentence. Click the day or time of a schedule, the folder, or the site to change it in place; Custom… and Change… open the full editor from Settings → Automations. Also run it adds another way. An automation whose workflow needs an input with no default stays off and shows What should it use each time? until it is filled. Every automation also lists in Settings → Automations."
+            disambiguation: "Per installed workflow, on its page: each automation that starts it, as a sentence. Click the day or time of a schedule, the folder, or the site to change it in place; Custom… and Change… open the full editor from Settings → Automations. Also run it adds another way. An automation whose workflow needs an input with no default stays off and shows What should it use each time? until it is filled. The bolt beside a workflow in the sidebar opens the same choices in a small panel (Run <name>…): a suggestion is made in one click with Undo, and See all ways to automate scrolls Home to Ways to automate. Every automation also lists in Settings → Automations."
         ),
         .init(
             id: "workflows.recentRuns",

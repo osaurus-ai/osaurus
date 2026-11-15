@@ -31,7 +31,48 @@ enum WorkflowStatusLine {
     }
 }
 
+/// The line under one automation, on a workflow's page and on Home: when
+/// it runs next, or how it last went.
+enum WorkflowAutomationState {
+    static func line(
+        _ event: OsaurusEvent, latestSettled: EventRun? = nil, needsSetup: Bool = false, inputsMissing: Bool = false,
+        hasTargetProblem: Bool = false, now: Date = Date(), style: AutomationSentence.Style = .current
+    ) -> (text: String, tone: ThemeStatusKind?) {
+        if inputsMissing { return (L("Off until you fill in what it uses."), .warning) }
+        guard event.isEnabled else {
+            if case .schedule(let schedule) = event.source, case .once = schedule.frequency, let fired = event.lastFiredAt {
+                return (L("Ran once on \(style.date(fired, template: "MMMd"))"), nil)
+            }
+            return (L("Off"), nil)
+        }
+        if needsSetup { return (L("Finish setup to run"), .warning) }
+        if hasTargetProblem { return (L("Can't start its workflow. Open it to see why."), .error) }
+        if let latestSettled, latestSettled.status == .failed {
+            return (L("Last run failed \(WorkflowRunWords.day(latestSettled.firedAt, now: now, style: style))"), .error)
+        }
+        if let next = event.nextFireDate(asOf: now) {
+            return (L("Next: \(AutomationSentence.nextRun(next, now: now, style: style))"), nil)
+        }
+        let lastRan = latestSettled.map { L("Last ran \(WorkflowRunWords.day($0.firedAt, now: now, style: style))") }
+        switch event.sourceKind {
+        case .folder, .rss: return (lastRan.map { L("Watching. \($0)") } ?? L("Watching."), nil)
+        default: return (lastRan.map { L("On. \($0)") } ?? L("On"), nil)
+        }
+    }
+}
+
 enum WorkflowRunWords {
+    /// "today", "yesterday", "Friday", "Nov 2": a past day inside a sentence.
+    static func day(_ date: Date, now: Date = Date(), style: AutomationSentence.Style = .current) -> String {
+        let calendar = style.calendar
+        if calendar.isDate(date, inSameDayAs: now) { return L("today") }
+        if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(date, inSameDayAs: yesterday) {
+            return L("yesterday")
+        }
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: date), to: calendar.startOfDay(for: now)).day ?? 0
+        return days > 0 && days < 7 ? style.date(date, template: "EEEE") : style.date(date, template: "MMMd")
+    }
+
     /// "Today, 8:00 AM", "Yesterday, 8:00 AM", "Friday, 8:00 AM", "Nov 3, 8:00 AM".
     static func when(_ date: Date, now: Date = Date(), style: AutomationSentence.Style = .current) -> String {
         let calendar = style.calendar

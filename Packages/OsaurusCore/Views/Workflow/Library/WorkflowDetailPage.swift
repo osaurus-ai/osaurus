@@ -36,9 +36,8 @@ struct WorkflowDetailPage<Actions: View>: View {
     let onDone: () -> Void
     /// Every run of it (Activity, filtered to this workflow).
     let onSeeAllRuns: (InstalledWorkflow) -> Void
-    /// An automation added just before the page opened (the automate
-    /// popover, Home), shown in edit state once.
-    var takeHighlight: () -> UUID? = { nil }
+    /// What the page was opened to do (the automate popover, Home), once.
+    var takeIntent: () -> WorkflowAutomationIntent? = { nil }
     let actionMenu: (InstalledWorkflow) -> Actions
 
     /// Recorded runs, read when the page opens and when one of its runs
@@ -46,7 +45,6 @@ struct WorkflowDetailPage<Actions: View>: View {
     @State private var recordedRuns: [WorkflowRun] = []
     @State private var tagText = ""
     @State private var editingTags = false
-    @State private var highlightedAutomation: UUID?
     @State private var pageWidth: CGFloat = 0
 
     private static var shownRunCount: Int { 5 }
@@ -68,7 +66,7 @@ struct WorkflowDetailPage<Actions: View>: View {
                         nameNotice(workflow)
                         HStack(alignment: .top, spacing: theme.space.s24) {
                             VStack(alignment: .leading, spacing: theme.space.s24) {
-                                WorkflowAutomationsSection(workflow: workflow, highlighted: $highlightedAutomation)
+                                WorkflowAutomationsSection(workflow: workflow, takeIntent: takeIntent)
                                 if !isWide { recentRuns(workflow) }
                                 whatItDoes(workflow)
                                 beforeItRuns(workflow, report: report)
@@ -111,7 +109,6 @@ struct WorkflowDetailPage<Actions: View>: View {
         // the full record, read off the main actor.
         .onAppear {
             recordedRuns = runs.recentRuns().filter { $0.workflowID == workflowID }
-            if let highlight = takeHighlight() { highlightedAutomation = highlight }
         }
         .task(id: endedLiveRuns) {
             // Architect tests and eval runs are not what the workflow did for anyone.

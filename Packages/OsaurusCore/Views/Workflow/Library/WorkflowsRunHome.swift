@@ -15,6 +15,12 @@ extension WorkflowsView {
         VStack(alignment: .leading, spacing: theme.space.s32) {
             homeHeader
             WorkflowsRunningNow(onOpen: openRun)
+            WorkflowsHomeSections(
+                windowState: windowState, overview: windowState.workflowsOverview,
+                onRun: { workflow in
+                    if workflow.needsSetup { setupSubject = .setup(workflow) } else { play(workflow) }
+                },
+                onAllActivity: { TaskControl.showHistory(.automations) })
             PublishedByYouLine(kind: .workflow, anchor: "workflows.publishedByYou")
         }
     }
@@ -35,6 +41,7 @@ extension WorkflowsView {
                 .settingsLandingAnchor("workflows.architect")
             }
             HStack(spacing: theme.space.s4) {
+                WorkflowsHomeSubtitle(overview: windowState.workflowsOverview)
                 Spacer(minLength: theme.space.s8)
                 WorkflowTextLink(title: L("Connections"), icon: "link") { showingConnections = true }
                     .help(L("The services your workflows sign in to. See what each one is used by and sign in again."))

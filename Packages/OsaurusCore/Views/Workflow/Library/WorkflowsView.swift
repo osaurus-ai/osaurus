@@ -282,7 +282,7 @@ struct WorkflowsView: View {
                 onEdit: { ArchitectLauncher.edit($0, in: windowState) },
                 onDone: { windowState.popWorkflowsPage() },
                 onSeeAllRuns: { TaskControl.showHistory(.workflow($0.id)) },
-                takeHighlight: { windowState.takeWorkflowsAutomationHighlight() },
+                takeIntent: { windowState.takeWorkflowsAutomationIntent() },
                 actionMenu: { workflow in installedCard(workflow, detailActionMenu: true) }
             )
             .id("workflow-\(id)")
@@ -339,7 +339,6 @@ struct WorkflowsView: View {
             selection: windowState.workflowsSidebarSelection,
             workflowMenu: { workflow, label in AnyView(sidebarMenu(workflow, label: label)) },
             onRun: runFromSidebar,
-            onAutomate: { windowState.selectWorkflowsPage(.workflow($0)) },
             onDeleteDraft: { deletingDraft = $0 })
     }
 
@@ -415,16 +414,29 @@ struct WorkflowsView: View {
             newWorkflowPage(onBack: nil)
                 .transition(.opacity)
         } else {
-            ScrollView {
-                workflowsHome
-                    .frame(maxWidth: WorkflowLibraryLayout.columnWidth, alignment: .leading)
-                    .padding(.horizontal, theme.space.s24)
-                    .padding(.top, WorkflowLibraryLayout.pageTopInset(theme))
-                    .padding(.bottom, theme.space.s64)
-                    .frame(maxWidth: .infinity, alignment: .top)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    workflowsHome
+                        .frame(maxWidth: WorkflowLibraryLayout.columnWidth, alignment: .leading)
+                        .padding(.horizontal, theme.space.s24)
+                        .padding(.top, WorkflowLibraryLayout.pageTopInset(theme))
+                        .padding(.bottom, theme.space.s64)
+                        .frame(maxWidth: .infinity, alignment: .top)
+                }
+                .onAppear { scrollHome(proxy, to: windowState.takeWorkflowsHomeScrollTarget()) }
+                .onReceive(NotificationCenter.default.publisher(for: .workflowsHomeScroll)) { _ in
+                    scrollHome(proxy, to: windowState.takeWorkflowsHomeScrollTarget())
+                }
             }
             .transition(.opacity)
             .settingsLandingAnchor("workflows.overview")
+        }
+    }
+
+    private func scrollHome(_ proxy: ScrollViewProxy, to section: String?) {
+        guard let section else { return }
+        DispatchQueue.main.async {
+            withAnimation(theme.motion.standard) { proxy.scrollTo(section, anchor: .top) }
         }
     }
 

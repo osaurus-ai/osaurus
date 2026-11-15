@@ -598,6 +598,19 @@ Settings. They are ordinary `OsaurusEvent`s from
   rules that pick a suggested one; `AutomationCatalog` lists the kinds the
   Workflows screens offer (named-service webhooks as one entry; event
   streams and generic webhooks stay in Settings).
+- The sidebar's bolt opens `WorkflowAutomatePopover`: the workflow's
+  automations with switches, then `AutomationPresets`. A preset that needs
+  nothing more is created at once with an Undo toast
+  (`WorkflowAutomationUndo`, which deletes the event); anything else hands
+  the workflow's page a `WorkflowAutomationIntent` (highlight, add a feed,
+  or open the editor) through `ChatWindowState.showWorkflowAutomation`.
+- Home reads `WorkflowsOverviewModel` through `WorkflowsHomeModel`: the
+  count line uses the sidebar's `WorkflowsSidebarModel.status`, **Running
+  on their own** lists every workflow-action event whose workflow is
+  installed (with `WorkflowAutomationState` and a 7-bar
+  `WorkflowHealth` strip from its fires), the agent/prompt count excludes
+  channel messages, and each **Ways to automate** card counts the distinct
+  workflows with an enabled event of that catalog entry.
 
 ## Tests
 

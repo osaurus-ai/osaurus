@@ -350,6 +350,11 @@ struct SettingsSearchSelfFindProbe {
             ("Restore Defaults", "settings.configurator.restoreDefaults"),
             // Workflows: the sidebar, Home, New Workflow, and a workflow's page.
             ("Running now", "workflows.runningNow"),
+            ("Running on their own", "workflows.runningOnTheirOwn"),
+            ("All activity", "workflows.runningOnTheirOwn"),
+            ("Ways to automate", "workflows.waysToAutomate"),
+            ("See all ways to automate", "workflows.waysToAutomate"),
+            ("One click to run", "workflows.pin"),
             ("Search workflows", "workflows.search"),
             ("All workflows", "workflows.all"),
             ("Run by hand", "workflows.all"),

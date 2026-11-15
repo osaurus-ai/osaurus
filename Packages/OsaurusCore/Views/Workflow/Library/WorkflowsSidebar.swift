@@ -32,7 +32,6 @@ struct WorkflowsSidebar: View {
     /// Wraps an installed workflow's row with its context menu.
     let workflowMenu: (InstalledWorkflow, AnyView) -> AnyView
     let onRun: (WorkflowsSidebarModel.Row) -> Void
-    let onAutomate: (UUID) -> Void
     let onDeleteDraft: (WorkflowDraft) -> Void
 
     static let storeURL = URL(string: "https://store.osaurus.ai/")!
@@ -142,7 +141,23 @@ struct WorkflowsSidebar: View {
             isSelected: row.workflowID.map { selection == .workflow($0) } ?? false,
             onOpen: { open(row) },
             onRun: { onRun(row) },
-            onAutomate: { if let id = row.workflowID { onAutomate(id) } })
+            automatePopover: { close in
+                guard let id = row.workflowID, let workflow = installed.workflow(id: id) else { return nil }
+                return AnyView(
+                    WorkflowAutomatePopover(
+                        workflow: workflow,
+                        onOpenPage: { intent in
+                            close()
+                            windowState.isWorkflowsDrawerPresented = false
+                            windowState.showWorkflowAutomation(workflowID: id, intent: intent)
+                        },
+                        onSeeAllWays: {
+                            close()
+                            windowState.isWorkflowsDrawerPresented = false
+                            windowState.showWorkflowsHome(scrolledTo: WorkflowsHomeSection.ways)
+                        },
+                        onClose: close))
+            })
         switch row.kind {
         case .installed(let id):
             if let workflow = installed.workflow(id: id) {
@@ -270,8 +285,10 @@ struct WorkflowsSidebarWorkflowRow: View {
     let isSelected: Bool
     let onOpen: () -> Void
     let onRun: () -> Void
-    let onAutomate: () -> Void
+    /// The bolt's popover; its argument closes it.
+    let automatePopover: (_ close: @escaping () -> Void) -> AnyView?
     @State private var isHovered = false
+    @State private var showsAutomate = false
 
     var body: some View {
         HStack(spacing: theme.space.s8) {
@@ -301,8 +318,15 @@ struct WorkflowsSidebarWorkflowRow: View {
             .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
             .accessibilityAction { onOpen() }
             if row.canAutomate {
-                SidebarRowActionButton(icon: "bolt", help: "Automate", action: onAutomate)
+                SidebarRowActionButton(icon: "bolt", help: "Automate") { showsAutomate.toggle() }
                     .accessibilityLabel(Text("Automate \(row.name)", bundle: .module))
+                    .anchoredCard(
+                        isPresented: $showsAutomate,
+                        size: CGSize(width: WorkflowAutomatePopover.width, height: 0),
+                        besideAnchor: true, accessibilityLabel: L("Automate \(row.name)")
+                    ) {
+                        if showsAutomate { automatePopover { showsAutomate = false } }
+                    }
             }
             SettingsIconButton(
                 row.isPinned ? "play.fill" : "play", help: "Run now", size: .extraExtraSmall,

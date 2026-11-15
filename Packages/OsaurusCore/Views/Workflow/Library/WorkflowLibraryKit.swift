@@ -544,6 +544,71 @@ struct WorkflowTextLink: View {
 // MARK: - Progress
 
 /// How far a run has got: a thin bar in the run's status color.
+/// A dashed outline: something you could add, not something there yet.
+struct WorkflowDashedOutline: ViewModifier {
+    @Environment(\.theme) private var theme
+    var radius: CGFloat?
+
+    func body(content: Content) -> some View {
+        content.overlay {
+            Group {
+                if let radius {
+                    RoundedRectangle(cornerRadius: radius, style: .continuous)
+                        .strokeBorder(theme.border.strong, style: StrokeStyle(lineWidth: theme.stroke.default, dash: [4, 3]))
+                } else {
+                    Capsule()
+                        .strokeBorder(theme.border.strong, style: StrokeStyle(lineWidth: theme.stroke.default, dash: [4, 3]))
+                }
+            }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
+    }
+}
+
+extension View {
+    /// A capsule when `radius` is nil.
+    func workflowDashedOutline(radius: CGFloat? = nil) -> some View { modifier(WorkflowDashedOutline(radius: radius)) }
+}
+
+/// "+ at another time": a dashed chip that adds something.
+struct WorkflowDashedChip: View {
+    @Environment(\.theme) private var theme
+    /// Already localized.
+    let title: String
+    var icon: String = "plus"
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) { WorkflowDashedChipLabel(title: title, icon: icon) }
+            .buttonStyle(.plain)
+            .pointingHandCursor()
+    }
+}
+
+struct WorkflowDashedChipLabel: View {
+    @Environment(\.theme) private var theme
+    let title: String
+    var icon: String = "plus"
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: theme.space.s4) {
+            Image(systemName: icon)
+                .glyphSize(.micro, weight: .semibold)
+                .accessibilityHidden(true)
+            Text(verbatim: title)
+                .font(SettingsFont.compactLabel)
+        }
+        .foregroundStyle(isHovered ? theme.text.primary : theme.text.secondary)
+        .padding(.horizontal, theme.space.s10)
+        .padding(.vertical, theme.space.s4)
+        .workflowDashedOutline()
+        .contentShape(Capsule())
+        .onHover { hovering in withAnimation(theme.motion.quick) { isHovered = hovering } }
+    }
+}
+
 struct WorkflowRunProgressBar: View {
     @Environment(\.theme) private var theme
     let run: WorkflowRun
