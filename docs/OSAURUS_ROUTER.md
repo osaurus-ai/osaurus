@@ -455,6 +455,13 @@ something or opens a surface, not on a schedule.
   with the switch off, so someone who turned the Router off because it is
   broken can still say so. These rows are labeled "Help & feedback" in
   Insights.
+- The Cloud media catalog (`GET /v1/media/models`,
+  `MediaGenerationCoordinator.refreshCloudCatalog`) is fetched at launch and
+  when the identity or provider status changes, and never while **Use
+  Osaurus Router** is off: the refresh sends nothing, clears the cached Cloud
+  image and video models so they leave the picker, and discards a response
+  that lands after the switch turns off. Turning the Router back on refreshes
+  the catalog.
 
 ## Empty Stream Diagnostics
 
