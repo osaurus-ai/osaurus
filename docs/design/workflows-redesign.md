@@ -47,7 +47,7 @@ Read this before writing code. The redesign is a new surface over existing syste
 - Update `docs/WORKFLOWS.md` and `docs/AUTOMATIONS.md` (their UI sections) in the pull request that changes the behavior they describe.
 - Follow `docs/ACCESSIBILITY.md`. Status is never carried by color alone: every status dot or bar has a text or icon equivalent and an accessibility label.
 - Tests: `make test`. Add unit tests for every pure model introduced below (sentence formatting, presets, sidebar list model, activity feed, health strip).
-- One pull request per phase in section 9. Do not combine phases.
+- Phases 1 to 5 in section 9 ship together in one pull request. Build them in order; each phase's "Done when" list is still checked on its own.
 
 ## 4. Vocabulary
 
@@ -319,7 +319,7 @@ One observable, main-actor view model per window (`WorkflowsOverviewModel`) that
 
 ## 9. Phases
 
-Each phase is one pull request and leaves the app shippable.
+Phases 1 to 5 are built in order and ship in one pull request. Phase 6 is not built.
 
 **Phase 1: Sidebar and pinning.**
 `isPinned` and `pinnedAt`, store method, the sidebar with all sections, row status and second line (needs `AutomationSentence` short form and `WorkflowsOverviewModel`), run button, context menu, Store row, tab removal with link compatibility, `ChatShellLayout` and shell doc updates. The bolt button is present and opens the workflow detail for now. Home shows the existing content minus the tabs.
