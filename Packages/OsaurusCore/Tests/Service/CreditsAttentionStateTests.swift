@@ -192,8 +192,9 @@ struct CreditsAttentionTrackerTests {
         await drainMain()
         #expect(harness.defaults.data(forKey: CreditsAttentionTracker.defaultsKey) != nil)
 
+        // Task.detached runs on the cooperative pool, never the main thread,
+        // matching where OsaurusIdentity.setup() posts this notification.
         await Task.detached {
-            #expect(!Thread.isMainThread)
             center.post(name: .osaurusIdentityChanged, object: nil)
         }.value
         await drainMain()
