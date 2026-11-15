@@ -80,6 +80,9 @@ fi
 
 mkdir -p "$TEST_ROOT/models"
 unset OSAURUS_BUNDLED_MODELS_DIR
+# Keychain-free launches are headless (HTTP server only) unless asked to
+# present the onboarding and chat windows a person sees.
+export OSAURUS_KEYCHAIN_FREE_SHOW_UI=1
 if [[ "$VARIANT" == "full" ]]; then
   if [[ -d "$RAPTOR_SOURCE" ]]; then
     BUNDLED_MODEL_SOURCE_DIR="$RAPTOR_SOURCE" "$ROOT/scripts/build/fetch_bundled_model.sh" "$TEST_ROOT/BundledModels"
