@@ -386,6 +386,13 @@ To expose Ollama on the network, start it with:
 OLLAMA_HOST=0.0.0.0:11434 ollama serve
 ```
 
+When thinking is off (chat titles, follow-up suggestions, compaction, or the
+Off reasoning choice), Osaurus sends `reasoning_effort: "none"`, the only
+thinking switch Ollama's `/v1` endpoint reads. Other self-hosted servers get
+`chat_template_kwargs.enable_thinking: false` instead. Osaurus recognizes
+Ollama by port 11434 or a host containing `ollama`; an Ollama server behind a
+proxy on another port is treated like any other self-hosted server.
+
 ### LM Studio
 
 ```
