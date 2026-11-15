@@ -299,4 +299,53 @@ struct ChatSessionLocalSetupBridgeTests {
         #expect(session.pendingLocalSetupModelId == nil)
         await cleanup()
     }
+
+    // MARK: - Architect model guidance
+
+    /// "Use DeepSeek V4.1 Flash" in the Architect's model notice: with the
+    /// Router already in the picker, the Router model is selected and kept
+    /// as the Architect's model, and the notice no longer applies.
+    @Test func architectGuidanceSelectsAndKeepsTheRouterModel() async throws {
+        try await StoragePathsTestLock.shared.run { @MainActor in
+            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent(
+                "osaurus-architect-guidance-\(UUID().uuidString)", isDirectory: true)
+            try? FileManager.default.createDirectory(at: tmp, withIntermediateDirectories: true)
+            let previous = ArchitectConfigurationStore.overrideDirectory
+            ArchitectConfigurationStore.overrideDirectory = tmp
+            ArchitectConfigurationStore.resetCacheForTests()
+            defer {
+                ArchitectConfigurationStore.overrideDirectory = previous
+                ArchitectConfigurationStore.resetCacheForTests()
+                try? FileManager.default.removeItem(at: tmp)
+            }
+
+            let session = ChatSession()
+            session.agentId = Agent.architectId
+            await drainInitialCacheSnapshot()
+            let local = ModelPickerItem(id: "mlx-test/architect-local", displayName: "Local", source: .local)
+            let router = makeRouterItem()
+            session.applyPickerItems([local, router])
+            session.selectedModel = local.id
+            #expect(session.architectModelGuidanceApplies)
+            #expect(session.architectCloudModelDisplayName == "DeepSeek V4.1 Flash")
+
+            let switched = await session.useOsaurusCloudForArchitect(maxConnectAttempts: 1)
+            #expect(switched)
+            #expect(session.selectedModel == router.id)
+            #expect(ArchitectConfigurationStore.load().model == router.id)
+            #expect(!session.architectModelGuidanceApplies)
+        }
+    }
+
+    /// The switch belongs to the Architect's chat only.
+    @Test func architectGuidanceSwitchIgnoresOtherAgents() async {
+        let session = ChatSession()
+        session.agentId = Agent.defaultId
+        await drainInitialCacheSnapshot()
+        session.applyPickerItems([makeRouterItem()])
+        let before = session.selectedModel
+        #expect(!session.architectModelGuidanceApplies)
+        #expect(await session.useOsaurusCloudForArchitect(maxConnectAttempts: 1) == false)
+        #expect(session.selectedModel == before)
+    }
 }
