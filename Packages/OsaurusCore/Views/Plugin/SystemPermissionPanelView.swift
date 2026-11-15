@@ -38,7 +38,7 @@ struct SystemPermissionPanelView: View {
             ThemeHairlineDivider(color: theme.border.default)
             footer
         }
-        .frame(width: 440)
+        .frame(width: SettingsSheetWidth.compact)
         .fixedSize(horizontal: true, vertical: true)
         .clipShape(RoundedRectangle(cornerRadius: theme.radius.xlarge, style: .continuous))
         .settingsChrome(.overlay)
