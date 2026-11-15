@@ -2,8 +2,9 @@
 
 Status: PARTIAL. The bar was at least 0.95 per suite at repeat 5 with no case
 below 0.8. Onboarding, ToolResultGrounding and Workflow meet it; the other
-suites do not. Every row below the bar is attributed. The live app run and
-`make test` are still outstanding.
+suites do not. Every row below the bar is attributed. The live app run
+covers routing, settle, state, continuity and relaunch; Effort None in the
+live app is not proven.
 
 ## Setup
 
@@ -227,11 +228,63 @@ with the KV cache growing. The request set no output limit, so the bundle's
 `max_tokens` of 1,048,576 applied. It is recorded as an errored model trial;
 no output cap was added.
 
+## Live app run
+
+Isolated Release app built from `336bab72` with `MARKETING_VERSION=1.0.2`.
+The bundle's `minimum_osaurus_version` gate reads the app's
+`CFBundleShortVersionString`, not `OSAURUS_HOST_VERSION`, so a 1.0.0 build
+refuses Raptor. Launched with
+`scripts/live-proof/launch-keychain-free-osaurus.sh` and
+`OSAURUS_KEYCHAIN_FREE_SHOW_UI=1` against test root
+`/tmp/raptor07-live-171010`, with the model symlinked from `~/MLXModels`.
+The Orchestrator chat used Raptor at Effort High with the bundle's sampler
+defaults.
+
+- Routing and exact tool arguments: a trip-planning request produced
+  `status`, then `architect_handoff` with
+  `{"brief":"Plan a Lisbon trip…","user_message":"My partner and I…"}`. The
+  handoff stopped after 24.4 s (activity row `Workflow · Stopped`, 499) and
+  the model got a typed error. It then called `run_workflow` with
+  `{"input":{"task":"<verbatim request>"},"workflow":"Research"}`. The
+  Research workflow ran two `web_search` calls, three `url_extract` calls
+  (one 404 from happycow.net, reported as an error) and one more search, and
+  succeeded in 66.7 s. The final answer was grounded in those results.
+- Settle: every turn ended with Stop gone, input unlocked, a chat title and
+  follow-up suggestions. The reasoning rail closed with visible text after it
+  on every turn.
+- Harness-owned state: every main turn was followed by a
+  `Session State · Raptor` extraction, 3.4–6.2 s at 32–45 tok/s.
+- Continuity: at turn 5 the model restated the dates (May 3–9), diet
+  (vegetarian) and party size (two). Memory distillation also ran, so memory
+  may have contributed alongside the chat history and state.
+- Relaunch: after quitting and relaunching on the same test root, the chat
+  reopened with all turns. Asked for the dates and diet, Raptor answered
+  "May 3–9, … both of you are vegetarian … two people", adding a year (2026)
+  it was never given. That turn prefilled 3,016 tokens cold and decoded 519
+  tokens at 40.7 tok/s in 12.8 s.
+- Main-turn decode on this run: 7.3–47.3 tok/s per request. The low values
+  are short replies (57 tokens) on 5–6k-token prompts, where prefill dominates
+  the request. Turn start was 30–60 s on the first routed turns while another
+  checkout's build was loading the machine.
+- Content flaws: one dining pick served octopus to vegetarians, and one reply
+  invented "Sevilha and Pradhis gardens" as Lisbon sites.
+- Display mismatch: Settings → Agents → Orchestrator shows "Model Readiness:
+  No model selected · Tools: off" while the chat runs Raptor with tools
+  working. The chat's model comes from the picker, not an agent default.
+  Worth a follow-up; not changed here.
+- The Orchestrator's Max Output Tokens defaults to 16,384, so the unbounded
+  decode seen in the eval trial above cannot happen on this chat path.
+
+Evidence: `raptor07-final/live-app/activity-rows.csv` (sha256 `c2c24455…`)
+holds every non-embedding activity row with durations, token counts and
+tok/s.
+
 ## Not yet proven
 
-- Live isolated Release app run: Orchestrator routing, harness-owned state
-  across turns and a relaunch, Thinking off on Raptor, and tool calls with
-  exact arguments.
+- Effort None on Raptor in the live app. Effort lives only in the chat model
+  picker, which is a separate popover window that background automation could
+  not click. The eval self-judge runs with thinking off and gets visible
+  JSON, which covers the boundary for structured requests but not chat.
 - `make test` on the final source.
 
 ## Evidence
