@@ -68,17 +68,34 @@ public enum TeamSeeder {
     /// The fresh-install seed: the team, the default workflows, and the
     /// Privacy Filter file. Returns the teammates it created; empty when
     /// this install was seeded before.
+    ///
+    /// The install counts as seeded only when the roster was empty by
+    /// choice (a bundle left every teammate out) or a teammate it asked for
+    /// now exists. A seed that made nobody stays unseeded, so the Create
+    /// Your Team discovery card can still offer the team.
     @discardableResult
     public static func seedFreshInstall(_ options: Options, defaults: UserDefaults = .standard) async -> [Agent] {
         guard !hasSeeded(defaults) else { return [] }
-        let created = await create(options.teammates, bookmarkingGuardedFolders: false)
+        let wanted = options.teammates
+        let created = await create(wanted, bookmarkingGuardedFolders: false)
         let workflows = installDefaultWorkflows(options)
         writePrivacyFilterIfMissing()
-        defaults.set(true, forKey: seededDefaultsKey)
+        let seeded = seedCounts(wanted: wanted, present: Set(AgentManager.shared.agents.compactMap(\.teammate)))
+        if seeded { defaults.set(true, forKey: seededDefaultsKey) }
         FeatureTelemetry.teamSeeded(
-            source: "fresh_install", teammates: created.count, workflows: workflows,
-            developerMac: options.developerMac)
+            source: seeded ? "fresh_install" : "fresh_install_failed", teammates: created.count,
+            workflows: workflows, developerMac: options.developerMac)
         return created
+    }
+
+    nonisolated static func seedCounts(wanted: [Teammate], present: Set<Teammate>) -> Bool {
+        wanted.isEmpty || wanted.contains(where: present.contains)
+    }
+
+    /// Records the install as seeded, for a team made on purpose after
+    /// onboarding (the Create Your Team card).
+    public static func markSeeded(_ defaults: UserDefaults = .standard) {
+        defaults.set(true, forKey: seededDefaultsKey)
     }
 
     /// The teammates for this Mac, in roster order.

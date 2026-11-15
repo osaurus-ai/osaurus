@@ -38,6 +38,7 @@ final class DiscoveryCenter {
         $0.sendPreparedAsk(label: $1, dispatch: $2)
     }
     var createTeammate: (Teammate) async -> Void = { _ = await TeamSeeder.create([$0]) }
+    var createTeam: () async -> [Agent] = { await DiscoveryCenter.createLiveTeam() }
     /// An installed default workflow's name, by template id.
     var workflowName: (UUID) -> String? = { OnboardingPaths.installed($0)?.name }
     var isPermissionGranted: (SystemPermission) -> Bool = { SystemPermissionService.shared.isGranted($0) }
@@ -301,6 +302,8 @@ final class DiscoveryCenter {
         trial: (id: UUID, name: String)? = nil
     ) -> (title: String, note: String?)? {
         switch item {
+        case .team:
+            return (L("Create Team"), L("macOS asks before a teammate first opens one of your apps."))
         case .tryWorkflow:
             guard let trial else { return nil }
             return (String(format: L("Run %@"), trial.name), nil)
@@ -390,6 +393,19 @@ final class DiscoveryCenter {
             }
         }
         switch item {
+        case .team:
+            let created = await createTeam()
+            if created.isEmpty {
+                end(L("I could not add the team. You can try again in Settings → Agents → Delegation → Create starter agents."))
+            } else {
+                let names = ListFormatter.localizedString(byJoining: created.map(\.name))
+                end(
+                    String(
+                        format: created.count == 1
+                            ? L("%@ is on your team. Ask me about your day, your mail, or your files.")
+                            : L("%@ are on your team. Ask me about your day, your mail, or your files."),
+                        names))
+            }
         case .tryWorkflow:
             guard let trial = trialOffer(snapshot) else { return end() }
             overlays[sessionId] = nil
@@ -530,6 +546,15 @@ final class DiscoveryCenter {
         start(.turnOnWorkflow, in: session)
     }
 
+    /// The day-one team, on the Orchestrator's list, with the install
+    /// marked seeded so deleting the team later does not bring the card back.
+    static func createLiveTeam() async -> [Agent] {
+        let created = await TeamSeeder.createTeam(developerMac: DeveloperMacSignal.isDeveloperMac())
+        for agent in created { AgentNodeExecutor.allowForOrchestrator(.local(agent.id, name: agent.name)) }
+        if !created.isEmpty { TeamSeeder.markSeeded() }
+        return created
+    }
+
     // MARK: - Requests
 
     /// What the Configurator is asked for an item that adds a teammate. A
@@ -620,9 +645,11 @@ final class DiscoveryCenter {
         }.map(\.0)
         let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
             .standardizedFileURL.path
+        s.teamSeeded = TeamSeeder.hasSeeded()
         for agent in manager.agents where agent.id != Agent.defaultId {
             let capabilities = manager.effectiveCapabilities(for: agent.id)
             s.enabledApps.formUnion(capabilities.enabledAppleApps)
+            if agent.teammate != nil { s.teammateExists = true }
             let folder = manager.workingFolder(for: agent)?.path
             switch agent.teammate {
             case .keeper:

@@ -48,6 +48,32 @@ public struct RoutableWorkflowDoc: Sendable, Hashable {
     }
 }
 
+/// What `run_workflow` can run, split the way the Orchestrator should read
+/// it: the user's own agents, the built-in workers, then workflows.
+public struct OrchestratorTeam: Sendable, Hashable {
+    public var agents: [RoutableWorkflowDoc]
+    public var workers: [RoutableWorkflowDoc]
+    public var workflows: [RoutableWorkflowDoc]
+
+    public init(
+        agents: [RoutableWorkflowDoc] = [], workers: [RoutableWorkflowDoc] = [], workflows: [RoutableWorkflowDoc] = []
+    ) {
+        self.agents = agents
+        self.workers = workers
+        self.workflows = workflows
+    }
+
+    init(docs: [RoutableWorkflowDoc]) {
+        let workerIDs = Set(BuiltInWorker.allCases.map { AgentWrapperCatalog.id(forAgent: $0.agentId).uuidString })
+        self.init(
+            agents: docs.filter { $0.kind == .wrapper && !workerIDs.contains($0.id) },
+            workers: docs.filter { $0.kind == .wrapper && workerIDs.contains($0.id) },
+            workflows: docs.filter { $0.kind != .wrapper })
+    }
+
+    public var isEmpty: Bool { agents.isEmpty && workers.isEmpty && workflows.isEmpty }
+}
+
 @MainActor
 public enum RoutableWorkflowCatalog {
     /// Installed and hosted workflows the Orchestrator may run, then
@@ -89,6 +115,9 @@ public enum RoutableWorkflowCatalog {
 
     /// Names `run_workflow` resolves, for `status` and refusal messages.
     public static func names() -> [String] { docs().map(\.name) }
+
+    /// `docs()` grouped for the Orchestrator's Team prompt section.
+    public static func team() -> OrchestratorTeam { OrchestratorTeam(docs: docs()) }
 
     /// The live wrappers; a seam for tests.
     static var wrapperListing: @MainActor () -> AgentWrapperCatalog.Listing = { AgentWrapperCatalog.liveListing() }
