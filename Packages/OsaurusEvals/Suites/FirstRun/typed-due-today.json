@@ -31,7 +31,7 @@
       ],
       "maxIterations": 6,
       "rubric": [
-        "Gives an answer grounded in what the teammate returned, or names the specific thing to fix (a permission, an account, a setting). Does NOT say it lacks the tools or connections to help, and shows no raw tool or reasoning markers."
+        "Answers the request, or names the specific thing the user has to fix (a permission, an account, or a setting). Does NOT say it lacks the tools or connections to help, and shows no raw tool or reasoning markers."
       ]
     }
   }

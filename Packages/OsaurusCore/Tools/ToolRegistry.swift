@@ -1055,10 +1055,18 @@ public final class ToolRegistry: ObservableObject {
                     FeatureTelemetry.computerUseRefused(stage: .permissionAccessibility)
                 }
                 let missingNames = stillMissing.map { $0.displayName }.joined(separator: ", ")
-                let message =
-                    unanswered
-                    ? "Missing system permissions for tool: \(name). Required: \(missingNames). Osaurus asked the user to turn it on and they did not answer. Tell them what needs it and where: System Settings → Privacy & Security → \(stillMissing[0].systemSettingsPath); then they can ask again."
-                    : "Missing system permissions for tool: \(name). Required: \(missingNames). Ask the user to grant it in System Settings → Privacy & Security (or Osaurus Settings → Privacy & Security → Permissions), then try again."
+                let addOnly = stillMissing.contains(.calendar) ? await SystemPermissionGate.calendarIsAddOnly() : false
+                let message: String
+                if addOnly {
+                    message =
+                        "Missing system permissions for tool: \(name). Required: \(missingNames). Calendar is set to Add Only for Osaurus, so it can add events but not read them. Ask the user to choose Full Access for Osaurus in System Settings → Privacy & Security → Calendars, then try again."
+                } else if unanswered {
+                    message =
+                        "Missing system permissions for tool: \(name). Required: \(missingNames). Osaurus asked the user to turn it on and they did not answer. Tell them what needs it and where: System Settings → Privacy & Security → \(stillMissing[0].systemSettingsPath); then they can ask again."
+                } else {
+                    message =
+                        "Missing system permissions for tool: \(name). Required: \(missingNames). Ask the user to grant it in System Settings → Privacy & Security (or Osaurus Settings → Privacy & Security → Permissions), then try again."
+                }
                 // Typed like `AppleToolError.permissionDenied`: the first
                 // missing permission's stable name and its System Settings
                 // pane ride along so the envelope tells the model exactly

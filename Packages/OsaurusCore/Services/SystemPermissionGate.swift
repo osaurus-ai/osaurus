@@ -80,6 +80,11 @@ enum SystemPermissionGate {
         }
     }
 
+    /// Calendar is granted as Add Only: events can be added, not read.
+    static func calendarIsAddOnly() async -> Bool {
+        await (environmentOverrideForTests ?? .live).calendarIsAddOnly()
+    }
+
     /// The running agent's name for the panel title; "Osaurus" for the
     /// Orchestrator and for runs with no agent.
     static func requesterName() -> String {

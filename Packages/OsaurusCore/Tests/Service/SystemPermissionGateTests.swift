@@ -287,6 +287,24 @@ struct SystemPermissionGateTests {
                 }
             }
             #expect((try? result.get())?.contains(CalendarPermissionFixture.executed) == true, "\(result)")
+
+            let addOnly = Recorder()
+            await withGate(
+                environment(macOSCanAsk: false, request: .denied, addOnly: true, recorder: addOnly), recorder: addOnly
+            ) {
+                await ChatExecutionContext.$toolExecutionScope.withValue(scope) {
+                    let call = Task { try await registry.execute(name: name, argumentsJSON: "{}") }
+                    await waitUntil { SystemPermissionPanelService.openPanelsForTesting.contains(.calendar) }
+                    SystemPermissionPanelService.answerForTesting(.calendar, .notNow)
+                    do {
+                        _ = try await call.value
+                        Issue.record("Not Now must refuse the call")
+                    } catch let error as NSError {
+                        #expect(error.code == 7)
+                        #expect(error.localizedDescription.contains("choose Full Access"), "\(error)")
+                    }
+                }
+            }
         }
     }
 
