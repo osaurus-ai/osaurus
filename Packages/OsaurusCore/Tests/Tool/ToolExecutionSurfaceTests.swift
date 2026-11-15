@@ -130,7 +130,7 @@ struct ToolExecutionSurfaceResolutionTests {
 
 // MARK: - Registry resolution on live routing state
 
-@Suite(.serialized)
+@Suite(.serialized, .toolPermissionPromptQueue)
 @MainActor
 struct ToolRegistryExecutionSurfaceTests {
 

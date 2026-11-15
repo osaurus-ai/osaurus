@@ -23,7 +23,7 @@ private final class ImageRunApprovalProbe {
 }
 
 @MainActor
-@Suite("Image run approval contract", .serialized, .timeLimit(.minutes(1)))
+@Suite("Image run approval contract", .serialized, .timeLimit(.minutes(1)), .toolPermissionPromptQueue)
 struct ImageRunApprovalContractTests {
     @Test("Caller-owned approval commits once before returning")
     func approvalCommitsOnce() async throws {

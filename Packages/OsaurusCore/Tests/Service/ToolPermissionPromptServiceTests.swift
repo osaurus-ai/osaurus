@@ -179,7 +179,7 @@ private actor WaitEvents {
     func add(_ waiting: Bool) { values.append(waiting) }
 }
 
-@Suite("Tool permission prompt queue", .serialized)
+@Suite("Tool permission prompt queue", .serialized, .toolPermissionPromptQueue)
 struct ToolPermissionPromptQueueTests {
     private typealias Outcome = ToolPermissionPromptService.PolicyApprovalOutcome
 

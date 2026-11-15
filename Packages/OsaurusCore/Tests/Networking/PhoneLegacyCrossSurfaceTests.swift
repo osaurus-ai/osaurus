@@ -42,7 +42,7 @@ private func surface(of id: UUID) -> AttentionSurface? {
     return nil
 }
 
-@Suite("Paired-phone cards settle across surfaces", .serialized)
+@Suite("Paired-phone cards settle across surfaces", .serialized, .toolPermissionPromptQueue)
 @MainActor
 struct PhoneLegacyCrossSurfaceTests {
     private func preview() -> ActionPreview {

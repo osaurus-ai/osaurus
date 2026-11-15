@@ -334,8 +334,9 @@ final class ChatTurn: ObservableObject, Identifiable {
             toolStateRevision &+= 1
         }
     }
-    /// Bumped whenever `toolCalls`, `toolResults` or `toolCallDurations`
-    /// change, so per-sync tool-state checks can skip comparing their values.
+    /// Bumped whenever `toolCalls`, `toolResults`, `toolCallDurations` or
+    /// `toolCallApprovalSkips` change, so per-sync tool-state checks can skip
+    /// comparing their values.
     private(set) var toolStateRevision: UInt64 = 0
     /// OpenAI Responses reasoning item captured for this assistant turn: the
     /// opaque `id` and `encrypted_content`. Re-emitted before the turn's
@@ -415,6 +416,12 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// Finished Computer Use / AppleScript step logs by call id, captured
     /// when the result lands (the live feed is dropped seconds later).
     var toolCallLogs: [String: SubagentRunLog] = [:]
+    /// Why a call ran without its approval card, by call id: the tool row's
+    /// "Ran without asking" marker. Absent for calls that asked or never
+    /// needed to.
+    @Published var toolCallApprovalSkips: [String: ToolApprovalSkipReason] = [:] {
+        didSet { toolStateRevision &+= 1 }
+    }
 
     // MARK: - Remote-agent (Mode 2) tool activity — display only
 
@@ -580,6 +587,9 @@ final class ChatTurn: ObservableObject, Identifiable {
     /// Use this instead of assigning `toolResults` directly so durations persist.
     func setToolResult(_ result: String, for callId: String) {
         toolResults[callId] = result
+        if let skip = ToolApprovalAudit.take(callId: callId) {
+            toolCallApprovalSkips[callId] = skip
+        }
         // The run has finished by the time its result lands, and the feed
         // registry keeps it for a short grace window. Keep the log.
         if toolCallLogs[callId] == nil,

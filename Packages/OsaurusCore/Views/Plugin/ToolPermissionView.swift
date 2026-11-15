@@ -32,12 +32,28 @@ struct ToolPermissionView: View {
     /// service presents one card at a time; telling the user more are coming
     /// explains why another card appears right after this decision.
     var queuedBehind: Int = 0
+    /// Agent-scoped "Don't ask again" entries, for a custom agent's own run
+    /// on this Mac. Nil keeps the single **Always Allow…**.
+    var agentChoices: AgentChoices? = nil
+
+    struct AgentChoices {
+        let agentName: String
+        let onAlwaysAllowForAgent: () -> Void
+        let onNeverAskForAgent: () -> Void
+    }
+
+    private enum Confirmation {
+        case everyAgent
+        case thisAgent(String)
+        case neverAsk(String)
+    }
 
     @ObservedObject private var themeManager = ThemeManager.shared
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     @State private var showsDetails = false
-    @State private var showAlwaysAllowConfirm = false
+    @State private var confirmation: Confirmation?
+    @State private var alertCardHeight: CGFloat = 0
     @State private var appeared = false
     @State private var alertScopeId = UUID()
     private var alertScope: ThemedAlertScope { .toolPermission(alertScopeId) }
@@ -73,6 +89,10 @@ struct ToolPermissionView: View {
         .opacity(appeared ? 1 : 0)
         .offset(y: appeared ? 0 : -6)
         .frame(width: 440)
+        .frame(
+            minHeight: confirmation == nil ? nil : alertCardHeight + 2 * theme.space.s16,
+            alignment: .top
+        )
         .fixedSize(horizontal: true, vertical: true)
         .clipShape(RoundedRectangle(cornerRadius: theme.radius.xlarge, style: .continuous))
         .settingsChrome(.overlay)
@@ -83,17 +103,15 @@ struct ToolPermissionView: View {
         }
         .environment(\.theme, themeManager.currentTheme)
         .themedAlert(
-            L("Always Allow \"\(presentation.title)\"?"),
-            isPresented: $showAlwaysAllowConfirm,
-            message:
-                L(
-                    "This tool will be automatically allowed to run without prompting in the future. You can change this in the Tools settings."
-                ),
-            primaryButton: .primary(L("Always Allow")) { onAlwaysAllow() },
+            confirmationTitle,
+            isPresented: Binding(get: { confirmation != nil }, set: { if !$0 { confirmation = nil } }),
+            message: confirmationMessage,
+            primaryButton: confirmationButton,
             secondaryButton: .cancel(L("Cancel"))
         )
         .themedAlertScope(alertScope)
         .overlay(ThemedAlertHost(scope: alertScope))
+        .onPreferenceChange(ThemedAlertCardHeightKey.self) { alertCardHeight = $0 }
     }
 
     // MARK: - Header
@@ -240,17 +258,76 @@ struct ToolPermissionView: View {
     @ViewBuilder
     private var leaseControl: some View {
         if !perCallApprovalOnly {
-            if let onAllowForRun {
+            if let agentChoices {
+                SettingsMenuButton(.tertiary, "Don't ask again", size: .compact) {
+                    if let onAllowForRun {
+                        Button(presentation.leaseActionTitle, action: onAllowForRun)
+                    }
+                    Button(L("Always Allow for \(agentChoices.agentName)…")) {
+                        confirmation = .thisAgent(agentChoices.agentName)
+                    }
+                    Button(L("Always Allow for Every Agent…")) { confirmation = .everyAgent }
+                    Divider()
+                    Button(L("Never Ask for \(agentChoices.agentName)…")) {
+                        confirmation = .neverAsk(agentChoices.agentName)
+                    }
+                }
+                .fixedSize()
+                .accessibilityIdentifier("toolPermission.lease")
+            } else if let onAllowForRun {
                 SettingsMenuButton(.tertiary, "Don't ask again", size: .compact) {
                     Button(presentation.leaseActionTitle, action: onAllowForRun)
-                    Button(L("Always Allow…")) { showAlwaysAllowConfirm = true }
+                    Button(L("Always Allow…")) { confirmation = .everyAgent }
                 }
                 .fixedSize()
                 .accessibilityIdentifier("toolPermission.lease")
             } else {
-                SettingsButton(.tertiary, "Always Allow…", size: .compact) { showAlwaysAllowConfirm = true }
+                SettingsButton(.tertiary, "Always Allow…", size: .compact) { confirmation = .everyAgent }
                     .accessibilityIdentifier("toolPermission.alwaysAllow")
             }
+        }
+    }
+
+    // MARK: - Confirmation
+
+    private var confirmationTitle: String {
+        switch confirmation {
+        case .neverAsk(let agentName):
+            return ToolApprovalEducation.neverAskConfirmTitle(agentName: agentName)
+        case .thisAgent(let agentName):
+            return L("Always Allow \"\(presentation.title)\" for \(agentName)?")
+        case .everyAgent where agentChoices != nil:
+            return L("Always Allow \"\(presentation.title)\" for Every Agent?")
+        case .everyAgent, nil:
+            return L("Always Allow \"\(presentation.title)\"?")
+        }
+    }
+
+    private var confirmationMessage: String {
+        switch confirmation {
+        case .neverAsk(let agentName):
+            return ToolApprovalEducation.neverAskConfirmMessage(agentName: agentName)
+        case .thisAgent(let agentName):
+            return ToolApprovalEducation.alwaysAllowForAgentMessage(agentName: agentName)
+        case .everyAgent where agentChoices != nil:
+            return ToolApprovalEducation.alwaysAllowForEveryAgentMessage
+        case .everyAgent, nil:
+            return L(
+                "This tool will be automatically allowed to run without prompting in the future. You can change this under Tools & MCP → All Tools."
+            )
+        }
+    }
+
+    private var confirmationButton: AlertButtonConfig {
+        switch confirmation {
+        case .neverAsk:
+            let action = agentChoices?.onNeverAskForAgent ?? {}
+            return .destructive(ToolApprovalEducation.neverAskConfirmButton, action: action)
+        case .thisAgent:
+            let action = agentChoices?.onAlwaysAllowForAgent ?? {}
+            return .primary(L("Always Allow"), action: action)
+        case .everyAgent, nil:
+            return .primary(L("Always Allow"), action: onAlwaysAllow)
         }
     }
 }
@@ -541,6 +618,17 @@ private struct ContentSizedScrollView<Content: View>: View {
                 "shell_run", #"{"command": "python3 /workspace/runs/convert-1/main.py"}"#, surface: .sandboxVM,
                 reason: "Convert the uploaded CSVs to Parquet."),
             onAllow: {}, onDeny: {}, onAlwaysAllow: {}, onAllowForRun: {}
+        )
+        .environment(\.theme, CustomizableTheme.light())
+        .padding()
+    }
+
+    #Preview("Permission sheet - custom agent") {
+        ToolPermissionView(
+            presentation: previewPresentation(
+                "shell_run", #"{"command": "git status"}"#, surface: .sandboxVM),
+            onAllow: {}, onDeny: {}, onAlwaysAllow: {}, onAllowForRun: {},
+            agentChoices: .init(agentName: "Researcher", onAlwaysAllowForAgent: {}, onNeverAskForAgent: {})
         )
         .environment(\.theme, CustomizableTheme.light())
         .padding()

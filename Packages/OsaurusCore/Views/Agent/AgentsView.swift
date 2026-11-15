@@ -393,6 +393,7 @@ struct AgentsView: View {
     /// Detail tab a custom-agent-only landing opens, or nil for grid landings.
     static func customAgentLandingTabRaw(for pending: String) -> String? {
         if pending.hasPrefix("agents.appleApps") || pending == "agents.skills" { return appleAppsLandingTabRaw }
+        if pending == "agents.toolApprovals" || pending == "agents.toolPolicies" { return appleAppsLandingTabRaw }
         if pending == "agents.workflows" { return "abilities" }
         if pending.hasPrefix("agents.sandbox.") { return "sandbox" }
         if pending == "agents.automation.recentTasks" { return "automation" }
@@ -6743,7 +6744,11 @@ struct AgentDetailView: View {
                 taskChecklistEnabled: taskChecklistEnabled,
                 clarifyEnabled: clarifyEnabled,
                 artifactsEnabled: artifactsEnabled,
-                workingFolderReadOnly: agent.id == Agent.defaultId ? false : workingFolderReadOnly
+                workingFolderReadOnly: agent.id == Agent.defaultId ? false : workingFolderReadOnly,
+                // Written by the Tools tab's approvals card and policy menus
+                // through `AgentManager` (instant save), so pass them through.
+                toolApprovalMode: current.settings.toolApprovalMode,
+                toolPolicies: current.settings.toolPolicies
             ),
             order: current.order
         )

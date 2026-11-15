@@ -9134,10 +9134,11 @@ final class ChatSession: ObservableObject {
                                 continue
                             }
                             do {
-                                try await ToolRegistry.shared.resolvePermissionGate(
+                                let skipReason = try await ToolRegistry.shared.resolvePermissionGate(
                                     name: call.invocation.toolName,
                                     argumentsJSON: call.invocation.jsonArguments
                                 )
+                                ToolApprovalAudit.record(skipReason, callId: call.callId)
                                 approved.append((slot, call.invocation, call.callId))
                             } catch {
                                                     let envelope = ToolEnvelope.fromError(

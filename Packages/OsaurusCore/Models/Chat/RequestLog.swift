@@ -19,6 +19,16 @@ struct ToolCallLog: Identifiable, Sendable, Codable, Equatable {
     let result: String?
     let durationMs: Double?
     let isError: Bool
+    /// Raw `ToolApprovalSkipReason`: why the call ran without its approval
+    /// card. Kept as recorded and encoded only when set, so every row
+    /// re-encodes byte-for-byte and older rows hash the same.
+    private let approvalSkipRaw: String?
+    var approvalSkip: ToolApprovalSkipReason? { approvalSkipRaw.flatMap(ToolApprovalSkipReason.init(rawValue:)) }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, arguments, result, durationMs, isError
+        case approvalSkipRaw = "approvalSkip"
+    }
 
     init(
         id: UUID = UUID(),
@@ -26,7 +36,8 @@ struct ToolCallLog: Identifiable, Sendable, Codable, Equatable {
         arguments: String,
         result: String? = nil,
         durationMs: Double? = nil,
-        isError: Bool = false
+        isError: Bool = false,
+        approvalSkip: ToolApprovalSkipReason? = nil
     ) {
         self.id = id
         self.name = name
@@ -34,6 +45,7 @@ struct ToolCallLog: Identifiable, Sendable, Codable, Equatable {
         self.result = Self.redactedResult(toolName: name, result: result)
         self.durationMs = durationMs
         self.isError = isError
+        self.approvalSkipRaw = approvalSkip?.rawValue
     }
 
     /// Decoding bypasses the redactors: persisted rows were redacted when
@@ -47,11 +59,12 @@ struct ToolCallLog: Identifiable, Sendable, Codable, Equatable {
         result = try c.decodeIfPresent(String.self, forKey: .result)
         durationMs = try c.decodeIfPresent(Double.self, forKey: .durationMs)
         isError = try c.decodeIfPresent(Bool.self, forKey: .isError) ?? false
+        approvalSkipRaw = try c.decodeIfPresent(String.self, forKey: .approvalSkipRaw)
     }
 
     private init(
         rawId: UUID, rawName: String, rawArguments: String, rawResult: String?,
-        rawDurationMs: Double?, rawIsError: Bool
+        rawDurationMs: Double?, rawIsError: Bool, rawApprovalSkip: String?
     ) {
         id = rawId
         name = rawName
@@ -59,6 +72,7 @@ struct ToolCallLog: Identifiable, Sendable, Codable, Equatable {
         result = rawResult
         durationMs = rawDurationMs
         isError = rawIsError
+        approvalSkipRaw = rawApprovalSkip
     }
 
     /// Copy with every free-text field replaced by a marker. Used when the
@@ -70,7 +84,8 @@ struct ToolCallLog: Identifiable, Sendable, Codable, Equatable {
             rawArguments: RequestLog.contentWithheldMarker,
             rawResult: result == nil ? nil : RequestLog.contentWithheldMarker,
             rawDurationMs: durationMs,
-            rawIsError: isError
+            rawIsError: isError,
+            rawApprovalSkip: approvalSkipRaw
         )
     }
 

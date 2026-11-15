@@ -39,6 +39,18 @@ enum ConfigRisk {
     static func autoPolicySendsStillAsk(_ tool: String) -> String {
         "Sets tool `\(tool)` to auto — drafts will run without asking; calls that send as the user still show an approval card every time."
     }
+    static func neverAsk(_ agent: String) -> String {
+        "Sets agent `\(agent)` to never ask — its tools set to Ask run without an approval card, in chats and in its scheduled and watcher runs. Tools set to Deny, sends and deletes, configuration changes, and delegation still ask."
+    }
+    static func agentAutoPolicy(_ agent: String, _ tool: String) -> String {
+        "Sets tool `\(tool)` to auto for agent `\(agent)` — it will run without asking in that agent's runs."
+    }
+    static func agentAutoPolicyIgnoredPerCall(_ agent: String, _ tool: String) -> String {
+        "Sets tool `\(tool)` to auto for agent `\(agent)`, but it always asks for approval on every call (it sends or deletes as the user) — the setting is stored and has no effect."
+    }
+    static func agentAutoPolicySendsStillAsk(_ agent: String, _ tool: String) -> String {
+        "Sets tool `\(tool)` to auto for agent `\(agent)` — drafts will run without asking; calls that send as the user still show an approval card every time."
+    }
     /// The sandbox adapters run commands and write files in the VM; only
     /// the workspace tools are meant to reach them.
     static func sandboxAdapterEnabled(_ tool: String) -> String {
@@ -491,6 +503,11 @@ enum ConfigPlanner {
                 if let mode = entry.tools?.mode, ToolSelectionMode(rawValue: mode) == nil {
                     issues.append(
                         "agents[\(entry.name)].tools.mode: must be `auto` or `manual` (got `\(mode)`).")
+                }
+                for (tool, raw) in (entry.tools?.policies ?? [:]).sorted(by: { $0.key < $1.key })
+                where AgentToolPolicyValue(raw) == nil {
+                    issues.append(
+                        "agents[\(entry.name)].tools.policies[\(tool)]: must be one of: auto, ask, deny, default.")
                 }
                 if let v = entry.sandbox?.maxCommandsPerTurn, !(1...500).contains(v) {
                     issues.append(
@@ -1524,6 +1541,9 @@ enum ConfigPlanner {
                 if let desired = entry.sharedToolApproval, desired != (agent.sharedToolApproval ?? .deny) {
                     changes.append(Self.sharedToolApprovalChange(desired))
                 }
+                diffToolApprovals(
+                    entry, agentName: entry.name, currentMode: agent.settings.toolApprovalMode,
+                    currentPolicies: agent.settings.toolPolicies, into: &changes, risks: &risks)
                 if changes.isEmpty {
                     unchanged += 1
                 } else {
@@ -1550,6 +1570,9 @@ enum ConfigPlanner {
                     }
                 }
                 summarizePortableSettings(entry, into: &changes)
+                diffToolApprovals(
+                    entry, agentName: entry.name, currentMode: .useGlobal, currentPolicies: [:],
+                    into: &changes, risks: &risks)
                 if entry.orchestratorSpawnable == false {
                     changes.append("not added to the Orchestrator's delegation list")
                 }
@@ -1575,6 +1598,36 @@ enum ConfigPlanner {
         }
         if unchanged > 0 {
             notes.append("\(unchanged) agent(s) already match the document.")
+        }
+    }
+
+    /// `tool_approvals` and `tools.policies`: Never Ask and each loosened
+    /// tool are high risk, worded like the global `tools.policies` risks.
+    private static func diffToolApprovals(
+        _ entry: AgentEntry, agentName: String, currentMode: AgentToolApprovalMode,
+        currentPolicies: [String: ToolPermissionPolicy],
+        into changes: inout [String], risks: inout [String]
+    ) {
+        if let mode = entry.toolApprovals, mode != currentMode {
+            changes.append("tool_approvals: \(currentMode.rawValue) -> \(mode.rawValue)")
+            if mode == .neverAsk { risks.append(ConfigRisk.neverAsk(agentName)) }
+        }
+        let registry = ToolRegistry.shared
+        for (tool, raw) in (entry.tools?.policies ?? [:]).sorted(by: { $0.key < $1.key }) {
+            guard let value = AgentToolPolicyValue(raw) else { continue }
+            let desired = value.policy
+            let current = currentPolicies[tool]
+            guard desired != current else { continue }
+            changes.append(
+                "tools.policies[\(tool)]: \(current?.rawValue ?? "default") -> \(desired?.rawValue ?? "default")")
+            guard desired == .auto else { continue }
+            if registry.requiresPerCallApproval(tool) {
+                risks.append(ConfigRisk.agentAutoPolicyIgnoredPerCall(agentName, tool))
+            } else if registry.mayRequirePerCallApproval(tool) {
+                risks.append(ConfigRisk.agentAutoPolicySendsStillAsk(agentName, tool))
+            } else {
+                risks.append(ConfigRisk.agentAutoPolicy(agentName, tool))
+            }
         }
     }
 

@@ -23,6 +23,9 @@ public struct ChatTurnData: Codable, Identifiable, Sendable, Equatable {
     /// Finished Computer Use / AppleScript step logs, keyed by call id. UI
     /// history only: never part of the model-facing tool result.
     public var toolCallLogs: [String: SubagentRunLog]
+    /// Why a call ran without its approval card, keyed by call id. UI
+    /// history only; empty for calls that asked and for legacy turns.
+    public var toolCallApprovalSkips: [String: ToolApprovalSkipReason] = [:]
     /// Seconds the model spent thinking; drives "Thought for 30s". Nil when unknown.
     public var thinkingDuration: TimeInterval?
     public var thinking: String
@@ -130,7 +133,8 @@ public struct ChatTurnData: Codable, Identifiable, Sendable, Equatable {
         toolCallLogs: [String: SubagentRunLog] = [:],
         author: ParticipantRef? = nil,
         remoteParticipantMessageId: String? = nil,
-        hostRun: HostRunRequest? = nil
+        hostRun: HostRunRequest? = nil,
+        toolCallApprovalSkips: [String: ToolApprovalSkipReason] = [:]
     ) {
         self.id = id
         self.role = role
@@ -164,6 +168,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable, Equatable {
         self.author = author
         self.remoteParticipantMessageId = remoteParticipantMessageId
         self.hostRun = hostRun
+        self.toolCallApprovalSkips = toolCallApprovalSkips
     }
 
     // Backward-compatible decoder: migrates old `attachedImages` into unified `attachments`
@@ -179,6 +184,9 @@ public struct ChatTurnData: Codable, Identifiable, Sendable, Equatable {
             try container.decodeIfPresent([String: TimeInterval].self, forKey: .toolCallDurations) ?? [:]
         toolCallLogs =
             (try? container.decodeIfPresent([String: SubagentRunLog].self, forKey: .toolCallLogs)) ?? [:]
+        toolCallApprovalSkips =
+            (try? container.decodeIfPresent([String: String].self, forKey: .toolCallApprovalSkips))?
+            .compactMapValues(ToolApprovalSkipReason.init(rawValue:)) ?? [:]
         thinkingDuration = try container.decodeIfPresent(TimeInterval.self, forKey: .thinkingDuration)
         thinking = try container.decodeIfPresent(String.self, forKey: .thinking) ?? ""
         createdAt = try container.decodeIfPresent(Date.self, forKey: .createdAt)
@@ -236,6 +244,9 @@ public struct ChatTurnData: Codable, Identifiable, Sendable, Equatable {
         if !toolCallLogs.isEmpty {
             try container.encode(toolCallLogs, forKey: .toolCallLogs)
         }
+        if !toolCallApprovalSkips.isEmpty {
+            try container.encode(toolCallApprovalSkips.mapValues(\.rawValue), forKey: .toolCallApprovalSkips)
+        }
         try container.encodeIfPresent(thinkingDuration, forKey: .thinkingDuration)
         try container.encode(thinking, forKey: .thinking)
         try container.encodeIfPresent(createdAt, forKey: .createdAt)
@@ -272,7 +283,7 @@ public struct ChatTurnData: Codable, Identifiable, Sendable, Equatable {
         case id, role, content, attachments
         case sharedArtifacts
         case attachedImages  // legacy key for reading old sessions
-        case toolCalls, toolCallId, toolResults, toolCallDurations, toolCallLogs, thinking
+        case toolCalls, toolCallId, toolResults, toolCallDurations, toolCallLogs, toolCallApprovalSkips, thinking
         case thinkingDuration
         case createdAt, completedAt, lastOutputAt, generationTokenCount, timeToFirstToken
         case generationTokensPerSecond, modelLoadSeconds, requestedAt
@@ -319,6 +330,7 @@ extension ChatTurnData {
         self.toolResults = turn.toolResults
         self.toolCallDurations = turn.toolCallDurations
         self.toolCallLogs = turn.toolCallLogs
+        self.toolCallApprovalSkips = turn.toolCallApprovalSkips
         self.thinkingDuration = turn.thinkingDuration
         self.thinking = turn.thinking
         self.createdAt = turn.createdAt
@@ -367,6 +379,7 @@ extension ChatTurn {
         for (callId, log) in data.toolCallLogs {
             SubagentRunLogArchive.shared.store(log, for: callId)
         }
+        self.toolCallApprovalSkips = data.toolCallApprovalSkips
         self.thinkingDuration = data.thinkingDuration
         self.thinking = data.thinking
         self.completedAt = data.completedAt

@@ -1192,6 +1192,9 @@ final class NativeToolCallRowView: NSView {
         // completed, so it reads in past tense ("Inserted into the database");
         // the running state shimmers `runningTitle` in present tense instead.
         // Expanded: the raw technical name (monospaced), since that's the detail view.
+        nameLabel.toolTip = item.approvalSkip.map {
+            L("Ran without an approval card.") + " " + $0.displayDetail
+        }
         if isExpanded {
             nameLabel.stringValue = item.call.function.name
             nameLabel.font = theme.nsFont(.code, weight: .semibold)
@@ -1252,7 +1255,7 @@ final class NativeToolCallRowView: NSView {
                 }
             }()
             // Append the recorded duration after an interpunct, dimmed.
-            if item.duration != nil || sourceTag != nil || item.repeatCount > 1 {
+            if item.duration != nil || sourceTag != nil || item.repeatCount > 1 || item.approvalSkip != nil {
                 let s = NSMutableAttributedString(
                     string: past,
                     attributes: [.font: titleFont, .foregroundColor: NSColor(theme.text.primary)]
@@ -1292,6 +1295,17 @@ final class NativeToolCallRowView: NSView {
                             attributes: [
                                 .font: theme.nsFont(.caption, weight: .medium),
                                 .foregroundColor: NSColor(theme.text.secondary),
+                            ]
+                        )
+                    )
+                }
+                if item.approvalSkip != nil {
+                    s.append(
+                        NSAttributedString(
+                            string: " · \(L("Ran without asking"))",
+                            attributes: [
+                                .font: theme.nsFont(.caption),
+                                .foregroundColor: NSColor(theme.text.tertiary),
                             ]
                         )
                     )

@@ -385,6 +385,12 @@ private struct ThemedAlertDialogContent: View {
         .padding(.horizontal, dialogLayout("paddingX", inheriting: inspectionMetric("padding", 24))).catalogLayoutTarget(dialogLayoutKey("paddingX"))
         .padding(.bottom, dialogLayout("paddingBottom", inheriting: inspectionMetric("padding", 16))).catalogLayoutTarget(dialogLayoutKey("paddingBottom"))
         .frame(width: width ?? 340)
+        // Measured before the flexible frame below, which reports the height
+        // it was offered rather than the content's.
+        .background(
+            GeometryReader { geo in
+                Color.clear.preference(key: ThemedAlertCardHeightKey.self, value: geo.size.height)
+            })
         .frame(minHeight: inspectionMetric("height", 0))
         .applyIf(inspectionFamily != nil) { $0.environment(\.theme, theme) }
         .assignedBaseChrome(inspectionFamily ?? 17, fallback: .overlay)
@@ -654,6 +660,14 @@ private struct ThemedAlertPresenterModifier: ViewModifier {
                 }
             }
     }
+}
+
+/// Height of the alert card a `ThemedAlertHost` is showing. A host overlaid
+/// on a view sized to its own content clips a taller card; that view reads
+/// this to grow while the alert is up.
+struct ThemedAlertCardHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat { 0 }
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 /// Host view that renders the active alert as a global overlay.

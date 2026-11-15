@@ -2945,6 +2945,7 @@ extension FloatingInputCard {
         var count = 0
         if autoSpeakAssistant { count += 1 }
         if isSandboxLeaseBlocked { count += 1 }
+        if !isRemoteAgentRun, ToolApprovalResolver.chatSkipReason(agentId: effectiveAgentId) != nil { count += 1 }
         // Configuration chip, or the folder chip once a folder is active.
         if !isRemoteAgentRun, folderState.hasActiveFolder { count += 1 }
         return count
@@ -2967,6 +2968,10 @@ extension FloatingInputCard {
 
             if isSandboxLeaseBlocked {
                 sandboxToggleChip(compact: compact)
+            }
+
+            if !isRemoteAgentRun {
+                ToolApprovalsChip(agentId: effectiveAgentId, compact: compact)
             }
 
             // Folder selection lives in the + attach menu now, so the chip

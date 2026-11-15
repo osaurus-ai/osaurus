@@ -107,6 +107,7 @@ extension Template {
             if let v = overrides.sandbox { entry.sandbox = v }
             if let v = overrides.subagents { entry.subagents = v }
         }
+        Self.strippingApprovals(&entry)
         var doc = OsaurusConfigDocument()
         doc.version = 1
         doc.agents = [entry]
@@ -260,6 +261,7 @@ extension Template {
         entry.capabilities?.relayEnabled = nil
         // Installed names are per-Mac; workflows travel as references below.
         entry.workflows = nil
+        strippingApprovals(&entry)
 
         if let path = agent.workingFolderPath, !path.isEmpty {
             reqs.workingFolder = PathHint(path: abbreviateHome(path), label: L("Working Folder"))
@@ -307,6 +309,13 @@ extension Template {
         var copy = entry
         copy.tools?.enabled = enabled.filter { registered.contains($0) }
         return copy
+    }
+
+    /// Approval settings are the receiving user's decision: a template never
+    /// carries them out, and a hand-edited one cannot install with them.
+    static func strippingApprovals(_ entry: inout AgentEntry) {
+        entry.toolApprovals = nil
+        entry.tools?.policies = nil
     }
 
     static func abbreviateHome(_ path: String) -> String {

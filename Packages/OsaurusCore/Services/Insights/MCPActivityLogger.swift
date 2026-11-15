@@ -20,6 +20,8 @@ enum MCPActivityLogger {
         let argumentsJSON: String
         let attribution: InsightsService.ActivityAttribution
         let started = Date()
+        /// The gate has already run for this call by the time it is created.
+        let approvalSkip = ChatExecutionContext.currentToolCallId.flatMap(ToolApprovalAudit.peek(callId:))
 
         func finish(_ result: Result<String, Error>) {
             let durationMs = Date().timeIntervalSince(started) * 1000
@@ -58,7 +60,8 @@ enum MCPActivityLogger {
                         name: exposedToolName ?? toolName,
                         arguments: recordedArgs,
                         result: resultPreview ?? errorMessage,
-                        isError: errorMessage != nil
+                        isError: errorMessage != nil,
+                        approvalSkip: approvalSkip
                     )
                 ],
                 attribution: attribution
