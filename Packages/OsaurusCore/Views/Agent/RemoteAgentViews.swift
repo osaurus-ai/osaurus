@@ -576,7 +576,7 @@ struct RemoteAgentDetailView: View {
 
     private func viewInInsights(_ remote: RemoteAgent) {
         InsightsService.shared.focus(providerId: remote.providerId)
-        ManagementStateManager.shared.selectedTab = .insights
+        ChatWindowManager.shared.showInsightsSurface()
     }
 
     private func sourceCard(for remote: RemoteAgent) -> some View {

@@ -128,7 +128,7 @@ struct TaskDetailSheet: View {
                 InsightsService.shared.showTask(task.id)
                 InsightsService.shared.focus(taskId: task.id)
                 onClose()
-                ManagementStateManager.shared.selectedTab = .insights
+                ChatWindowManager.shared.showInsightsSurface()
             }
         }
     }
@@ -163,7 +163,7 @@ struct TaskDetailSheet: View {
                         ) {
                             InsightsService.shared.showInteraction(attentionId: attentionId)
                             onClose()
-                            ManagementStateManager.shared.selectedTab = .insights
+                            ChatWindowManager.shared.showInsightsSurface()
                         }
                     } else {
                         SettingsValueRow(

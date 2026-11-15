@@ -19,7 +19,7 @@ their MCP server.
 | External MCP client -> Osaurus | Stdio command | Supported | Configure the client with `command: "osaurus"` and `args: ["mcp"]`. |
 | External MCP client -> Osaurus | HTTP endpoints | Supported | Use `GET /mcp/tools` and `POST /mcp/call` on the local Osaurus server. |
 | Osaurus -> remote MCP provider | HTTP endpoint | Supported | Add a provider URL in **Custom Server** or choose a catalog template. |
-| Osaurus -> remote MCP provider | HTTP streaming / SSE | Supported when the server supports it | Enable **Streaming Enabled** in Advanced. |
+| Osaurus -> remote MCP provider | HTTP streaming / SSE | Supported when the server supports it | Turn on **Enable Streaming** in Advanced. |
 | Osaurus -> third-party local MCP provider | Stdio command | Supported | Choose **Stdio** in Custom Server and configure command, args, env, execution host, and working directory. |
 
 If a vendor publishes a stdio config such as `{"command": "npx", "args": [...]}`,
@@ -338,8 +338,8 @@ Add arbitrary HTTP headers. Mark a header as a **secret** to save its value in G
 
 | Setting               | Description                               | Default |
 | --------------------- | ----------------------------------------- | ------- |
-| **Auto-connect**      | Connect automatically when Osaurus starts | true    |
-| **Streaming Enabled** | Use the streaming/SSE HTTP transport when the server supports it | false   |
+| **Enable Streaming**  | Use the streaming/SSE HTTP transport when the server supports it (HTTP only) | false   |
+| **Auto-connect on Launch** | Connect automatically when Osaurus starts | true    |
 | **Discovery Timeout** | Timeout for tool discovery (seconds)      | 20      |
 | **Tool Call Timeout** | How long a tool call may go without any sign of progress (seconds) | 45; 120 for Legal, Investing, and Healthcare templates |
 | **Max Duration with Progress** | Longest a tool call may run while the server keeps sending progress updates (minutes) | 10 |

@@ -24,6 +24,7 @@ struct ModelDefaultsView: View {
             textGroup
             ImageVideoDefaultModelsGroup(editor: subagentEditor)
             SpeechDefaultModelGroup()
+            EmbeddingDefaultModelGroup()
             DetectionDefaultModelGroup()
             AppleScriptDefaultModelGroup(editor: subagentEditor)
 
@@ -138,6 +139,97 @@ private struct SpeechDefaultModelGroup: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Embedding
+
+/// The embedding model behind memory, knowledge and capability search.
+/// Indexes are opened against one model per launch, so a change applies
+/// after Osaurus restarts.
+private struct EmbeddingDefaultModelGroup: View {
+    struct Option: Identifiable, Equatable {
+        let id: String
+        let name: String
+        let path: String?
+    }
+
+    @Environment(\.theme) private var theme
+    @ObservedObject private var maintenance = EmbeddingIndexMaintenance.shared
+    @State private var settings = EmbeddingSettingsStore.snapshot()
+    @State private var options: [Option] = []
+
+    private var selectedId: String { settings.effectiveModelId }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            SettingsSectionHeader(title: "Embedding")
+            EmbeddingRestartBanner()
+            SettingsGroup {
+                SettingsRow(
+                    title: "Embedding Model",
+                    description:
+                        "Turns text into vectors for memory, knowledge, skill, method and tool search. A change applies after Osaurus restarts.",
+                    anchorId: "modelDefaults.embedding"
+                ) {
+                    HStack(spacing: theme.space.s8) {
+                        SettingsMenuPicker(selection: Binding(get: { selectedId }, set: { select($0) })) {
+                            ForEach(pickerOptions) { option in
+                                Text(verbatim: option.name).tag(option.id)
+                            }
+                        }
+                        SettingsButton(.secondary, "Download") {
+                            ManagementStateManager.shared.openLocalModels(kind: .embedding)
+                        }
+                    }
+                }
+            }
+            if let footer = rebuildFooter {
+                SettingsGroupFooter(footer)
+            }
+        }
+        .onAppear(perform: reload)
+        .onReceive(NotificationCenter.default.publisher(for: .embeddingSettingsChanged)) { _ in reload() }
+        .onReceive(NotificationCenter.default.publisher(for: .localModelsChanged)) { _ in reload() }
+    }
+
+    /// The saved choice stays listed even when its bundle went missing, so
+    /// the picker never shows a blank selection.
+    private var pickerOptions: [Option] {
+        guard !options.contains(where: { $0.id.caseInsensitiveCompare(selectedId) == .orderedSame }) else {
+            return options
+        }
+        return options + [Option(id: selectedId, name: EmbeddingModelCatalog.displayName(for: selectedId), path: nil)]
+    }
+
+    private var rebuildFooter: String? {
+        let pending = maintenance.pendingStores
+        guard !pending.isEmpty else { return nil }
+        let names = pending.map(\.title).joined(separator: ", ")
+        return L("Rebuilding search indexes with \(EmbeddingService.modelName): \(names). Search uses text matching until each finishes.")
+    }
+
+    private func select(_ id: String) {
+        guard id.caseInsensitiveCompare(selectedId) != .orderedSame else { return }
+        let path = options.first { $0.id == id }?.path
+        EmbeddingSettingsStore.save(EmbeddingSettings(selectedModelId: id, selectedModelPath: path))
+        settings = EmbeddingSettingsStore.snapshot()
+    }
+
+    private func reload() {
+        settings = EmbeddingSettingsStore.snapshot()
+        var result = [Option(id: EmbeddingModelCatalog.builtIn.id, name: EmbeddingModelCatalog.builtIn.name, path: nil)]
+        for entry in EmbeddingModelCatalog.curated where !entry.isBuiltIn {
+            guard let directory = EmbeddingModelCatalog.installedDirectory(for: entry),
+                EmbeddingDetection.runtimeSupport(at: directory).isSupported
+            else { continue }
+            result.append(Option(id: entry.id, name: entry.name, path: directory.path))
+        }
+        for model in EmbeddingModelCatalog.discoveredModels()
+        where EmbeddingDetection.runtimeSupport(at: model.localDirectory).isSupported {
+            result.append(Option(id: model.id, name: model.name, path: model.localDirectory.path))
+        }
+        options = result
     }
 }
 

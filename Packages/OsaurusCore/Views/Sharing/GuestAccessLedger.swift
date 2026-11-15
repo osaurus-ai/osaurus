@@ -325,6 +325,6 @@ struct GuestAccessLedger: View {
         if let nonce = row.accessKeyNonce {
             _ = InsightsService.shared.focus(accessKeyId: nonce)
         }
-        ManagementStateManager.shared.selectedTab = .insights
+        ChatWindowManager.shared.showInsightsSurface()
     }
 }

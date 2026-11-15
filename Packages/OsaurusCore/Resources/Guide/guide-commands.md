@@ -40,4 +40,4 @@ Imported plugins (including Claude plugin bundles) can install their own slash c
 
 ## Notes
 
-- The assistant can list and describe commands (`osaurus_list scope=commands`), but creating and editing them is done in the Commands tab.
+- The assistant can list and describe commands (`osaurus_inspect` with `action: list`, `scope: commands`), but creating and editing them is done in the Commands tab.

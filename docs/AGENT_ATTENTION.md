@@ -66,9 +66,9 @@ Only the owner's devices see it.
 `NotificationChannel` (`Services/Attention/NotificationChannels.swift`,
 `DesktopNotificationChannel.swift`) has four implementations:
 
-- **In the app** (`in_app`): a toast, plus the management badge.
+- **In the app** (`in_app`): a toast, plus the **Inbox** badge in the Settings sidebar.
 - **Desktop** (`desktop`): `UNUserNotificationCenter` with actions —
-  **Approve** / **Deny** (and **Allow for This Conversation** for an owner
+  **Allow** / **Deny** (and **Allow for This Conversation** for an owner
   approval) and **Reply** for questions and messages. Answering resolves the
   item with `surface = desktop`.
 - **Paired phone** (`phone`): `SyncAttentionFeed` lists the item in the
@@ -244,12 +244,14 @@ Since the first version, these have landed:
   (`RemoteAgentHostHistory`), and polls the mailbox with backoff
   (`SharedConversationPoller`).
 - `ask_owner` lets a shared agent put a question to its owner.
-- **Approvals**, pinned in the Management sidebar under Automations, lists
-  the blocking items waiting on the owner, one row each: a sentence title,
-  who asked and when, one main answer and the rest under ⋯. Messages and
-  notices are not listed; what was answered is in Insights → Interactions
-  (**Past Approvals**). The sidebar badge counts what is waiting. The chat
-  sidebar marks an agent waiting on you as **Needs your input**.
+- **Inbox** (sidebar row; tab id `approvals`) has three sections. **Needs
+  You** lists the blocking items waiting on the owner, one row each: a
+  sentence title, who asked and when, one main answer and the rest under ⋯.
+  **Waiting on Others** lists your chats with someone else's agent that are
+  paused while its owner decides, and **Live Now** lists people using your
+  agents right now. Messages and notices are not listed; what was answered
+  is in Insights → Interactions. The sidebar badge counts what is waiting.
+  The chat sidebar marks an agent waiting on you as **Needs your input**.
 - Mailbox messages, conversation leases and invite-peer identities are kept
   on disk (0600) and survive a restart.
 - **Decline Unanswered Requests After** sets the owner-approval timeout per
@@ -265,7 +267,7 @@ Since the first version, these have landed:
 | Owner approval                  | `Services/Attention/OwnerApprovalService.swift`, `Tools/ToolRegistry.swift`, `Views/Chat/OwnerApprovalPrompt.swift` |
 | Multi-party                     | `Services/Attention/MultiPartyTranscript.swift`, `ConversationMailbox.swift`, `Services/Router/InboundSharedRunBridge.swift` |
 | Calling side                    | `Services/Attention/SharedAgentCallerClient.swift`, `SharedConversationPoller.swift`, `Services/Provider/RemoteProviderService.swift` |
-| `ask_owner`, Approvals          | `Tools/AskOwnerTool.swift`, `Views/Approvals/ApprovalsView.swift`, `Services/Attention/AttentionOpener.swift` |
+| `ask_owner`, Inbox              | `Tools/AskOwnerTool.swift`, `Views/Approvals/ApprovalsView.swift`, `Services/Attention/AttentionOpener.swift` |
 | Logging                         | `Services/Attention/AttentionActivityLogger.swift`, `AttentionLog.swift`, `ConversationEventLog.swift` |
 | iPhone feed (Sync)              | `Services/Sync/SyncAttentionFeed.swift`, `SyncDeviceFeedContract.swift` |
 | HTTP routes                     | `Networking/HTTPHandler.swift` (`/conversations/{id}/events`, and the 6-digit phone's prompt routes) |

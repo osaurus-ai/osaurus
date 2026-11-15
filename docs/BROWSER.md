@@ -103,7 +103,7 @@ actions into one call with one final snapshot.
   calls `browser_open_login`; `BrowserWindowController` presents a visible
   window on the agent's profile, the user signs in directly, and the run
   resumes logged-in when the window closes.
-- **Settings → Browser** lists every session with its live/saved state, last
+- **Settings → Computer & Browser Use → Browser Use** lists every session with its live/saved state, last
   page, and per-service sign-in badges. Open attaches the live WebView (or
   restores the saved profile at its last page); Close detaches without
   touching data; Reset destructively wipes the profile after confirmation.
@@ -177,7 +177,7 @@ Additional hardening beyond the gate ladder:
   tools are not registered, and (unlike search) its **skill is also
   suppressed** — the skill teaches the model to call `browser_*` tools that
   no longer exist. The installed card stays with a "Built into Osaurus"
-  banner deep-linking to Settings → Browser, and uninstall works normally.
+  banner deep-linking to Settings → Computer & Browser Use → Browser Use, and uninstall works normally.
 - At launch, `BrowserPluginMigration` copies each agent's **exact**
   `osaurus.browser/profile_id` Keychain value into the native session catalog
   (one-time, idempotent, old key left in place). Because the UUID is reused,

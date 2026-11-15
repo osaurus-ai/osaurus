@@ -250,8 +250,13 @@ public final class ManagementBadgeStore: ObservableObject {
         // miss, so doing it inline would block the main thread. Do not probe identity/Keychain from this path; startup badge
         // freshness is less important than avoiding password prompts while
         // local chat boots.
-        let inventoryCandidates = ModelManager.shared.deduplicatedModels()
+        // Only the arrays are read here; deduplicating them is O(models)
+        // work that runs with the rest of the inventory off the main actor.
+        let suggestedModels = ModelManager.shared.suggestedModels
+        let availableModels = ModelManager.shared.availableModels
         Task.detached(priority: .utility) { [weak self] in
+            let inventoryCandidates = ModelManager.deduplicatedModels(
+                suggested: suggestedModels, available: availableModels)
             let downloadedModels = Self.modelsBadgeCount(inventoryCandidates: inventoryCandidates)
             let pinned = (try? MemoryDatabase.shared.pinnedFactStats()) ?? 0
             // Pending knowledge proposals drive the "review needed"

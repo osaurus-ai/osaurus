@@ -477,12 +477,15 @@ final class LanguageCatalogSource: LocalModelCatalogSource {
         let check = modelManager.manifestChecks[model.id.lowercased()]
         let isUnsupported = model.isDownloaded && !model.isMLXFormat
 
+        let isVLM = model.isVLM
+        // Matches the subtitle: the catalog's Vision use case counts too.
+        let showsVision = isVLM || model.useCase == .vision
         var subtitle: [String] = []
         if lists.isDecision(model) {
             subtitle.append(L("Decision"))
         } else {
             if let useCase = model.useCase, useCase != .smallest { subtitle.append(useCase.displayName) }
-            if model.isVLM, model.useCase != .vision { subtitle.append(L("Vision")) }
+            if isVLM, model.useCase != .vision { subtitle.append(L("Vision")) }
             if let params = model.parameterCount { subtitle.append(params) }
         }
         if isFamily {
@@ -522,7 +525,7 @@ final class LanguageCatalogSource: LocalModelCatalogSource {
             name: isFamily ? ModelMetadataParser.familyDisplayName(from: model.id) : model.name,
             subtitle: subtitle.joined(separator: " · "),
             description: model.description,
-            icon: model.isVLM ? "eye" : "text.bubble",
+            icon: showsVision ? "eye" : "text.bubble",
             badges: badges,
             isTopPick: model.isTopSuggestion,
             fit: model.compatibility(totalMemoryGB: mem),

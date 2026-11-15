@@ -24,7 +24,6 @@ struct InsightsView: View {
 
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
-    @State private var hasAppeared = false
     @State private var selectedLog: RequestLog?
     @State private var showClearConfirmation = false
     @State private var showExportSheet = false
@@ -32,15 +31,14 @@ struct InsightsView: View {
     @State private var showFilterPopover = false
 
     /// Content width at or above which a selected row opens beside the list
-    /// instead of replacing it. Settings with its sidebar open crosses this
-    /// around a 1280pt window.
+    /// instead of replacing it. Beside the main window's navigation rail
+    /// this is crossed at a window just under 1100pt wide.
     static let inspectorBreakpoint: CGFloat = 1040
     static let inspectorWidth: CGFloat = 440
 
     var body: some View {
         VStack(spacing: theme.space.s0) {
             headerView
-                .settingsHeaderEntrance(hasAppeared: hasAppeared)
 
             GeometryReader { geo in
                 let useInspector = geo.size.width >= Self.inspectorBreakpoint
@@ -54,13 +52,11 @@ struct InsightsView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .clipped()
-            .opacity(hasAppeared ? 1 : 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(theme.surface.canvas)
         .environment(\.theme, themeManager.currentTheme)
         .onAppear {
-            withAnimation(theme.motion.standard.delay(0.05)) { hasAppeared = true }
             insightsService.reload()
             applyPendingFocus(insightsService.pendingFocusLogId)
         }

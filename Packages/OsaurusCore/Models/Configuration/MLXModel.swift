@@ -667,7 +667,7 @@ struct MLXModel: Identifiable, Codable {
     var isDecision: Bool { catalogIsDecision == true || DecisionDetection.isDecision(at: localDirectory) }
 
     var isEmbedding: Bool {
-        EmbeddingDetection.isEmbedding(at: localDirectory)
+        EmbeddingModelCatalog.isCatalogId(id) || EmbeddingDetection.isEmbedding(at: localDirectory)
     }
 
     /// Memoizes `family` per model name. The model grid derives card gradients

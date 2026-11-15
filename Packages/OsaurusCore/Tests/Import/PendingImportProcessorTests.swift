@@ -31,7 +31,8 @@ struct PendingImportProcessorTests {
     }
 
     private func makeFixture(
-        withServer: Bool = false, withRuntime: Bool = false, orchestratorSpawnable: Bool? = nil, model: String? = nil
+        withServer: Bool = false, withRuntime: Bool = false, orchestratorSpawnable: Bool? = nil, model: String? = nil,
+        modelStrictness: String? = nil
     ) throws -> Fixture {
         let suffix = UUID().uuidString.prefix(8).lowercased()
         let fixture = Fixture(
@@ -85,9 +86,14 @@ struct PendingImportProcessorTests {
             "---\nname: \(fixture.skill)\ndescription: Triage a ticket.\n---\n\n# Triage\n\nRead the ticket.\n",
             "skills/\(fixture.skill)/SKILL.md")
         try write("Escalation matrix.\n", "skills/\(fixture.skill)/references/escalation.md")
-        let envelope: [String: Any] = [
+        var envelope: [String: Any] = [
             "format": "osaurus.template", "format_version": 1, "name": fixture.agent, "agent": agent,
         ]
+        if let model, let modelStrictness {
+            envelope["requirements"] = [
+                "models": [["slot": "main", "preferred": model, "strictness": modelStrictness]]
+            ]
+        }
         let agentData = try JSONSerialization.data(withJSONObject: envelope, options: [.sortedKeys])
         try write(String(decoding: agentData, as: UTF8.self), "agents/support.json")
         return fixture
@@ -183,6 +189,25 @@ struct PendingImportProcessorTests {
             #expect(rest.items.allSatisfy { $0.status == .done }, "\(rest.items)")
             #expect(SkillManager.shared.skill(named: fixture.skill) == nil)
             #expect(receipts(fixture).isEmpty)
+        }
+    }
+
+    /// A bundle whose main model is `strictness: always` installs the agent
+    /// locked to it; `preferred` leaves it unlocked.
+    @Test(arguments: [("always", true), ("preferred", false)])
+    func alwaysMainModel_installsTheAgentLocked(strictness: String, locked: Bool) async throws {
+        try await exclusive {
+            let fixture = try makeFixture(model: "foundation", modelStrictness: strictness)
+            defer { try? FileManager.default.removeItem(at: fixture.root) }
+
+            let installed = try await run(.install, fixture)
+            #expect(installed.status == .applied, "\(installed.items)")
+            let installedAgent = try #require(agent(named: fixture.agent))
+            #expect(installedAgent.defaultModel == "foundation")
+            #expect((installedAgent.modelLocked == true) == locked)
+            #expect((AgentManager.shared.lockedModel(for: installedAgent.id) == "foundation") == locked)
+
+            _ = try await run(.remove, fixture)
         }
     }
 

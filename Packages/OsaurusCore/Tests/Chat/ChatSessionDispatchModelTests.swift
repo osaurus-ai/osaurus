@@ -293,6 +293,94 @@ struct ChatSessionDispatchModelTests {
         await cleanup()
     }
 
+    // MARK: - Model lock
+
+    private func makeLockedAgent(defaultModel: String) -> (agent: Agent, cleanup: () async -> Void) {
+        let made = makeAgent(defaultModel: defaultModel)
+        AgentManager.shared.updateModelLocked(for: made.agent.id, locked: true)
+        return made
+    }
+
+    /// A locked agent's window chat ignores the model the conversation saved.
+    @Test func lockedWindowChatIgnoresSavedModel() async {
+        let (agent, cleanup) = makeLockedAgent(defaultModel: "mlx-test/locked")
+        let session = await makeReattachedSession(
+            agentId: agent.id,
+            source: .chat,
+            persistedModel: "mlx-test/manual-pick",
+            items: [localItem("mlx-test/manual-pick"), localItem("mlx-test/locked")]
+        )
+        #expect(session.selectedModel == "mlx-test/locked")
+        session.applyPickerItems([
+            localItem("mlx-test/manual-pick"), localItem("mlx-test/locked"), localItem("mlx-test/other"),
+        ])
+        #expect(session.selectedModel == "mlx-test/locked")
+        await cleanup()
+    }
+
+    /// A missing locked model stays selected instead of falling back to the
+    /// saved model or the first chat-capable one.
+    @Test func lockedModelMissingFromPickerNeverFallsBack() async {
+        let (agent, cleanup) = makeLockedAgent(defaultModel: "mlx-test/gone")
+        let session = await makeReattachedSession(
+            agentId: agent.id,
+            source: .channel,
+            persistedModel: "mlx-test/old-model",
+            items: [localItem("mlx-test/old-model"), localItem("mlx-test/other")]
+        )
+        #expect(session.selectedModel == "mlx-test/gone")
+        session.applyAgentDefaultModelForDispatch()
+        #expect(session.selectedModel == "mlx-test/gone")
+        #expect(session.pinModelForRun("mlx-test/other") == false)
+        #expect(session.selectedModel == "mlx-test/gone")
+        await cleanup()
+    }
+
+    /// Window chats normally keep a manual pick on dispatch; a locked agent's
+    /// do not.
+    @Test func lockedWindowChatDispatchUsesLockedModel() async {
+        let (agent, cleanup) = makeLockedAgent(defaultModel: "mlx-test/locked")
+        let session = await makeReattachedSession(
+            agentId: agent.id,
+            source: .chat,
+            persistedModel: "mlx-test/manual-pick",
+            items: [localItem("mlx-test/manual-pick"), localItem("mlx-test/locked")]
+        )
+        session.selectedModel = "mlx-test/manual-pick"
+        session.applyAgentDefaultModelForDispatch()
+        #expect(session.selectedModel == "mlx-test/locked")
+        await cleanup()
+    }
+
+    /// A pick on a locked agent never rewrites its saved model.
+    @Test func selectionOnLockedAgentDoesNotPersist() async {
+        let (agent, cleanup) = makeLockedAgent(defaultModel: "mlx-test/locked")
+        let session = await makeReattachedSession(
+            agentId: agent.id,
+            source: .chat,
+            persistedModel: "mlx-test/locked",
+            items: [localItem("mlx-test/other"), localItem("mlx-test/locked")]
+        )
+        session.selectedModel = "mlx-test/other"
+        for _ in 0 ..< 3 { await Task.yield() }
+        #expect(AgentManager.shared.agent(for: agent.id)?.defaultModel == "mlx-test/locked")
+        await cleanup()
+    }
+
+    /// Unlocking restores the usual window-chat behavior.
+    @Test func unlockedAgentKeepsWindowChatPick() async {
+        let (agent, cleanup) = makeLockedAgent(defaultModel: "mlx-test/locked")
+        AgentManager.shared.updateModelLocked(for: agent.id, locked: false)
+        let session = await makeReattachedSession(
+            agentId: agent.id,
+            source: .chat,
+            persistedModel: "mlx-test/manual-pick",
+            items: [localItem("mlx-test/manual-pick"), localItem("mlx-test/locked")]
+        )
+        #expect(session.selectedModel == "mlx-test/manual-pick")
+        await cleanup()
+    }
+
     @Test func loadingUnpinnedConversationClearsPreviousRestoredChoice() async {
         let (agent, cleanup) = makeAgent(defaultModel: "mlx-test/default")
         let session = await makeSessionBeforeCatalog(agentId: agent.id)

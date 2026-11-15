@@ -251,16 +251,14 @@ struct AgentTemplatesView: View {
     }
 
     private var filterChips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: theme.space.s6) {
-                ForEach(AgentTemplateFilter.allCases) { option in
-                    if option != .published || hasPublished {
-                        FilterChip(
-                            option.label, icon: option.icon, count: apply(option).count,
-                            isSelected: activeFilter == option, help: option.help
-                        ) {
-                            filter = option
-                        }
+        FilterChipScroller {
+            ForEach(AgentTemplateFilter.allCases) { option in
+                if option != .published || hasPublished {
+                    FilterChip(
+                        option.label, icon: option.icon, count: apply(option).count,
+                        isSelected: activeFilter == option, help: option.help
+                    ) {
+                        filter = option
                     }
                 }
             }

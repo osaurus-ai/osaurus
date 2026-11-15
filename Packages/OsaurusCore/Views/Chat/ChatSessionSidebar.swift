@@ -171,6 +171,7 @@ struct ChatSessionSidebar: View {
                     if !directlySharedAgents.isEmpty { sharedAgentsSection(directlySharedAgents) }
                 }
                 .padding(.horizontal, theme.space.s16)
+                .padding(.bottom, theme.space.s16)
             }
             .sidebarScrollEdgeFade()
             .coordinateSpace(name: "agentList")

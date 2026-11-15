@@ -30,8 +30,8 @@ final class DiscoveryCenter {
     var snapshot: () -> DiscoverySnapshot = { DiscoveryCenter.liveSnapshot() }
     var now: () -> Date = { Date() }
     var turnOnAutomation: (EventEntry) async -> OnboardingKeep.Outcome = { await OnboardingKeep.turnOn($0) }
-    var pickFolder: @MainActor (_ message: String, _ directory: URL?) -> URL? = {
-        DiscoveryCenter.runFolderPanel(message: $0, directory: $1)
+    var pickFolder: @MainActor (_ message: String, _ directory: URL?) async -> URL? = {
+        await DiscoveryCenter.runFolderPanel(message: $0, directory: $1)
     }
     var openSetting: @MainActor (String) -> Void = { SettingsLanding.open(id: $0) }
     var sendAsk: (ChatSession, String, ServiceToolInvocation?) -> Bool = {
@@ -426,7 +426,9 @@ final class DiscoveryCenter {
             }
         case .keeperFolders:
             let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
-            guard let url = pickFolder(L("Choose a folder for the new teammate to read."), documents) else { return }
+            guard let url = await pickFolder(L("Choose a folder for the new teammate to read."), documents) else {
+                return
+            }
             configure(Self.folderTeammateRequest(path: url.path, folderName: url.lastPathComponent))
         case .keeperRedaction:
             configure(String(format: "Turn on the redaction tools for the agent named %@.", names[.keeper] ?? "Keeper"))
@@ -449,7 +451,7 @@ final class DiscoveryCenter {
                 session.rebuildVisibleBlocks()
                 return
             }
-            guard let url = pickFolder(L("Choose the project Builder works in."), nil),
+            guard let url = await pickFolder(L("Choose the project Builder works in."), nil),
                 let builder = AgentManager.shared.agents.first(where: { $0.teammate == .builder })
             else { return }
             AgentManager.shared.updateWorkingFolder(for: builder.id, bookmark: Self.bookmark(url), path: url.path)
@@ -506,7 +508,7 @@ final class DiscoveryCenter {
             end()
             openSetting("skills.overview")
         case .orchestratorFolder:
-            guard let url = pickFolder(L("Choose a folder for the Orchestrator to work in."), nil) else { return }
+            guard let url = await pickFolder(L("Choose a folder for the Orchestrator to work in."), nil) else { return }
             AgentManager.shared.updateWorkingFolder(for: Agent.defaultId, bookmark: Self.bookmark(url), path: url.path)
             end(String(format: L("The Orchestrator works in %@ now."), url.lastPathComponent))
         case .computerUse:
@@ -688,7 +690,7 @@ final class DiscoveryCenter {
         try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
     }
 
-    private static func runFolderPanel(message: String, directory: URL?) -> URL? {
+    private static func runFolderPanel(message: String, directory: URL?) async -> URL? {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -696,7 +698,7 @@ final class DiscoveryCenter {
         panel.prompt = L("Choose")
         panel.message = message
         panel.directoryURL = directory
-        return panel.runModal() == .OK ? panel.url : nil
+        return await panel.beginModal() == .OK ? panel.url : nil
     }
 
     /// Authored lines are shown, never sent to a model.

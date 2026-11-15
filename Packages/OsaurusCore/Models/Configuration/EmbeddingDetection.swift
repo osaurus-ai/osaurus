@@ -64,13 +64,100 @@ enum EmbeddingDetection {
         }
     }
 
-    /// Whether the bundle at `directory` is an embedding/encoder-only model
-    /// per its config.json. Missing or unparseable configs return `false`.
+    /// Whether the bundle at `directory` is an embedding model. Missing or
+    /// unparseable configs return `false`.
+    ///
+    /// Decoder embedders (Qwen3-Embedding, EmbeddingGemma) declare a causal
+    /// architecture, so the config classifier alone would offer them as chat
+    /// models. A sentence-transformers layout identifies them first; a vision
+    /// config still vetoes. Curated bundles without that layout (the MLX
+    /// Qwen3-Embedding conversions) are recognized by `EmbeddingModelCatalog`.
     static func isEmbedding(at directory: URL) -> Bool {
         cachedVerdict("dir:\(directory.path)") {
             guard let json = readConfigJSON(at: directory) else { return false }
+            if json["vision_config"] != nil { return false }
+            if hasSentenceTransformersMarkers(at: directory) {
+                return true
+            }
             return isEmbeddingConfig(json)
         }
+    }
+
+    static func hasSentenceTransformersMarkers(at directory: URL) -> Bool {
+        let fm = FileManager.default
+        return ["modules.json", "1_Pooling/config.json", "config_sentence_transformers.json"].contains {
+            fm.fileExists(atPath: directory.appendingPathComponent($0).path)
+        }
+    }
+
+    // MARK: - Runtime support
+
+    enum RuntimeSupport: Equatable, Sendable {
+        case model2vec
+        case transformer(modelType: String)
+        case unsupported(reason: String)
+
+        var isSupported: Bool {
+            if case .unsupported = self { return false }
+            return true
+        }
+    }
+
+    /// `model_type` keys MLXEmbedders' model registry creates. The registry
+    /// is private to vmlx-swift, so this mirrors its keys exactly.
+    static let transformerModelTypes: Set<String> = [
+        "bert", "roberta", "xlm-roberta", "distilbert", "nomic_bert", "modernbert",
+        "qwen3", "gemma3", "gemma3_text", "gemma3n",
+    ]
+
+    /// Registry types whose vmlx-swift implementation can't load real
+    /// checkpoints. Refused before load: EmbeddingGemma traps the process,
+    /// and every NomicBERT checkpoint fails the weight check.
+    static let unloadableModelTypes: [String: String] = {
+        let gemma =
+            "the MLX EmbeddingGemma implementation in vmlx-swift stops Osaurus while loading its projection layers."
+        return [
+            "gemma3": gemma,
+            "gemma3_text": gemma,
+            "gemma3n": gemma,
+            "nomic_bert":
+                "the MLX NomicBERT implementation in vmlx-swift expects learned position embeddings, but NomicBERT checkpoints use rotary positions.",
+        ]
+    }()
+
+    /// Whether Osaurus can run the bundle at `directory` as its embedding model.
+    static func runtimeSupport(at directory: URL) -> RuntimeSupport {
+        guard let info = EmbeddingBundleInfo.read(at: directory) else {
+            return .unsupported(reason: "the bundle has no readable config.json.")
+        }
+        return runtimeSupport(of: info, directory: directory)
+    }
+
+    static func runtimeSupport(of info: EmbeddingBundleInfo, directory: URL? = nil) -> RuntimeSupport {
+        if info.hasVisionConfig {
+            return .unsupported(reason: "vision-language bundles can't be used for text embeddings.")
+        }
+        guard let modelType = info.modelType else {
+            return .unsupported(reason: "config.json does not declare a model_type.")
+        }
+        if modelType == "model2vec" {
+            if let directory {
+                let fm = FileManager.default
+                let required = ["model.safetensors", "tokenizer.json"]
+                guard required.allSatisfy({ fm.fileExists(atPath: directory.appendingPathComponent($0).path) })
+                else {
+                    return .unsupported(reason: "Model2Vec bundles need model.safetensors and tokenizer.json.")
+                }
+            }
+            return .model2vec
+        }
+        guard transformerModelTypes.contains(modelType) else {
+            return .unsupported(reason: "the \(modelType) architecture isn't supported by the MLX embedding runtime.")
+        }
+        if let reason = unloadableModelTypes[modelType] {
+            return .unsupported(reason: reason)
+        }
+        return .transformer(modelType: modelType)
     }
 
     /// Pure classifier over a parsed config.json. Exposed for tests.

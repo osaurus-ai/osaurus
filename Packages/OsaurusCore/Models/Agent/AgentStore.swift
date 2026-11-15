@@ -103,6 +103,7 @@ public enum AgentStore {
     nonisolated static let classicUnknownFields: [ClassicResaveRecovery.FieldPath] = [
         ["sharedToolApproval"],
         ["pluginId"],
+        ["modelLocked"],
         ["autonomousExec", "hostServicesEnabled"],
         ["settings", "enabledWorkflowIDs"],
         ["settings", "workingFolderReadOnly"],

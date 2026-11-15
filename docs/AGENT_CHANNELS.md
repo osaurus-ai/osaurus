@@ -241,38 +241,41 @@ workflow + input mapping), queueing, and a reply policy (`autoReply` for
 agents, `replyWithWorkflowOutput` for workflows). A connection can have any
 number of events.
 
-The user-facing home for this is the channel sheet's **Agents on this
-channel** section (`AgentsOnChannelSection`, in every native sheet and the
-n8n *Who answers?* step). It is built from `ChannelAgentRoster`
+Every native channel sheet is the same five steps
+(`AgentChannelProviderSetupSection`): **Connect** (account and access),
+**Receiving** (rooms and people), **Routing**, **Sending**, and **Test**.
+Routing is `ChannelRoutingSection` (`Views/Event/ChannelRoutingSection.swift`),
+built from `ChannelAgentRoster`
 (`Services/AgentChannel/ChannelAgentRoster.swift`), a pure model over the
 connection's events plus the effective posting bindings:
 
-- one **row** per agent or workflow target: `answers` (the *simple*
-  automation for that target — no aliases, empty filter, the only automation
-  for that target on the connection), the row's room scope, `answersEnabled`
-  (`isEnabled`), `repliesAutomatically` (`reply.replies(for:)`), and for
-  local agents a `posting` summary of the agent's bindings on the connection
-  (`off` / `askFirst` / `withoutAsking` / `mixed`, or `unavailable` when the
-  bot cannot post anywhere);
-- `customRules`: every non-simple automation, shown as "Custom routing:
-  N rules" with a link to Automations.
+- **Who answers messages** is a flat table with one row per channel
+  automation (a *rule*): **Where** (rooms, or Any room, plus badges for
+  aliases, *Only when mentioned* and filters), **Who answers** (an agent or a
+  workflow), **Replies** (agents: *Automatically* / *After approval*;
+  workflows: *Posts the output* / *Doesn't reply*, or *Replies from its
+  steps* when the workflow has a `reply` step), and whether it is on. Many
+  agents across many rooms is just more rows.
+- **Add Rule** → `EventManager.create` (`ChannelAgentRoster.newRule`); the row
+  menu has **Edit…** (the full automation editor, in place), **Duplicate for
+  another room…** (`ChannelAgentRoster.duplicate`) and **Delete**. The
+  Replies picker writes `reply.autoReply` / `replyWithWorkflowOutput`.
+- **Where messages go** under the table is a plain-language summary
+  (`routingLines`) with warnings (`routingWarnings`) when no rule is on, when
+  readable rooms reach no one, when several targets answer the same messages,
+  or when a rule has no agent.
 
-Writes reuse existing APIs: **Add Agent** → `EventManager.create`
-(`ChannelAgentRoster.newAnswerEvent`, any-room, auto-reply on, named
-"<Agent> on <Channel>"); **Answers messages** → `setEnabled` (an automation
-is never deleted from here; a post-only agent gains a plain automation);
-**Replies automatically** → `update` of `reply.autoReply` /
-`replyWithWorkflowOutput`; **Posts on its own** →
+**Sending** holds **Agents that post on their own** (`ChannelPostingSection`):
+agents that may start a message unprompted, written with
 `AgentChannelConnectionManager.upsertBinding` for one stored binding per
 writable room (`ChannelAgentRoster.postingBindings`, ids `place-<conn>-<room>-
 <agent8>` so they never collide with automatic `auto-` ids; *Without asking*
-confirms first). **More options** opens the automation in Automations via
-`ManagementStateManager.pendingEventEditId`. The connection card's detail is
-"Answered by X, Y" (`AgentChannelConnectionCenterView.routingSummary`, agent
-and workflow names, de-duplicated); the agent's Channels tab shows the same
-roster per connection as a read-only **On channels** list
-(`ChannelAgentRoster.presenceDetail(for:)`) with **Edit in Channels**
-(`pendingChannelConnectionId`).
+confirms first). The connection card's detail is "Answered by X, Y"
+(`AgentChannelConnectionCenterView.routingSummary`, agent and workflow names,
+de-duplicated), or "Nobody answers here yet — messages stay in the inbox".
+The agent's Channels tab shows the same roster per connection as a read-only
+**On Channels** list (`ChannelAgentRoster.agentOverview`) with **Edit in
+Channels** (`pendingChannelConnectionId`).
 
 - Every platform service (Discord, Slack, Telegram, iMessage, WhatsApp, Email,
   n8n, custom HTTP) runs its own gates first — connection enabled, allowlists,
@@ -352,15 +355,15 @@ Key properties of the model:
   "Automatic" in the UI; switching one to auto-send goes through the same
   explicit acknowledgement as any autonomous binding.
 - Bindings are edited on the channel: Settings → Channels → the platform →
-  Agents on this channel → **Posts on its own** writes one stored binding per
-  room the bot may post in, all with the chosen mode (see "Inbound routing"
-  above). The built-in Default agent cannot answer messages but can be added
-  posts-only; its row's More options opens the per-room place editor in a
-  sheet (`AgentChannelDefaultAgentPostingSheet` hosting
+  **Sending** → **Agents that post on their own** writes one stored binding
+  per room the bot may post in, all with the chosen mode (see "Inbound
+  routing" above). The built-in Default agent cannot answer messages but can
+  be added posts-only; its row's **Edit places…** opens the per-room place
+  editor in a sheet (`AgentChannelDefaultAgentPostingSheet` hosting
   `AgentChannelAgentDestinationsSection`), which is also the only UI that
   still reaches the `draft` mode and per-binding guidance, sources, rate
   policy and thread pinning. The agent's Channels tab is read-only
-  (**On channels**, Edit in Channels). Each binding
+  (**On Channels**, Edit in Channels). Each binding
   names a single agent, a connection (native or custom), a room, an optional
   thread, operator-facing "when to use" guidance, the run sources it may be
   used from, an outbound mode, and a rate policy. New bindings get an
@@ -721,12 +724,12 @@ accounts: `SourceConnection`s of type `.imap` or `.mailApp`, passwords in
   for approval on a Mail app account is saved as a Mail draft. Known gaps:
   no STARTTLS, and SMTP replies are not appended to Sent.
 - **Actions**: `diagnostics`, `list_spaces`, `list_rooms`,
-  `read_messages`, `read_thread`, `search`, `reply_thread`. Proactive
+  `read_messages`, `read_thread`, `search_messages`, `reply_thread`. Proactive
   `send_message`, edits, reactions and attachments are
   `unsupportedKind`; Email is excluded from proactive posting and
   auto-destinations.
 - **UI**: `EmailSettingsView` (Connect, Receiving, Routing, Sending,
-  Verify), opened from the Connection Center and Add Channel; catalog row
+  Test), opened from the Connection Center and Add Channel; catalog row
   `agentChannels.email`.
 - **Tests**: `Email/EmailChannelServiceTests`,
   `Email/EmailChannelTransportRuntimeTests`, `Email/SMTPClientTests`.
@@ -932,12 +935,14 @@ the channel database without bound.
 
 ## Inbox And Audit Workbench
 
-`AgentChannelAuditWorkbenchService` backs two views. **Automations → History**
-(`AutomationHistoryView`) shows receive decisions that never reached an
-automation — denied, failed, and unclaimed (`unclaimed_message` rows written by
-`EventManager.ingestChannelMessage` with the `no_event_*` / `mention_required`
-reason) — next to automation runs, with received/denied/duplicate counts and a
-copyable redacted JSON export for one connection or all of them. Each
+`AgentChannelAuditWorkbenchService` backs two views. **Automations → ⋯ →
+Channel Messages** (`AutomationHistoryView`) shows receive decisions that never
+reached an automation — denied, failed, and unclaimed (`unclaimed_message`
+rows written by `EventManager.ingestChannelMessage` with the `no_event_*` /
+`mention_required` reason) — and messages taken as a workflow form's answer,
+with received/denied/duplicate counts and a copyable redacted JSON export for
+one connection or all of them. Automation runs are not listed there; they are
+tasks in **Tasks → History**. Each
 connection's diagnostics (`AgentChannelInboundActivityListView`) shows its
 recent inbound stages and the newest redacted inbox messages. The Channels tab
 itself has only **Channels** and **Outbox**; the former Activity tab is gone.
@@ -948,9 +953,9 @@ reply-token validation, and remote safety gates before dispatching or writing to
 a channel. The workbench helps maintainers and operators answer: "Did this
 group message come from an authorized sender, and if not, why was it dropped?"
 
-This foundation does not add a live Discord receive relay. It adds the durable
-message, duplicate-filtering, and redacted audit foundation that a relay,
-webhook receiver, Slack adapter, or Telegram adapter can share.
+The native adapters (Discord, Slack, Telegram, iMessage, WhatsApp, Email) and
+the n8n / custom HTTP receivers all share this durable message,
+duplicate-filtering, and redacted audit layer.
 
 ## Async Channel Substrate
 

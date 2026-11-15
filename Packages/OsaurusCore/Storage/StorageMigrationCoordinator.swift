@@ -62,11 +62,40 @@ public actor StorageMigrationCoordinator {
         /// to safely write the temp copy the converter needs. Left untouched
         /// on disk (still openable via detection-first) and retried next launch.
         public var skipped: [String] = []
+        /// Why the storage key couldn't be resolved, when conversion needed it
+        /// and it was unavailable. Every store that needed converting is then
+        /// listed in `locked`.
+        public var keyFailure: String?
+        /// Policy-aware files (attachments, `sync-local/` state) converted.
+        public var filesConverted: Int = 0
+        /// Policy-aware files that failed to convert and kept their old form.
+        public var filesFailed: Int = 0
 
         public var isFullyConverged: Bool {
-            locked.isEmpty && failed.isEmpty && skipped.isEmpty
+            locked.isEmpty && failed.isEmpty && skipped.isEmpty && keyFailure == nil && filesFailed == 0
         }
     }
+
+    /// Raised by `setEncryptionEnabled(true)` when no storage key can be
+    /// resolved. The posture is left unchanged.
+    public enum ToggleError: LocalizedError {
+        case keyUnavailable(String)
+
+        public var errorDescription: String? {
+            switch self {
+            case .keyUnavailable(let detail):
+                return String(
+                    format: L("Encryption wasn't turned on because the storage key couldn't be created or read: %@"),
+                    detail
+                )
+            }
+        }
+    }
+
+    /// `PersistenceHealth` store id for "the posture needs the storage key and
+    /// it isn't available". Not a database, so the recovery card shows it as
+    /// a posture problem rather than offering Retry/Reset on a file.
+    public static let storageKeyIssueStore = "storage-key"
 
     private init() {}
 
@@ -93,6 +122,9 @@ public actor StorageMigrationCoordinator {
             return
         }
 
+        // Before any format work, so convergence sees every file under one key.
+        await Self.recoverInterruptedRotation()
+
         let mode = Self.resolveLaunchMode()
         let report = await converge(to: mode)
 
@@ -114,13 +146,16 @@ public actor StorageMigrationCoordinator {
                 "convergence: \(report.skipped.count) store(s) skipped (insufficient disk space): \(report.skipped.joined(separator: ", "), privacy: .public)"
             )
         }
+        if report.filesFailed > 0 {
+            Self.log.error("convergence: \(report.filesFailed) file(s) failed to convert")
+        }
 
         // Fleet observability: a compact, non-degraded per-launch summary in
         // `/health` so the rollout can be monitored across users.
         PersistenceHealth.shared.recordInfo(
             key: "storage_convergence",
             message:
-                "mode=\(mode.rawValue) converted=\(report.converted) matching=\(report.alreadyMatching) locked=\(report.locked.count) failed=\(report.failed.count) skipped=\(report.skipped.count)"
+                "mode=\(mode.rawValue) converted=\(report.converted) matching=\(report.alreadyMatching) locked=\(report.locked.count) failed=\(report.failed.count) skipped=\(report.skipped.count) files=\(report.filesConverted) files_failed=\(report.filesFailed) key=\(report.keyFailure == nil ? "ok" : "unavailable")"
         )
     }
 
@@ -128,11 +163,81 @@ public actor StorageMigrationCoordinator {
 
     /// Persist the desired posture and converge on-disk storage to match.
     /// Used by the Settings encryption toggle.
+    ///
+    /// Turning encryption on resolves (or creates) the storage key first and
+    /// throws `ToggleError.keyUnavailable` without touching the posture when
+    /// that fails. If nothing could be converted afterwards, the previous
+    /// posture is restored so the marker never claims a state the disk isn't in.
     @discardableResult
     public func setEncryptionEnabled(_ enabled: Bool) async throws -> Report {
         let mode: StorageEncryptionMode = enabled ? .encrypted : .plaintext
+        let previous = StorageEncryptionPolicy.shared.persistedMode()
+        if enabled {
+            do {
+                _ = try await Self.resolveKeyOffActor()
+            } catch {
+                Self.log.error(
+                    "toggle: storage key unavailable, encryption not enabled: \(error.localizedDescription, privacy: .public)"
+                )
+                throw ToggleError.keyUnavailable(error.localizedDescription)
+            }
+        }
         try StorageEncryptionPolicy.shared.setDesiredMode(mode)
-        return await converge(to: mode)
+        let report = await converge(to: mode)
+        let nothingMoved = report.converted == 0 && report.filesConverted == 0
+        let somethingNeededIt = !report.failed.isEmpty || !report.locked.isEmpty || report.filesFailed > 0
+        if nothingMoved, somethingNeededIt, let previous, previous != mode,
+            Self.detectOnDiskPosture() != Self.posture(for: mode)
+        {
+            try? StorageEncryptionPolicy.shared.setDesiredMode(previous)
+            Self.log.error("toggle: nothing converted to \(mode.rawValue, privacy: .public); restored \(previous.rawValue, privacy: .public)")
+        }
+        return report
+    }
+
+    private static func posture(for mode: StorageEncryptionMode) -> StorageOnDiskPosture {
+        mode == .encrypted ? .encrypted : .plaintext
+    }
+
+    /// `currentKey()` can block on a Keychain read, so keep it off the actor's
+    /// cooperative thread.
+    private static func resolveKeyOffActor() async throws -> SymmetricKey {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(with: Result { try StorageKeyManager.shared.currentKey() })
+            }
+        }
+    }
+
+    /// Runs `StorageExportService.recoverInterruptedRotation()` under the
+    /// mutation gate, off the cooperative pool (it reads the Keychain and
+    /// may rekey databases).
+    static func recoverInterruptedRotation() async {
+        await MainActor.run { StorageMutationGate.shared.beginMutating() }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            DispatchQueue.global(qos: .userInitiated).async {
+                StorageExportService.recoverInterruptedRotation()
+                continuation.resume()
+            }
+        }
+        await MainActor.run { StorageMutationGate.shared.endMutating() }
+    }
+
+    // MARK: - Storage key health
+
+    /// Record that the selected posture needs the storage key and it can't be
+    /// resolved, so the Data & Storage panel and `/health` say why encrypted
+    /// stores (and the services built on them) aren't available.
+    public nonisolated static func recordKeyUnavailable(_ error: Error) {
+        PersistenceHealth.shared.recordStoreIssue(
+            store: storageKeyIssueStore,
+            kind: .locked,
+            message: error.localizedDescription
+        )
+    }
+
+    public nonisolated static func clearKeyUnavailable() {
+        PersistenceHealth.shared.clearStoreIssue(store: storageKeyIssueStore)
     }
 
     // MARK: - Core convergence
@@ -165,9 +270,9 @@ public actor StorageMigrationCoordinator {
 
         let dbTargets = StorageDatabaseCatalog.databaseTargets()
         let needing = dbTargets.filter { Self.needsConversion(path: $0.path, to: mode) }
-        let needsBlobs = Self.blobsNeedConversion(to: mode)
+        let needsFiles = Self.filesNeedConversion(to: mode)
 
-        guard !needing.isEmpty || needsBlobs else {
+        guard !needing.isEmpty || needsFiles else {
             report.alreadyMatching = dbTargets.count
             return report
         }
@@ -177,21 +282,26 @@ public actor StorageMigrationCoordinator {
         // one when the user opts in.
         let key: SymmetricKey
         do {
-            key = try StorageKeyManager.shared.currentKey()
+            key = try await Self.resolveKeyOffActor()
+            Self.clearKeyUnavailable()
         } catch {
-            // Cannot proceed without the key. Report encrypted stores as
-            // locked (recovery UI surfaces them); never destroy data.
-            for target in needing where StorageFileFormat.detect(path: target.path) == .encrypted {
+            // Cannot proceed without the key, and never destroy data. Every
+            // store that needed converting stays as it is and is reported, so
+            // the caller can't mistake this for a converged tree.
+            report.keyFailure = error.localizedDescription
+            Self.recordKeyUnavailable(error)
+            for target in needing {
                 report.locked.append(target.label)
-                if let store = StorageRecoveryService.Store.store(forPath: target.path) {
-                    PersistenceHealth.shared.recordStoreIssue(
-                        store: store.rawValue,
-                        kind: .locked,
-                        message:
-                            "Encrypted store can't be opened: the storage key is unavailable on this Mac.",
-                        path: target.path
-                    )
-                }
+                guard StorageFileFormat.detect(path: target.path) == .encrypted,
+                    let store = StorageRecoveryService.Store.store(forPath: target.path)
+                else { continue }
+                PersistenceHealth.shared.recordStoreIssue(
+                    store: store.rawValue,
+                    kind: .locked,
+                    message:
+                        "Encrypted store can't be opened: the storage key is unavailable on this Mac.",
+                    path: target.path
+                )
             }
             report.alreadyMatching = dbTargets.count - report.locked.count
             return report
@@ -217,6 +327,8 @@ public actor StorageMigrationCoordinator {
         report.failed = outcome.failed
         report.skipped = outcome.skipped
         report.alreadyMatching += outcome.matched
+        report.filesConverted = outcome.files.converted
+        report.filesFailed = outcome.files.failed
 
         await MainActor.run { StorageMutationGate.shared.endMutating() }
         for handle in openHandles { handle.reopener() }
@@ -313,43 +425,68 @@ public actor StorageMigrationCoordinator {
         }
     }
 
-    /// True when any attachment blob's on-disk form differs from `mode`
-    /// (encrypted `.osec` while plaintext is desired, or vice versa).
-    static func blobsNeedConversion(to mode: StorageEncryptionMode) -> Bool {
+    /// The files in the policy-aware directories whose on-disk form differs
+    /// from `mode`: `.osec` twins when plaintext is desired, plaintext twins
+    /// when encryption is. Temp files and raw-by-design files are left out.
+    static func filesNeedingConversion(to mode: StorageEncryptionMode) -> [URL] {
         let fm = FileManager.default
-        let dir = AttachmentBlobStore.blobsDir()
-        guard let entries = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
-        else { return false }
-        switch mode {
-        case .plaintext:
-            return entries.contains { $0.pathExtension == "osec" }
-        case .encrypted:
-            return entries.contains { $0.pathExtension != "osec" && !$0.hasDirectoryPath }
-        }
-    }
-
-    /// Convert attachment blobs to `mode` (AES-GCM `.osec` twin <-> plaintext).
-    private static func convergeBlobs(to mode: StorageEncryptionMode, key: SymmetricKey) {
-        let fm = FileManager.default
-        let dir = AttachmentBlobStore.blobsDir()
-        guard let entries = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
-        else { return }
-        for entry in entries where !entry.hasDirectoryPath {
-            switch mode {
-            case .plaintext:
-                guard entry.pathExtension == "osec" else { continue }
-                guard let data = try? EncryptedFileStore.read(entry, key: key) else { continue }
-                let plain = EncryptedFileStore.plaintextURL(for: entry)
-                guard (try? data.write(to: plain, options: [.atomic])) != nil else { continue }
-                try? fm.removeItem(at: entry)
-            case .encrypted:
-                guard entry.pathExtension != "osec" else { continue }
-                guard let data = try? Data(contentsOf: entry) else { continue }
-                let enc = EncryptedFileStore.encryptedURL(for: entry)
-                guard (try? EncryptedFileStore.write(data, to: enc, key: key)) != nil else { continue }
-                try? fm.removeItem(at: entry)
+        var out: [URL] = []
+        for dir in StorageDatabaseCatalog.policyAwareDirectories() {
+            guard let entries = try? fm.contentsOfDirectory(
+                at: dir.url,
+                includingPropertiesForKeys: [.isDirectoryKey]
+            ) else { continue }
+            for entry in entries {
+                let isDir = (try? entry.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
+                guard !isDir, !entry.lastPathComponent.hasPrefix("."),
+                    !dir.rawFileNames.contains(entry.lastPathComponent)
+                else { continue }
+                let isEncrypted = entry.pathExtension == "osec"
+                if isEncrypted == (mode == .plaintext) { out.append(entry) }
             }
         }
+        return out
+    }
+
+    static func filesNeedConversion(to mode: StorageEncryptionMode) -> Bool {
+        !filesNeedingConversion(to: mode).isEmpty
+    }
+
+    /// Convert the policy-aware files to `mode` (AES-GCM `.osec` twin <->
+    /// plaintext). A file is only removed after its other twin is written, so
+    /// a failure leaves it readable in its old form and is counted.
+    static func convergeFiles(
+        to mode: StorageEncryptionMode,
+        key: SymmetricKey
+    ) -> (converted: Int, failed: Int) {
+        let fm = FileManager.default
+        var converted = 0
+        var failed = 0
+        for entry in filesNeedingConversion(to: mode) {
+            let target =
+                mode == .plaintext
+                ? EncryptedFileStore.plaintextURL(for: entry) : EncryptedFileStore.encryptedURL(for: entry)
+            do {
+                // Writers follow the posture, which is already `mode`: a target
+                // twin that exists is newer than `entry`, which is then stale.
+                if !fm.fileExists(atPath: target.path) {
+                    switch mode {
+                    case .plaintext:
+                        try EncryptedFileStore.read(entry, key: key).write(to: target, options: [.atomic])
+                    case .encrypted:
+                        try EncryptedFileStore.write(Data(contentsOf: entry), to: target, key: key)
+                    }
+                }
+                try fm.removeItem(at: entry)
+                converted += 1
+            } catch {
+                failed += 1
+                log.error(
+                    "convergence: \(entry.lastPathComponent, privacy: .public) didn't convert: \(error.localizedDescription, privacy: .public)"
+                )
+            }
+        }
+        return (converted, failed)
     }
 
     /// Run the (synchronous, IO-heavy) conversions on a utility queue so we
@@ -358,7 +495,10 @@ public actor StorageMigrationCoordinator {
         targets: [StorageDatabaseCatalog.DatabaseTarget],
         mode: StorageEncryptionMode,
         key: SymmetricKey
-    ) async -> (converted: Int, failed: [String], matched: Int, skipped: [String]) {
+    ) async -> (
+        converted: Int, failed: [String], matched: Int, skipped: [String],
+        files: (converted: Int, failed: Int)
+    ) {
         await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .utility).async {
                 var converted = 0
@@ -394,10 +534,10 @@ public actor StorageMigrationCoordinator {
                         failed.append(target.label)
                     }
                 }
-                // Attachment blobs (AES-GCM, not SQLCipher) ride along with the
-                // databases so the whole tree matches the chosen posture.
-                convergeBlobs(to: mode, key: key)
-                continuation.resume(returning: (converted, failed, matched, skipped))
+                // Attachment blobs and `sync-local/` state (AES-GCM, not
+                // SQLCipher) ride along so the whole tree matches the posture.
+                let files = convergeFiles(to: mode, key: key)
+                continuation.resume(returning: (converted, failed, matched, skipped, files))
             }
         }
     }

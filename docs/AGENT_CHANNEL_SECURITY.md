@@ -1,8 +1,11 @@
 # Agent Channel Security Foundation
 
-This document covers the policy-only foundation for future Discord, Slack,
-Telegram, and JSON Agent Channel receive flows. It does not implement adapter
-routing, an inbox UI, a remote command center, or computer-use triggers.
+This document covers the shared inbound policy layer (identity, allowlists,
+replay and trust checks) that every Agent Channel receive path runs through:
+the native Discord, Slack, Telegram, iMessage, WhatsApp and Email adapters and
+the n8n / custom JSON receivers. Routing a message to an agent is covered in
+`docs/AGENT_CHANNELS.md` ("Inbound routing is automations"); this document is
+only the policy that runs before it.
 
 ## Identity Model
 

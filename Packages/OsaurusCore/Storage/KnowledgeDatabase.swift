@@ -406,9 +406,19 @@ public final class KnowledgeDatabase: @unchecked Sendable {
     /// type as `doc_type` when non-empty, else `inferred_type`.
     private func migrateToV3() throws {
         KnowledgeLogger.database.info("Running v3 migration (inferred document type)")
-        try executeRaw(
-            "ALTER TABLE documents ADD COLUMN inferred_type TEXT NOT NULL DEFAULT ''"
-        )
+        // Stores converted by an older build lost `user_version` and re-run
+        // this step with the column already there.
+        var found = false
+        try executeRaw("PRAGMA table_info(documents)") { stmt in
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let name = sqlite3_column_text(stmt, 1), String(cString: name) == "inferred_type" { found = true }
+            }
+        }
+        if !found {
+            try executeRaw(
+                "ALTER TABLE documents ADD COLUMN inferred_type TEXT NOT NULL DEFAULT ''"
+            )
+        }
         KnowledgeLogger.database.info("v3 migration completed")
     }
 

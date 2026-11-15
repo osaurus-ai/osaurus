@@ -108,7 +108,8 @@ so this static manifest flag is the only supported mechanism. Existing Slack
 apps created from an older manifest must reapply the updated manifest on the
 App Manifest page for the change to take effect.
 
-Guided setup (matches the numbered steps in Settings -> Channels -> Slack):
+Guided setup (Settings -> Channels -> Slack walks through **Connect**, **Receiving**,
+**Routing**, **Sending** and **Test**; steps 1-3 below are under Connect):
 
 1. **Create the Slack app.** Open [api.slack.com/apps](https://api.slack.com/apps),
    choose "Create New App" -> "From a manifest", and paste the manifest copied
@@ -124,7 +125,7 @@ Guided setup (matches the numbered steps in Settings -> Channels -> Slack):
    receive messages** — it is what powers the outgoing Socket Mode connection.
    Test Connection validates it against `apps.connections.open` and reports
    an invalid token or missing scope explicitly.
-4. **Choose channels and people.** Use **Load from Slack** to fetch the
+4. **Choose conversations and people** (Receiving). Use **Load from Slack** to fetch the
    authenticated workspace, visible conversations, and workspace users. Select
    Read and Write independently for each joined channel (invite the bot to the
    channel first), then select the users authorized to trigger inbound
@@ -132,9 +133,12 @@ Guided setup (matches the numbered steps in Settings -> Channels -> Slack):
    selections become allowlists. If workspace policy withholds `users:read` or
    conversation-list scopes, the sheet shows the missing scope and keeps the
    Advanced manual-ID fields available.
-5. **Send incoming messages to an agent.** Enable dispatch and pick the target
-   agent. Mention policy, thread continuation, and automatic replies are
-   configured here.
+5. **Send incoming messages to an agent** (Routing). Under **Who answers
+   messages**, press **Add Rule** and pick the agent (or workflow) and the
+   channels it listens in. The rule's **Replies** column chooses
+   *Automatically* or *After approval*; its **Edit…** menu sets aliases,
+   *Only when mentioned*, thread continuation and instructions. Sending (the
+   **Allow Sending on Slack** toggle and writable channels) is its own step.
 6. **Verify an incoming message.** Press **Verify incoming message**, then send
    the suggested test message (for example `@your-slack-bot hello`) from an
    authorized sender in a readable channel. Mention the **Slack bot user**,
@@ -207,7 +211,7 @@ start Telegram receive by itself. For new messages to arrive in the local inbox,
 all of these must be true:
 
 - `Store Incoming Messages` is enabled.
-- `Enable Long Polling` is enabled.
+- `Receive Messages` (long polling) is enabled.
 - At least one readable chat id is allowlisted.
 - At least one authorized sender id is allowlisted.
 - No Telegram webhook is registered for the same bot token.
@@ -231,7 +235,7 @@ the channel is ready for user testing:
 
 - Bot token saved and **Test Connection** returns bot identity.
 - `Store Incoming Messages` is enabled.
-- `Enable Long Polling` is enabled.
+- `Receive Messages` (long polling) is enabled.
 - At least one readable chat id is allowlisted.
 - At least one authorized sender id is allowlisted.
 - No webhook is registered for the bot token.
@@ -271,8 +275,8 @@ Proactive posting needs no separate setup. Once a channel has a saved
 credential, write access to at least one room (`writeEnabled` plus a
 write-allowlisted room id), and an agent answering on it, Osaurus derives an
 automatic **Ask first** posting place for each writable room × answering
-agent. The channel sheet shows it as **Posts on its own: Asks first** on the
-agent's row under **Agents on this channel**; the agent's Channels tab lists
+agent. The channel sheet shows it as **Asks first** on the agent's row under
+**Sending** -> **Agents that post on their own**; the agent's Channels tab lists
 it read-only ("posts after asking first").
 
 Outbound spot check, after the inbound checklist above passes:
@@ -316,10 +320,10 @@ smoke proof needs the receive path. `receiveStorageEnabled` defaults to `true`.
 
 Telegram reads come from the local Agent Channel message store. Populate the
 store through the long-poll or webhook receive path before proving
-`read_messages`/`search_messages`. With long polling left at its default
-(disabled) and no webhook ingress wired, a fresh Telegram setup returns empty
-read/search results: nothing fetches new updates into the store. Enable
-"Enable Long Polling" in Telegram settings (with a saved token and sender
+`read_messages`/`search_messages`. With long polling off and no webhook
+ingress wired, a Telegram setup returns empty read/search results: nothing
+fetches new updates into the store. Turn on **Receive Messages** in Telegram
+settings (with a saved token and sender
 allowlist) to fill the inbox. Long polling starts from the app lifecycle when
 both `receiveStorageEnabled` and `longPollingEnabled` are true; Telegram
 returns a 409 conflict if another consumer (a registered webhook or a second

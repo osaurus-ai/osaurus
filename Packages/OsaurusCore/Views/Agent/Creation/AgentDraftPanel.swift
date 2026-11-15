@@ -336,6 +336,10 @@ struct AgentDraftPanel: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 editButton(.identity)
             }
+            if editing != .identity, nameTaken(name) {
+                nameTakenNote
+                    .transition(.opacity)
+            }
             if editing == .identity {
                 identityEditor(draft)
                     .transition(.opacity)
@@ -364,6 +368,18 @@ struct AgentDraftPanel: View {
         }
     }
 
+    private var nameTakenNote: some View {
+        HStack(alignment: .firstTextBaseline, spacing: theme.space.s6) {
+            Image(systemName: "exclamationmark.circle.fill")
+                .glyphSize(.footnote, weight: .semibold)
+                .accessibilityHidden(true)
+            Text("Another agent already has this name.", bundle: .module)
+                .font(SettingsFont.rowDescription)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .foregroundColor(theme.status.error.foreground)
+    }
+
     private func identityEditor(_ draft: AgentDraft) -> some View {
         VStack(alignment: .leading, spacing: theme.space.s12) {
             VStack(alignment: .leading, spacing: theme.space.s6) {
@@ -372,9 +388,7 @@ struct AgentDraftPanel: View {
                     placeholder: L("e.g., Research Assistant"), text: text(draft, .name, \.name), icon: "textformat",
                     isInvalid: nameTaken(draft.agent.name))
                 if nameTaken(draft.agent.name) {
-                    Text("Another agent already has this name.", bundle: .module)
-                        .font(SettingsFont.rowDescription)
-                        .foregroundColor(theme.status.error.foreground)
+                    nameTakenNote
                 }
             }
             VStack(alignment: .leading, spacing: theme.space.s6) {
@@ -653,12 +667,7 @@ struct AgentDraftPanel: View {
     // MARK: - Create
 
     private func nameTaken(_ name: String) -> Bool {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
-        return agentManager.agents.contains {
-            !$0.isBuiltIn && $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
-                .caseInsensitiveCompare(trimmed) == .orderedSame
-        }
+        agentManager.isCustomAgentNameTaken(name)
     }
 
     private func blocker(_ draft: AgentDraft) -> String? {
@@ -684,15 +693,19 @@ struct AgentDraftPanel: View {
 
     private func footerBar(_ draft: AgentDraft) -> some View {
         let blocker = blocker(draft)
+        // Something only the person (or the Configurator) can fix, as
+        // opposed to waiting for a reply or an install.
+        let needsFix = nameTaken(draft.agent.name)
+        let ink: Color = blocker == nil ? theme.text.secondary : needsFix ? theme.status.error.foreground : theme.text.tertiary
         return HStack(spacing: theme.space.s12) {
             HStack(alignment: .firstTextBaseline, spacing: theme.space.s6) {
-                Image(systemName: blocker == nil ? "checkmark.circle.fill" : "info.circle")
+                Image(systemName: blocker == nil ? "checkmark.circle.fill" : needsFix ? "exclamationmark.circle.fill" : "info.circle")
                     .glyphSize(.footnote, weight: .semibold)
-                    .foregroundStyle(blocker == nil ? theme.statusInk(.success) : theme.text.tertiary)
+                    .foregroundStyle(blocker == nil ? theme.statusInk(.success) : ink)
                     .accessibilityHidden(true)
                 Text(verbatim: blocker ?? L("Ready. Keep refining, or create it now."))
                     .font(SettingsFont.rowDescription)
-                    .foregroundColor(blocker == nil ? theme.text.secondary : theme.text.tertiary)
+                    .foregroundColor(ink)
                     .fixedSize(horizontal: false, vertical: true)
             }
             Spacer(minLength: theme.space.s8)

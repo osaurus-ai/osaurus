@@ -4,11 +4,13 @@
 //
 //  `FilterChip` is the only selectable filter pill (category, source,
 //  kind, toggle). `FilterChipRow` lays a set of them out in one scrolling
-//  row with an optional "All" chip. `FilterTokenChip` is the removable
+//  row with an optional "All" chip; `FilterChipScroller` is that row's
+//  scrolling container for chips laid out by hand. `FilterTokenChip` is the removable
 //  applied-filter token. Pages put these in `SettingsPageHeader.toolbar`
 //  or directly above the list they filter.
 //
 
+import AppKit
 import SwiftUI
 
 // MARK: - Filter Chip
@@ -102,8 +104,6 @@ struct FilterChipRow<Item: Hashable>: View {
 
     private static var allID: String { "__filter_all__" }
 
-    @State private var overflow = ChipRowOverflow()
-
     init(
         _ items: [Item],
         selection: Binding<Item?>,
@@ -127,54 +127,24 @@ struct FilterChipRow<Item: Hashable>: View {
     }
 
     var body: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: theme.space.s6) {
-                    if let allTitle {
-                        FilterChip(allTitle, count: allCount, isSelected: selection == nil) {
-                            select(nil)
-                        }
-                        .id(Self.allID)
-                    }
-                    ForEach(items, id: \.self) { item in
-                        FilterChip(
-                            title(item),
-                            icon: icon?(item),
-                            count: count?(item),
-                            isSelected: selection == item,
-                            tint: tint?(item)
-                        ) {
-                            select(selection == item && allowsDeselect && allTitle != nil ? nil : item)
-                        }
-                        .id(item)
-                    }
+        FilterChipScroller(reveal: selection.map { AnyHashable($0) } ?? AnyHashable(Self.allID)) {
+            if let allTitle {
+                FilterChip(allTitle, count: allCount, isSelected: selection == nil) {
+                    select(nil)
                 }
-                .padding(.vertical, theme.space.s2)
+                .id(AnyHashable(Self.allID))
             }
-            // Fades a cut-off edge so the hidden chips read as scrollable.
-            .onScrollGeometryChange(for: ChipRowOverflow.self) { geo in
-                ChipRowOverflow(
-                    leading: geo.visibleRect.minX > 1,
-                    trailing: geo.visibleRect.maxX < geo.contentSize.width - 1
-                )
-            } action: { _, new in
-                withAnimation(theme.motion.quick) { overflow = new }
-            }
-            .mask {
-                HStack(spacing: theme.space.s0) {
-                    edgeFade(fading: overflow.leading, toward: .leading)
-                    Rectangle()
-                    edgeFade(fading: overflow.trailing, toward: .trailing)
+            ForEach(items, id: \.self) { item in
+                FilterChip(
+                    title(item),
+                    icon: icon?(item),
+                    count: count?(item),
+                    isSelected: selection == item,
+                    tint: tint?(item)
+                ) {
+                    select(selection == item && allowsDeselect && allTitle != nil ? nil : item)
                 }
-            }
-            .onChange(of: selection) { _, newValue in
-                withAnimation(theme.motion.quick) {
-                    if let newValue {
-                        proxy.scrollTo(newValue, anchor: .center)
-                    } else {
-                        proxy.scrollTo(Self.allID, anchor: .center)
-                    }
-                }
+                .id(AnyHashable(item))
             }
         }
     }
@@ -182,22 +152,221 @@ struct FilterChipRow<Item: Hashable>: View {
     private func select(_ item: Item?) {
         withAnimation(theme.motion.quick) { selection = item }
     }
+}
 
-    /// Opaque while nothing is past that edge. The solid layer's opacity is
-    /// what animates, since gradient stops do not interpolate.
-    private func edgeFade(fading: Bool, toward end: UnitPoint) -> some View {
-        ZStack {
-            LinearGradient(colors: [.black, .clear], startPoint: end == .leading ? .trailing : .leading, endPoint: end)
+// MARK: - Filter Chip Scroller
+
+/// One horizontal row of chips that may be wider than the page. Every chip
+/// row goes through this so the outer chips keep their whole border and
+/// focus ring, and chips past either edge stay reachable without a trackpad:
+/// a cut-off edge fades and shows a chevron that pages the row, and a
+/// vertical mouse wheel over the row scrolls it sideways. `reveal` is the
+/// `.id` of a chip to scroll into view whenever it changes.
+struct FilterChipScroller<Content: View>: View {
+    @Environment(\.theme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var spacing: CGFloat?
+    var reveal: AnyHashable?
+    @ViewBuilder let content: () -> Content
+
+    @State private var position = ScrollPosition(point: .zero)
+    @State private var metrics = ChipRowMetrics()
+    @State private var chevronWidth: CGFloat = 0
+
+    init(spacing: CGFloat? = nil, reveal: AnyHashable? = nil, @ViewBuilder content: @escaping () -> Content) {
+        self.spacing = spacing
+        self.reveal = reveal
+        self.content = content
+    }
+
+    /// Room past each outer chip for its stroke and keyboard focus ring,
+    /// both of which draw outside the chip's frame. The extra slack keeps
+    /// the ring's anti-aliased outer edge off the clip line when the row
+    /// lands on a fractional pixel.
+    private var bleed: CGFloat {
+        theme.assignedMetric("component.focus.offset", fallback: theme.focusOffset)
+            + theme.assignedMetric("component.focus.width", fallback: theme.stroke.focus)
+            + theme.space.s2
+    }
+
+    var body: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: spacing ?? theme.space.s6) { content() }
+                    .padding(bleed)
+            }
+            .scrollPosition($position)
+            .onScrollGeometryChange(for: ChipRowMetrics.self) { geo in
+                ChipRowMetrics(
+                    offset: geo.contentOffset.x,
+                    visibleWidth: geo.containerSize.width,
+                    contentWidth: geo.contentSize.width
+                )
+            } action: { old, new in
+                if old.overflow != new.overflow {
+                    withAnimation(motion(theme.motion.quick)) { metrics = new }
+                } else {
+                    metrics = new
+                }
+            }
+            // The bleed sits outside the row so the first chip still lines
+            // up with the content above and below it.
+            .padding(.horizontal, -bleed)
+            .mask {
+                HStack(spacing: theme.space.s0) {
+                    edgeFade(fading: metrics.overflow.leading, toward: .leading)
+                    Rectangle()
+                    edgeFade(fading: metrics.overflow.trailing, toward: .trailing)
+                }
+            }
+            .overlay(alignment: .leading) {
+                if metrics.overflow.leading {
+                    chevron("chevron.left", help: "Scroll left") { page(by: -1) }
+                }
+            }
+            .overlay(alignment: .trailing) {
+                if metrics.overflow.trailing {
+                    chevron("chevron.right", help: "Scroll right") { page(by: 1) }
+                }
+            }
+            .background {
+                HorizontalWheelScroll(isActive: metrics.overflow.any) { delta in
+                    scroll(by: delta)
+                }
+            }
+            .onChange(of: reveal) { _, id in
+                guard let id else { return }
+                withAnimation(motion(theme.motion.quick)) { proxy.scrollTo(id, anchor: .center) }
+            }
+        }
+    }
+
+    private func chevron(_ icon: String, help: String, action: @escaping () -> Void) -> some View {
+        SettingsIconButton(icon, help: help, size: .compact, action: action)
+            .padding(.horizontal, bleed)
+            .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { chevronWidth = $0 }
+            .transition(.opacity)
+    }
+
+    /// Opaque while nothing is past that edge. Once chips are hidden there,
+    /// it is clear under the chevron and fades in beside it. The solid
+    /// layer's opacity is what animates, since gradient stops do not
+    /// interpolate.
+    private func edgeFade(fading: Bool, toward end: Edge) -> some View {
+        let fade = LinearGradient(
+            colors: [.black, .clear],
+            startPoint: end == .leading ? .trailing : .leading,
+            endPoint: end == .leading ? .leading : .trailing
+        )
+        .frame(width: theme.space.s32)
+        let clearWidth = fading ? chevronWidth : 0
+        let underChevron = Color.clear.frame(width: clearWidth)
+        return ZStack {
+            HStack(spacing: theme.space.s0) {
+                if end == .leading { underChevron; fade } else { fade; underChevron }
+            }
             Rectangle().opacity(fading ? 0 : 1)
         }
-        .frame(width: theme.space.s32)
+        // The solid layer is flexible; without a fixed width each edge
+        // would take a third of the row and mask out the chips inside it.
+        .frame(width: clearWidth + theme.space.s32)
+    }
+
+    /// Moves most of a visible width, keeping a chip's worth of overlap so
+    /// the reader can tell where they were.
+    private func page(by direction: CGFloat) {
+        let step = max(metrics.visibleWidth - 2 * (chevronWidth + theme.space.s32), metrics.visibleWidth / 2)
+        withAnimation(motion(theme.motion.standard)) { scroll(to: metrics.offset + direction * step) }
+    }
+
+    /// Returns whether the row moved, so a wheel at either end can scroll
+    /// the page instead.
+    private func scroll(by delta: CGFloat) -> Bool {
+        let before = metrics.offset
+        scroll(to: before + delta)
+        return clamped(before + delta) != clamped(before)
+    }
+
+    private func scroll(to x: CGFloat) {
+        position.scrollTo(x: clamped(x))
+    }
+
+    private func clamped(_ x: CGFloat) -> CGFloat {
+        min(max(x, 0), max(metrics.contentWidth - metrics.visibleWidth, 0))
+    }
+
+    private func motion(_ animation: Animation) -> Animation? {
+        reduceMotion ? nil : animation
     }
 }
 
-/// Which ends of a horizontal chip row still hide chips.
-private struct ChipRowOverflow: Equatable {
-    var leading = false
-    var trailing = false
+/// Where a horizontal chip row is scrolled and which ends still hide chips.
+private struct ChipRowMetrics: Equatable {
+    var offset: CGFloat = 0
+    var visibleWidth: CGFloat = 0
+    var contentWidth: CGFloat = 0
+
+    var overflow: (leading: Bool, trailing: Bool, any: Bool) {
+        let leading = offset > 1
+        let trailing = offset + visibleWidth < contentWidth - 1
+        return (leading, trailing, leading || trailing)
+    }
+}
+
+/// Sends a vertical mouse wheel over this view to `onScroll` as a
+/// horizontal distance while `isActive`. Trackpads already scroll
+/// sideways, so only wheel events with whole-line deltas are taken, and
+/// only while `onScroll` reports the row moved; otherwise the page under
+/// the row scrolls as usual.
+private struct HorizontalWheelScroll: NSViewRepresentable {
+    @Environment(\.theme) private var theme
+    let isActive: Bool
+    let onScroll: (CGFloat) -> Bool
+
+    func makeNSView(context: Context) -> MonitorView { MonitorView() }
+
+    func updateNSView(_ view: MonitorView, context: Context) {
+        view.onScroll = onScroll
+        view.lineDistance = theme.space.s32
+        view.setActive(isActive)
+    }
+
+    static func dismantleNSView(_ view: MonitorView, coordinator: ()) {
+        view.setActive(false)
+    }
+
+    final class MonitorView: NSView {
+        var onScroll: (CGFloat) -> Bool = { _ in false }
+        var lineDistance: CGFloat = 0
+        private var monitor: Any?
+
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window == nil { setActive(false) }
+        }
+
+        func setActive(_ active: Bool) {
+            if active, monitor == nil {
+                monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+                    let consumed = MainActor.assumeIsolated { self?.consumes(event) ?? false }
+                    return consumed ? nil : event
+                }
+            } else if !active, let monitor {
+                NSEvent.removeMonitor(monitor)
+                self.monitor = nil
+            }
+        }
+
+        private func consumes(_ event: NSEvent) -> Bool {
+            guard let window, event.window === window, !event.hasPreciseScrollingDeltas,
+                abs(event.scrollingDeltaY) > abs(event.scrollingDeltaX),
+                bounds.contains(convert(event.locationInWindow, from: nil))
+            else { return false }
+            return onScroll(-event.scrollingDeltaY * lineDistance)
+        }
+    }
 }
 
 // MARK: - Filter Token Chip

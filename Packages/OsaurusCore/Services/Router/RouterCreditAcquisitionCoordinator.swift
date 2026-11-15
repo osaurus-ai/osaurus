@@ -83,10 +83,23 @@ final class RouterCreditAcquisitionCoordinator {
     }
 
     /// The signing-layer allowlist while first-action acquisition is pending.
+    ///
+    /// Help (`/support/…`) is allowed alongside the two acquisition requests:
+    /// the Router does not record support calls as a wallet's first signed
+    /// action, so sending a bug report cannot disqualify a first-time redeem
+    /// code. Nothing else on the Router has that exemption.
     func allowsSignedRequest(pathAndQuery: String) -> Bool {
         guard blocksGeneralSignedRequests else { return true }
-        let path = pathAndQuery.split(separator: "?", maxSplits: 1).first.map(String.init)
+        guard let path = pathAndQuery.split(separator: "?", maxSplits: 1).first.map(String.init)
+        else { return false }
         return path == "/credits/redeem" || path == "/credits/welcome/claim"
+            || Self.isSupportPath(path)
+    }
+
+    /// `/support` or anything under `/support/`. A prefix match on the bare
+    /// string would also admit an unrelated `/supportive…` route.
+    nonisolated static func isSupportPath(_ path: String) -> Bool {
+        path == "/support" || path.hasPrefix("/support/")
     }
 
     /// Whether the automatic welcome service may issue its claim now.

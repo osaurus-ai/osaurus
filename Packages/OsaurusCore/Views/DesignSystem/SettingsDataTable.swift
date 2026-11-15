@@ -60,7 +60,21 @@ struct SettingsDataTableSort<Key: Hashable>: Equatable {
         }
         return nil
     }
+
+    /// The same cycle when nil means `defaultSort`: its header shows as
+    /// sorted, and landing back on it stores nil.
+    static func next(
+        after current: SettingsDataTableSort?,
+        default defaultSort: SettingsDataTableSort?,
+        key: Key,
+        initialAscending: Bool
+    ) -> SettingsDataTableSort? {
+        let next = next(after: current ?? defaultSort, key: key, initialAscending: initialAscending)
+        return next == defaultSort ? nil : next
+    }
 }
+
+extension SettingsDataTableSort: Sendable where Key: Sendable {}
 
 enum SettingsDataTableLayout {
     /// The columns that fit `width`, dropping the highest `hidePriority`
@@ -99,6 +113,9 @@ struct SettingsDataTable<Row: Identifiable, SortKey: Hashable, Cell: View>: View
     let columns: [SettingsDataTableColumn<SortKey>]
     let rows: [Row]
     @Binding var sort: SettingsDataTableSort<SortKey>?
+    /// The order rows are in when `sort` is nil, shown on its header so the
+    /// default never looks unsorted. Nil when the default follows no column.
+    var defaultSort: SettingsDataTableSort<SortKey>?
     @Binding var selection: Row.ID?
     var isLoading: Bool
     /// Catalog key read by VoiceOver for a row's open action.
@@ -112,6 +129,7 @@ struct SettingsDataTable<Row: Identifiable, SortKey: Hashable, Cell: View>: View
         columns: [SettingsDataTableColumn<SortKey>],
         rows: [Row],
         sort: Binding<SettingsDataTableSort<SortKey>?>,
+        defaultSort: SettingsDataTableSort<SortKey>? = nil,
         selection: Binding<Row.ID?>,
         isLoading: Bool = false,
         rowActionLabel: String = "Show details",
@@ -120,6 +138,7 @@ struct SettingsDataTable<Row: Identifiable, SortKey: Hashable, Cell: View>: View
         self.columns = columns
         self.rows = rows
         self._sort = sort
+        self.defaultSort = defaultSort
         self._selection = selection
         self.isLoading = isLoading
         self.rowActionLabel = rowActionLabel
@@ -143,8 +162,10 @@ struct SettingsDataTable<Row: Identifiable, SortKey: Hashable, Cell: View>: View
                     ForEach(0 ..< 5, id: \.self) { index in
                         if index > 0 { SettingsGroupDivider() }
                         skeletonRow(visible, index: index)
+                            .modifier(SettingsDataTableBottomCorners(isLast: index == 4))
                     }
                 } else {
+                    let lastId = rows.last?.id
                     ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                         if index > 0 { SettingsGroupDivider() }
                         SettingsDataTableRow(
@@ -157,6 +178,7 @@ struct SettingsDataTable<Row: Identifiable, SortKey: Hashable, Cell: View>: View
                         ) {
                             cells(for: row, visible)
                         }
+                        .modifier(SettingsDataTableBottomCorners(isLast: row.id == lastId))
                         .id(row.id)
                     }
                 }
@@ -164,7 +186,9 @@ struct SettingsDataTable<Row: Identifiable, SortKey: Hashable, Cell: View>: View
                 header(visible)
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous))
+        // No clip on the whole table: a continuous-corner mask over a lazy
+        // stack re-composites every visible row offscreen on each scroll
+        // frame. The header rounds the top and the last row the bottom.
         .settingsChrome(.surface)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .focusable()
@@ -188,17 +212,36 @@ struct SettingsDataTable<Row: Identifiable, SortKey: Hashable, Cell: View>: View
             .padding(.vertical, theme.space.s8)
             ThemeHairlineDivider(color: theme.rowRule)
         }
-        .background(theme.surface.raised)
+        .background { headerChrome }
+    }
+
+    /// The table's own top edge, carried by the header so it stays rounded
+    /// and bordered while pinned over rows scrolled beneath it. The page
+    /// canvas fills the corners outside the curve.
+    private var headerChrome: some View {
+        let shape = UnevenRoundedRectangle(
+            topLeadingRadius: theme.radius.large, topTrailingRadius: theme.radius.large, style: .continuous)
+        return ZStack {
+            Rectangle().fill(theme.surface.canvas)
+            shape.fill(theme.surface.raised)
+            shape.strokeBorder(theme.border.default, lineWidth: theme.stroke.default)
+                .mask(alignment: .top) {
+                    // Top and sides only; the hairline below is the divider.
+                    Rectangle().padding(.bottom, theme.stroke.default)
+                }
+        }
     }
 
     @ViewBuilder
     private func headerCell(_ column: SettingsDataTableColumn<SortKey>) -> some View {
         let label = Text(LocalizedStringKey(column.title), bundle: .module)
         if let key = column.sortKey {
-            let active = sort?.key == key ? sort : nil
+            let effective = sort ?? defaultSort
+            let active = effective?.key == key ? effective : nil
             Button {
                 withAnimation(theme.motion.quick) {
-                    sort = .next(after: sort, key: key, initialAscending: column.initialAscending)
+                    sort = .next(
+                        after: sort, default: defaultSort, key: key, initialAscending: column.initialAscending)
                 }
             } label: {
                 HStack(spacing: theme.space.s4) {
@@ -285,6 +328,23 @@ private struct SettingsDataTableRow<Content: View>: View {
             .accessibilityElement(children: .contain)
             .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
             .accessibilityAction(named: Text(LocalizedStringKey(actionLabel), bundle: .module)) { action() }
+    }
+}
+
+/// Rounds the last row's hover and selection wash into the table's bottom
+/// corners. Other rows draw unclipped.
+private struct SettingsDataTableBottomCorners: ViewModifier {
+    @Environment(\.theme) private var theme
+    let isLast: Bool
+
+    func body(content: Content) -> some View {
+        if isLast {
+            content.clipShape(UnevenRoundedRectangle(
+                bottomLeadingRadius: theme.radius.large, bottomTrailingRadius: theme.radius.large,
+                style: .continuous))
+        } else {
+            content
+        }
     }
 }
 

@@ -108,6 +108,35 @@ struct HTTPHandlerChatStreamingTests {
         }
     }
 
+    /// A locked agent refuses a different `model` and runs its own when the
+    /// request names it or omits it.
+    @MainActor
+    @Test(arguments: [("other-model", false), ("fake", true), ("", true)])
+    func agentRun_lockedAgentRefusesADifferentModel(requested: String, runs: Bool) async throws {
+        try await SandboxTestLock.runWithStoragePaths {
+            let agent = Agent(name: "Locked model fixture", defaultModel: "fake", modelLocked: true,
+                              toolsEnabled: false, memoryEnabled: false)
+            AgentManager.shared.add(agent)
+            defer { AgentStore.delete(id: agent.id); AgentManager.shared.refresh() }
+            let engine = MockChatEngine(deltas: ["red"], completeText: "", model: "fake")
+            let server = try await startChatStreamingTestServer(with: engine, trustLoopback: true)
+            defer { Task { await server.shutdown() } }
+            var request = URLRequest(url: URL(string:
+                "http://\(server.host):\(server.port)/agents/\(agent.id.uuidString)/run")!)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.authenticate()
+            request.disablePersistenceForTests()
+            var body: [String: Any] = ["messages": [["role": "user", "content": "hi"]], "stream": true]
+            if !requested.isEmpty { body["model"] = requested }
+            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            let (data, _) = try await URLSession.shared.data(for: request)
+            let text = String(decoding: data, as: UTF8.self)
+            #expect(text.contains("locked to model 'fake'") == !runs, "\(text)")
+            #expect(text.contains("red") == runs, "\(text)")
+        }
+    }
+
     @Test(arguments: [1, 2])
     func localToolCompletionSSEKeepsCallsChannelsAndRuntimeUsage(_ callCount: Int) async throws {
         let capture = LocalToolCompletionContractTests.Capture()

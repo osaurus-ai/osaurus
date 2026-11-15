@@ -404,28 +404,25 @@ private struct ProviderConnectivityCenterPanel: View {
             ])
 
             if showsIssueFilters {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: theme.settingsControlGap) {
+                FilterChipScroller(spacing: theme.settingsControlGap) {
+                    FilterChip(
+                        L("All"),
+                        count: snapshot.issueReportCount(for: statusFilter),
+                        isSelected: selectedIssueKind == nil,
+                        tint: theme.status.warning.foreground
+                    ) {
+                        onSelectIssueKind(nil)
+                    }
+                    ForEach(snapshot.sortedIssueKinds(for: statusFilter)) { kind in
                         FilterChip(
-                            L("All"),
-                            count: snapshot.issueReportCount(for: statusFilter),
-                            isSelected: selectedIssueKind == nil,
-                            tint: theme.status.warning.foreground
+                            kind.displayName,
+                            count: snapshot.issueKindCounts(for: statusFilter)[kind, default: 0],
+                            isSelected: selectedIssueKind == kind,
+                            tint: issueColor(kind)
                         ) {
-                            onSelectIssueKind(nil)
-                        }
-                        ForEach(snapshot.sortedIssueKinds(for: statusFilter)) { kind in
-                            FilterChip(
-                                kind.displayName,
-                                count: snapshot.issueKindCounts(for: statusFilter)[kind, default: 0],
-                                isSelected: selectedIssueKind == kind,
-                                tint: issueColor(kind)
-                            ) {
-                                onSelectIssueKind(kind)
-                            }
+                            onSelectIssueKind(kind)
                         }
                     }
-                    .padding(.vertical, theme.space.s2)
                 }
             }
         }

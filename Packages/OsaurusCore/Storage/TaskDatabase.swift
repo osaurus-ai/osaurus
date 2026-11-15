@@ -272,7 +272,11 @@ public final class TaskDatabase: @unchecked Sendable {
         if version < 3 {
             try executeRaw("BEGIN TRANSACTION")
             do {
-                try executeRaw("ALTER TABLE tasks ADD COLUMN origin_session_id TEXT")
+                // Stores converted by an older build lost `user_version`
+                // and re-run this step with the column already there.
+                if try !hasColumn("tasks", "origin_session_id") {
+                    try executeRaw("ALTER TABLE tasks ADD COLUMN origin_session_id TEXT")
+                }
                 try executeRaw(
                     "CREATE INDEX IF NOT EXISTS idx_tasks_origin_session ON tasks(origin_session_id, created_at DESC)")
                 try executeRaw("PRAGMA user_version = 3")
@@ -674,6 +678,16 @@ public final class TaskDatabase: @unchecked Sendable {
         }
         defer { sqlite3_finalize(stmt) }
         try handler(stmt)
+    }
+
+    private func hasColumn(_ table: String, _ column: String) throws -> Bool {
+        var found = false
+        try executeRaw("PRAGMA table_info(\(table))") { stmt in
+            while sqlite3_step(stmt) == SQLITE_ROW {
+                if let name = sqlite3_column_text(stmt, 1), String(cString: name) == column { found = true }
+            }
+        }
+        return found
     }
 
     private static func bindText(_ stmt: OpaquePointer, _ index: Int32, _ value: String) {

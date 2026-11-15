@@ -2266,11 +2266,10 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
             ? before.map { $0.content + content }
             : content
 
+        // The parent directory is created by the first write's command, so
+        // a write costs one exec into the VM per part.
         let dir = (resolved as NSString).deletingLastPathComponent
-        _ = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
-            agentName,
-            command: "mkdir -p '\(dir)'"
-        )
+        let makeParent = "mkdir -p '\(shellEscapeSingleQuoted(dir))' && "
 
         // Append must not depend on the best-effort diff pre-read. A transient
         // read failure used to turn `before` into an empty string and then
@@ -2284,7 +2283,7 @@ internal struct SandboxWriteFileTool: OsaurusTool, @unchecked Sendable {
             let redirect = (index == 0 && mode != "append") ? ">" : ">>"
             let result = try await SandboxToolCommandRunnerRegistry.shared.execAsAgent(
                 agentName,
-                command: "printf '%s' '\(escaped)' \(redirect) '\(resolved)'"
+                command: (index == 0 ? makeParent : "") + "printf '%s' '\(escaped)' \(redirect) '\(resolved)'"
             )
             guard result.succeeded else {
                 let position = parts.count > 1 ? " (part \(index + 1) of \(parts.count))" : ""

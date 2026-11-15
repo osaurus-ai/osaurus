@@ -420,8 +420,16 @@ final class SyncService: @unchecked Sendable {
             observers.append(
                 workspace.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: nil) {
                     [core] _ in
-                    try? SyncConversationStore.shared.performWrite { SyncAgentDirectory.writePresence(.sleeping, core: $0) }
-                    _ = SyncService.blocking(timeout: 5) { try await core.suspend() }
+                    // Blocks on purpose: AppKit acknowledges sleep once this
+                    // returns, so the presence write and suspend should land
+                    // first. Both run in one detached job so the whole wait,
+                    // including any queued store writes, stays under 5s.
+                    _ = SyncService.blocking(timeout: 5) {
+                        try? SyncConversationStore.shared.performWrite {
+                            SyncAgentDirectory.writePresence(.sleeping, core: $0)
+                        }
+                        try await core.suspend()
+                    }
                 }
             )
             observers.append(

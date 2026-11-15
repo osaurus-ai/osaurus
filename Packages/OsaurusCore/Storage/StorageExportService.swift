@@ -90,23 +90,17 @@ public actor StorageExportService {
             }
         }
 
-        // 2. JSON files — decrypt every `.osec` under known dirs.
-        let osecRoots = [
-            OsaurusPaths.agents(),
-            OsaurusPaths.schedules(),
-            OsaurusPaths.watchers(),
-            OsaurusPaths.providers(),
-            OsaurusPaths.config(),
-            OsaurusPaths.sessionsArchive(),
-            OsaurusPaths.sandboxPluginLibrary(),
-            OsaurusPaths.toolSpecs(),
-        ]
+        // 2. JSON files — decrypt every `.osec` under known dirs. Attachments
+        //    are handled below.
+        let blobsDir = AttachmentBlobStore.blobsDir()
+        let osecRoots = StorageDatabaseCatalog.encryptedFileRoots().filter {
+            $0.standardizedFileURL != blobsDir.standardizedFileURL
+        }
         for root in osecRoots {
             summary.jsonFilesDecrypted += decryptOSecTree(under: root, key: key, into: destination)
         }
 
         // 3. Blobs — decrypt content-addressed attachments.
-        let blobsDir = AttachmentBlobStore.blobsDir()
         if fm.fileExists(atPath: blobsDir.path) {
             summary.blobsDecrypted = decryptBlobsDir(blobsDir, key: key, into: destination)
         }
@@ -150,21 +144,20 @@ public actor StorageExportService {
     /// Keychain). Use with care.
     ///
     /// Sequencing:
-    ///   1. Snapshot the current key.
-    ///   2. Generate a new 256-bit key (NOT yet installed).
-    ///   3. Quiesce every registered DB handle (close their SQLite
-    ///      connections) so SQLCipher gets exclusive access for the
-    ///      `PRAGMA rekey` step.
-    ///   4. Rekey every SQLCipher DB.
-    ///   5. Re-wrap every `.osec` file under `~/.osaurus/`.
-    ///   6. Install the new key in the Keychain (atomic with cache).
-    ///   7. Reopen the DB handles. The app keeps working seamlessly
-    ///      because `OsaurusDatabaseHandle.withAllHandlesQuiesced`
-    ///      restores them on the way out.
+    ///   1. Snapshot the current key and generate a new one.
+    ///   2. Stage the new key in the Keychain as the pending rotation
+    ///      key, so a crash part-way through can still read every file.
+    ///   3. Close every registered DB handle (and the plugin / agent
+    ///      connections) so SQLCipher gets exclusive access.
+    ///   4. Rekey every encrypted database and re-wrap every `.osec`
+    ///      file the old key opens.
+    ///   5. Install the new key, then drop the pending one.
+    ///   6. End the mutation gate, then reopen the handles. Reopening
+    ///      while the gate is held would park each reopen on the gate.
     ///
-    /// If any step before (6) fails we roll back: handles are
-    /// reopened with the old key (still in Keychain), the new key
-    /// is discarded.
+    /// If step 4 or 5 fails, everything already moved is put back under
+    /// the old key. Anything left behind by a crash is moved back by
+    /// `recoverInterruptedRotation()` on the next launch.
     @discardableResult
     public func rotateStorageKey() async throws -> SymmetricKey {
         // Key rotation only makes sense when at-rest encryption is enabled.
@@ -186,16 +179,17 @@ public actor StorageExportService {
         // do/catch with explicit `await endMutating` on every exit
         // instead.
         await MainActor.run { StorageMutationGate.shared.beginMutating() }
+        let openHandles = OsaurusDatabaseHandle.allOpenHandles
+        for handle in openHandles { handle.closer() }
+        // Plugin and per-agent DBs aren't registered handles, so close
+        // their live connections too. They reopen lazily.
+        AgentDatabaseStore.shared.closeAll()
+        PluginDatabase.closeAllOpen()
 
-        let result: Result<SymmetricKey, Error>
-        do {
-            let key = try await performRotation()
-            result = .success(key)
-        } catch {
-            result = .failure(error)
-        }
+        let result = Result { try Self.performRotation() }
 
         await MainActor.run { StorageMutationGate.shared.endMutating() }
+        for handle in openHandles { handle.reopener() }
 
         switch result {
         case .success(let key):
@@ -212,12 +206,15 @@ public actor StorageExportService {
         }
     }
 
-    /// Body of `rotateStorageKey` extracted so the gate
-    /// `begin/endMutating` lifecycle is auditably linear.
-    private func performRotation() async throws -> SymmetricKey {
+    private static let rotationLog = Logger(subsystem: "ai.osaurus", category: "storage.export")
+
+    /// Body of `rotateStorageKey`, run with every handle closed and the
+    /// mutation gate held.
+    private static func performRotation() throws -> SymmetricKey {
+        let keyManager = StorageKeyManager.shared
         let oldKey: SymmetricKey
         do {
-            oldKey = try StorageKeyManager.shared.currentKey()
+            oldKey = try keyManager.currentKey()
         } catch {
             throw StorageExportError.keyUnavailable
         }
@@ -229,37 +226,188 @@ public actor StorageExportService {
         let newKey = SymmetricKey(data: Data(newRaw))
         for i in newRaw.indices { newRaw[i] = 0 }
 
-        // Quiesce the open SQLCipher handles before rekeying so they
-        // don't fight us for exclusive access. They're reopened on
-        // the way out (with the new key, which we install before
-        // the reopen).
-        try OsaurusDatabaseHandle.withAllHandlesQuiesced {
-            // Plugin and per-agent DBs aren't registered handles, so close
-            // their live connections too — the in-place `PRAGMA rekey` below
-            // must not fight an open fd on those files. They reopen lazily.
-            AgentDatabaseStore.shared.closeAll()
-            PluginDatabase.closeAllOpen()
-            for target in StorageDatabaseCatalog.databaseTargets() {
+        do {
+            try keyManager.stagePendingRotationKey(newKey)
+        } catch {
+            throw StorageExportError.rekeyFailed("Keychain staging failed: \(error.localizedDescription)")
+        }
+
+        var rekeyed: [StorageDatabaseCatalog.DatabaseTarget] = []
+        var rewrapped: [URL] = []
+        do {
+            for target in StorageDatabaseCatalog.databaseTargets()
+            where StorageFileFormat.detect(path: target.path) == .encrypted {
+                try injectFaultForTesting(afterRekeying: rekeyed.count)
                 do {
                     try rekeyDatabase(path: target.path, oldKey: oldKey, newKey: newKey)
-                    log.info("storage rekey: \(target.label) done")
                 } catch {
-                    log.error("storage rekey: \(target.label) FAILED: \(error.localizedDescription)")
                     throw StorageExportError.rekeyFailed("\(target.label): \(error.localizedDescription)")
                 }
+                rekeyed.append(target)
+                rotationLog.info("storage rekey: \(target.label, privacy: .public) done")
             }
-            rewrapOSecTree(under: OsaurusPaths.root(), oldKey: oldKey, newKey: newKey)
-
-            // Install the new key BEFORE the quiesced handles get
-            // reopened — otherwise the reopen path would try the old
-            // key against the now-rekeyed files and fail.
+            try injectFaultForTesting(afterRekeying: rekeyed.count)
+            try rewrapOSecTree(under: OsaurusPaths.root(), from: oldKey, to: newKey, rewrapped: &rewrapped)
             do {
-                try StorageKeyManager.shared.install(key: newKey)
+                try keyManager.install(key: newKey)
             } catch {
                 throw StorageExportError.rekeyFailed("Keychain install failed: \(error.localizedDescription)")
             }
+        } catch {
+            if case RotationCrashForTesting.crashed = error { throw error }
+            rotationLog.error("storage rekey failed, rolling back: \(error.localizedDescription, privacy: .public)")
+            if rollBack(rekeyed: rekeyed, rewrapped: rewrapped, oldKey: oldKey, newKey: newKey) {
+                keyManager.clearPendingRotationKey()
+            }
+            throw error
         }
+        keyManager.clearPendingRotationKey()
         return newKey
+    }
+
+    /// Put everything a failed rotation already moved back under `oldKey`.
+    /// Returns false when something couldn't be moved back; the pending key
+    /// is then kept so the next launch's recovery can finish the job.
+    private static func rollBack(
+        rekeyed: [StorageDatabaseCatalog.DatabaseTarget],
+        rewrapped: [URL],
+        oldKey: SymmetricKey,
+        newKey: SymmetricKey
+    ) -> Bool {
+        var clean = true
+        for target in rekeyed.reversed() {
+            do {
+                try rekeyDatabase(path: target.path, oldKey: newKey, newKey: oldKey)
+            } catch {
+                clean = false
+                rotationLog.error(
+                    "storage rekey rollback: \(target.label, privacy: .public) FAILED: \(error.localizedDescription, privacy: .public)"
+                )
+            }
+        }
+        for file in rewrapped {
+            do {
+                try EncryptedFileStore.write(EncryptedFileStore.read(file, key: newKey), to: file, key: oldKey)
+            } catch {
+                clean = false
+                rotationLog.error(
+                    "storage rewrap rollback: \(file.lastPathComponent, privacy: .public) FAILED: \(error.localizedDescription, privacy: .public)"
+                )
+            }
+        }
+        return clean
+    }
+
+    /// Finish what a rotation interrupted by a crash or quit left behind:
+    /// move every database and `.osec` file still under the pending key back
+    /// to the current key, then drop the pending key. Run at launch before
+    /// any store opens.
+    public static func recoverInterruptedRotation() {
+        let keyManager = StorageKeyManager.shared
+        guard keyManager.rotationMayBeInterrupted else { return }
+        let pending: SymmetricKey
+        do {
+            guard let staged = try keyManager.pendingRotationKey() else {
+                keyManager.clearPendingRotationKey()
+                return
+            }
+            pending = staged
+        } catch {
+            rotationLog.error("rotation recovery: pending key unreadable: \(error.localizedDescription, privacy: .public)")
+            return
+        }
+        let current: SymmetricKey
+        do {
+            current = try keyManager.currentKey()
+        } catch {
+            rotationLog.error("rotation recovery: current key unavailable: \(error.localizedDescription, privacy: .public)")
+            return
+        }
+        if current.withUnsafeBytes({ Data($0) }) == pending.withUnsafeBytes({ Data($0) }) {
+            keyManager.clearPendingRotationKey()
+            return
+        }
+
+        var clean = true
+        var moved = 0
+        for target in StorageDatabaseCatalog.databaseTargets()
+        where StorageFileFormat.detect(path: target.path) == .encrypted {
+            if databaseOpens(path: target.path, key: current) { continue }
+            guard databaseOpens(path: target.path, key: pending) else {
+                rotationLog.error("rotation recovery: \(target.label, privacy: .public) opens with neither key")
+                continue
+            }
+            do {
+                try rekeyDatabase(path: target.path, oldKey: pending, newKey: current)
+                moved += 1
+            } catch {
+                clean = false
+                rotationLog.error(
+                    "rotation recovery: \(target.label, privacy: .public) FAILED: \(error.localizedDescription, privacy: .public)"
+                )
+            }
+        }
+        if let enumerator = FileManager.default.enumerator(at: OsaurusPaths.root(), includingPropertiesForKeys: nil) {
+            for case let file as URL in enumerator where file.pathExtension == "osec" {
+                if (try? EncryptedFileStore.read(file, key: current)) != nil { continue }
+                guard let plaintext = try? EncryptedFileStore.read(file, key: pending) else { continue }
+                do {
+                    try EncryptedFileStore.write(plaintext, to: file, key: current)
+                    moved += 1
+                } catch {
+                    clean = false
+                    rotationLog.error(
+                        "rotation recovery: \(file.lastPathComponent, privacy: .public) FAILED: \(error.localizedDescription, privacy: .public)"
+                    )
+                }
+            }
+        }
+        rotationLog.notice("rotation recovery: moved \(moved) artifact(s) back to the current key")
+        if clean { keyManager.clearPendingRotationKey() }
+    }
+
+    private static func databaseOpens(path: String, key: SymmetricKey) -> Bool {
+        var dbPointer: OpaquePointer?
+        guard sqlite3_open_v2(path, &dbPointer, SQLITE_OPEN_READONLY, nil) == SQLITE_OK, let conn = dbPointer else {
+            sqlite3_close(dbPointer)
+            return false
+        }
+        defer { sqlite3_close(conn) }
+        return (try? applyKey(key, to: conn)) != nil
+    }
+
+    // MARK: - Fault injection
+
+    enum RotationCrashForTesting: Error { case crashed }
+
+    #if DEBUG
+        /// What a test wants rotation to do after rekeying `afterDatabases`
+        /// databases: fail normally (and roll back), or stop dead as if the
+        /// process died.
+        enum RotationFault {
+            case fail(afterDatabases: Int)
+            case crash(afterDatabases: Int)
+        }
+
+        private static let faultLock = NSLock()
+        nonisolated(unsafe) private static var _faultForTesting: RotationFault?
+        static var faultForTesting: RotationFault? {
+            get { faultLock.withLock { _faultForTesting } }
+            set { faultLock.withLock { _faultForTesting = newValue } }
+        }
+    #endif
+
+    private static func injectFaultForTesting(afterRekeying count: Int) throws {
+        #if DEBUG
+            switch faultForTesting {
+            case .fail(let n) where n == count:
+                throw StorageExportError.rekeyFailed("injected failure after \(count) database(s)")
+            case .crash(let n) where n == count:
+                throw RotationCrashForTesting.crashed
+            default:
+                break
+            }
+        #endif
     }
 
     // MARK: - Internals: per-DB
@@ -330,19 +478,34 @@ public actor StorageExportService {
             let msg = String(cString: sqlite3_errmsg(src))
             return .failure(StorageExportError.writeFailed("export: \(msg)"))
         }
+        if let failure = StorageFormatConverter.copyHeaderPragmas(on: src, into: "plaintext") {
+            return .failure(StorageExportError.writeFailed("export: \(failure)"))
+        }
         return .success(())
     }
 
-    private func rekeyDatabase(path: String, oldKey: SymmetricKey, newKey: SymmetricKey) throws {
+    private static func rekeyDatabase(path: String, oldKey: SymmetricKey, newKey: SymmetricKey) throws {
         var dbPointer: OpaquePointer?
         guard sqlite3_open(path, &dbPointer) == SQLITE_OK, let conn = dbPointer else {
+            sqlite3_close(dbPointer)
             throw StorageExportError.rekeyFailed("open \(path)")
         }
         defer { sqlite3_close(conn) }
 
-        // Apply old key first to unlock the DB.
-        let oldHex = oldKey.withUnsafeBytes { Data($0).map { String(format: "%02x", $0) }.joined() }
-        if sqlite3_exec(conn, "PRAGMA key = \"x'\(oldHex)'\"", nil, nil, nil) != SQLITE_OK {
+        try applyKey(oldKey, to: conn)
+
+        // Now rekey to the new value.
+        let newHex = newKey.withUnsafeBytes { Data($0).map { String(format: "%02x", $0) }.joined() }
+        if sqlite3_exec(conn, "PRAGMA rekey = \"x'\(newHex)'\"", nil, nil, nil) != SQLITE_OK {
+            throw StorageExportError.rekeyFailed("PRAGMA rekey")
+        }
+    }
+
+    /// Key `conn` and force a read, so a wrong key fails here rather than on
+    /// the first real query.
+    private static func applyKey(_ key: SymmetricKey, to conn: OpaquePointer) throws {
+        let hex = key.withUnsafeBytes { Data($0).map { String(format: "%02x", $0) }.joined() }
+        if sqlite3_exec(conn, "PRAGMA key = \"x'\(hex)'\"", nil, nil, nil) != SQLITE_OK {
             throw StorageExportError.rekeyFailed("PRAGMA key")
         }
         for pragma in [
@@ -352,15 +515,8 @@ public actor StorageExportService {
         ] {
             _ = sqlite3_exec(conn, pragma, nil, nil, nil)
         }
-        // Force a read so we know the old key was correct.
         if sqlite3_exec(conn, "SELECT count(*) FROM sqlite_master", nil, nil, nil) != SQLITE_OK {
-            throw StorageExportError.rekeyFailed("verify old key")
-        }
-
-        // Now rekey to the new value.
-        let newHex = newKey.withUnsafeBytes { Data($0).map { String(format: "%02x", $0) }.joined() }
-        if sqlite3_exec(conn, "PRAGMA rekey = \"x'\(newHex)'\"", nil, nil, nil) != SQLITE_OK {
-            throw StorageExportError.rekeyFailed("PRAGMA rekey")
+            throw StorageExportError.rekeyFailed("verify key")
         }
     }
 
@@ -415,12 +571,25 @@ public actor StorageExportService {
         return count
     }
 
-    private func rewrapOSecTree(under url: URL, oldKey: SymmetricKey, newKey: SymmetricKey) {
+    /// Re-encrypt every `.osec` under `url` that `oldKey` opens. Files under
+    /// another key (or unreadable) are left alone; a failed write throws so
+    /// the rotation rolls back instead of installing a key some files lack.
+    private static func rewrapOSecTree(
+        under url: URL,
+        from oldKey: SymmetricKey,
+        to newKey: SymmetricKey,
+        rewrapped: inout [URL]
+    ) throws {
         let fm = FileManager.default
         guard let enumerator = fm.enumerator(at: url, includingPropertiesForKeys: nil) else { return }
         for case let f as URL in enumerator where f.pathExtension == "osec" {
             guard let plaintext = try? EncryptedFileStore.read(f, key: oldKey) else { continue }
-            try? EncryptedFileStore.write(plaintext, to: f, key: newKey)
+            do {
+                try EncryptedFileStore.write(plaintext, to: f, key: newKey)
+            } catch {
+                throw StorageExportError.rekeyFailed("rewrap \(f.lastPathComponent): \(error.localizedDescription)")
+            }
+            rewrapped.append(f)
         }
     }
 

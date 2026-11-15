@@ -16,7 +16,8 @@ enum SpawnFanOutPolicy {
     static func fanOutLimitMessage(requested: Int, limit: Int, kind: String) -> String {
         "This wave asks for \(requested) \(kind) subagents, but this agent allows at most "
             + "\(limit) \(kind) subagents at once. Run the extra work after these finish, "
-            + "or ask the user to raise the limit in the Subagents settings."
+            + "or ask the user to raise the limit under Limits (Settings → Agents → Delegation for the "
+            + "Orchestrator, or the agent's Abilities → Subagents)."
     }
 
     /// Per-launcher fan-out limits: `local` mirrors the Server Concurrent

@@ -12,11 +12,14 @@ struct InspectorAssignedTextEditor: NSViewRepresentable {
     let tracking: CGFloat
     let paragraphSpacing: CGFloat
     let textColor: NSColor
-    let selectionColor: NSColor
     let editable: Bool
     var onFocusChange: (Bool) -> Void
     var accessibleName: String? = nil
     var accessibleHelp: String? = nil
+    /// Owned by the caller when it sizes the editor to its text: an auto-hiding
+    /// legacy scroller narrows the text, which changes the height that decided
+    /// whether the scroller shows, and the editor oscillates by a line.
+    var showsVerticalScroller = true
 
     func makeNSView(context: Context) -> InspectorEditorScrollView {
         let scroll = InspectorEditorScrollView()
@@ -49,12 +52,14 @@ struct InspectorAssignedTextEditor: NSViewRepresentable {
     func updateNSView(_ scroll: InspectorEditorScrollView, context: Context) {
         context.coordinator.parent = self
         guard let view = scroll.documentView as? InspectorMultilineTextView else { return }
+        if scroll.hasVerticalScroller != showsVerticalScroller { scroll.hasVerticalScroller = showsVerticalScroller }
         view.isEditable = editable
         view.isSelectable = true
         view.setAccessibilityLabel(accessibleName ?? L("Multiline editor"))
         view.setAccessibilityHelp(accessibleHelp)
         view.insertionPointColor = textColor
-        view.selectedTextAttributes = [.backgroundColor: selectionColor, .foregroundColor: textColor]
+        // Selection keeps AppKit's accent highlight, like single-line fields:
+        // a neutral fill matches the editor's hover surface and disappears.
         guard !view.hasMarkedText() else { return }
         let selected = view.selectedRanges
         if view.string != text { view.string = text }
@@ -68,8 +73,17 @@ struct InspectorAssignedTextEditor: NSViewRepresentable {
         ]
         view.typingAttributes = attributes
         view.textStorage?.setAttributes(attributes, range: NSRange(location: 0, length: view.textStorage?.length ?? 0))
-        view.selectedRanges = selected.filter { NSMaxRange($0.rangeValue) <= (view.string as NSString).length }
+        view.selectedRanges = Self.restoredSelection(selected, length: (view.string as NSString).length)
         context.coordinator.measure(view)
+    }
+    /// The prior selection, minus ranges past the new end. Never empty:
+    /// `NSTextView` raises on an empty list, and an exception thrown through
+    /// a SwiftUI update corrupts later updates. Clearing the text from code
+    /// (a form reset after Send) drops every range, so the caret moves to the
+    /// end instead.
+    static func restoredSelection(_ selected: [NSValue], length: Int) -> [NSValue] {
+        let kept = selected.filter { NSMaxRange($0.rangeValue) <= length }
+        return kept.isEmpty ? [NSValue(range: NSRange(location: length, length: 0))] : kept
     }
     func makeCoordinator() -> Coordinator { Coordinator(self) }
     @MainActor final class Coordinator: NSObject, NSTextViewDelegate {

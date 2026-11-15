@@ -566,9 +566,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
         // MemorySearchService.initialize() needs it for reverse maps.
         // MetalGate serializes CoreML/MLX at runtime; this task is only held
         // for startup sequencing of orphan recovery + activity tracking below.
-        // Databases are created/opened already SQLCipher-encrypted via
-        // `EncryptedSQLiteOpener`; each `*Database.shared.open()` only parks
-        // on `StorageMutationGate` while a key rotation is in flight.
+        // Databases open through `OsaurusStorageOpener`, which sniffs each
+        // file and only asks for the key when it is SQLCipher-encrypted; each
+        // `*Database.shared.open()` parks on `StorageMutationGate` while
+        // convergence or a key rotation is in flight.
         let embeddingInitTask = Task.detached(priority: .utility) {
             // Converge on-disk storage to the selected posture (default:
             // plaintext) before opening anything. For existing encrypted
@@ -585,10 +586,20 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             // thread inside the synchronous Keychain read. In plaintext mode
             // no key is required, so storage-dependent services always come up.
             if StorageEncryptionPolicy.shared.isEncryptionEnabled {
-                try? await StorageKeyManager.shared.prewarmCurrentKeyOffCooperativeExecutor()
+                var prewarmError: Error?
+                do {
+                    try await StorageKeyManager.shared.prewarmCurrentKeyOffCooperativeExecutor()
+                } catch {
+                    prewarmError = error
+                }
                 guard StorageKeyManager.shared.hasCachedKey else {
                     MemoryLogger.database.error(
                         "Storage-dependent search/index services disabled — storage key is not already unlocked"
+                    )
+                    // Memory, methods, file history and the tool index stay
+                    // closed; say so in Data & Storage and /health.
+                    StorageMigrationCoordinator.recordKeyUnavailable(
+                        prewarmError ?? StorageKeyError.keyUnavailableForExistingData
                     )
                     return
                 }
@@ -676,6 +687,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                     await MemoryService.shared.armResidencyDrainOnModelLoad()
                 }
             }
+        }
+
+        // Indexes built by a different embedding model than this launch's
+        // profile are rebuilt in the background; search uses text matching
+        // for a store until its rebuild lands.
+        Task { @MainActor in
+            await embeddingInitTask.value
+            await EmbeddingIndexMaintenance.shared.runAfterLaunch()
         }
 
         Task { @MainActor in
@@ -854,6 +873,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
                         try? await Task.sleep(for: .seconds(2))
                         await AnnouncementsService.shared.refreshIfDue(trigger: .launch)
                         self?.presentAnnouncementIfEligible()
+                        // Help replies: a request only while the user has a
+                        // report that is not closed, so the rail's Help dot
+                        // is right without them opening the page.
+                        await SupportService.shared.refreshIfDue(trigger: .launch)
                     }
                 }
             }
@@ -1366,6 +1389,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             // switching never turns into a stream of feed requests.
             await AnnouncementsService.shared.refreshIfDue(trigger: .activation)
             self?.presentAnnouncementIfEligible()
+            // Replies to the user's open Help reports, at most once per 5
+            // minutes, then polled while the app stays in front. No open
+            // report, no request.
+            await SupportService.shared.refreshIfDue(trigger: .activation)
+            SupportService.shared.startPolling { NSApp.isActive }
         }
     }
 
@@ -1882,6 +1910,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelega
             { SubagentConfigurationStore.flushPendingWrites() },
             { ConfigDiskWriter.flushPendingWrites(timeout: 2.5) },
             { WorkflowDraftStore.flushPendingWrites(timeout: 2.5) },
+            { WorkflowRunStore.flushPendingWrites(timeout: 2.5) },
             { Keychain.flushPendingWrites(timeout: 2.5) },
             {
                 try? SyncConversationStore.shared.performWrite { SyncAgentDirectory.writePresence(.quitting, core: $0) }
@@ -2946,6 +2975,10 @@ extension AppDelegate {
             ChatWindowManager.shared.showWorkflowsSurface()
             return
         }
+        if initialTab == .insights {
+            ChatWindowManager.shared.showInsightsSurface()
+            return
+        }
         let state = ManagementStateManager.shared
         if let deeplinkAgentId, AgentManager.shared.agent(for: deeplinkAgentId)?.isBuiltIn == false {
             state.pendingAgentDetailId = deeplinkAgentId
@@ -3093,8 +3126,7 @@ extension AppDelegate {
         }
         var buttons: [AlertButtonConfig] = [dismissButton]
         var seenLabels: Set<String> = [dismissButton.title]
-        for (index, cta) in ordered {
-            guard let url = cta.resolvedURL else { continue }
+        for (index, cta) in ordered where cta.resolvedURL != nil {
             // Button rows are keyed by title; a duplicate label would
             // collapse two CTAs into one.
             var label = cta.label
@@ -3104,18 +3136,7 @@ extension AppDelegate {
                     service.markSeen(slug)
                     FeatureTelemetry.announcementClicked(
                         slug: slug, action: "cta", ctaKind: cta.kind, ctaIndex: index)
-                    if cta.isDeepLink {
-                        self?.handleOsaurusDeepLink(url)
-                    } else {
-                        // `open` makes a synchronous XPC round-trip to
-                        // LaunchServices that can block for seconds while
-                        // the browser cold-launches and hang the main
-                        // thread; NSWorkspace is thread-safe, so fire it
-                        // off main.
-                        DispatchQueue.global(qos: .userInitiated).async {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }
+                    self?.openAnnouncementCTA(cta)
                 })
         }
 
@@ -3143,6 +3164,22 @@ extension AppDelegate {
             scope: scope
         )
         return nil
+    }
+
+    /// An announcement button, from the dialog or from Help.
+    func openAnnouncementCTA(_ cta: OsaurusRouterAnnouncement.CTA) {
+        guard let url = cta.resolvedURL else { return }
+        if cta.isDeepLink {
+            handleOsaurusDeepLink(url)
+        } else {
+            // `open` makes a synchronous XPC round-trip to LaunchServices
+            // that can block for seconds while the browser cold-launches and
+            // hang the main thread; NSWorkspace is thread-safe, so fire it
+            // off main.
+            DispatchQueue.global(qos: .userInitiated).async {
+                NSWorkspace.shared.open(url)
+            }
+        }
     }
 }
 

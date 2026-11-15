@@ -31,8 +31,6 @@ struct ManagementView: View {
     /// Observed so the pending landing anchor reaches every tab via the
     /// environment, re-rendering their glow targets when a result lands.
     @ObservedObject private var highlightCoordinator = SettingsHighlightCoordinator.shared
-    /// The New Agent creator takes the whole content pane while it shows.
-    @ObservedObject private var agentCreator = AgentCreatorController.shared
 
     @EnvironmentObject private var updater: UpdaterViewModel
 
@@ -59,7 +57,7 @@ struct ManagementView: View {
             .environment(\.theme, themeManager.currentTheme)
             .tint(theme.action.primary.default.background)
             .onAppear(perform: handleAppear)
-            .onChange(of: stateManager.selectedTab) { handleTabChange(to: $1) }
+            .onChange(of: stateManager.selectedTab) { handleTabChange(from: $0, to: $1) }
             // The pairing deeplink router publishes an invite here when an
             // `osaurus://...?pair=...` URL is opened. Forwarding it through
             // a local @State (`presentingInvite`) gives the sheet a stable
@@ -107,7 +105,6 @@ private extension ManagementView {
             selection: selectedTabBinding,
             searchText: $searchText,
             sections: sidebarSections,
-            focusCollapsed: stateManager.selectedTab == .agents && agentCreator.isShowing,
             column: column
         ) { _ in
             Group {
@@ -221,7 +218,8 @@ private extension ManagementView {
         case .voice:
             VoiceView()
         case .insights:
-            InsightsView()
+            // Insights lives in the main window; `handleTabChange` sends it there.
+            EmptyView()
         case .server:
             ServerView()
         case .permissions:
@@ -308,16 +306,25 @@ private extension ManagementView {
         }
     }
 
-    func handleTabChange(to newTab: ManagementTab) {
-        if newTab == .workflows {
-            stateManager.selectedTab = ManagementTab.defaultTab
-            ChatWindowManager.shared.showWorkflowsSurface()
+    func handleTabChange(from oldTab: ManagementTab, to newTab: ManagementTab) {
+        if ManagementTab.mainWindowCases.contains(newTab) {
+            // Settings stays on the page the link was on, so the title
+            // bar's back button returns there.
+            stateManager.selectedTab =
+                ManagementTab.visibleCases.contains(oldTab) ? oldTab : ManagementTab.defaultTab
+            if newTab == .workflows {
+                ChatWindowManager.shared.showWorkflowsSurface()
+            } else {
+                ChatWindowManager.shared.showInsightsSurface()
+            }
             return
         }
         guard ManagementTab.visibleCases.contains(newTab) else {
             stateManager.selectedTab = ManagementTab.defaultTab
             return
         }
+        // Restored after a main-window redirect: nothing new was opened.
+        guard !ManagementTab.mainWindowCases.contains(oldTab) else { return }
 
         // Leave a trail of which screen was on-screen so a layout-engine app
         // hang (no first-party frame in the stack) can be localized to a tab.

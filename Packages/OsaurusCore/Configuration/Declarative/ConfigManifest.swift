@@ -135,7 +135,7 @@ public enum ConfigManifest {
 
         ConfigSectionSpec(
             .harnessRuntimes,
-            comment: "external agent harnesses an agent can run on (Settings → Runtimes)",
+            comment: "external agent harnesses an agent can run on (Settings → Agent Runtimes)",
             value: .entityList(
                 [
                     ConfigKeySpec(
@@ -292,6 +292,10 @@ public enum ConfigManifest {
                     ConfigKeySpec(
                         "model", .scalar(.string, example: "null", nullable: true),
                         comment: "same format as default_agent.model; omitted = the Orchestrator's model"),
+                    ConfigKeySpec(
+                        "model_locked", .scalar(.boolean, example: "false"),
+                        comment: "true: chats always run on model, the chat picker is fixed,",
+                        moreComments: ["and a missing model fails instead of falling back"]),
                     ConfigKeySpec(
                         "temperature", .scalar(.number, example: "null", nullable: true),
                         comment: "0..2"),

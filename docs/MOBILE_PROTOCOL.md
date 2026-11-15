@@ -863,7 +863,7 @@ the phone accepts a typed host and port.
 
 ### 11.2 Generating the code (Mac)
 
-"Generate Pairing Code" mints the master-scoped key immediately (biometric
+"Generate 6-Digit Code" mints the master-scoped key immediately (biometric
 prompt — the user is at the Mac) and shows a uniformly random 6-digit code.
 The code is single-use, valid for 5 minutes, and discarded after 5 wrong
 guesses from any source; an unused code's key is deleted.
@@ -1667,7 +1667,7 @@ an allow.
 
 ### 16.3 Configuration plans: `GET /config/approvals`, `POST /config/approvals/{id}`
 
-The orchestrator changes this Mac's setup with `osaurus_config`, and every
+The Configurator changes this Mac's setup with `osaurus_config`, and every
 apply waits on its own plan-review card rather than a §16.1 card. A run from
 the paired phone parks the plan here for the phone to answer, for up to five
 minutes; plans raised in a Mac chat are never listed.

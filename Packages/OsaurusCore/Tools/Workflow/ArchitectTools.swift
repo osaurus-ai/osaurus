@@ -1003,7 +1003,7 @@ final class WorkflowTestTool: OsaurusTool, PermissionedTool, @unchecked Sendable
                     + suffix
             }
             if message.localizedCaseInsensitiveContains("denied by policy") {
-                return "The step's tool is set to Deny in Tools. Ask the person to change it to Ask or Auto, then test again." + suffix
+                return "The step's tool is set to Deny in Tools & MCP. Ask the person to change it to Ask or Auto, then test again." + suffix
             }
             return "The step's tool refused the call: \(message) Change the step so it stays within what the message allows." + suffix
         }

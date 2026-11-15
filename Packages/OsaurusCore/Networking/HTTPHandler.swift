@@ -4284,7 +4284,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
         return (
             "peer_inference_disabled",
             "This Osaurus does not share its models for inference with paired agents. "
-                + "Ask the owner to enable it in Server → Overview."
+                + "Ask the owner to enable it in Settings → Sharing → Access → Model Sharing."
         )
     }
 
@@ -10943,6 +10943,32 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     return
                 }
                 model = agentModel ?? ""
+            } else if let lockedModel = await MainActor.run(body: {
+                AgentManager.shared.lockedModel(for: agentId)
+            }) {
+                let requested = req.model
+                if !requested.isEmpty, requested != "default", requested != lockedModel {
+                    let msg =
+                        "This agent is locked to model '\(lockedModel)'; remove the `model` override and retry."
+                    RemoteAgentRunLog.serverError(
+                        "run agent=\(agentId.uuidString) REJECTED reqModel=\(requested) error=agent_model_locked"
+                    )
+                    hop {
+                        writerBound.value.writeError(msg, context: ctx.value)
+                        writerBound.value.writeEnd(ctx.value)
+                    }
+                    logSelf.logRequest(
+                        method: "POST",
+                        path: path,
+                        userAgent: logUserAgent,
+                        requestBody: logRequestBody,
+                        responseStatus: 200,
+                        startTime: logStartTime,
+                        errorMessage: msg
+                    )
+                    return
+                }
+                model = lockedModel
             } else if req.model.isEmpty || req.model == "default" {
                 let agentModel = await MainActor.run { AgentManager.shared.effectiveModel(for: agentId) }
                 if let agentModel {
@@ -13220,11 +13246,15 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
             try EmbeddingService.validateAPIModel(request.model)
         } catch {
             let message = error.localizedDescription
+            let unavailable: Bool
+            if case EmbeddingService.APIModelError.unavailable = error { unavailable = true } else { unavailable = false }
             let payload: [String: Any] = ollamaFormat
                 ? ["error": message]
                 : ["error": [
-                    "message": message, "type": "invalid_request_error",
-                    "param": "model", "code": "unsupported_embedding_model",
+                    "message": message,
+                    "type": unavailable ? "server_error" : "invalid_request_error",
+                    "param": "model",
+                    "code": unavailable ? "embedding_model_unavailable" : "unsupported_embedding_model",
                 ]]
             // Model IDs are caller-controlled; encode rather than interpolate
             // so quotes, newlines and backslashes remain valid JSON.
@@ -13233,10 +13263,11 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 ?? #"{"error":"Unsupported embedding model"}"#
             var headers = [("Content-Type", "application/json; charset=utf-8")]
             headers.append(contentsOf: stateRef.value.corsHeaders)
-            sendResponse(context: context, version: head.version, status: .badRequest, headers: headers, body: json)
+            let status: HTTPResponseStatus = unavailable ? .serviceUnavailable : .badRequest
+            sendResponse(context: context, version: head.version, status: status, headers: headers, body: json)
             logRequest(
                 method: "POST", path: logPath, userAgent: userAgent,
-                requestBody: requestBodyString, responseBody: json, responseStatus: 400,
+                requestBody: requestBodyString, responseBody: json, responseStatus: Int(status.code),
                 startTime: startTime, errorMessage: message
             )
             return
@@ -13300,10 +13331,21 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     details: Self.embeddingActivityDetails(texts: texts, dimensions: embeddings.first?.count)
                 )
             } catch {
-                let errorJson =
+                // Memory Safety refusals and load failures are the selected
+                // model being unavailable, not a malformed request.
+                let isProfileError = error is EmbeddingProfileError
+                let status: HTTPResponseStatus = isProfileError ? .serviceUnavailable : .internalServerError
+                let payload: [String: Any] =
                     ollamaFormat
-                    ? #"{"error":"\#(error.localizedDescription)"}"#
-                    : #"{"error":{"message":"\#(error.localizedDescription)","type":"server_error","code":"embedding_failed"}}"#
+                    ? ["error": error.localizedDescription]
+                    : ["error": [
+                        "message": error.localizedDescription,
+                        "type": "server_error",
+                        "code": isProfileError ? "embedding_model_unavailable" : "embedding_failed",
+                    ]]
+                let errorJson = (try? JSONSerialization.data(withJSONObject: payload))
+                    .map { String(decoding: $0, as: UTF8.self) }
+                    ?? #"{"error":"Embedding failed"}"#
 
                 hop {
                     var headers = [("Content-Type", "application/json; charset=utf-8")]
@@ -13311,7 +13353,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     self.sendResponse(
                         context: ctx.value,
                         version: head.version,
-                        status: .internalServerError,
+                        status: status,
                         headers: headers,
                         body: errorJson
                     )
@@ -13322,7 +13364,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                     userAgent: logUserAgent,
                     requestBody: logRequestBody,
                     responseBody: errorJson,
-                    responseStatus: 500,
+                    responseStatus: Int(status.code),
                     startTime: logStartTime,
                     model: EmbeddingService.modelName,
                     errorMessage: error.localizedDescription,
@@ -13609,7 +13651,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 context: context,
                 status: .badRequest,
                 message:
-                    "No image model specified and no default image generation model is configured (Settings → Agent Delegation).",
+                    "No image model specified and no default image generation model is configured (Settings → Model Defaults → Images & Video).",
                 path: "/images/generations",
                 startTime: startTime,
                 userAgent: userAgent,
@@ -14390,7 +14432,7 @@ final class HTTPHandler: ChannelInboundHandler, Sendable {
                 context: context,
                 status: .badRequest,
                 message:
-                    "No image model specified and no default image edit model is configured (Settings → Agent Delegation).",
+                    "No image model specified and no default image edit model is configured (Settings → Model Defaults → Images & Video).",
                 path: "/images/edits",
                 startTime: startTime,
                 userAgent: userAgent,

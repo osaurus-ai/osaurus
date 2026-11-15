@@ -33,7 +33,10 @@ final class OnboardingFirstRun {
         await SystemPermissionService.shared.requestPermissionAndWait($0)
     }
     var isPermissionGranted: (SystemPermission) -> Bool = { SystemPermissionService.shared.isGranted($0) }
-    var readDownloads: () async -> Bool = {
+    /// `@MainActor` in the type, not just the default: a nonisolated async
+    /// closure runs on the global executor, and its synchronous TeamSeeder
+    /// call then trips the main-actor isolation check.
+    var readDownloads: @MainActor () async -> Bool = {
         let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
         let readable = await Task.detached {
             (try? FileManager.default.contentsOfDirectory(atPath: downloads.path)) != nil
@@ -41,7 +44,7 @@ final class OnboardingFirstRun {
         if readable { await TeamSeeder.bookmarkWaitingFolders(at: downloads) }
         return readable
     }
-    var pickProjectFolder: @MainActor () -> URL? = { OnboardingFirstRun.runProjectPanel() }
+    var pickProjectFolder: @MainActor () async -> URL? = { await OnboardingFirstRun.runProjectPanel() }
     /// Off in tests, which read the panel the moment a line lands.
     var typesOutLines = !RuntimeEnvironment.isUnderTests
     var isOffline: () -> Bool = { RemoteProviderManager.shared.isOffline }
@@ -624,7 +627,7 @@ final class OnboardingFirstRun {
                 _ = await requestPermission(companion)
             }
         case .downloadsFolder: granted = await readDownloads()
-        case .projectFolder: granted = pickProjectFolder().map(setBuilderFolder) ?? false
+        case .projectFolder: granted = await pickProjectFolder().map(setBuilderFolder) ?? false
         case .topic: return
         }
         guard var plan else { return }
@@ -653,14 +656,14 @@ final class OnboardingFirstRun {
         permission == .calendar ? [.reminders] : []
     }
 
-    private static func runProjectPanel() -> URL? {
+    private static func runProjectPanel() async -> URL? {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.prompt = L("Choose")
         panel.message = L("Choose the project Builder works in.")
-        return panel.runModal() == .OK ? panel.url : nil
+        return await panel.beginModal() == .OK ? panel.url : nil
     }
 
     private func setBuilderFolder(_ url: URL) -> Bool {

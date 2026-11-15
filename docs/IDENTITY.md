@@ -59,8 +59,8 @@ Master Address (Human)            ← iCloud Keychain / 24-word phrase; same on 
 
 The master is shared by every device that holds the same identity. Each
 device has its own hardware-bound device ID, and every agent address minted on
-that device is derived from `(master, deviceID, index)`. Two Macs (or a Mac and
-a future iOS client) restored from the same phrase therefore mint **disjoint**
+that device is derived from `(master, deviceID, index)`. Two devices restored
+from the same phrase therefore mint **disjoint**
 agent addresses even when both allocate index 0 — there is no cross-device
 index coordination, and none is needed. Ownership is still provable from the
 master alone: any device holding the master can re-derive and sign for any of
@@ -197,7 +197,7 @@ HMAC-SHA512(
     → same address derivation as master key
 ```
 
-Not an agent key and not stored on any agent: it exists so a phone paired to a Mac with no custom agents still has an address to pin, since the built-in Default agent has none. Only `POST /secure/session` accepts it; the relay, Bonjour, access keys and invites never see it. Its own domain keeps it apart from every agent key at every index. See [`MOBILE_PROTOCOL.md` §11.3](MOBILE_PROTOCOL.md) and `MobileConnectIdentity.swift`.
+Not an agent key and not stored on any agent: it exists so a phone paired to a Mac with no custom agents still has an address to pin, since the built-in Default agent has none. Only `POST /secure/session` accepts it; the relay, the Bonjour mobile advertiser (`_osaurus-mobile._tcp`), access keys and invites never see it. Its own domain keeps it apart from every agent key at every index. See [`MOBILE_PROTOCOL.md` §11.3](MOBILE_PROTOCOL.md) and `MobileConnectIdentity.swift`.
 
 Agent keys are **never persisted**. They are re-derived from the master key whenever a signature is needed, which requires biometric authentication to access the master key. The derived `agentAddress` is persisted on the `Agent` model so it can be displayed without triggering biometric prompts.
 
@@ -399,9 +399,9 @@ A standard BIP39 24-word mnemonic encoding the 32-byte master key. This is the o
 
 - **Algorithm:** BIP39 §3. 256 bits of entropy plus the high 8 bits of `SHA-256(entropy)` as a checksum (264 bits total = 24 × 11), split into 24 11-bit big-endian indices into the canonical 2048-word English wordlist.
 - **Encoding:** Implemented in [`Identity/MasterKeyMnemonic.swift`](../Packages/OsaurusCore/Identity/MasterKeyMnemonic.swift) with no external SwiftPM dependency. The wordlist ships as a bundle resource at `Resources/Identity/bip39-english.txt`.
-- **Display:** Shown exactly once during onboarding's recovery phase and once in `IdentityView.RecoveryPromptCard` immediately after a fresh `OsaurusIdentity.setup()`. Rendered as a 4×6 grid with "Copy phrase", "Save as .txt", and "Print" actions.
+- **Display:** Onboarding does not show the phrase. It is opened on demand with **View recovery phrase** in Settings → Osaurus ID (`MasterMnemonicCard`), which can be reopened any time. Rendered as a 4×6 grid with "Copy phrase", "Save as .txt", and "Print" actions.
 - **Memory hygiene:** The 32-byte seed is held only on the stack of `OsaurusIdentity.setup()` long enough to compute the mnemonic, then wiped via `Data.zeroOut()` (which calls `memset` over the underlying buffer).
-- **Acknowledgement:** A `masterMnemonicAcknowledged` UserDefaults flag (canonicalised in `IdentityDefaultsKey`) is set when the user confirms "I've saved it". On subsequent launches the Identity view shows a yellow "Master key backup not confirmed" banner whenever the flag is missing.
+- **Acknowledgement:** A `masterMnemonicAcknowledged` UserDefaults flag (canonicalised in `IdentityDefaultsKey`) is reset on a fresh setup. No banner or prompt reads it; the phrase stays reachable through **View recovery phrase**.
 
 **What the phrase does and does not recover.** The phrase rebuilds the **master** only. Agent addresses are re-derived from the master plus each agent's stored key path, and the two layouts differ in what that path needs:
 
@@ -426,7 +426,7 @@ OSAURUS-XXXX-XXXX-XXXX-XXXX
 
 Format: `OSAURUS-` prefix followed by 4 groups of 4 uppercase hex characters (8 random bytes = 64 bits of entropy).
 
-- Generated from `SecRandomCopyBytes` and shown to the user exactly once during initial setup.
+- Generated from `SecRandomCopyBytes` during initial setup (`RecoveryManager.configure`). The app does not currently display it.
 - Single-use; consumed when claimed against the Osaurus directory.
 - **Cannot rebuild the local master** — it is only an authenticator for the future server-side recovery flow.
 - Discarded from application memory after display; never stored on device in plaintext.
@@ -514,7 +514,7 @@ Access keys bridge the gap between the hardware-bound internal identity and the 
 
 ### LAN pairing (retired)
 
-Osaurus no longer advertises agents over Bonjour (`_osaurus._tcp`), and the LAN `GET /pair/challenge` + `POST /pair` flow is gone: both routes now return `404` (or `401` from the auth gate for a non-loopback caller). The user's own Macs reach each other's agents through Sync (`docs/SYNC.md`), other people through relay invites and Workspaces, and the iPhone through Sync as well (`SYNC_MOBILE_CONTRACT.md`; the old `/pair/code` flow is removed). Keys the old flow minted stay valid until they expire (90 days) or are revoked under access keys; the `.osaurus` providers it created on connectors stay as ordinary model providers.
+Osaurus no longer advertises agents over Bonjour (`_osaurus._tcp`), and the LAN `GET /pair/challenge` + `POST /pair` flow is gone: both routes now return `404` (or `401` from the auth gate for a non-loopback caller). The user's own Macs reach each other's agents through Sync (`docs/SYNC.md`), other people through relay invites and Workspaces, and the iPhone through Sync as well (`SYNC_MOBILE_CONTRACT.md`). The 6-digit iPhone flow (`_osaurus-mobile._tcp`, `/pair/hello`, `/pair/code`, `/pair/confirm`) still runs for iPhone apps without Sync until an iPhone joins Sync; after that those routes answer `410`. Keys the old flow minted stay valid until they expire (90 days) or are revoked under access keys; the `.osaurus` providers it created on connectors stay as ordinary model providers.
 
 Pairings approved before the agent-scoping fix are master-scoped, never-expiring keys. The Settings → Server pane labels them as **Legacy** and explains: *"Pre-upgrade pairing — grants access to all agents and never expires."* Users can revoke and re-pair to scope them tighter.
 
@@ -550,7 +550,7 @@ Because both X25519 keys are ephemeral, the channel has **forward secrecy**: com
 - Streams must end with the authenticated `fin` frame; silent truncation by a relay or middlebox is detected client-side.
 - Sequence numbers double as AEAD nonces and are bound into the AAD with the session id and direction, so frames cannot be transplanted between sessions, directions, or calls.
 
-**Hard-require (no downgrade).** Non-loopback requests to `/agents/{id}/run` and `/agents/{id}/dispatch` — including relay-origin traffic — that did not arrive through the channel are rejected with `426 Upgrade Required` (`secure_channel_required`). Loopback callers (CLI, App Intents) stay plaintext. `/models` and agent metadata routes keep accepting plaintext for third-party SDK clients, though Osaurus peers fetch them through the channel too. Peers advertise support via `osc=1` in their Bonjour TXT record and a `secureChannel` flag in pair/invite responses; an old peer that cannot handshake produces a clear "upgrade Osaurus" error instead of a cryptic failure.
+**Hard-require (no downgrade).** Non-loopback requests to `/agents/{id}/run` and `/agents/{id}/dispatch` — including relay-origin traffic — that did not arrive through the channel are rejected with `426 Upgrade Required` (`secure_channel_required`). Loopback callers (CLI, App Intents) stay plaintext. `/models` and agent metadata routes keep accepting plaintext for third-party SDK clients, though Osaurus peers fetch them through the channel too. Peers advertise support via a `secureChannel` flag in pair/invite responses; an old peer that cannot handshake produces a clear "upgrade Osaurus" error instead of a cryptic failure.
 
 With the channel in place, the relay is a **blind pipe**: it forwards only handshake messages and ciphertext, and the relay operator (a TLS-terminating MITM by construction) can no longer observe Bearer tokens, prompts, or responses.
 

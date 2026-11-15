@@ -989,6 +989,9 @@ final class ChatSession: ObservableObject {
     /// remote provider shows up in the picker live, without reopening the
     /// window (mirrors `AgentsView`'s `$items` subscription).
     nonisolated(unsafe) private var modelCacheCancellable: AnyCancellable?
+    /// Lock Model, or the locked model, can change while the chat is open.
+    /// Provider connects also decide whether a locked model is available.
+    nonisolated(unsafe) private var modelLockCancellable: AnyCancellable?
     /// Runtime residency changes can originate outside this window (HTTP,
     /// plugins, subagents, other chats). Observe them so a model evicted behind
     /// the window's back cannot keep a stale green warm indicator.
@@ -1234,6 +1237,15 @@ final class ChatSession: ObservableObject {
                 Task { @MainActor in self?.applyPickerItems(items) }
             }
 
+        modelLockCancellable = Publishers.Merge(
+            NotificationCenter.default.publisher(for: .agentUpdated).map { @Sendable _ in () },
+            NotificationCenter.default.publisher(for: .remoteProviderStatusChanged).map { @Sendable _ in () }
+        )
+        .receive(on: RunLoop.main)
+        .sink { [weak self] _ in
+            Task { @MainActor in self?.applyModelLockChange() }
+        }
+
         runtimeResidencyObserver = NotificationCenter.default.addObserver(
             forName: .modelRuntimeResidencyChanged,
             object: nil,
@@ -1367,7 +1379,9 @@ final class ChatSession: ObservableObject {
                 // signal, so those pin transitions never read as a user
                 // switching models.
                 let isRemoteAgentTarget = self.isRemoteAgentTarget || self.workspaceContext != nil
-                if Self.shouldWarnAboutModelSwitch(
+                let pid = self.agentId ?? Agent.defaultId
+                let isLocked = AgentManager.shared.lockedModel(for: pid) != nil
+                if !isLocked, Self.shouldWarnAboutModelSwitch(
                     previousModel: previousModel,
                     newModel: model,
                     hasConversation: self.hasVisibleThreadMessages,
@@ -1387,13 +1401,13 @@ final class ChatSession: ObservableObject {
                 }
                 self.lastManualModelSelection = model
                 self.restoredWindowModelSelection = nil
-                let pid = self.agentId ?? Agent.defaultId
                 // Mode 2 (remote agent run): the model is pinned to the remote
                 // agent's own model. Don't write that pin into the LOCAL agent's
                 // saved default — otherwise selecting a remote agent would
                 // silently overwrite the local agent's preferred model. Mode 1
                 // (plain model picks on a local agent) still persists normally.
-                if self.remoteAgentProviderId == nil {
+                // A locked agent's model changes only in its settings.
+                if self.remoteAgentProviderId == nil, !isLocked {
                     AgentManager.shared.updateDefaultModel(for: pid, model: model)
                 }
 
@@ -1593,6 +1607,7 @@ final class ChatSession: ObservableObject {
         modelLoadCancellable = nil
         contextEstimateCancellable = nil
         modelCacheCancellable = nil
+        modelLockCancellable = nil
         screenContextCancellable = nil
         // Belt-and-suspenders: a session shouldn't dealloc while marked
         // active, but a stale sidebar indicator with no live session to
@@ -1658,6 +1673,15 @@ final class ChatSession: ObservableObject {
     /// (`source == .chat`) alone, where a manual pick must survive, unless
     /// `inWindowChat`.
     func applyAgentDefaultModelForDispatch(inWindowChat: Bool = false) {
+        if admittedDelegationModel == nil, let locked = Self.lockedModelSelection(for: agentId, in: pickerItems) {
+            guard selectedModel != locked else { return }
+            isLoadingModel = true
+            selectedModel = locked
+            loadActiveModelOptions(for: locked)
+            applyImageModelDefaults(for: locked)
+            isLoadingModel = false
+            return
+        }
         guard inWindowChat || source != .chat else { return }
         if let admitted = admittedDelegationModel {
             // Preserve an unavailable target for the runtime's ordinary error,
@@ -1682,9 +1706,14 @@ final class ChatSession: ObservableObject {
     }
 
     /// Selects `model` for the next run without saving it as the agent's
-    /// choice. Returns false when the picker has no such model.
+    /// choice. Returns false when the picker has no such model, or when the
+    /// agent is locked to a different one (the locked model is selected).
     @discardableResult
     func pinModelForRun(_ model: String) -> Bool {
+        if admittedDelegationModel == nil, Self.lockedModelSelection(for: agentId, in: pickerItems) != nil {
+            applyAgentDefaultModelForDispatch()
+            return selectedModel == (Self.resolvePickerModelId(model, in: pickerItems) ?? model)
+        }
         guard let id = Self.resolvePickerModelId(model, in: pickerItems) else { return false }
         guard selectedModel != id else { return true }
         isLoadingModel = true
@@ -1709,9 +1738,11 @@ final class ChatSession: ObservableObject {
         notifySessionBecameActive()
     }
 
-    /// The model a new session for `agentId` starts on: the agent's
-    /// effective model when the picker has it, else a fallback pick.
+    /// The model a new session for `agentId` starts on: the locked model, or
+    /// the agent's effective model when the picker has it, else a fallback
+    /// pick.
     static func initialModel(for agentId: UUID?, in items: [ModelPickerItem]) -> String? {
+        if let locked = lockedModelSelection(for: agentId, in: items) { return locked }
         if let configured = AgentManager.shared.effectiveModel(for: agentId ?? Agent.defaultId),
             let model = resolvePickerModelId(configured, in: items)
         {
@@ -1726,6 +1757,41 @@ final class ChatSession: ObservableObject {
             return osaurusRouterValueCandidate(in: items)?.id
         }
         return items.firstChatCapable?.id
+    }
+
+    /// The lock state the composer last rendered: the locked model and
+    /// whether it was unavailable.
+    private var renderedModelLock: (model: String?, unavailable: String?) = (nil, nil)
+
+    /// Follow Lock Model and provider changes: a locked agent's session moves
+    /// onto its model, and the chip and notice re-render when they change.
+    private func applyModelLockChange() {
+        let locked = AgentManager.shared.lockedModel(for: agentId)
+        if locked != nil, !isStreaming { applyAgentDefaultModelForDispatch() }
+        let state = (model: locked, unavailable: lockedModelUnavailable)
+        guard state != renderedModelLock else { return }
+        renderedModelLock = state
+        objectWillChange.send()
+    }
+
+    /// What a locked agent's session selects: the picker's id for the locked
+    /// model, or the locked id itself when the picker lacks it, so the turn
+    /// fails instead of running on another model. Nil when not locked.
+    static func lockedModelSelection(for agentId: UUID?, in items: [ModelPickerItem]) -> String? {
+        guard let locked = AgentManager.shared.lockedModel(for: agentId) else { return nil }
+        return resolvePickerModelId(locked, in: items) ?? locked
+    }
+
+    /// The locked model when this session's agent is locked to a model that
+    /// is not available now. Nil while models are still being discovered or
+    /// a provider is still connecting, when it cannot be told yet.
+    var lockedModelUnavailable: String? {
+        guard admittedDelegationModel == nil, let locked = AgentManager.shared.lockedModel(for: agentId),
+            Self.resolvePickerModelId(locked, in: pickerItems) == nil,
+            !isDiscoveringModels, ModelPickerItemCache.shared.isLoaded,
+            !RemoteProviderManager.shared.providerStates.values.contains(where: \.isConnecting)
+        else { return nil }
+        return locked
     }
 
     /// Resolve an agent-configured model string to a picker item id.
@@ -1967,6 +2033,8 @@ final class ChatSession: ObservableObject {
 
         if let admitted = admittedDelegationModel {
             newSelected = Self.resolvePickerModelId(admitted, in: newOptions) ?? admitted
+        } else if let locked = Self.lockedModelSelection(for: agentId, in: newOptions) {
+            newSelected = locked
         } else if let manual = lastManualModelSelection, selectedModel == manual,
             newOptionIds.contains(manual)
         {
@@ -2394,14 +2462,29 @@ final class ChatSession: ObservableObject {
             result.insert(.onboardingPanel(turnId: turnId, panel: panel), at: index + 1)
             return result
         }
-        var result = withoutAuthoredActions(blocks)
+        let stripped = withoutAuthoredActions(blocks)
         let streamingId = isStreaming ? turns.last?.id : nil
-        for turn in turns.reversed() where turn.role == .assistant && turn.id != streamingId {
-            guard let location = turn.runLocation,
-                let index = result.lastIndex(where: { $0.turnId == turn.id })
-            else { continue }
+        var labels: [UUID: ContentBlock] = [:]
+        for turn in turns where turn.role == .assistant && turn.id != streamingId {
+            guard let location = turn.runLocation else { continue }
             let label = location.label(tokensPerSecond: turn.generationTokensPerSecond)
-            result.insert(.runLocation(turnId: turn.id, text: label), at: index + 1)
+            labels[turn.id] = .runLocation(turnId: turn.id, text: label)
+        }
+        // Each label goes right after its turn's last block, in one pass
+        // (this runs on every streaming delta).
+        var lastIndexByTurn: [UUID: Int] = [:]
+        if !labels.isEmpty {
+            for (index, block) in stripped.enumerated() where labels[block.turnId] != nil {
+                lastIndexByTurn[block.turnId] = index
+            }
+        }
+        var result: [ContentBlock] = []
+        result.reserveCapacity(stripped.count + lastIndexByTurn.count + 1)
+        for (index, block) in stripped.enumerated() {
+            result.append(block)
+            if lastIndexByTurn[block.turnId] == index, let label = labels[block.turnId] {
+                result.append(label)
+            }
         }
         // After the walkthrough, this chat can hold a discovery's panel too.
         if let (turnId, panel) = OnboardingFirstRun.shared.panel(for: self) ?? DiscoveryCenter.shared.panel(for: self),
@@ -4366,7 +4449,9 @@ final class ChatSession: ObservableObject {
     /// second copy of the transcript or resetting an attached window's draft.
     func restorePersistedModelSelection(_ savedModel: String?) {
         restoredWindowModelSelection = source == .chat ? savedModel : nil
-        if let savedModel, pickerItems.contains(where: { $0.id == savedModel }) {
+        if let savedModel, AgentManager.shared.lockedModel(for: agentId) == nil,
+            pickerItems.contains(where: { $0.id == savedModel })
+        {
             isLoadingModel = true
             selectedModel = savedModel
             loadActiveModelOptions(for: selectedModel)
@@ -7842,6 +7927,12 @@ final class ChatSession: ObservableObject {
                 ttftTrace?.mark("pre_send_wait")
                 ttftTrace?.set("awaited_pre_send_handshake", awaitedPreSendHandshake)
                 do {
+                    if let unavailable = self.lockedModelUnavailable {
+                        throw ChatEngine.EngineError(
+                            kind: .agentModelUnavailable(
+                                agentName: AgentManager.shared.agent(for: turnAgentId)?.displayName ?? L("This agent"),
+                                model: unavailable))
+                    }
                     let engine = chatEngineFactory(runtimeSource.inferenceSource)
                     let chatCfg = ChatConfigurationStore.load()
 
@@ -8251,6 +8342,8 @@ final class ChatSession: ObservableObject {
                     // through the post-tool recovery path.
                     var hasStructuredToolWorkThisRun = false
 
+                    let attachmentMessages = TurnAttachmentMessageCache()
+
                     /// Convert a single turn to a ChatMessage (returns nil if should be skipped)
                     @MainActor
                     func turnToMessage(_ t: ChatTurn, isLastTurn: Bool, isLatestUserTurn: Bool) -> ChatMessage? {
@@ -8266,20 +8359,24 @@ final class ChatSession: ObservableObject {
                             // on a picture) ride as multimodal tool messages
                             // for vision models. Same helper as warm-up so
                             // both serialise byte-identical history.
-                            return ToolResultMediaBridge.toolMessage(
-                                content: t.content,
-                                toolCallId: t.toolCallId,
-                                attachments: t.attachments,
-                                supportsImages: turnSupportsImages
-                            )
+                            return attachmentMessages.message(for: t) {
+                                ToolResultMediaBridge.toolMessage(
+                                    content: t.content,
+                                    toolCallId: t.toolCallId,
+                                    attachments: t.attachments,
+                                    supportsImages: turnSupportsImages
+                                )
+                            }
                         case .user:
-                            let base = Self.buildUserChatMessage(
-                                content: t.content,
-                                attachments: t.attachments,
-                                supportsImages: turnSupportsImages,
-                                supportsAudio: turnSupportsAudio,
-                                supportsVideo: turnSupportsVideo
-                            )
+                            let base = attachmentMessages.message(for: t) {
+                                Self.buildUserChatMessage(
+                                    content: t.content,
+                                    attachments: t.attachments,
+                                    supportsImages: turnSupportsImages,
+                                    supportsAudio: turnSupportsAudio,
+                                    supportsVideo: turnSupportsVideo
+                                )
+                            }
                             // Replay the frozen memory / screen-context block
                             // this turn was originally sent with, so its wire
                             // bytes never change once it has been part of a
@@ -10526,6 +10623,9 @@ struct ChatView: View {
     /// the agent's. Returns nil when no remote agent is selected (the chip is
     /// interactive then and resolves its own label).
     private var pinnedModelChipLabel: String? {
+        if !isRemoteAgentChrome, let locked = lockedAgentModel {
+            return session.pickerItems.first(where: { $0.id == session.selectedModel })?.displayName ?? locked
+        }
         guard isRemoteAgentChrome else { return nil }
         if let host = observedSession.hostDeviceElsewhere { return hostedRunMonitor.hostName(host) }
         if let providerId = windowState.selectedRemoteAgentProviderId,
@@ -10557,6 +10657,28 @@ struct ChatView: View {
         if observedSession.hostDeviceElsewhere != nil { return true }
         if let context = observedSession.workspaceContext { return !context.isServedForTeammate }
         return windowState.selectedRemoteAgentProviderId != nil
+    }
+
+    /// The model this tab's agent is locked to, or nil.
+    private var lockedAgentModel: String? {
+        AgentManager.shared.lockedModel(for: observedSession.agentId)
+    }
+
+    /// Why this tab's model chip is a fixed label, if it is.
+    private var composerModelPin: ModelPinReason? {
+        if isRemoteAgentChrome { return .remoteAgent }
+        return lockedAgentModel != nil ? .agentLocked : nil
+    }
+
+    /// The locked model this tab cannot run, when it is unavailable.
+    private var lockedModelUnavailable: String? {
+        isRemoteAgentChrome ? nil : observedSession.lockedModelUnavailable
+    }
+
+    /// Typing stays open but nothing sends: another device is replying, or
+    /// the agent's locked model is unavailable. Explained above the card.
+    private var composerSendBlocked: Bool {
+        observedSession.remoteReply != nil || observedSession.isWaitingOnHost || lockedModelUnavailable != nil
     }
 
     /// Workspace name for the composer's "Workspace pool" spend chip when the
@@ -10675,6 +10797,34 @@ struct ChatView: View {
             } else {
                 sharedAgentStatusNotice(status, identity: identity)
             }
+        }
+    }
+
+    /// The agent is locked to a model that is not available: nothing sends
+    /// until the model is repaired or the agent's model is changed.
+    private func lockedModelUnavailableNotice(_ model: String) -> some View {
+        remoteAgentNoticeRow(tone: theme.status.warning) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .glyphSize(.caption, weight: .semibold)
+                .foregroundColor(theme.status.warning.foreground)
+            Text(
+                String(
+                    format: L(
+                        "This agent's model (%@) isn't available. Repair it in the app that installed it, or change the model in the agent's settings."
+                    ), model)
+            )
+            .textStyle(.caption, weight: 500)
+            .foregroundColor(theme.text.primary)
+            .lineLimit(3)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            Button(action: {
+                AppDelegate.shared?.showManagementWindow(
+                    initialTab: .agents, deeplinkAgentId: observedSession.agentId)
+            }) {
+                Text("Open Agent Settings", bundle: .module)
+            }
+            .assignedSettingsButtonStyle(.secondary, size: .compact)
         }
     }
 
@@ -11539,6 +11689,7 @@ struct ChatView: View {
                     MainNavigationRail(windowState: windowState)
                         .padding(.top, topInset)
                 }
+                HStack(alignment: .top, spacing: theme.space.s0) {
                 // Sidebar, docked beside the content (regular and wide).
                 // Stays mounted at its own width while hidden: opening and
                 // closing only animates the clipped column it slides through,
@@ -11671,6 +11822,12 @@ struct ChatView: View {
                                     .animation(theme.motion.springAnimation, value: composerLock)
                             }
 
+                            if let locked = lockedModelUnavailable {
+                                lockedModelUnavailableNotice(locked)
+                                    .padding(.top, theme.space.s8)
+                                    .readableColumnRow()
+                            }
+
                             // Run-liveness notice (slow / stalled) so a run
                             // with no visible progress reads as a knowable
                             // state with a recovery action, not a hang.
@@ -11789,13 +11946,13 @@ struct ChatView: View {
                                     onSendNow: { observedSession.sendNowInterrupting() },
                                     onCancelQueued: { observedSession.cancelQueuedSend() },
                                     onAddCredits: { showTopUpSheet = true },
-                                    isModelPinned: isRemoteAgentChrome,
+                                    modelPin: composerModelPin,
+                                    isPinnedModelUnavailable: lockedModelUnavailable != nil,
                                     pinnedModelLabel: pinnedModelChipLabel,
                                     remoteConnectionPending: windowState.remoteAgentConnectionPhase
                                         == .connecting,
                                     composerLock: composerLock,
-                                    sendBlocked: observedSession.remoteReply != nil
-                                        || observedSession.isWaitingOnHost,
+                                    sendBlocked: composerSendBlocked,
                                     isRemoteAgentRun: isRemoteAgentChrome,
                                     inputHistoryProvider: { [weak observedSession] in
                                         guard let observedSession else { return [] }
@@ -11836,7 +11993,7 @@ struct ChatView: View {
                                 onOpenModelManager: {
                                     AppDelegate.shared?.showManagementWindow(initialTab: .models)
                                 },
-                                onUseFoundation: windowState.foundationModelAvailable
+                                onUseFoundation: windowState.foundationModelAvailable && lockedAgentModel == nil
                                     ? {
                                         session.selectedModel = session.pickerItems.firstChatCapable?.id ?? "foundation"
                                     } : nil,
@@ -11917,33 +12074,42 @@ struct ChatView: View {
                     .allowsHitTesting(!isChatContentCovered)
                     .accessibilityHidden(isChatContentCovered)
 
-
-                    if windowState.mainSurface == .workflows && windowState.showsWorkflowLibrary {
-                        WorkflowMainDestination(windowState: windowState)
-                            .padding(.top, Self.headerHeight(theme))
+                    ZStack {
+                        if windowState.mainSurface == .workflows && windowState.showsWorkflowLibrary {
+                            WorkflowMainDestination(windowState: windowState)
+                                .padding(.top, Self.headerHeight(theme))
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .transition(pageTransition)
+                        } else if windowState.mainSurface == .insights {
+                            InsightsView()
+                                .padding(.top, Self.headerHeight(theme))
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .transition(pageTransition)
+                        } else if windowState.mainSurface == .help {
+                            HelpView()
+                                .padding(.top, Self.headerHeight(theme))
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .transition(pageTransition)
+                        } else if windowState.mainSurface == .newAgent {
+                            AgentCreatorMainDestination(windowState: windowState)
+                                .padding(.top, Self.headerHeight(theme))
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .transition(pageTransition)
+                        } else if windowState.mainSurface == .settings {
+                            SettingsMainDestination(
+                                topInset: topInset,
+                                sidebarWidth: clampedSidebarWidth,
+                                isSidebarCollapsed: windowState.isSettingsSidebarCollapsed,
+                                sidebarWidthRange: Self.sidebarWidthRange,
+                                storedSidebarWidth: $storedSidebarWidth,
+                                liveSidebarWidth: $liveSidebarWidth
+                            )
+                            .equatable()
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .zIndex(2)
-                    } else if windowState.mainSurface == .settings {
-                        SettingsMainDestination(
-                            topInset: topInset,
-                            sidebarWidth: clampedSidebarWidth,
-                            isSidebarCollapsed: windowState.isSettingsSidebarCollapsed,
-                            sidebarWidthRange: Self.sidebarWidthRange,
-                            storedSidebarWidth: $storedSidebarWidth,
-                            liveSidebarWidth: $liveSidebarWidth
-                        )
-                        .equatable()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .zIndex(2)
+                            .transition(pageTransition)
+                        }
                     }
-                }
-                // Workflows keeps its rounded canvas; Chat meets the sidebar
-                // with a square corner. Leave the titlebar above it intact.
-                .mask {
-                    VStack(spacing: theme.space.s0) {
-                        Rectangle().frame(height: topInset)
-                        UnevenRoundedRectangle(topLeadingRadius: windowState.mainSurface == .workflows ? theme.radius.xlarge : 0, style: .continuous)
-                    }
+                    .zIndex(2)
                 }
                 .environment(\.workflowSharedGrid, windowState.mainSurface == .workflows)
                 // Computer Use gated-action confirmations. Process-wide queue so
@@ -11961,6 +12127,16 @@ struct ChatView: View {
                 theme.surface.canvas
                     .padding(.top, topInset)
                     .frame(width: inspectorWidth)
+                }
+                // Everything beside the rail meets it with one rounded
+                // corner, whichever surface or sidebar is first. Leave the
+                // titlebar above it intact.
+                .mask {
+                    VStack(spacing: theme.space.s0) {
+                        Rectangle().frame(height: topInset)
+                        UnevenRoundedRectangle(topLeadingRadius: isEmbedded ? 0 : theme.radius.xlarge, style: .continuous)
+                    }
+                }
             }
             // The card sits in that column when there is one, otherwise
             // over the content's trailing edge.
@@ -12367,11 +12543,18 @@ struct ChatView: View {
     /// Either creation chat, which share the chat-beside-draft layout.
     private var isCreationLayout: Bool { isWorkflowCreation || isAgentCreation }
 
-    /// The Workflows home or Settings owns the content area; the live
-    /// thread and composer stay mounted underneath, hidden.
+    /// The Workflows home, Insights, New Agent or Settings owns the content
+    /// area; the live thread and composer stay mounted underneath, hidden.
     private var isChatContentCovered: Bool {
         (windowState.mainSurface == .workflows && windowState.showsWorkflowLibrary)
-            || windowState.mainSurface == .settings
+            || windowState.showsPageSurface
+    }
+
+    /// A short fade carried by the transition alone, so nothing inside the
+    /// page animates its layout. Any movement shows a gap under the rounded
+    /// corner.
+    private var pageTransition: AnyTransition {
+        .opacity.animation(theme.motion.quick)
     }
 
     /// The Architect chat's draft, when it has one.
@@ -12499,7 +12682,7 @@ struct ChatView: View {
             onOpenModelManager: {
                 AppDelegate.shared?.showManagementWindow(initialTab: .models)
             },
-            onUseFoundation: windowState.foundationModelAvailable
+            onUseFoundation: windowState.foundationModelAvailable && lockedAgentModel == nil
                 ? {
                     session.selectedModel =
                         session.pickerItems.firstChatCapable?.id
@@ -13338,7 +13521,7 @@ extension ChatView {
                 guard let ourWindow = ChatWindowManager.shared.getNSWindow(id: capturedWindowId),
                     event.window === ourWindow,
                     let windowState,
-                    windowState.mainSurface != .settings
+                    !windowState.showsPageSurface
                 else { return event }
                 windowState.isFindBarVisible = true
                 // Also fires when the bar is already open so Cmd+F always
@@ -13397,12 +13580,12 @@ extension ChatView {
                     return nil
                 }
 
-                // Stage 2.5: Settings covers the chat. Esc belongs to the
-                // page on screen (its search field, an inspector); the
-                // hidden chat's prompts and the window itself are never
-                // its target. A focused field gets it first, then lets go
-                // of focus, as in Stage 4.25.
-                if let windowState, windowState.mainSurface == .settings {
+                // Stage 2.5: Settings or Insights covers the chat. Esc
+                // belongs to the page on screen (its search field, an
+                // inspector); the hidden chat's prompts and the window
+                // itself are never its target. A focused field gets it
+                // first, then lets go of focus, as in Stage 4.25.
+                if let windowState, windowState.showsPageSurface {
                     if let field = ourWindow.firstResponder as? NSTextView,
                         field.isFieldEditor || field is IMETrackingTextView, !field.hasMarkedText()
                     {
@@ -13499,9 +13682,10 @@ extension ChatView {
                     return nil
                 }
 
-                // Stage 7.5: A page is pushed (Workflows' editor, a
-                // workflow, a run, New Workflow) — go back one level, as
-                // the title bar's back button does.
+                // Stage 7.5: A link opened this surface, or a page is
+                // pushed (Workflows' editor, a workflow, a run, New
+                // Workflow) — go back one level, as the title bar's back
+                // button does.
                 if let windowState, windowState.goBack() {
                     return nil
                 }
@@ -13549,7 +13733,9 @@ private struct MainNavigationRail: View {
             destination(.chat, symbol: "message", label: "Chat")
             destination(.workflows, symbol: "point.forward.to.point.capsulepath", label: "Workflows")
             Spacer(minLength: 8)
+            NavigationHelpButton(windowState: windowState)
             NavigationUsageButton()
+            destination(.insights, symbol: "chart.bar.doc.horizontal", label: "Insights")
             destination(.settings, symbol: "gearshape", label: "Settings")
         }
         .padding(.horizontal, theme.space.s6).padding(.vertical, theme.space.s8)
@@ -13561,11 +13747,7 @@ private struct MainNavigationRail: View {
     private func destination(_ surface: ChatWindowState.MainSurface, symbol: String, label: String) -> some View {
         let isSelected = windowState.mainSurface == surface
         return SettingsIconButton(symbol, help: label, size: .regular, isActive: isSelected, role: .tertiary) {
-            if surface == .workflows, windowState.mainSurface == .workflows, windowState.showsWorkflowLibrary {
-                withAnimation(theme.motion.quick) { windowState.showWorkflowsHome() }
-            } else {
-                windowState.showMainSurface(surface)
-            }
+            windowState.showMainSurfaceFromRail(surface)
         }
         .frame(width: 32, height: 32)
         .accessibilityAddTraits(isSelected ? .isSelected : [])

@@ -24,41 +24,55 @@ Osaurus is committed to providing an accessible experience for all users. This d
 
 ## Color Palette Compliance
 
+The values below are the built-in semantic palettes in
+[`CustomTheme.swift`](../Packages/OsaurusCore/Models/Theme/CustomTheme.swift)
+(`ThemeColorRoles.lightDefaults` / `.darkDefaults`). Ratios are measured against
+each appearance's canvas surface (`#FBFAF9` light, `#181816` dark). Regenerate
+this table whenever those palettes change.
+
 ### Light Appearance
 
 | Element           | Hex Code  | Contrast Ratio | Status        |
 | ----------------- | --------- | -------------- | ------------- |
 | **Text Colors**   |           |                |               |
-| Primary Text      | `#1a1a18` | ~17:1          | ✅ AAA        |
-| Secondary Text    | `#555550` | ~7:1           | ✅ AA         |
-| Tertiary Text     | `#717168` | ~5.5:1         | ✅ AA         |
+| Primary Text      | `#2D2D2A` | 13.2:1         | ✅ AAA        |
+| Secondary Text    | `#474543` | 9.2:1          | ✅ AAA        |
+| Tertiary Text     | `#5A5852` | 6.8:1          | ✅ AA         |
+| Disabled Text     | `#888680` | 3.5:1          | Exempt (inactive) |
 | **Status Colors** |           |                |               |
-| Success           | `#15803d` | ~4.5:1         | ✅ AA         |
-| Warning           | `#a16207` | ~4.5:1         | ✅ AA         |
-| Error             | `#dc2626` | ~4.5:1         | ✅ AA         |
-| Info              | `#555550` | ~7:1           | ✅ AA         |
+| Success           | `#227758` | 5.2:1          | ✅ AA         |
+| Warning           | `#976000` | 5.0:1          | ✅ AA         |
+| Error             | `#9B2208` | 7.7:1          | ✅ AAA        |
+| Info              | `#0E4F90` | 7.9:1          | ✅ AAA        |
 | **UI Components** |           |                |               |
-| Input Border      | `#a8a8a3` | ~3.5:1         | ✅ AA         |
-| Primary Border    | `#d0d0cc` | ~2.2:1         | ✅ Decorative |
-| Focus Border      | `#4a4a46` | ~8:1           | ✅ AAA        |
+| Strong Border     | `#888680` | 3.5:1          | ✅ AA         |
+| Default Border    | `#BAB9B5` | 1.9:1          | Decorative    |
+| Subtle Border     | `#D8D8D4` | 1.4:1          | Decorative    |
+| Focus Border      | `#181816` | 17.1:1         | ✅ AAA        |
 
 ### Dark Appearance
 
 | Element           | Hex Code  | Contrast Ratio | Status        |
 | ----------------- | --------- | -------------- | ------------- |
 | **Text Colors**   |           |                |               |
-| Primary Text      | `#f5f5f2` | ~17:1          | ✅ AAA        |
-| Secondary Text    | `#a8a8a3` | ~8.5:1         | ✅ AAA        |
-| Tertiary Text     | `#8a8a85` | ~5.5:1         | ✅ AA         |
+| Primary Text      | `#FBFAF9` | 17.1:1         | ✅ AAA        |
+| Secondary Text    | `#D8D8D4` | 12.4:1         | ✅ AAA        |
+| Tertiary Text     | `#A1A09B` | 6.8:1          | ✅ AA         |
+| Disabled Text     | `#54524F` | 2.3:1          | Exempt (inactive) |
 | **Status Colors** |           |                |               |
-| Success           | `#22c55e` | ~8:1           | ✅ AAA        |
-| Warning           | `#fbbf24` | ~11:1          | ✅ AAA        |
-| Error             | `#f87171` | ~6:1           | ✅ AA         |
-| Info              | `#60a5fa` | ~6:1           | ✅ AA         |
+| Success           | `#4CE5AD` | 11.1:1         | ✅ AAA        |
+| Warning           | `#FFB35C` | 10.0:1         | ✅ AAA        |
+| Error             | `#F37358` | 6.3:1          | ✅ AA         |
+| Info              | `#70B8FF` | 8.5:1          | ✅ AAA        |
 | **UI Components** |           |                |               |
-| Input Border      | `#52525b` | ~3:1           | ✅ AA         |
-| Primary Border    | `#3f3f46` | ~2.5:1         | ✅ Decorative |
-| Focus Border      | `#8a8a85` | ~5.5:1         | ✅ AA         |
+| Strong Border     | `#73726E` | 3.7:1          | ✅ AA         |
+| Default Border    | `#3F3D3B` | 1.6:1          | Decorative    |
+| Subtle Border     | `#353331` | 1.4:1          | Decorative    |
+| Focus Border      | `#FBFAF9` | 17.1:1         | ✅ AAA        |
+
+Default and subtle borders separate surfaces that already differ in fill, so they
+are decorative under 1.4.11. A control whose boundary is its only visual cue must
+use the strong or focus border.
 
 ---
 

@@ -810,6 +810,7 @@ enum ConfigApplier {
             agent.avatar = AgentMascot(storedID: avatar)?.rawValue
         }
         if entry.model.isSpecified { agent.defaultModel = entry.model.valueOrNil }
+        if let locked = entry.modelLocked { agent.modelLocked = locked }
         if entry.temperature.isSpecified {
             agent.temperature = entry.temperature.valueOrNil.map(Float.init)
         }
@@ -870,7 +871,7 @@ enum ConfigApplier {
             } else {
                 outcome.notes.append(
                     "runtime: `\(raw)` is not registered on this Mac, so the agent runs on Osaurus's "
-                        + "own loop. Add it under Settings → Runtimes, then pick it in the chat model picker.")
+                        + "own loop. Add it under Settings → Agent Runtimes, then pick it in the chat model picker.")
             }
         }
         if var entry = entry.claudeCode {
@@ -2566,7 +2567,7 @@ enum ConfigApplier {
                         section: "search_providers", target: entry.id,
                         status: needsKey ? .needsUserAction : .done,
                         message: needsKey
-                            ? "Added. Paste the API key in Settings → Search." : nil))
+                            ? "Added. Paste the API key in Settings → Web Search." : nil))
             } else {
                 if let enabled = entry.enabled {
                     manager.setEnabled(enabled, for: entry.id)

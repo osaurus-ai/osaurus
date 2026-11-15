@@ -10,7 +10,7 @@ Osaurus runs open-weight models locally on Apple Silicon using MLX — no intern
 
 ## Downloading models
 
-- Settings… (⌘,) → Local Models lists the curated catalog in one table: name, **Fits This Mac**, estimated memory, download size and release date, with installed models first. **All**, **On This Mac** and **Available** narrow the list, the search field matches names and families, column headers sort, and **Filter** (Language) narrows by type, size, parameters and family. Click a row to open its details on the right; download, pause, and delete from the row or the details. **Model kind** switches the page between Language, Image, Speech, Privacy Detection and AppleScript models; which installed model is used for each job is Models → Model Defaults.
+- Settings… (⌘,) → Local Models lists the curated catalog in one table: name, **Fits This Mac**, estimated memory, download size and release date, with installed models first. **All**, **On This Mac** and **Available** narrow the list, the search field matches names and families, column headers sort, and **Filter** (Language) narrows by type, size, parameters and family. Click a row to open its details on the right; download, pause, and delete from the row or the details. **Model kind** switches the page between Language, Image, Speech, Embedding, Privacy Detection and AppleScript models; which installed model is used for each job is Models → Model Defaults.
 - Or just ask the default Osaurus assistant in chat to download a model — it can list recommended models and start the download for you.
 - Models are stored in `~/MLXModels` (override with the `OSU_MODELS_DIR` environment variable). Model weights live outside `~/.osaurus/`.
 - The full download of Osaurus (the ~4 GB `Osaurus-<version>-full.dmg`) ships Raptor 0.7 inside the app. On first launch it is installed into `~/MLXModels/OsaurusAI/Raptor-0.7-4B-JANG_6M` (an instant APFS clone when the app and your models folder share a volume, so it costs no extra disk), onboarding skips the model download, and later updates stay small because the installed copy lives in `~/MLXModels`, not in the app. Deleting it from **Local Models → On This Mac** is permanent for that install; download it again from the catalog if you want it back.
@@ -37,7 +37,7 @@ remain errors. Metadata checks never download or replace model weights.
 
 - Bigger models are smarter but slower and need more RAM; quantized variants (4-bit/8-bit) trade a little quality for much lower memory.
 - The Models catalog is curated for Osaurus (tool calling, reasoning, and template support are validated), and the OsaurusAI page on Hugging Face hosts optimized bundles.
-- Temperature, top-k, and the other sampling values come from each model bundle's own configuration unless you explicitly override them in Server → Settings → Sampling Defaults.
+- Temperature, top-k, and the other sampling values come from each model bundle's own configuration unless you explicitly override them in Server → Server Settings → Sampling Defaults.
 
 ## Download size and estimated memory
 
@@ -73,7 +73,7 @@ restores bundle-aware policy, so a capable bundle can show Adaptive again.
 Legacy manual depths migrate to Adaptive and are re-evaluated by runtime admission.
 
 On is a request, not proof of active speculation. Unsupported media and
-schema-constrained requests run AR. Server → Settings → **Speculative Decoding**
+schema-constrained requests run AR. Server → Server Settings → **Speculative Decoding**
 shows the loaded model's actual resolution and reason. Sampling stays bundle-driven
 unless explicitly overridden. Remote models do not expose this local control.
 
@@ -83,8 +83,8 @@ On macOS 26+ with Apple Intelligence, the on-device Apple Foundation model is av
 
 ## Model memory and loading
 
-- Models load on first use. Residency (keep loaded / unload when idle) is configured in Server → Settings → Model Memory.
-- RAM-safety settings (Server → Settings → Memory Safety) govern load admission and cache caps so a large model can't take down the system.
+- Models load on first use. Residency (keep loaded / unload when idle) is configured in Server → Server Settings → Model Memory.
+- RAM-safety settings (Server → Server Settings → Memory Safety) govern load admission and cache caps so a large model can't take down the system.
 - If a model is too large for available RAM, Osaurus refuses the load with a clear error instead of letting the system swap or crash.
 
 Automatic checks of installed official OsaurusAI repositories run periodically without downloading model files. Use **Automatically Check Model Updates** in Models → Model Defaults → Downloads & Updates to opt out. Manual detail checks and explicit Verify/Repair/Update actions remain available. Metadata matching does not replace file verification.

@@ -1425,6 +1425,7 @@ enum ConfigPlanner {
     /// what the new agent will be able to reach.
     private static func summarizePortableSettings(_ entry: AgentEntry, into changes: inout [String]) {
         if entry.generationSettings.valueOrNil != nil { changes.append("generation_settings: configured") }
+        if entry.modelLocked == true { changes.append("model_locked: true") }
         if let show = entry.showResponseMetrics { changes.append("show_response_metrics: \(show)") }
         if entry.followUpSuggestions == false { changes.append("follow_up_suggestions: false") }
         if let avatar = entry.avatar, !avatar.isEmpty { changes.append("avatar: \(avatar)") }
@@ -1488,6 +1489,9 @@ enum ConfigPlanner {
                 diff(
                     "model", desired: entry.model,
                     current: agent.defaultModel.map { ConfigField.value($0) } ?? .null, into: &changes)
+                if let locked = entry.modelLocked, locked != (agent.modelLocked == true) {
+                    changes.append("model_locked: \(agent.modelLocked == true) -> \(locked)")
+                }
                 diff(
                     "temperature", desired: entry.temperature,
                     current: agent.temperature.map { ConfigField.value(Double($0)) } ?? .null,
@@ -2435,7 +2439,7 @@ enum ConfigPlanner {
             } else {
                 var changes = ["add search provider"]
                 if let def = manager.definition(id: entry.id), !def.isKeyless {
-                    changes.append("needs an API key — paste it in Settings → Search after apply")
+                    changes.append("needs an API key — paste it in Settings → Web Search after apply")
                 }
                 actions.append(
                     ConfigPlanAction(

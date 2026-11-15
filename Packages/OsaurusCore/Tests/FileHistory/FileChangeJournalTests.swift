@@ -290,6 +290,84 @@ struct FileChangeJournalTests {
         #expect(!exists(home.appendingPathComponent("build")))
     }
 
+    /// Shadow manifests from earlier launches were scanned with
+    /// `FileManager` attributes; the scan must produce identical entries.
+    @Test func scanMatchesFileManagerAttributes() async throws {
+        let env = try FileHistoryTestEnv.make()
+        defer { env.cleanup() }
+        let fm = FileManager.default
+        let home = env.agentHome
+        try write(home.appendingPathComponent("src/main.py"), "print(1)")
+        try write(home.appendingPathComponent(".hidden/conf"), "x")
+        try write(home.appendingPathComponent("node_modules/dep/index.js"), "dep")
+        try write(home.appendingPathComponent("pkg/.cache/blob"), "cached")
+        try write(home.appendingPathComponent("bg-123.log"), "log")
+        try write(home.appendingPathComponent("logs/bg-1.log"), "nested log")
+        try write(home.appendingPathComponent("café/naïve.txt"), "unicode")
+        // Enough files that sub-microsecond mtime rounding differences show.
+        for i in 0 ..< 200 { try write(home.appendingPathComponent("many/f\(i).txt"), "\(i)") }
+        let script = home.appendingPathComponent("run.sh")
+        try write(script, "#!/bin/sh")
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: script.path)
+        try fm.createDirectory(at: home.appendingPathComponent("empty"), withIntermediateDirectories: true)
+        try fm.createSymbolicLink(atPath: home.appendingPathComponent("latest").path, withDestinationPath: "src")
+        try fm.createSymbolicLink(atPath: home.appendingPathComponent("dangling").path, withDestinationPath: "nope")
+
+        var expected: FileChangeJournal.Manifest = [:]
+        let enumerator = try #require(fm.enumerator(atPath: home.path))
+        while let rel = enumerator.nextObject() as? String {
+            let attrs = enumerator.fileAttributes
+            let type = attrs?[.type] as? FileAttributeType
+            if FileChangeJournal.isExcluded(relativePath: rel) {
+                if type == .typeDirectory { enumerator.skipDescendants() }
+                continue
+            }
+            switch type {
+            case .typeSymbolicLink:
+                let target = (try? fm.destinationOfSymbolicLink(atPath: home.path + "/" + rel)) ?? ""
+                expected[rel] = .init(type: .symlink, size: 0, mtimeNs: 0, linkTarget: target)
+            case .typeDirectory:
+                expected[rel] = .init(type: .directory, size: 0, mtimeNs: 0, linkTarget: nil)
+            default:
+                let size = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
+                let mtime = (attrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+                let mode = (attrs?[.posixPermissions] as? NSNumber)?.int64Value ?? 0
+                expected[rel] = .init(
+                    type: .file, size: size, mtimeNs: Int64(mtime * 1_000_000_000) &+ mode, linkTarget: nil)
+            }
+        }
+
+        let scanned = try #require(await env.journal.scanManifest(root: home))
+        #expect(scanned == expected)
+        #expect(scanned["logs/bg-1.log"] != nil)
+        #expect(scanned["bg-123.log"] == nil)
+        #expect(!scanned.keys.contains { $0.hasPrefix("node_modules") || $0.contains(".cache") })
+    }
+
+    @Test func inFlightShadowCaptureIsRecoveredAfterCrash() async throws {
+        let env = try FileHistoryTestEnv.make()
+        defer { env.cleanup() }
+        let file = env.agentHome.appendingPathComponent("doc.txt")
+        try write(file, "v1")
+        try await captured(env, tool: "sandbox_exec", declared: nil) { try self.write(file, "v2") }
+        let token = await env.journal.beginCapture(
+            sessionId: Self.session, toolName: "sandbox_exec",
+            targets: [.init(kind: .agentHome, rootId: agent)])
+        try write(file, "v3")
+        try write(env.agentHome.appendingPathComponent("new.txt"), "created")
+        // The app dies here: `endCapture` never runs.
+
+        let relaunched = env.relaunched()
+        let recovered = try #require(await relaunched.changeSets(for: Self.session).first { $0.id == token.setId })
+        let byPath = Dictionary(uniqueKeysWithValues: recovered.entries.map { ($0.path, $0) })
+        #expect(byPath["doc.txt"]?.kind == .modified)
+        #expect(byPath["new.txt"]?.kind == .created)
+        let summary = await relaunched.revert(.set(token.setId), sessionId: Self.session)
+        #expect(summary.isClean, "\(summary)")
+        #expect(read(file) == "v2")
+        #expect(!exists(env.agentHome.appendingPathComponent("new.txt")))
+    }
+
     @Test func shadowPicksUpUserEditsBetweenCalls() async throws {
         let env = try FileHistoryTestEnv.make()
         defer { env.cleanup() }

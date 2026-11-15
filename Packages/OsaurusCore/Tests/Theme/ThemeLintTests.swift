@@ -235,8 +235,7 @@ struct ThemeLintTests {
                 id: "legacyThemeMember",
                 fix: "do not reintroduce v6 bridges; read the role group instead",
                 scope: "Models/Theme/",
-                // `selectionColor` here is the NSTextView selection, not a v6 bridge.
-                allowedFiles: ["Models/Theme/DesignLibrary/InspectorAssignedTextEditor.swift"],
+                allowedFiles: [],
                 hints: ["var ", "let ", "func "]
             ) { line in
                 line.matches(of: /\b(?:var|let|func)\s+(\w+)\b/).contains { members.contains(String($0.1)) }
