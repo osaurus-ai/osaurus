@@ -446,6 +446,94 @@
         }
       }
     },
+    "%lld issues" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld issue"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld issues"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld needs your attention." : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld needs your attention."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld need your attention."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld other automations run agents." : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld other automation runs an agent."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld other automations run agents."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "%lld run on their own." : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld runs on its own."
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld run on their own."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "%lld tools have their own policy for this agent. A tool set to Deny for every agent stays denied." : {
       "localizations" : {
         "de" : {
@@ -1568,6 +1656,28 @@
         }
       }
     },
+    "On for %lld workflows" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "On for %lld workflow"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "On for %lld workflows"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "Osaurus is still using %@. Restart to switch to %@." : {
       "localizations" : {
         "de" : {
@@ -1870,6 +1980,28 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "執行工具呼叫時不顯示審批卡片。%@ 工具可以執行程式碼和修改檔案，因此僅在你信任已安裝的工具時才開啟。若只想變更某個智能體，請在該智能體的「工具」分頁中使用「工具審批」。"
+          }
+        }
+      }
+    },
+    "runs every %lld minutes" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "runs every minute"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "runs every %lld minutes"
+                }
+              }
+            }
           }
         }
       }

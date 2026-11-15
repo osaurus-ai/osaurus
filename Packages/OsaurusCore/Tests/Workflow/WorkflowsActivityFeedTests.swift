@@ -251,3 +251,37 @@ struct WorkflowActivityRoutingTests {
         #expect(ChatWindowState.workflowsSidebarSelection([.activity, .run(workflowID: UUID(), runID: nil, agentId: UUID())]) != .activity)
     }
 }
+
+/// SwiftPM copies the string catalog without compiling it, so these read
+/// the source catalog rather than `L(...)`.
+struct WorkflowCountWordsTests {
+    private static let catalog = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        .appendingPathComponent("Resources/Localizable.xcstrings")
+
+    private static func englishPlural(_ key: String) throws -> [String: String] {
+        let root = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: catalog)) as? [String: Any])
+        let strings = try #require(root["strings"] as? [String: Any])
+        let entry = try #require(strings[key] as? [String: Any], "missing \(key)")
+        let en = try #require((entry["localizations"] as? [String: Any])?["en"] as? [String: Any])
+        let plural = try #require((en["variations"] as? [String: Any])?["plural"] as? [String: Any])
+        return plural.compactMapValues { (($0 as? [String: Any])?["stringUnit"] as? [String: Any])?["value"] as? String }
+    }
+
+    @Test func countsHaveASingular() throws {
+        let expected: [String: String] = [
+            "%lld issues": "%lld issue",
+            "%lld needs your attention.": "%lld needs your attention.",
+            "%lld run on their own.": "%lld runs on its own.",
+            "%lld other automations run agents.": "%lld other automation runs an agent.",
+            "On for %lld workflows": "On for %lld workflow",
+            "runs every %lld minutes": "runs every minute",
+        ]
+        for (key, one) in expected {
+            let forms = try Self.englishPlural(key)
+            #expect(forms["one"] == one)
+            #expect(forms["other"] != nil)
+        }
+        #expect(try Self.englishPlural("%lld needs your attention.")["other"] == "%lld need your attention.")
+    }
+}
