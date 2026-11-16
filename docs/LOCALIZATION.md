@@ -26,9 +26,12 @@ All SwiftUI and `String` UI text in **OsaurusCore** must resolve against the **p
 
 All of the above are listed in the Xcode project's `knownRegions`, so the
 "help wanted" locales already have empty columns ready in the String Catalog
-editor. We're actively seeking contributors for them -- see
-**[TRANSLATORS.md](TRANSLATORS.md)** for the call to action and the contributor
-leaderboard. Add any further locales to `knownRegions` when expanding support.
+editor. "Required" means CI enforces that maintained keys have a value. It
+does not mean every screen is translated: new features often ship English-only
+and are filled in later. Live per-language coverage, the review backlog, and
+the call for contributors are in **[TRANSLATORS.md](TRANSLATORS.md)**
+(regenerate the table with `python3 scripts/i18n/coverage.py`). Add any
+further locales to `knownRegions` when expanding support.
 
 ## Swift API
 
@@ -47,9 +50,21 @@ Helpers live in `Packages/OsaurusCore/Utils/`:
 Text(LocalizedStringKey(title), bundle: .module)
 ```
 
-After adding a key in code, add **de**, **zh-Hans**, **ko**, and **ru** in `Localizable.xcstrings` (Xcode String Catalog editor). Add **zh-Hant** too when you can — it is community-maintained and nearly complete, but not yet enforced by CI.
+After adding a key in code, add **de**, **zh-Hans**, **ko**, and **ru** in `Localizable.xcstrings` (Xcode String Catalog editor). Add **zh-Hant** too when you can — it is community-maintained and not yet enforced by CI.
 
 Avoid raw `Text("…")`, `.help("…")`, `Button("…")`, `panel.title = "…"`, and `UNMutableNotificationContent.title = "…"` in `Packages/OsaurusCore`. CI flags these because they usually resolve against the wrong bundle.
+
+## Translation state
+
+Each localized value carries a state, and it is the only review signal the catalog has:
+
+| State | Meaning |
+| ----- | ------- |
+| `translated` | A fluent speaker wrote or checked it in context. |
+| `needs_review` | Usable, but machine/AI-assisted or written by a non-native speaker. Shipped as-is; queued for native review. |
+| `new` / missing | Falls back to English at runtime. |
+
+Mark machine- or AI-assisted output `needs_review` (Xcode: right-click → **Mark for Review**; JSON flow: `apply-ko.py --state needs_review`), and never bulk-promote `needs_review` to `translated` without a native reviewer. Never copy the English text into a locale to make it "complete"; leaving it untranslated keeps it visible in the backlog. Contributor-facing guidelines are in [TRANSLATORS.md](TRANSLATORS.md#translation-guidelines).
 
 ## Adding a new language
 
@@ -105,9 +120,10 @@ In Xcode: **Product → Export Localizations…** / **Import Localizations…** 
 | `scripts/i18n/lint-swift-literals.py` | Flag Swift literals that bypass package-bundle localization |
 | `scripts/i18n/merge-locale.py` | Copy one locale from another catalog (existing keys only) |
 | `scripts/i18n/fill-zh-hans.py` | Optional machine-translation backfill (`pip install deep-translator`) |
-| `scripts/i18n/export-untranslated.py` | Export keys missing a locale into batched JSON for (LLM/human) translators |
-| `scripts/i18n/apply-ko.py` | Apply translated JSON maps back into a catalog with placeholder/coverage validation and Xcode-exact formatting (`--locale` is configurable) |
+| `scripts/i18n/export-untranslated.py` | Export non-stale keys missing a locale into batched JSON for (LLM/human) translators |
+| `scripts/i18n/apply-ko.py` | Apply translated JSON maps back into a catalog with placeholder/coverage validation and Xcode-exact formatting (`--locale` is configurable; `--partial` lands one batch at a time) |
 | `scripts/i18n/prune-catalog.py` | Remove en-only / empty Xcode auto-extraction stubs and stale keys |
+| `scripts/i18n/coverage.py` | Generate the per-language status table in `TRANSLATORS.md` (coverage over Swift-referenced keys, review backlog, largest untranslated areas) |
 | `scripts/i18n/leaderboard.py` | Generate the translator leaderboard in `TRANSLATORS.md` from merged PRs (needs `gh`) |
 
 Shared logic: `scripts/i18n/xcstrings_util.py`.
