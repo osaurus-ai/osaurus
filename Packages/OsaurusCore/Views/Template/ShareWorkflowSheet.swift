@@ -217,7 +217,7 @@ struct ShareWorkflowSheet: View {
     private var sheetHeight: CGFloat {
         switch phase {
         case .choose: return 340
-        case .file: return 720
+        case .file: return 640
         case .manage: return isLive ? 680 : 480
         default: return 680
         }
