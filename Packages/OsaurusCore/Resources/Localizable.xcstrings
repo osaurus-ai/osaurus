@@ -344,6 +344,57 @@
         }
       }
     },
+    "“%@” could not start because other work was using the memory it needs." : {
+
+    },
+    "“%@” did not finish." : {
+
+    },
+    "“%@” needs a folder to work in, and none is chosen." : {
+
+    },
+    "“%@” ran out of time before it finished." : {
+
+    },
+    "“%@” stopped because its form was closed without an answer." : {
+
+    },
+    "“%@” stopped because nobody answered its form in time." : {
+
+    },
+    "“%@” stopped because replacing existing files was not allowed." : {
+
+    },
+    "“%@” stopped because the provider account is out of credits." : {
+
+    },
+    "“%@” stopped because the request to allow it was declined." : {
+
+    },
+    "%@ · You share the recipe, never your data." : {
+
+    },
+    "%@ +%lld more" : {
+
+    },
+    "%@ at %@" : {
+
+    },
+    "%@ automation" : {
+
+    },
+    "%@ could not run %@" : {
+
+    },
+    "%@ feed" : {
+
+    },
+    "%@ folder" : {
+
+    },
+    "%@ had news" : {
+
+    },
     "%@ is set to Never Ask, so tool calls run without an approval card." : {
       "localizations" : {
         "de" : {
@@ -377,6 +428,24 @@
           }
         }
       }
+    },
+    "%@ needs to be set up before it can run." : {
+
+    },
+    "%@ on launch" : {
+
+    },
+    "%@ posted something new" : {
+
+    },
+    "%@ ran it" : {
+
+    },
+    "%@ schedule" : {
+
+    },
+    "%@ will run %@." : {
+
     },
     "%@ will run tools without showing an approval card, in chats and in its scheduled and watcher runs. Tools can run code and modify files, so use this only for an agent whose tools you trust." : {
       "localizations" : {
@@ -412,6 +481,36 @@
         }
       }
     },
+    "%@ will stop running %@." : {
+
+    },
+    "%@: did not finish" : {
+
+    },
+    "%@: skipped" : {
+
+    },
+    "%@. Could not finish." : {
+
+    },
+    "%@. Could not start." : {
+
+    },
+    "%@. Needs setup first." : {
+
+    },
+    "%@. Running now." : {
+
+    },
+    "%@. Stopped." : {
+
+    },
+    "%@. Took %@." : {
+
+    },
+    "%@. Waiting for your answer." : {
+
+    },
     "%lld dimensions" : {
       "localizations" : {
         "de" : {
@@ -445,6 +544,12 @@
           }
         }
       }
+    },
+    "%lld hr" : {
+
+    },
+    "%lld hr %lld min" : {
+
     },
     "%lld issues" : {
       "localizations" : {
@@ -490,6 +595,12 @@
         }
       }
     },
+    "%lld of the last %lld runs failed" : {
+
+    },
+    "%lld of the last %lld runs failed." : {
+
+    },
     "%lld other automations run agents." : {
       "localizations" : {
         "en" : {
@@ -533,6 +644,9 @@
           }
         }
       }
+    },
+    "%lld sec" : {
+
     },
     "%lld tools have their own policy for this agent. A tool set to Deny for every agent stays denied." : {
       "localizations" : {
@@ -670,6 +784,39 @@
         }
       }
     },
+    "A file shows up, a site posts, an app has news…" : {
+
+    },
+    "A file was added to %@" : {
+
+    },
+    "a folder" : {
+
+    },
+    "A message arrived" : {
+
+    },
+    "a site" : {
+
+    },
+    "A test run" : {
+
+    },
+    "account removed" : {
+
+    },
+    "Add another" : {
+
+    },
+    "All activity" : {
+
+    },
+    "All workflows" : {
+
+    },
+    "Also run it" : {
+
+    },
     "Always Allow \"%@\" for %@?" : {
       "localizations" : {
         "de" : {
@@ -806,6 +953,9 @@
         }
       }
     },
+    "An agent ran it" : {
+
+    },
     "Announcements" : {
       "localizations" : {
         "de" : {
@@ -839,6 +989,12 @@
           }
         }
       }
+    },
+    "Another workflow failed" : {
+
+    },
+    "Another workflow ran it" : {
+
     },
     "Approval" : {
       "localizations" : {
@@ -976,6 +1132,18 @@
         }
       }
     },
+    "at" : {
+
+    },
+    "At a set time" : {
+
+    },
+    "At a time I choose" : {
+
+    },
+    "at another time" : {
+
+    },
     "Auto-Allow All Tool Calls is on, so approval cards are skipped. %@" : {
       "localizations" : {
         "de" : {
@@ -1078,6 +1246,12 @@
         }
       }
     },
+    "Automate %@" : {
+
+    },
+    "Automate…" : {
+
+    },
     "Blocked for every agent under Tools & MCP → All Tools" : {
       "localizations" : {
         "de" : {
@@ -1112,6 +1286,15 @@
         }
       }
     },
+    "Browse the Store" : {
+
+    },
+    "Building something custom? Webhooks and event streams live under Advanced." : {
+
+    },
+    "Can't start its workflow. Open it to see why." : {
+
+    },
     "Configuration changes, which show their own review card." : {
       "localizations" : {
         "de" : {
@@ -1145,6 +1328,15 @@
           }
         }
       }
+    },
+    "Custom schedule" : {
+
+    },
+    "Custom trigger" : {
+
+    },
+    "Daily at %@" : {
+
     },
     "Delegating to other agents, image and video costs, AppleScript confirmation, and Computer or Browser Use." : {
       "localizations" : {
@@ -1214,6 +1406,69 @@
         }
       }
     },
+    "Don't suggest sharing this workflow" : {
+
+    },
+    "Every %@" : {
+
+    },
+    "Every %lld min" : {
+
+    },
+    "Every 30 minutes" : {
+
+    },
+    "Every day" : {
+
+    },
+    "Every day, every weekday, every Monday…" : {
+
+    },
+    "Every hour" : {
+
+    },
+    "Every morning, every Friday, every hour." : {
+
+    },
+    "Every run of this workflow" : {
+
+    },
+    "Every weekday" : {
+
+    },
+    "Everything is working. Last %lld runs all finished." : {
+
+    },
+    "Everything is working. The last run finished." : {
+
+    },
+    "Failed %@" : {
+
+    },
+    "Fill in what it uses first" : {
+
+    },
+    "Finish setup to run" : {
+
+    },
+    "Finish setup to run." : {
+
+    },
+    "Follow a blog, a podcast, or a news feed." : {
+
+    },
+    "Fridays" : {
+
+    },
+    "From the Store" : {
+
+    },
+    "Hide what happened" : {
+
+    },
+    "How to share" : {
+
+    },
     "In Use" : {
       "localizations" : {
         "de" : {
@@ -1247,6 +1502,18 @@
           }
         }
       }
+    },
+    "Last %lld runs all worked" : {
+
+    },
+    "Last ran %@" : {
+
+    },
+    "Last run failed" : {
+
+    },
+    "Last run failed %@" : {
+
     },
     "Lock Model" : {
       "localizations" : {
@@ -1350,6 +1617,9 @@
         }
       }
     },
+    "missing key" : {
+
+    },
     "Model Locked" : {
       "localizations" : {
         "de" : {
@@ -1451,6 +1721,18 @@
           }
         }
       }
+    },
+    "Mondays" : {
+
+    },
+    "Monthly on the %@" : {
+
+    },
+    "more ways" : {
+
+    },
+    "needs setup" : {
+
     },
     "Never Ask" : {
       "localizations" : {
@@ -1588,6 +1870,27 @@
         }
       }
     },
+    "New mail arrived" : {
+
+    },
+    "no answer" : {
+
+    },
+    "no model" : {
+
+    },
+    "No runs yet. Try it once to see what you get." : {
+
+    },
+    "not allowed" : {
+
+    },
+    "not available" : {
+
+    },
+    "not enough memory" : {
+
+    },
     "Not Supported" : {
       "localizations" : {
         "de" : {
@@ -1656,6 +1959,21 @@
         }
       }
     },
+    "Nothing here yet." : {
+
+    },
+    "Nothing needs your attention." : {
+
+    },
+    "Nothing runs on its own yet." : {
+
+    },
+    "Off until you fill in what it uses." : {
+
+    },
+    "On a custom schedule" : {
+
+    },
     "On for %lld workflows" : {
       "localizations" : {
         "en" : {
@@ -1677,6 +1995,54 @@
           }
         }
       }
+    },
+    "On schedule" : {
+
+    },
+    "On the 1st of the month" : {
+
+    },
+    "On. %@" : {
+
+    },
+    "On. Next run %@." : {
+
+    },
+    "Once, %@" : {
+
+    },
+    "One click and it is set." : {
+
+    },
+    "One click to run" : {
+
+    },
+    "Only runs when you click Run. Last ran %@." : {
+
+    },
+    "Only runs when you click Run. Not run yet." : {
+
+    },
+    "Open Advanced" : {
+
+    },
+    "Open Automations" : {
+
+    },
+    "Open result" : {
+
+    },
+    "Open Set Up and choose or enter the connection again." : {
+
+    },
+    "Open Set Up and sign in to the connection again." : {
+
+    },
+    "Opens store.osaurus.ai in your browser" : {
+
+    },
+    "Osaurus could not start %@." : {
+
     },
     "Osaurus is still using %@. Restart to switch to %@." : {
       "localizations" : {
@@ -1712,6 +2078,36 @@
         }
       }
     },
+    "Osaurus opened" : {
+
+    },
+    "Osaurus ran it" : {
+
+    },
+    "Osaurus tried to reach a service for “%@”, but it did not answer. Trying again may work." : {
+
+    },
+    "Osaurus tried to run “%@”, but a connected account asked you to sign in again." : {
+
+    },
+    "Osaurus tried to run “%@”, but a key it needs has not been added." : {
+
+    },
+    "Osaurus tried to run “%@”, but macOS has not given it permission yet." : {
+
+    },
+    "Osaurus tried to run “%@”, but the account it signs in with is gone." : {
+
+    },
+    "Osaurus tried to run “%@”, but the model it uses is not available." : {
+
+    },
+    "Osaurus tried to run “%@”, but the service turned down its sign-in." : {
+
+    },
+    "out of credits" : {
+
+    },
     "Per-Tool Policies" : {
       "localizations" : {
         "de" : {
@@ -1745,6 +2141,36 @@
           }
         }
       }
+    },
+    "Pick a day and time…" : {
+
+    },
+    "Pick a moment, then pick a workflow" : {
+
+    },
+    "Pick a workflow" : {
+
+    },
+    "posts something new" : {
+
+    },
+    "Ran %@, %@" : {
+
+    },
+    "Ran on its own" : {
+
+    },
+    "Ran on schedule" : {
+
+    },
+    "Ran on their own" : {
+
+    },
+    "Ran once on %@" : {
+
+    },
+    "ran out of time" : {
+
     },
     "Ran without an approval card." : {
       "localizations" : {
@@ -1882,6 +2308,9 @@
         }
       }
     },
+    "Read it like a sentence. Click any word to change it." : {
+
+    },
     "Rebuilding search indexes with %@: %@. Search uses text matching until each finishes." : {
       "localizations" : {
         "de" : {
@@ -1915,6 +2344,12 @@
           }
         }
       }
+    },
+    "Recent runs" : {
+
+    },
+    "Remove this automation?" : {
+
     },
     "Replies show up here, and a dot on the Help icon means one is waiting." : {
       "localizations" : {
@@ -1950,6 +2385,18 @@
         }
       }
     },
+    "Run %@…" : {
+
+    },
+    "Run a follow-up when another workflow fails." : {
+
+    },
+    "Run by hand" : {
+
+    },
+    "Run by me" : {
+
+    },
     "Run tool calls without showing an approval card. %@ Tools can run code and modify files, so enable this only if you trust the tools you have installed. To change this for one agent, use Tool Approvals on that agent's Tools tab." : {
       "localizations" : {
         "de" : {
@@ -1984,6 +2431,12 @@
         }
       }
     },
+    "Running on their own" : {
+
+    },
+    "runs every %@ at %@" : {
+
+    },
     "runs every %lld minutes" : {
       "localizations" : {
         "en" : {
@@ -2005,6 +2458,60 @@
           }
         }
       }
+    },
+    "runs every day at %@" : {
+
+    },
+    "runs every hour" : {
+
+    },
+    "runs every weekday at %@" : {
+
+    },
+    "runs every year on %@ at %@" : {
+
+    },
+    "runs from a custom trigger" : {
+
+    },
+    "runs on a custom schedule" : {
+
+    },
+    "runs on the %@ of every month at %@" : {
+
+    },
+    "runs once on %@ at %@" : {
+
+    },
+    "runs when %@ has news" : {
+
+    },
+    "runs when %@ posts something new" : {
+
+    },
+    "runs when a file is added to %@" : {
+
+    },
+    "runs when a message arrives" : {
+
+    },
+    "runs when another workflow fails" : {
+
+    },
+    "runs when new mail arrives" : {
+
+    },
+    "runs when Osaurus opens" : {
+
+    },
+    "Saturdays" : {
+
+    },
+    "See all" : {
+
+    },
+    "See all ways to automate" : {
+
     },
     "Semantic search stays off until Osaurus restarts with %@." : {
       "localizations" : {
@@ -2074,6 +2581,9 @@
         }
       }
     },
+    "service did not answer" : {
+
+    },
     "Set Auto, Ask or Deny for this agent with the menu on an enabled tool's row." : {
       "localizations" : {
         "de" : {
@@ -2107,6 +2617,30 @@
           }
         }
       }
+    },
+    "Set up" : {
+
+    },
+    "Share to the Store" : {
+
+    },
+    "Shared by the people who made them" : {
+
+    },
+    "Show all in Activity" : {
+
+    },
+    "sign-in expired" : {
+
+    },
+    "sign-in refused" : {
+
+    },
+    "Something “%@” needs is not available on this Mac right now." : {
+
+    },
+    "Start the day with something ready for you." : {
+
     },
     "Still asks:" : {
       "localizations" : {
@@ -2142,6 +2676,15 @@
         }
       }
     },
+    "Stopped %@" : {
+
+    },
+    "Suggested" : {
+
+    },
+    "Sundays" : {
+
+    },
     "Teammates and remote callers on a shared agent." : {
       "localizations" : {
         "de" : {
@@ -2175,6 +2718,24 @@
           }
         }
       }
+    },
+    "Technical details" : {
+
+    },
+    "The %lld steps it follows" : {
+
+    },
+    "The 1 step it follows" : {
+
+    },
+    "The last run failed." : {
+
+    },
+    "The last run worked" : {
+
+    },
+    "The site's feed address, like https://example.com/feed" : {
+
     },
     "This Agent" : {
       "localizations" : {
@@ -2482,6 +3043,9 @@
         }
       }
     },
+    "Thursdays" : {
+
+    },
     "Tick the box above to send." : {
       "localizations" : {
         "de" : {
@@ -2515,6 +3079,18 @@
           }
         }
       }
+    },
+    "today" : {
+
+    },
+    "today at %@" : {
+
+    },
+    "Today, %@" : {
+
+    },
+    "tomorrow at %@" : {
+
     },
     "Tool Approvals" : {
       "localizations" : {
@@ -2686,6 +3262,12 @@
         }
       }
     },
+    "Tuesdays" : {
+
+    },
+    "Turn this automation on or off" : {
+
+    },
     "Use Global Setting" : {
       "localizations" : {
         "de" : {
@@ -2719,6 +3301,102 @@
           }
         }
       }
+    },
+    "Watch a folder like Downloads or Desktop." : {
+
+    },
+    "Watch This Folder" : {
+
+    },
+    "Watching." : {
+
+    },
+    "Watching. %@" : {
+
+    },
+    "Ways to automate" : {
+
+    },
+    "Wednesdays" : {
+
+    },
+    "Weekdays at %@" : {
+
+    },
+    "What gets shared" : {
+
+    },
+    "What it needs access to: %@" : {
+
+    },
+    "What it needs access to: %@, and %lld more" : {
+
+    },
+    "What it uses each time" : {
+
+    },
+    "What should it use each time?" : {
+
+    },
+    "What stays on your Mac" : {
+
+    },
+    "When %@ changes" : {
+
+    },
+    "When %@ has news" : {
+
+    },
+    "When %@ posts" : {
+
+    },
+    "when a file shows up" : {
+
+    },
+    "When a file shows up" : {
+
+    },
+    "When a file shows up in" : {
+
+    },
+    "When a file shows up in %@" : {
+
+    },
+    "When a file shows up in a folder…" : {
+
+    },
+    "When a run fails" : {
+
+    },
+    "When a site posts something new" : {
+
+    },
+    "When a site posts something new…" : {
+
+    },
+    "When an app has news" : {
+
+    },
+    "When an app has news…" : {
+
+    },
+    "When new mail arrives" : {
+
+    },
+    "when Osaurus opens" : {
+
+    },
+    "When Osaurus opens" : {
+
+    },
+    "When should this run?" : {
+
+    },
+    "When something goes wrong" : {
+
+    },
+    "When something happens" : {
+
     },
     "Workflow runs keep their own approvals." : {
       "localizations" : {
@@ -390109,6 +390787,9 @@
         }
       }
     },
+    "Yearly on %@" : {
+
+    },
     "yes" : {
       "localizations" : {
         "de" : {
@@ -390177,7 +390858,16 @@
         }
       }
     },
+    "yesterday" : {
+
+    },
     "Yesterday" : {
+
+    },
+    "yesterday at %@" : {
+
+    },
+    "Yesterday, %@" : {
 
     },
     "Yielding" : {
@@ -391574,6 +392264,9 @@
           }
         }
       }
+    },
+    "You ran it" : {
+
     },
     "You reactivated this workspace" : {
       "localizations" : {
@@ -393126,6 +393819,9 @@
         }
       }
     },
+    "Your accounts and sign-ins" : {
+
+    },
     "your agent" : {
       "localizations" : {
         "de" : {
@@ -393935,6 +394631,9 @@
       }
     },
     "Your author page" : {
+
+    },
+    "Your automations, and how the last %lld runs went" : {
 
     },
     "Your balance is %@. Add credits to keep chatting." : {
@@ -396983,6 +397682,9 @@
           }
         }
       }
+    },
+    "Your results and run history" : {
+
     },
     "Your rules" : {
       "localizations" : {
