@@ -81,11 +81,27 @@ struct AgentCallPolicyTests {
         var state = AgentCallPolicy.State()
         state.grants = [Self.grant()]
         state.allowed = [Self.agent]
-        state.calls[Self.agent] = (1...AgentCallPolicy.dailyCap).map { Self.now - Int64($0) * 60 * 60 * 1000 }
+        let cap = AgentCallPolicy.defaultDailyCap
+        state.calls[Self.agent] = (1...cap).map { Self.now - Int64($0) * 60 * 60 * 1000 }
         #expect(Self.isRefused(Self.decide(state)))
         // Calls older than a day don't count.
-        state.calls[Self.agent] = (1...AgentCallPolicy.dailyCap).map { Self.now - AgentCallPolicy.dayMs - Int64($0) }
+        state.calls[Self.agent] = (1...cap).map { Self.now - AgentCallPolicy.dayMs - Int64($0) }
         #expect(!Self.isRefused(Self.decide(state)))
+    }
+
+    @Test("an agent's own Calls a Day replaces the default, up or down")
+    func ownDailyCap() {
+        var state = AgentCallPolicy.State()
+        state.grants = [Self.grant()]
+        state.calls[Self.agent] = (1...3).map { Self.now - Int64($0) * 1000 }
+        state.dailyCaps = [Self.agent: 3]
+        #expect(Self.isRefused(Self.decide(state)))
+        state.dailyCaps = [Self.agent: AgentCallPolicy.defaultDailyCap + 5]
+        state.calls[Self.agent] = (1...AgentCallPolicy.defaultDailyCap).map { Self.now - Int64($0) * 1000 }
+        #expect(!Self.isRefused(Self.decide(state)))
+        // Another agent's limit doesn't apply.
+        state.dailyCaps = [UUID(): 1]
+        #expect(Self.isRefused(Self.decide(state)))
     }
 
     @Test("after two unanswered calls in a row, an agent can't ring on its own for a day")

@@ -1432,6 +1432,8 @@ struct AgentDetailView: View {
     /// "Call You": the agent may ring the user's iPhone on its own (`AgentCallPolicy`, kept
     /// outside the agent's settings).
     @State private var callYouEnabled: Bool = false
+    /// "Calls a Day": the agent's limit on calls in any 24 hours, arranged ones included.
+    @State private var callsPerDay: Int = AgentCallPolicy.defaultDailyCap
     @State private var searchMemoryEnabled: Bool = false
     /// Native `web_search` gate — default ON (free providers need no setup).
     @State private var webSearchEnabled: Bool = true
@@ -3788,6 +3790,18 @@ struct AgentDetailView: View {
                     isOn: callYouBinding,
                     pausedNote: toolsPausedNote,
                     onPausedNoteTap: flashToolsToggle
+                )
+                SettingsStepperRow(
+                    label: "Calls a Day",
+                    help: "The most times the agent can call you in any 24 hours, calls you ask for included.",
+                    value: Binding(
+                        get: { callsPerDay },
+                        set: { newValue in
+                            callsPerDay = newValue
+                            AgentCallPolicy.shared.setDailyCap(newValue, agentId: agent.id)
+                        }
+                    ),
+                    range: AgentCallPolicy.dailyCapRange
                 )
                 SettingsAbilityRow(
                     title: "Share Artifacts",
@@ -6667,6 +6681,7 @@ struct AgentDetailView: View {
         showResponseMetrics = agent.settings.showResponseMetrics
         speakEnabled = agent.settings.speakEnabled
         callYouEnabled = AgentCallPolicy.shared.isAllowed(agent.id)
+        callsPerDay = AgentCallPolicy.shared.dailyCap(for: agent.id)
         searchMemoryEnabled = agent.settings.searchMemoryEnabled
         webSearchEnabled = agent.settings.webSearchEnabled
         followUpEnabled = agent.settings.followUp.enabled

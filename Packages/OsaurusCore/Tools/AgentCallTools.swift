@@ -42,12 +42,21 @@ final class AgentCallPolicy {
         /// Calls in a row an agent made on its own that nobody took.
         var missedInRow: [UUID: Int] = [:]
         var lastMissMs: [UUID: Int64] = [:]
+        /// Each agent's limit on calls in any 24 hours, set in its settings; absent, `defaultDailyCap`.
+        /// Optional so a state saved before it was kept still reads.
+        var dailyCaps: [UUID: Int]?
+
+        func dailyCap(for agentId: UUID) -> Int {
+            dailyCaps?[agentId] ?? AgentCallPolicy.defaultDailyCap
+        }
     }
 
     /// Between two calls an agent makes on its own.
     nonisolated static let spacingMs: Int64 = 10 * 60 * 1000
-    /// Calls per agent in any 24 hours, arranged ones included.
-    nonisolated static let dailyCap = 5
+    /// Calls per agent in any 24 hours, arranged ones included: a backstop, generous by default and
+    /// set per agent in its settings ("Calls a Day").
+    nonisolated static let defaultDailyCap = 10
+    nonisolated static let dailyCapRange = 1 ... 100
     /// After this many unanswered calls in a row, an agent can't call on its own for a day.
     nonisolated static let missedInRowCap = 2
     nonisolated static let dayMs: Int64 = 24 * 3600 * 1000
@@ -76,6 +85,14 @@ final class AgentCallPolicy {
     func setAllowed(_ allowed: Bool, agentId: UUID) {
         if allowed { state.allowed.insert(agentId) } else { state.allowed.remove(agentId) }
         state.missedInRow[agentId] = nil
+        save()
+    }
+
+    func dailyCap(for agentId: UUID) -> Int { state.dailyCap(for: agentId) }
+
+    func setDailyCap(_ cap: Int, agentId: UUID) {
+        let clamped = min(max(cap, Self.dailyCapRange.lowerBound), Self.dailyCapRange.upperBound)
+        state.dailyCaps = (state.dailyCaps ?? [:]).merging([agentId: clamped]) { $1 }
         save()
     }
 
@@ -112,8 +129,12 @@ final class AgentCallPolicy {
 
     nonisolated static func decide(_ state: State, agentId: UUID, sessionId: UUID, nowMs: Int64) -> Decision {
         let recent = (state.calls[agentId] ?? []).filter { $0 > nowMs - dayMs }
-        if recent.count >= dailyCap {
-            return .refused("This agent has called \(dailyCap) times in the last 24 hours. Use `notify` instead.")
+        let cap = state.dailyCap(for: agentId)
+        if recent.count >= cap {
+            return .refused(
+                "This agent has called \(cap) times in the last 24 hours, its limit. Use `notify` instead, "
+                    + "or ask the user to raise Calls a Day in its settings."
+            )
         }
         if let grant = state.grants.first(where: {
             $0.sessionId == sessionId && $0.agentId == agentId && $0.expiresMs > nowMs
