@@ -386,7 +386,15 @@ final class SyncService: @unchecked Sendable {
     private func installLoggingOnce() {
         guard !loggingInstalled else { return }
         loggingInstalled = true
-        SyncLogging.useOSLog(level: .info)
+        // `SyncCoreLog`'s handler: debug builds write the core's records into tmp/osaurus.log with
+        // timestamps. This used to install the unified log over it, which left the file without
+        // a single core line, and the core's own timing (a fold holding it, sessions refused)
+        // couldn't be lined up with the app's (2026-11-16). Release builds go to the unified log, as before.
+        #if DEBUG
+            SyncCoreLog.start()
+        #else
+            SyncLogging.useOSLog(level: .info)
+        #endif
     }
 
     // MARK: - Lifecycle
