@@ -89,11 +89,17 @@ final class InsightsService: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     /// Fired on every append / clear so the dashboard refreshes (debounced).
     private let changed = PassthroughSubject<Void, Never>()
-    /// Store presence answers for `hasLog`, which the Credits timeline asks
-    /// once per row on every body pass. Emptied on every `changed` signal
-    /// (each append, clear, prune and settings write sends one on main), so
-    /// an answer never outlives the store state it was read from.
+    /// Store presence answers for `hasLog` / `knownHasLog`, which the Credits
+    /// timeline asks once per row on every body pass. Appends only add rows,
+    /// so a `changed` signal drops just the negative answers; `clear()` and a
+    /// prune that removed rows drop everything via `resetPresence()`.
     private var presenceCache: [String: Bool] = [:]
+    /// Keys a `knownHasLog` miss asked for that are queued or being read off
+    /// the main thread, so repeated body passes don't queue them again.
+    private var requestedPresence: Set<PresenceProbe> = []
+    private var queuedPresence: [PresenceProbe] = []
+    /// Bumped by `resetPresence()`; a read that started before it is dropped.
+    private var presenceGeneration = 0
     private var retentionTimer: Timer?
 
     // MARK: - Initialization
@@ -142,7 +148,10 @@ final class InsightsService: ObservableObject {
             .store(in: &cancellables)
 
         changed
-            .sink { [weak self] in self?.presenceCache.removeAll() }
+            .sink { [weak self] in
+                guard let self else { return }
+                self.presenceCache = self.presenceCache.filter(\.value)
+            }
             .store(in: &cancellables)
 
         changed
@@ -225,6 +234,7 @@ final class InsightsService: ObservableObject {
 
     /// Remove every row (store + hot cache). The store records a tombstone.
     func clear() {
+        resetPresence()
         logs.removeAll()
         totalRequestCountRaw = 0
         pendingFocusLogId = nil
@@ -240,7 +250,10 @@ final class InsightsService: ObservableObject {
             } catch {
                 NSLog("[Osaurus][Insights] clear failed: %@", "\(error)")
             }
-            await MainActor.run { [weak self] in self?.changed.send() }
+            await MainActor.run { [weak self] in
+                self?.resetPresence()
+                self?.changed.send()
+            }
         }
     }
 
@@ -280,9 +293,8 @@ final class InsightsService: ObservableObject {
     func hasLog(turnId: UUID) -> Bool {
         if logs.contains(where: { $0.turnId == turnId }) { return true }
         guard storeAvailable else { return false }
-        return cachedPresence("turn:\(turnId.uuidString)") {
-            (try? store.exists(turnId: turnId)) ?? false
-        }
+        let probe = PresenceProbe.turn(turnId)
+        return cachedPresence(probe.cacheKey) { probe.read(from: store) }
     }
 
     func hasLog(requestId: String) -> Bool {
@@ -290,9 +302,8 @@ final class InsightsService: ObservableObject {
         guard !normalized.isEmpty else { return false }
         if logs.contains(where: { $0.requestId == normalized }) { return true }
         guard storeAvailable else { return false }
-        return cachedPresence("request:\(normalized)") {
-            (try? store.exists(requestId: normalized)) ?? false
-        }
+        let probe = PresenceProbe.request(normalized)
+        return cachedPresence(probe.cacheKey) { probe.read(from: store) }
     }
 
     private func cachedPresence(_ key: String, probe: () -> Bool) -> Bool {
@@ -300,6 +311,65 @@ final class InsightsService: ObservableObject {
         let found = probe()
         presenceCache[key] = found
         return found
+    }
+
+    /// `hasLog(turnId:)` for view bodies: never waits on the store queue,
+    /// which appends hold while a turn is logging. An unknown key reads
+    /// `false` and is read off the main thread; `objectWillChange` fires
+    /// when a read finds a row, so the view asks again.
+    func knownHasLog(turnId: UUID) -> Bool {
+        if logs.contains(where: { $0.turnId == turnId }) { return true }
+        guard storeAvailable else { return false }
+        return knownPresence(.turn(turnId))
+    }
+
+    /// `hasLog(requestId:)` for view bodies; see `knownHasLog(turnId:)`.
+    func knownHasLog(requestId: String) -> Bool {
+        let normalized = requestId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return false }
+        if logs.contains(where: { $0.requestId == normalized }) { return true }
+        guard storeAvailable else { return false }
+        return knownPresence(.request(normalized))
+    }
+
+    private func knownPresence(_ probe: PresenceProbe) -> Bool {
+        if let hit = presenceCache[probe.cacheKey] { return hit }
+        guard requestedPresence.insert(probe).inserted else { return false }
+        if queuedPresence.isEmpty {
+            // One read for every miss in this body pass.
+            DispatchQueue.main.async { [weak self] in self?.readQueuedPresence() }
+        }
+        queuedPresence.append(probe)
+        return false
+    }
+
+    private func readQueuedPresence() {
+        let probes = queuedPresence
+        queuedPresence.removeAll()
+        guard !probes.isEmpty else { return }
+        let generation = presenceGeneration
+        let store = self.store
+        Task.detached(priority: .userInitiated) { [weak self] in
+            let answers = probes.map { ($0, $0.read(from: store)) }
+            await MainActor.run { [weak self] in
+                guard let self, self.presenceGeneration == generation else { return }
+                for (probe, found) in answers {
+                    self.presenceCache[probe.cacheKey] = found
+                    self.requestedPresence.remove(probe)
+                }
+                if answers.contains(where: \.1) {
+                    self.objectWillChange.send()
+                }
+            }
+        }
+    }
+
+    /// Rows were removed: every cached answer and in-flight read is stale.
+    private func resetPresence() {
+        presenceCache.removeAll()
+        requestedPresence.removeAll()
+        queuedPresence.removeAll()
+        presenceGeneration += 1
     }
 
     private func focus(log: RequestLog) {
@@ -391,7 +461,10 @@ final class InsightsService: ObservableObject {
         Task.detached(priority: .utility) { [weak self] in
             let removed = (try? store.prune(olderThan: cutoff)) ?? 0
             if removed > 0 {
-                await MainActor.run { [weak self] in self?.changed.send() }
+                await MainActor.run { [weak self] in
+                    self?.resetPresence()
+                    self?.changed.send()
+                }
             }
         }
     }
@@ -1235,5 +1308,24 @@ extension InsightsService {
             sessionId: sessionId,
             clientIP: clientIP
         )
+    }
+}
+
+private enum PresenceProbe: Hashable, Sendable {
+    case turn(UUID)
+    case request(String)
+
+    var cacheKey: String {
+        switch self {
+        case .turn(let id): return "turn:\(id.uuidString)"
+        case .request(let id): return "request:\(id)"
+        }
+    }
+
+    func read(from store: ActivityLogStore) -> Bool {
+        switch self {
+        case .turn(let id): return (try? store.exists(turnId: id)) ?? false
+        case .request(let id): return (try? store.exists(requestId: id)) ?? false
+        }
     }
 }
