@@ -40,6 +40,12 @@ extension SyncDeviceFeedContract {
         var events: [String]
         /// No `started` for runs an iPhone started itself.
         var onlyOthers: Bool?
+        /// Agent calls (`agent_calls`): true when this device rings for them, with a grant for its
+        /// PushKit token (sealed like `grant`, on the app's `.voip` topic).
+        var calls: Bool?
+        var voipGrant: String?
+        var voipGrantId: String?
+        var voipExpiresMs: Int64?
         var updatedMs: Int64
     }
 }

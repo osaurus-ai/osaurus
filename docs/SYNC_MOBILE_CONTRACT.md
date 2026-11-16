@@ -60,6 +60,7 @@ iPhone did over HTTP. A Mac's build says what it supports in its directory's `fe
 | `workflow_outputs` | the `workflowOutput` op and its `ai.osaurus.workflow-output/1` message (§5.5) |
 | `workflow_details` | `facts` and `steps` on each manage-state workflow: the Mac page's chips and step badges (§5.4) |
 | `workflow_push` | Workflow notifications on the iPhone through the push service: push registrations on the manage conversation, `pushRegistered` in the manage state (§5.6) |
+| `agent_calls` | Agents calling the user back: PushKit grants in push registrations, `call-answer/1`, `call` in the manage state (§5.7) |
 | `workflow_step_details` | `steps` on every `workflow_outputs` message, an empty list for a run without any (§5.5) |
 
 - The iPhone MUST check a flag before it writes a record or op that the flag covers, and MUST
@@ -907,6 +908,60 @@ through `https://push.sync.osaurus.ai/v1/send`, with `apns-collapse-id` set to t
 - Runs that started or ended before the Mac started aren't announced.
 - When the service answers 403 or 410, the Mac stops using that grant until it would have expired.
   The iPhone writes a new registration to start again.
+
+### 5.7 Agent calls (`agent_calls`)
+
+An agent can call the user back: the Mac rings each device set to ring through PushKit, and the
+device shows an incoming call. A device that wants these adds, to its registration (§5.6):
+
+```json
+{ "calls": true, "voipGrant": "<base64>", "voipGrantId": "…", "voipExpiresMs": 1770163260000 }
+```
+
+- `voipGrant` comes from `pushGrant` for the device's PushKit token, with the app's topic plus
+  `.voip`, made for this Mac. `calls` false, or no `voipGrant`, means the device doesn't ring.
+- The same rules as §5.6 apply: devices still in the account, the newest registration per
+  `installId`, and a grant the service refuses (403, 410) isn't used again until it would have
+  expired.
+
+A call is a `voip` push (no `aps`, sent now or never) to each device set to ring:
+
+```json
+{ "o": "<base64 of ChaChaPoly combined, with contentKey>" }
+```
+
+`o` opens to a ring or a call-off:
+
+```json
+{ "v": 1, "kind": "ring", "callId": "…", "device": "<Mac device key>", "sentMs": 1767571260000,
+  "agentId": "…", "agentName": "Builder", "sessionId": "…",
+  "opening": "Your build finished: all tests pass.", "reason": "Build finished" }
+{ "v": 1, "kind": "cancel", "callId": "…", "device": "<Mac device key>", "sentMs": 1767571290000 }
+```
+
+- iOS ends an app that receives a VoIP push without reporting a call, so the device reports one
+  for every push. For a `cancel`, a ring older than 40 seconds, or one it can't open, it reports
+  the call and ends it at once.
+- A ring lasts 40 seconds. The device writes its answer in
+  `ai.osaurus.call-answer/1/<its device key>`:
+
+  ```json
+  { "v": 1, "callId": "…", "outcome": "answered", "atMs": 1767571270000 }
+  ```
+
+  `outcome` is `answered`, `declined`, `missed` (it rang out) or `busy` (another call was on).
+- The first `answered` takes the call: the Mac sends a `cancel` to each device that hasn't
+  answered. When every device has turned it down, or after 45 seconds, the call is over.
+- The manage state carries `call` while a call rings and for a minute after it ends:
+  `{ "callId": "…", "state": "ringing" | "answered" | "ended", "answeredBy": "<device key>" }`.
+  A device still ringing for a call that isn't `ringing` there stops, in case its `cancel` was lost.
+- Answered, the device opens the chat `sessionId`, speaks `opening` as the agent's first line,
+  and goes on as any voice call on that chat.
+- A call nobody took sends each device that rang a notification on its alert grant, with
+  `apns-collapse-id` `call-<sessionId>`. `o` opens to
+  `{ "v": 1, "event": "missed_call", "device", "agentId", "sessionId", "title": "<agent>",
+  "body": "Missed call: <reason>" }`; the plain alert reads "Missed call".
+- One call at a time per Mac.
 
 ## 6. HTTP routes and their Sync replacements
 

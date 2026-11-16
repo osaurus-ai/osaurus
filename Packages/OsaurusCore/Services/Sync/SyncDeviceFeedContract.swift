@@ -61,6 +61,7 @@ enum SyncDeviceFeedContract {
         "workflow_outputs",
         "workflow_details",
         "workflow_push",
+        "agent_calls",
         "workflow_step_details",
     ]
 
@@ -212,6 +213,8 @@ enum SyncDeviceFeedContract {
         var workflows: [ManagedWorkflow]?
         /// The iPhones this Mac holds a push registration for (`workflow_push`), by device key.
         var pushRegistered: [String]?
+        /// The agent call this Mac is placing (`agent_calls`), until a minute after it ends.
+        var call: CallState?
         var updatedMs: Int64
     }
 

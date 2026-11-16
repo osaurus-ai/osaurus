@@ -172,6 +172,7 @@ final class SyncManageFeed {
             guard mine else { return }
             Task { @MainActor in
                 SyncWorkflowPush.shared.refresh()
+                SyncAgentCalls.shared.manageChanged()
                 await SyncManageFeed.shared.applyRequests()
             }
         }
@@ -188,7 +189,8 @@ final class SyncManageFeed {
         workspaceAgents: [SyncDeviceFeedContract.WorkspaceAgent] = [],
         filters: HistoryFilters = HistoryFilters(),
         workflows: [SyncDeviceFeedContract.ManagedWorkflow]? = nil,
-        pushRegistered: [String] = []
+        pushRegistered: [String] = [],
+        call: SyncDeviceFeedContract.CallState? = nil
     ) -> SyncDeviceFeedContract.ManageState {
         let manager = AgentManager.shared
         let listed = agents.filter(SyncHostRunner.canHost).map { agent -> SyncDeviceFeedContract.ManagedAgent in
@@ -217,6 +219,7 @@ final class SyncManageFeed {
             workspaces: filters.workspaces,
             workflows: workflows,
             pushRegistered: pushRegistered.isEmpty ? nil : pushRegistered,
+            call: call,
             updatedMs: SyncHostedRunContract.nowMs()
         )
     }
@@ -291,7 +294,8 @@ final class SyncManageFeed {
             ),
             filters: Self.historyFilters(),
             workflows: SyncWorkflowLibrary.managed(InstalledWorkflowStore.shared.workflows),
-            pushRegistered: SyncWorkflowPush.shared.registeredDevices
+            pushRegistered: SyncWorkflowPush.shared.registeredDevices,
+            call: SyncAgentCalls.shared.state
         )
         Task.detached(priority: .utility) {
             do {
