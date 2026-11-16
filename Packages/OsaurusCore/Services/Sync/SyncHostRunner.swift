@@ -81,6 +81,8 @@ final class SyncHostRunner: ObservableObject {
         let turnId: String
         /// Sync device key of the device that asked for this run.
         var requester: String?
+        /// The agent answering, for the approval notices (`SyncApprovalPush`).
+        var agentId: UUID? = nil
         var taskId: UUID?
         var stopRequested = false
         var published: [SyncHostedRunContract.PendingApproval] = []
@@ -458,7 +460,8 @@ final class SyncHostRunner: ObservableObject {
 
         record(turnId, sessionId: session.id, scope: scope, state: .running)
         writeHostRun(scope: scope, turnId: turnId, state: .running)
-        active[scope] = ActiveRun(sessionId: session.id, turnId: turnId, requester: snapshot.requester)
+        active[scope] = ActiveRun(
+            sessionId: session.id, turnId: turnId, requester: snapshot.requester, agentId: agentId)
         if let requester = snapshot.requester, requester != snapshot.me {
             runningFor[session.id] = HostedRequest(deviceKey: requester, agentId: agentId, startedAt: Date())
             if SyncPhoneDevices.isPhone(deviceKey: requester) {
@@ -551,7 +554,7 @@ final class SyncHostRunner: ObservableObject {
         guard workspaceTarget != nil || agent.map(Self.canHost) == true else { return .refused }
 
         let turnId = "host-" + UUID().uuidString.lowercased()
-        active[scope] = ActiveRun(sessionId: sessionId, turnId: turnId, requester: nil)
+        active[scope] = ActiveRun(sessionId: sessionId, turnId: turnId, requester: nil, agentId: agentId)
         if let agent, workspaceTarget == nil {
             await assignSender(agent: agent, scope: scope, sessionId: sessionId)
         } else {
@@ -589,6 +592,7 @@ final class SyncHostRunner: ObservableObject {
         if let sessionId = active[scope]?.sessionId {
             Task { await SyncContextUsage.refresh(scope: scope, sessionId: sessionId) }
         }
+        clearApprovalNotices(active[scope])
         active[scope] = nil
         ToolPermissionPromptService.denySyncedPrompts(scope: scope)
         SyncSecretPromptQueue.shared.cancelAll(scope: scope)
@@ -763,6 +767,7 @@ final class SyncHostRunner: ObservableObject {
             let sessionId = run.sessionId
             Task { await SyncContextUsage.refresh(scope: scope, sessionId: sessionId) }
         }
+        clearApprovalNotices(active[scope])
         active[scope] = nil
         ToolPermissionPromptService.denySyncedPrompts(scope: scope)
         SyncSecretPromptQueue.shared.cancelAll(scope: scope)
@@ -902,9 +907,20 @@ final class SyncHostRunner: ObservableObject {
             )
         }
         guard pending != run.published else { return }
+        let before = run.published
         run.published = pending
         active[scope] = run
         writeApprovals(scope: scope, pending: pending)
+        // The card is in the chat, which only the iPhone shows: it hears about it with the app closed.
+        SyncApprovalPush.shared.changed(
+            sessionId: run.sessionId, agentId: run.agentId, requester: run.requester, before: before, after: pending)
+    }
+
+    /// The run ended with approvals still published: their notices go too.
+    private func clearApprovalNotices(_ run: ActiveRun?) {
+        guard let run, !run.published.isEmpty else { return }
+        SyncApprovalPush.shared.changed(
+            sessionId: run.sessionId, agentId: run.agentId, requester: run.requester, before: run.published, after: [])
     }
 
     /// Publishes the questions (secrets) the run in `scope` is waiting on.

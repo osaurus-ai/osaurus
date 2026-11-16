@@ -668,6 +668,12 @@
     "Missed call" : {
 
     },
+    "Needs your approval" : {
+
+    },
+    "I need your OK before I go on: %@" : {
+
+    },
     "Started on %@" : {
 
     },
