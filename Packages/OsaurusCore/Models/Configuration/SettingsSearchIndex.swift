@@ -5078,7 +5078,7 @@ public enum SettingsSearchIndex {
             keywords: [
                 "when should this run", "want this to run on its own", "run on its own", "run automatically", "automate workflow", "schedule workflow", "every weekday",
                 "every morning", "run at a time", "when a file shows up", "watch a folder", "when osaurus opens",
-                "when a site posts", "feed", "also run it", "more ways", "add another way", "turn off automation", "remove automation",
+                "when a site posts", "feed", "also run it", "more ways", "add another way", "stop an automation", "remove automation",
                 "what should it use each time", "workflow inputs for automation",
             ],
             disambiguation: "Per installed workflow, on its page: each automation that starts it, as a sentence with its switch (Remove appears on hover). Click the day or time of a schedule, the folder, or the site to change it in place; Custom… and Change… open the full editor from Settings → Automations. Add Another Way under them adds another. An automation whose workflow needs an input with no default stays off and shows What should it use each time? until it is filled. The bolt beside a workflow in the sidebar opens the same choices in a small panel (Run <name>…): a suggestion is made in one click with Undo, and See all ways to automate opens the workflow's page. Every automation also lists in Settings → Automations."
