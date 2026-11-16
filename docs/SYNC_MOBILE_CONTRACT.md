@@ -950,6 +950,9 @@ A call is a `voip` push (no `aps`, sent now or never) to each device set to ring
   ```
 
   `outcome` is `answered`, `declined`, `missed` (it rang out) or `busy` (another call was on).
+  A device that answered writes `ended` for the same call when it hangs up. Until then (two
+  hours at most) the Mac takes the user to be on that call: `call_user` from any run in the chat
+  doesn't ring (the agent is told to say it in the call), and its approvals get no notice or call.
 - The first `answered` takes the call: the Mac sends a `cancel` to each device that hasn't
   answered. When every device has turned it down, or after 45 seconds, the call is over.
 - The manage state carries `call` while a call rings and for a minute after it ends:
@@ -976,9 +979,11 @@ which only that iPhone shows. An iPhone that lists `approval` in its registratio
   `o` opens to `{ "event": "approval_cleared", "sessionId" }`; the iPhone removes the notice.
 - It goes to the iPhone that asked for the run, or, for a run the Mac continued itself (a helper's
   report), to every iPhone that lists `approval`.
-- When a call was arranged from that chat (`arrange_callback`), the agent also calls about it
-  (§5.7), opening with what it waits on. That call counts toward the agent's calls a day but
-  leaves the arranged call for the result.
+- When a call was arranged from that chat (`arrange_callback`) and a device lists
+  `approval_call` too, the agent also calls about it (§5.7), opening with what it waits on. That
+  call counts toward the agent's calls a day but leaves the arranged call for the result.
+- Nothing new is sent for a run that is a turn of a live call (`hostRun.voiceCall`), or while a
+  call placed from the chat is on: the call reads the card out itself. The clearing push still goes.
 
 ## 6. HTTP routes and their Sync replacements
 

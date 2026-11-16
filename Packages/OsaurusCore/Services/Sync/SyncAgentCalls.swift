@@ -276,11 +276,45 @@ final class SyncAgentCalls {
 
     /// The manage conversation changed: reads the devices' answers to the call ringing now.
     func manageChanged() {
-        guard let id = current?.id, let core = SyncService.shared.core else { return }
-        Task { @MainActor in
-            let answers = await Task.detached(priority: .userInitiated) { Self.answers(core: core, call: id) }.value
-            SyncAgentCalls.shared.apply(answers, call: id)
+        guard let core = SyncService.shared.core else { return }
+        if let id = current?.id {
+            Task { @MainActor in
+                let answers = await Task.detached(priority: .userInitiated) { Self.answers(core: core, call: id) }.value
+                SyncAgentCalls.shared.apply(answers, call: id)
+            }
         }
+        // Answered calls still on: the device writes `ended` for its call when it hangs up.
+        let live = liveCalls
+        guard !live.isEmpty else { return }
+        Task { @MainActor in
+            let ended = await Task.detached(priority: .utility) { () -> [UUID] in
+                live.compactMap { sessionId, call in
+                    Self.answers(core: core, call: call.id).values.contains("ended") ? sessionId : nil
+                }
+            }.value
+            for sessionId in ended {
+                SyncAgentCalls.shared.liveCalls[sessionId] = nil
+                Self.trace("call on \(sessionId.uuidString.prefix(8)) ended")
+            }
+        }
+    }
+
+    // MARK: Calls on
+
+    /// Answered calls, by chat, until the device says the call ended.
+    private var liveCalls: [UUID: (id: String, sinceMs: Int64)] = [:]
+    /// A call no device has said ended counts as over after this.
+    nonisolated static let liveCallLimitMs: Int64 = 2 * 3600 * 1000
+
+    /// Whether the user is on a call placed from `sessionId` now: the agent tells them in the call,
+    /// and a ring would come through it as a second call the phone turns down as busy.
+    func isOnCall(sessionId: UUID) -> Bool {
+        guard let call = liveCalls[sessionId] else { return false }
+        if SyncHostedRunContract.nowMs() - call.sinceMs > Self.liveCallLimitMs {
+            liveCalls[sessionId] = nil
+            return false
+        }
+        return true
     }
 
     /// Each device's answer to `call`, from every manage conversation of this Mac.
@@ -349,6 +383,9 @@ final class SyncAgentCalls {
             }
         }
         setState(.init(callId: id, state: outcome == .answered ? "answered" : "ended", answeredBy: answeredBy))
+        if outcome == .answered {
+            liveCalls[active.request.sessionId] = (id, SyncHostedRunContract.nowMs())
+        }
         if outcome == .missed || outcome == .declined {
             for target in active.rang {
                 sendMissedCall(active.request, to: target.push)

@@ -28,6 +28,8 @@ final class SyncApprovalPush {
 
     /// The registration event an iPhone asks for these with.
     nonisolated static let event = "approval"
+    /// The registration event for being called about it too, when a call was arranged.
+    nonisolated static let callEvent = "approval_call"
 
     /// Approval calls in progress, by session: one at a time per chat.
     private var calling: Set<UUID> = []
@@ -47,13 +49,13 @@ final class SyncApprovalPush {
     ) {
         // A turn of a live call: the call reads the card out and hears the answer. A notice, or a
         // second call, rang through the one the user was on (2026-11-16).
-        guard !onCall else { return }
+        let quiet = onCall || SyncAgentCalls.shared.isOnCall(sessionId: sessionId)
         let known = Set(before.map(\.id))
         let added = after.filter { !known.contains($0.id) }
         let targets = SyncWorkflowPush.shared.targets.filter {
             $0.registration.events.contains(Self.event) && (requester == nil || $0.device == requester)
         }
-        if let first = added.first {
+        if let first = added.first, !quiet {
             let agentName = agentId.map(resolveAgentDisplayName) ?? L("Your agent")
             let what = Self.summary(first)
             Self.trace(
@@ -61,7 +63,11 @@ final class SyncApprovalPush {
             for target in targets {
                 send(.waiting(agentName: agentName, what: what), sessionId: sessionId, agentId: agentId, to: target)
             }
-            if let agentId { callIfArranged(sessionId: sessionId, agentId: agentId, agentName: agentName, what: what) }
+            // Called, rather than only notified, when a device asked for that ("Call Me for Approvals").
+            let wantsCall = targets.contains { $0.registration.events.contains(Self.callEvent) }
+            if let agentId, wantsCall {
+                callIfArranged(sessionId: sessionId, agentId: agentId, agentName: agentName, what: what)
+            }
         } else if after.isEmpty, !before.isEmpty {
             for target in targets {
                 send(.cleared, sessionId: sessionId, agentId: agentId, to: target)
