@@ -68,6 +68,23 @@ else
   fail_msg "derived lane != floors.json. derived: $(echo $derived) | declared: $(echo $declared)"
 fi
 
+# 5. Model-driven floors must name real suites, never overlap the model-free
+#    list (evals-deterministic would then load a model), and each needs a
+#    `make evals-<name>` lane that enforces the floor.
+while IFS= read -r suite; do
+  [[ -n "$suite" ]] || continue
+  lane="evals-$(echo "$suite" | tr '[:upper:]' '[:lower:]')"
+  if [[ ! -d "$SUITES_DIR/$suite" ]]; then
+    fail_msg "modelSuitePassRates declares $suite with no Suites/$suite/ directory"
+  elif jq -e --arg s "$suite" '.suitePassRates | has($s)' "$FLOORS" >/dev/null; then
+    fail_msg "$suite is in both suitePassRates and modelSuitePassRates"
+  elif ! awk -v lane="$lane" '$0 ~ "^"lane":" {found=1; next} found && /^[^[:space:]]/ {exit} found && /--fail-on-floor/ {ok=1} END {exit !ok}' "$MAKEFILE"; then
+    fail_msg "$suite has a model floor but no make $lane target passing --fail-on-floor"
+  else
+    pass "model suite $suite has a floored make $lane lane"
+  fi
+done < <(jq -r '.modelSuitePassRates // {} | keys_unsorted[] | select(startswith("_") | not)' "$FLOORS")
+
 if [[ "$fail" -ne 0 ]]; then
   echo "eval-floors/Makefile sync: FAILED" >&2
   exit 1

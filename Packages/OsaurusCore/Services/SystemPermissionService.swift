@@ -118,16 +118,29 @@ enum SystemPermissionProbe {
 /// `成功：` in Chinese), so a prefix test read every successful Mail / Notes
 /// / Music / Messages probe on those locales as a denial and the tool gate
 /// refused with `permission_denied` no matter what TCC said (GitHub #2858).
+///
+/// `status` separates a real denial from a probe that could not decide: an
+/// Apple Event that timed out, or an app that was not running or did not
+/// answer. Only `.denied` may be cached as not granted; an `.unknown` probe
+/// says nothing about TCC.
 struct PermissionProbeResult: Sendable, Equatable {
-    let isGranted: Bool
+    enum Status: Sendable, Equatable { case granted, denied, unknown }
+
+    let status: Status
     let message: String
 
+    var isGranted: Bool { status == .granted }
+
     static func granted(_ message: String) -> PermissionProbeResult {
-        PermissionProbeResult(isGranted: true, message: message)
+        PermissionProbeResult(status: .granted, message: message)
     }
 
     static func denied(_ message: String) -> PermissionProbeResult {
-        PermissionProbeResult(isGranted: false, message: message)
+        PermissionProbeResult(status: .denied, message: message)
+    }
+
+    static func unknown(_ message: String) -> PermissionProbeResult {
+        PermissionProbeResult(status: .unknown, message: message)
     }
 }
 
@@ -624,8 +637,19 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
     /// The decision is `PermissionProbeResult.isGranted` — derived from the
     /// AppleScript error number — never the localized probe message (#2858).
     func requestAutomationPermissionAndWait(_ permission: SystemPermission) async -> Bool {
-        if RuntimeEnvironment.isUnderTests { return false }
-        guard permission.isAutomationBased else { return permissionStates[permission] ?? false }
+        await requestAutomationDecision(permission) == .granted
+    }
+
+    /// `requestAutomationPermissionAndWait` with the probe's three-way
+    /// answer. A timeout or an app that did not answer is `.unknown` and
+    /// leaves the cached state alone: caching it as denied made the gate
+    /// refuse every later call with "Missing system permissions" when the
+    /// real problem was that Mail had not finished launching.
+    func requestAutomationDecision(_ permission: SystemPermission) async -> PermissionProbeResult.Status {
+        if RuntimeEnvironment.isUnderTests { return .denied }
+        guard permission.isAutomationBased else {
+            return (permissionStates[permission] ?? false) ? .granted : .denied
+        }
         // `tell application "X"` launches X if needed and would bring it to the
         // front; launching it ourselves first (activates = false) keeps the
         // probe from stealing focus from the chat window.
@@ -634,9 +658,101 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
                 bundleIdentifier: bundleId, appName: permission.displayName
             )
         }
-        let granted = await Self.probe(permission).isGranted
-        setPermission(permission, isGranted: granted)
-        return granted
+        let status = await Self.probe(permission).status
+        if let granted = Self.cachedGrant(for: status) { setPermission(permission, isGranted: granted) }
+        return status
+    }
+
+    /// What a probe answer may write to the cached grant: nothing for a
+    /// probe that could not decide.
+    nonisolated static func cachedGrant(for status: PermissionProbeResult.Status) -> Bool? {
+        switch status {
+        case .granted: return true
+        case .denied: return false
+        case .unknown: return nil
+        }
+    }
+
+    /// `requestPermissionAndWait` for the tool gate, which needs to tell a
+    /// denial from an Automation probe that could not decide.
+    func requestPermissionDecision(_ permission: SystemPermission) async -> PermissionProbeResult.Status {
+        if permission.isAutomationBased { return await requestAutomationDecision(permission) }
+        return await requestPermissionAndWait(permission) ? .granted : .denied
+    }
+
+    /// Whether macOS would still show its own dialog for `permission`: the
+    /// person has never answered it. After "Don't Allow" (or "Add Events
+    /// Only" for Calendar) the request APIs return at once with no dialog,
+    /// and Full Disk Access, Accessibility and Screen Recording never have
+    /// one. The tool gate shows its own panel in those cases.
+    func macOSCanAsk(_ permission: SystemPermission) async -> Bool {
+        guard permission.promptsWhenMissing, !RuntimeEnvironment.isUnderTests else { return false }
+        switch permission {
+        case .location:
+            return locationManager.authorizationStatus == .notDetermined
+        case .automation, .automationCalendar, .automationMail, .automationMessages, .automationMusic, .notes,
+            .maps:
+            guard let bundleId = Self.automationProbeBundleIdentifier(for: permission) ?? Self.systemEventsBundleId
+            else { return true }
+            _ = await AppleScriptBridge.ensureRunning(bundleIdentifier: bundleId, appName: permission.displayName)
+            let status = await Task.detached(priority: .userInitiated) {
+                Self.automationConsent(bundleIdentifier: bundleId, askUserIfNeeded: false)
+            }.value
+            return status != .denied
+        default:
+            return await Task.detached(priority: .userInitiated) { Self.canAskOffMain(permission) }.value
+        }
+    }
+
+    nonisolated private static let systemEventsBundleId: String? = "com.apple.systemevents"
+
+    nonisolated private static func canAskOffMain(_ permission: SystemPermission) -> Bool {
+        switch permission {
+        case .calendar: return EKEventStore.authorizationStatus(for: .event) == .notDetermined
+        case .reminders: return EKEventStore.authorizationStatus(for: .reminder) == .notDetermined
+        case .contacts: return CNContactStore.authorizationStatus(for: .contacts) == .notDetermined
+        case .microphone: return AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined
+        default: return false
+        }
+    }
+
+    /// Calendar access limited to adding events: macOS's "Add Events Only".
+    /// The Calendar tools need to read, so this is not a grant, and the gate
+    /// says which choice to change.
+    func calendarIsAddOnly() async -> Bool {
+        if RuntimeEnvironment.isUnderTests { return false }
+        return await Task.detached(priority: .userInitiated) {
+            EKEventStore.authorizationStatus(for: .event) == .writeOnly
+        }.value
+    }
+
+    /// The Automation (Apple Events) consent decision for one target app,
+    /// read through `AEDeterminePermissionToAutomateTarget`. With
+    /// `askUserIfNeeded` it shows the macOS "wants access to control" dialog
+    /// when the person has never answered, and blocks until they do, so
+    /// call it off the main thread. `.unknown` covers a target that is not
+    /// running or did not answer, and, without `askUserIfNeeded`, a person
+    /// who has not answered yet.
+    nonisolated static func automationConsent(
+        bundleIdentifier: String,
+        askUserIfNeeded: Bool
+    ) -> PermissionProbeResult.Status {
+        var target = AEAddressDesc()
+        let bytes = Array(bundleIdentifier.utf8)
+        let created = bytes.withUnsafeBytes {
+            AECreateDesc(DescType(typeApplicationBundleID), $0.baseAddress, $0.count, &target)
+        }
+        guard created == noErr else { return .unknown }
+        defer { AEDisposeDesc(&target) }
+        let status = AEDeterminePermissionToAutomateTarget(
+            &target, AEEventClass(typeWildCard), AEEventID(typeWildCard), askUserIfNeeded
+        )
+        switch status {
+        case noErr: return .granted
+        case OSStatus(errAEEventNotPermitted): return .denied
+        case OSStatus(errAEEventWouldRequireUserConsent): return askUserIfNeeded ? .denied : .unknown
+        default: return .unknown
+        }
     }
 
     /// Bundle id of the app an Automation probe targets, so it can be
@@ -791,7 +907,13 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
         source: String,
         success: @Sendable (String) -> String
     ) async -> PermissionProbeResult {
-        let result = await AppleScriptExecutor.run(source: source, timeout: automationProbeTimeout)
+        probeResult(for: await AppleScriptExecutor.run(source: source, timeout: automationProbeTimeout), success: success)
+    }
+
+    nonisolated static func probeResult(
+        for result: AppleScriptExecutionResult,
+        success: (String) -> String
+    ) -> PermissionProbeResult {
         switch result.status {
         case .success:
             return .granted(success(result.output ?? ""))
@@ -802,7 +924,7 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
                 "ERROR [\(number)]: \(text) → Permission denied. Grant in System Settings → Privacy & Security → Automation"
             )
         case .timedOut:
-            return .denied("ERROR: \(result.errorMessage ?? "The probe did not finish in time.")")
+            return .unknown("ERROR: \(result.errorMessage ?? "The probe did not finish in time.")")
         case .compileError, .runtimeError:
             let number = result.errorNumber.map { "[\($0)]" } ?? ""
             let text = result.errorMessage ?? "Unknown error"
@@ -812,7 +934,7 @@ final class SystemPermissionService: NSObject, ObservableObject, CLLocationManag
             ]
             let appGone = result.errorNumber.map(appGoneCodes.contains) ?? false
             let guidance = appGone ? " → App communication failed. Open the app and try again." : ""
-            return .denied("ERROR \(number): \(text)\(guidance)")
+            return .unknown("ERROR \(number): \(text)\(guidance)")
         }
     }
 

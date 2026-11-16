@@ -79,6 +79,8 @@ struct WorkflowCreationLanding<StarterCard: View>: View {
                                 .multilineTextAlignment(.center)
                                 .accessibilityAddTraits(.isHeader)
                                 .padding(.bottom, theme.space.s12)
+                            ArchitectModelGuidanceNotice(session: draft)
+                                .frame(maxWidth: 480)
                             WorkflowArchitectComposer(windowState: windowState, draft: draft, focusesOnAppear: true)
                                 // The existing composer owns 12pt outer side insets.
                                 .frame(maxWidth: 504)

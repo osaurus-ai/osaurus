@@ -996,6 +996,17 @@ public struct SystemPromptComposer: Sendable {
         } else {
             channelDestinationsSection = nil
         }
+        // The Orchestrator's routes say "`run_workflow` with that agent's
+        // name", and its schema says nothing about who is on the team, so a
+        // calendar ask needs the model to guess a teammate exists. Listing
+        // the captured catalog (like the knowledge grants below) names them.
+        // Static: the team is session-constant; an edit re-renders it.
+        if snapshot.agentId == Agent.defaultId, !effectiveToolsOff,
+            resolvedNames.contains(RunWorkflowTool.toolName),
+            let team = SystemPromptTemplates.orchestratorTeam(snapshot.orchestratorTeam)
+        {
+            composer.append(.static(id: "orchestratorTeam", label: L("Team"), content: team))
+        }
         // Production's default harness contract is intentionally small.
         // Tool schemas are the operational source of truth; security is
         // enforced by path validation, Seatbelt, and the VM boundary rather

@@ -16,6 +16,7 @@ struct DiscoveryCatalogTests {
     @Test
     func eachItem_followsItsShownAndRetiredRule() {
         let fresh = DiscoverySnapshot()
+        #expect(DiscoveryCatalog.status(.team, in: fresh) == .open)
         #expect(DiscoveryCatalog.status(.history, in: fresh) == .open)
         #expect(DiscoveryCatalog.status(.turnOnWorkflow, in: fresh) == .hidden)
         #expect(DiscoveryCatalog.status(.keeperFolders, in: fresh) == .hidden)
@@ -55,6 +56,7 @@ struct DiscoveryCatalogTests {
         s.skillOrPluginAdded = true
         s.orchestratorHasFolder = true
         s.computerOrBrowserOn = true
+        s.teammateExists = true
         let notDone = DiscoveryItem.allCases.filter { DiscoveryCatalog.status($0, in: s) != .done }
         // History retires through the import's notification, not a snapshot field.
         #expect(notDone == [.history])
@@ -81,6 +83,21 @@ struct DiscoveryCatalogTests {
                 #expect(DiscoveryCenter.schedulableWorkflows.contains(id), "\(teammate)")
             }
         }
+    }
+
+    /// Offered only to an install that never had the team: an upgrade, or
+    /// a seed that made nobody. A team made, or deleted after seeding, retires it.
+    @Test
+    func team_isOfferedOnlyWhenTheInstallNeverHadOne() {
+        var s = DiscoverySnapshot()
+        #expect(DiscoveryCatalog.status(.team, in: s) == .open)
+        #expect(DiscoveryCatalog.order(startedWith: nil).first == .team)
+        #expect(DiscoveryCenter.step(.team, snapshot: s, offer: nil)?.title == "Create Team")
+        s.teammateExists = true
+        #expect(DiscoveryCatalog.status(.team, in: s) == .done)
+        s.teammateExists = false
+        s.teamSeeded = true
+        #expect(DiscoveryCatalog.status(.team, in: s) == .done, "a team the person deleted is not offered again")
     }
 
     @Test
@@ -283,14 +300,19 @@ private final class DiscoveryRecorder {
     var skipUndo: (@MainActor () -> Void)?
 }
 
+/// The walkthrough tests run on a seeded install unless `teamSeeded` is
+/// false, so the Create Your Team card stays out of their way.
 @MainActor
 private func discovery(
     _ snapshot: DiscoverySnapshot = DiscoverySnapshot(),
-    firstRunInProgress: Bool = false
+    firstRunInProgress: Bool = false,
+    teamSeeded: Bool = true
 ) -> (DiscoveryCenter, DiscoveryRecorder) {
     let center = DiscoveryCenter.shared
     center.resetForTesting(store: DiscoveryStore(defaults: UserDefaults(suiteName: "discovery-\(UUID().uuidString)")!))
     let recorder = DiscoveryRecorder()
+    var snapshot = snapshot
+    if teamSeeded { snapshot.teamSeeded = true }
     center.snapshot = { snapshot }
     center.now = { Date(timeIntervalSince1970: 1_793_779_200) }
     center.sendAsk = { _, label, call in
@@ -304,6 +326,7 @@ private func discovery(
     center.openSetting = { recorder.settings.append($0) }
     center.pickFolder = { _, _ in nil }
     center.createTeammate = { _ in }
+    center.createTeam = { [] }
     center.isPermissionGranted = { _ in true }
     center.firstRun = { (firstRunInProgress, nil) }
     center.showSkipNotice = { recorder.skipUndo = $0 }
@@ -318,6 +341,7 @@ private func restoreDiscovery(_ center: DiscoveryCenter) {
     center.turnOnAutomation = { await OnboardingKeep.turnOn($0) }
     center.openSetting = { SettingsLanding.open(id: $0) }
     center.createTeammate = { _ = await TeamSeeder.create([$0]) }
+    center.createTeam = { await DiscoveryCenter.createLiveTeam() }
     center.isPermissionGranted = { SystemPermissionService.shared.isGranted($0) }
     center.firstRun = { DiscoveryCenter.liveFirstRun() }
     center.workflowName = { OnboardingPaths.installed($0)?.name }
@@ -442,6 +466,33 @@ struct DiscoveryInChatTests {
             #expect(center.panel(for: session) == nil)
             #expect(session.turns.last?.origin == .authored)
             #expect(session.turns.allSatisfy { $0.modelContextExcluded })
+        }
+    }
+
+    @Test
+    func anInstallWithNoTeam_isOfferedOne_andTheStepCreatesIt() async throws {
+        try await ChatHistoryTestStorage.run {
+            let (center, _) = discovery(teamSeeded: false)
+            defer { restoreDiscovery(center) }
+            let session = ChatSession()
+            center.draw(for: session)
+            #expect(session.discoveryCard?.item == .team)
+
+            center.open(.team, in: session)
+            #expect(center.panel(for: session)?.panel.buttons.first?.title == "Create Team")
+            center.createTeam = {
+                [Agent(name: "Planner"), Agent(name: "Courier")]
+            }
+            center.perform(.discover, in: session)
+            await center.waitForStep()
+            #expect(session.turns.last?.content.hasPrefix("Planner and Courier are on your team.") == true)
+            #expect(center.panel(for: session) == nil)
+
+            center.open(.team, in: session)
+            center.createTeam = { [] }
+            center.perform(.discover, in: session)
+            await center.waitForStep()
+            #expect(session.turns.last?.content.contains("Create starter agents") == true)
         }
     }
 

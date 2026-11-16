@@ -197,6 +197,17 @@ enum ToolPermissionPromptService {
         }
     }
 
+    /// A card that is not a tool approval, today the system-permission
+    /// panel. It shares the presenter slot so it never stacks on an approval
+    /// card, and goes ahead of approvals still waiting their turn.
+    struct AheadCard {
+        let id: UUID
+        let view: AnyView
+        let onReturn: () -> Void
+        let onEscape: () -> Void
+    }
+
+    private static var aheadQueue: [AheadCard] = []
     private static var queue: [PendingPrompt] = []
     private static var continuations: [UUID: CheckedContinuation<PromptResolution, Never>] = [:]
     private static var slot: PresenterSlot?
@@ -276,6 +287,7 @@ enum ToolPermissionPromptService {
         slot = nil
         presentedRequest = nil
         queue.removeAll()
+        aheadQueue.removeAll()
     }
 
     // MARK: - Remote approvals (Osaurus Connect)
@@ -737,6 +749,10 @@ enum ToolPermissionPromptService {
     /// guard, immediate cancellation) simply pumps again.
     private static func pump() {
         guard slot == nil else { return }
+        if !aheadQueue.isEmpty {
+            presentAhead(aheadQueue.removeFirst())
+            return
+        }
         while !queue.isEmpty {
             let next = queue.removeFirst()
             // Resolved (cancelled) while it was still queued.
@@ -826,6 +842,31 @@ enum ToolPermissionPromptService {
         lastRenderedCardSize = nil
     }
 
+    // MARK: - Cards ahead of the queue
+
+    /// Shows `card` as soon as the presented approval (if any) is answered,
+    /// ahead of every approval still queued.
+    static func presentAheadOfQueue(_ card: AheadCard) {
+        aheadQueue.append(card)
+        pump()
+    }
+
+    /// Closes or unqueues a card from `presentAheadOfQueue`.
+    static func dismissAheadCard(id: UUID) {
+        aheadQueue.removeAll { $0.id == id }
+        if let current = slot, current.id == id {
+            tearDown(current)
+            slot = nil
+        }
+        pump()
+    }
+
+    private static func presentAhead(_ card: AheadCard) {
+        let handles = makePanel(view: card.view, onAllow: card.onReturn, onDeny: card.onEscape)
+        slot = .presented(card.id, handles)
+        showPresentedPanel(handles.panel)
+    }
+
     // MARK: - Presentation
 
     private static func present(_ entry: PendingPrompt) {
@@ -870,14 +911,17 @@ enum ToolPermissionPromptService {
 
         let handles = makePanel(view: permissionView, onAllow: onAllow, onDeny: onDeny)
         slot = .presented(id, handles)
+        showPresentedPanel(handles.panel)
+    }
+
+    private static func showPresentedPanel(_ panel: NSPanel) {
         // Apply the card size reported during the sizing layout pass, when
         // the panel was not yet registered and the callback could not act.
         if let renderedSize = lastRenderedCardSize {
             resizePanelToRenderedContent(renderedSize)
         }
         NSApp.activate(ignoringOtherApps: true)
-        handles.panel.makeKeyAndOrderFront(nil)
-        let panel = handles.panel
+        panel.makeKeyAndOrderFront(nil)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             panel.makeKey()
             if let contentView = panel.contentView { panel.makeFirstResponder(contentView) }

@@ -293,6 +293,8 @@ def load_translatable_keys() -> set[str]:
                 continue
             if entry.get("shouldTranslate") is False:
                 continue
+            if entry.get("extractionState") == "stale":
+                continue
             keys.add(f"{rel}\u0000{key}")
     return keys
 

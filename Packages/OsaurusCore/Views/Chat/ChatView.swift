@@ -1926,6 +1926,17 @@ final class ChatSession: ObservableObject {
 
         // Router catalog not in the picker yet — (re-)enable and connect on
         // demand. First-run setup explicitly includes temporary Cloud access.
+        guard await connectOsaurusRouterIntoPicker(maxConnectAttempts: maxConnectAttempts) else { return false }
+        // If the local download landed while we waited, normal picker
+        // reconciliation has completed the handoff. Otherwise only a
+        // Router selection counts as a successful bridge.
+        if pendingLocalSetupModelId == nil { return selectedModel != nil }
+        return isOsaurusRouterSession || selectOsaurusRouterBridgeModel()
+    }
+
+    /// Enables the Osaurus Router and waits until its catalog is in this
+    /// session's picker. False when it did not connect in time.
+    private func connectOsaurusRouterIntoPicker(maxConnectAttempts: Int) async -> Bool {
         let manager = RemoteProviderManager.shared
         manager.setOsaurusRouterEnabled(true)
         // Bounded poll (~10s at the default attempts): identity setup / the
@@ -1937,17 +1948,50 @@ final class ChatSession: ObservableObject {
             await manager.connectOsaurusRouterIfPossible()
             if manager.firstRunOsaurusRouterModelId() != nil {
                 await refreshPickerItems()
-                // If the local download landed while we waited, normal picker
-                // reconciliation has completed the handoff. Otherwise only a
-                // Router selection counts as a successful bridge.
-                if pendingLocalSetupModelId == nil { return selectedModel != nil }
-                return isOsaurusRouterSession || selectOsaurusRouterBridgeModel()
+                return true
             }
             if attempt < attempts {
                 try? await Task.sleep(nanoseconds: 500_000_000)
             }
         }
         return false
+    }
+
+    /// The Architect is about to build on an on-device model; see
+    /// `ArchitectModelGuidance`. The person's acknowledgement is read by the
+    /// notice itself so it re-renders when that changes.
+    var architectModelGuidanceApplies: Bool {
+        ArchitectModelGuidance.applies(
+            agentId: agentId,
+            source: selectedPickerItem?.source,
+            isHarness: isHarnessAgentActive,
+            isLocked: agentId.map { AgentManager.shared.lockedModel(for: $0) != nil } ?? false,
+            isStreaming: isStreaming
+        )
+    }
+
+    /// The Osaurus Cloud model the Architect guidance offers, by its product
+    /// name, before or after the Router is connected.
+    var architectCloudModelDisplayName: String {
+        let candidate = Self.osaurusRouterValueCandidate(in: pickerItems)
+        return candidate.flatMap { RemoteProviderManager.firstRunOsaurusModelDisplayName($0.id) ?? $0.displayName }
+            ?? RemoteProviderManager.firstRunOsaurusModelDisplayName(RemoteProviderManager.firstRunOsaurusModelSlug)
+            ?? "DeepSeek"
+    }
+
+    /// Switches the Architect to the Osaurus Cloud model and keeps it as the
+    /// Architect's model, as a picker choice would. Connects the Router
+    /// first when its catalog is not in the picker yet. False when no Router
+    /// model could be reached; the selection is then unchanged.
+    func useOsaurusCloudForArchitect(maxConnectAttempts: Int = 20) async -> Bool {
+        guard agentId == Agent.architectId else { return false }
+        if Self.osaurusRouterValueCandidate(in: pickerItems) == nil {
+            guard await connectOsaurusRouterIntoPicker(maxConnectAttempts: maxConnectAttempts) else { return false }
+        }
+        guard let item = Self.osaurusRouterValueCandidate(in: pickerItems) else { return false }
+        selectedModel = item.id
+        AgentManager.shared.updateDefaultModel(for: Agent.architectId, model: item.id)
+        return true
     }
 
     /// Select the Router bridge candidate from the current picker items, if
@@ -11829,6 +11873,9 @@ struct ChatView: View {
                                     .padding(.top, theme.space.s8)
                                     .readableColumnRow()
                             }
+
+                            ArchitectModelGuidanceNotice(session: observedSession)
+                                .readableColumnRow()
 
                             // Run-liveness notice (slow / stalled) so a run
                             // with no visible progress reads as a knowable

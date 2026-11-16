@@ -30,6 +30,10 @@ public struct ArchitectConfiguration: Codable, Equatable, Sendable {
     /// Extra instructions appended after the built-in Architect persona.
     public var systemPrompt: String
 
+    /// The person chose to keep an on-device model after the Architect
+    /// chat suggested a frontier one, so the suggestion stays hidden.
+    public var localModelAcknowledged: Bool
+
     public init(
         model: String? = nil,
         runtime: AgentRuntime? = nil,
@@ -37,7 +41,8 @@ public struct ArchitectConfiguration: Codable, Equatable, Sendable {
         displayName: String? = nil,
         avatar: String? = nil,
         customAvatarFilename: String? = nil,
-        systemPrompt: String = ""
+        systemPrompt: String = "",
+        localModelAcknowledged: Bool = false
     ) {
         self.model = model
         self.runtime = runtime
@@ -46,6 +51,7 @@ public struct ArchitectConfiguration: Codable, Equatable, Sendable {
         self.avatar = avatar
         self.customAvatarFilename = customAvatarFilename
         self.systemPrompt = systemPrompt
+        self.localModelAcknowledged = localModelAcknowledged
     }
 
     public init(from decoder: Decoder) throws {
@@ -57,6 +63,7 @@ public struct ArchitectConfiguration: Codable, Equatable, Sendable {
         avatar = try c.decodeIfPresent(String.self, forKey: .avatar)
         customAvatarFilename = try c.decodeIfPresent(String.self, forKey: .customAvatarFilename)
         systemPrompt = try c.decodeIfPresent(String.self, forKey: .systemPrompt) ?? ""
+        localModelAcknowledged = try c.decodeIfPresent(Bool.self, forKey: .localModelAcknowledged) ?? false
     }
 
     /// The trimmed custom name, or nil when the stock name applies.

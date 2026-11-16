@@ -349,7 +349,14 @@ public enum AppleScriptLoop {
         // out of the (public) default argument because `AppleScriptExecutor` is
         // internal and a public default value can't reference an internal symbol.
         let runExecutor: AppleScriptRunner =
-            execute ?? { await AppleScriptExecutor.run(source: $0, language: $1) }
+            execute ?? { source, language in
+                if let refusal = await AppleScriptAutomationConsent.preflight(
+                    source: source, toolName: AppleScriptTool.toolName)
+                {
+                    return refusal
+                }
+                return await AppleScriptExecutor.run(source: source, language: language)
+            }
         // Compile-before-confirm dry run: real OSA compile when the real
         // executor runs the scripts; no check for an injected mock executor
         // (deterministic tests, no OSA dependency) unless the caller injects
@@ -2168,6 +2175,11 @@ public enum AppleScriptLoop {
                     success: false
                 )
             )
+            if message.hasPrefix(AppleScriptAutomationConsent.declinedMessagePrefix) {
+                return
+                    "\(message) Do not run the script again. Tell the user which app needs access and "
+                    + "where to turn it on, then stop."
+            }
             return
                 "macOS blocked the script because Automation permission for that app isn't granted yet "
                 + "(\(message)). A system permission dialog should have appeared — once the user approves "

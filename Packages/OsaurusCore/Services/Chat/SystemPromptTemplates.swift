@@ -1076,6 +1076,52 @@ public enum SystemPromptTemplates {
     /// own description the affordance. Editing a grant or a collection's
     /// name/summary re-renders the block (a one-time cached-prefix bust),
     /// matching the other config-driven sections.
+    /// Entries the Team section lists before pointing at `status`.
+    static let orchestratorTeamLimit = 12
+    static let orchestratorTeamSummaryLimit = 240
+
+    /// The Orchestrator's Team section: who `run_workflow` can hand a task
+    /// to, the user's agents first. Nil when there is nothing to run.
+    public static func orchestratorTeam(_ team: OrchestratorTeam) -> String? {
+        guard !team.isEmpty else { return nil }
+        var lines: [String] = ["## Team", ""]
+        lines.append(
+            "`run_workflow` runs these by name. Send a request to the one whose description covers it.")
+        var remaining = orchestratorTeamLimit
+        func appendGroup(_ title: String, _ docs: [RoutableWorkflowDoc]) {
+            guard !docs.isEmpty, remaining > 0 else { return }
+            lines.append("")
+            lines.append(title)
+            for doc in docs.prefix(remaining) {
+                let firstLine = doc.summary.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+                var summary = firstLine.trimmingCharacters(in: .whitespacesAndNewlines)
+                if summary.count > orchestratorTeamSummaryLimit {
+                    let cut = summary.prefix(orchestratorTeamSummaryLimit - 1)
+                    let word = cut.lastIndex(of: " ").map { cut[..<$0] } ?? cut
+                    summary = word.trimmingCharacters(in: .punctuationCharacters.union(.whitespaces)) + "…"
+                }
+                lines.append(summary.isEmpty ? "- **\(doc.name)**" : "- **\(doc.name)** — \(summary)")
+            }
+            remaining -= min(remaining, docs.count)
+        }
+        appendGroup("The user's agents (input `task`: the user's message):", team.agents)
+        appendGroup("Built-in workers (input `task`: the user's message):", team.workers)
+        appendGroup("Installed workflows (`status` shows each one's inputs):", team.workflows)
+        let total = team.agents.count + team.workers.count + team.workflows.count
+        if total > orchestratorTeamLimit {
+            lines.append("")
+            lines.append("…and \(total - orchestratorTeamLimit) more; `status` lists them all.")
+        }
+        if team.agents.isEmpty {
+            lines.append("")
+            lines.append(
+                "The user has no agents of their own yet, so nothing here reads their calendar, reminders, "
+                    + "mail, or notes. For a request that needs one of those, say so: Create starter agents "
+                    + "(Settings → Agents → Delegation) adds them, or `configurator_handoff` can set one up.")
+        }
+        return lines.joined(separator: "\n")
+    }
+
     public static func knowledgeGuidance(
         collections: [KnowledgeGrantDescriptor]
     ) -> String {

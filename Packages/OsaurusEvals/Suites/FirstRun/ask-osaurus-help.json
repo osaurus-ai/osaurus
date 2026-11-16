@@ -1,0 +1,30 @@
+{
+  "id": "firstrun.ask-osaurus-help",
+  "domain": "orchestrator",
+  "label": "first run • Osaurus card: what can you help me with",
+  "query": "What can you help me with?",
+  "notes": "Routing on, with the day-one team (Planner, Courier, Keeper, Scout) created from the bundled templates in a scratch folder, as a fresh install has it. The Osaurus card's first ask, sent as an ordinary message. A question about the Orchestrator itself is answered directly from its prompt, which now lists the team.",
+  "fixtures": {
+    "seedTeammates": [
+      "planner",
+      "courier",
+      "keeper",
+      "scout"
+    ]
+  },
+  "expect": {
+    "defaultAgent": {
+      "mustNotCallTools": [
+        "architect_handoff",
+        "spawn_agent",
+        "run_workflow",
+        "web_search"
+      ],
+      "rubric": [
+        "Says what Osaurus can do and names at least one teammate (Planner, Courier, Keeper, or Scout) with its job.",
+        "Does NOT say it lacks the tools or connections to help."
+      ],
+      "maxIterations": 4
+    }
+  }
+}
