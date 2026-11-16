@@ -963,6 +963,23 @@ A call is a `voip` push (no `aps`, sent now or never) to each device set to ring
   "body": "Missed call: <reason>" }`; the plain alert reads "Missed call".
 - One call at a time per Mac.
 
+### 5.8 Approval requests (`approval` in a push registration's `events`)
+
+A chat run for an iPhone publishes the approvals it waits on in the chat (`approval/1`, §3.7),
+which only that iPhone shows. An iPhone that lists `approval` in its registration's `events`
+(§5.6) also gets a notification when one is published, so it hears about it with the app closed:
+
+- An alert push, `apns-collapse-id` `approval-<sessionId>`, generic in the clear ("Approval
+  needed"). `o` opens to `{ "v": 1, "event": "approval", "device", "agentId", "sessionId",
+  "title": "<agent>", "body": "Needs your approval: <what>" }`.
+- When the run's approvals are answered (on any device) or the run ends, a background push whose
+  `o` opens to `{ "event": "approval_cleared", "sessionId" }`; the iPhone removes the notice.
+- It goes to the iPhone that asked for the run, or, for a run the Mac continued itself (a helper's
+  report), to every iPhone that lists `approval`.
+- When a call was arranged from that chat (`arrange_callback`), the agent also calls about it
+  (§5.7), opening with what it waits on. That call counts toward the agent's calls a day but
+  leaves the arranged call for the result.
+
 ## 6. HTTP routes and their Sync replacements
 
 Every route the iPhone 1.0(11) calls (`SYNC_MOBILE_IOS_HANDOFF.md` has the full inventory),
