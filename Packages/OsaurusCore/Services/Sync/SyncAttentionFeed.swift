@@ -196,9 +196,21 @@ final class SyncAttentionFeed {
             in: conversation,
             writtenByThatDevice: true
         )
+        // Unsigned (written before 0.1.0-beta.6): never a workflow form's answer, which only a set its own
+        // device signed may carry.
+        let signed = Set(
+            SyncDeviceFeedContract.perDevice(
+                SyncDeviceFeedContract.AttentionAnswers.self,
+                prefix: SyncDeviceFeedContract.attentionAnswerNamespacePrefix,
+                in: conversation,
+                writtenByThatDevice: true,
+                signedOnly: true
+            ).keys)
         for (device, set) in perDevice {
             guard let name = deviceNames[device] else { continue }
-            entries += set.answers.map { LabeledAnswer(id: $0.key, answer: $0.value, deviceLabel: name) }
+            let answers = signed.contains(device)
+                ? set.answers : set.answers.filter { $0.value.action != SyncDeviceFeedContract.submitAction }
+            entries += answers.map { LabeledAnswer(id: $0.key, answer: $0.value, deviceLabel: name) }
         }
         if let legacy = SyncHostedRunContract.read(
             SyncDeviceFeedContract.AttentionAnswers.self,

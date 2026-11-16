@@ -41,6 +41,19 @@ struct SyncManageResultsFitTests {
         #expect(fitted.results["r3"]?.data != nil)
     }
 
+    @Test func longMessagesGoBeforeAnyResult() {
+        var all: [String: SyncDeviceFeedContract.ManageResult] = [:]
+        for i in 0..<4 {
+            all["r\(i)"] = .init(
+                ok: false, error: "failed", message: String(repeating: "m", count: 20_000), doneMs: Int64(1_000 + i))
+        }
+        let fitted = Results(results: all).fitted()
+        #expect(size(fitted) <= Results.maxBytes)
+        #expect(fitted.results.count == 4, "every request still has its answer")
+        #expect(fitted.results["r0"]?.message == nil && fitted.results["r0"]?.error == "failed")
+        #expect(fitted.results["r3"]?.message != nil)
+    }
+
     @Test func fittingIsStable() {
         let fitted = results(count: 6, size: 30_000).fitted()
         #expect(size(fitted) <= Results.maxBytes)

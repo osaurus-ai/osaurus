@@ -407,21 +407,25 @@ enum SyncDeviceFeedContract {
         // could carry the same two and be taken for this Mac's own, and the requests in it run as this
         // user. So: the one used before, once found; else one no other user is in (agents may be);
         // else, as before, the first. The last is for a conversation that still lists this user's
-        // identity from before a change of phrase.
+        // identity from before a change of phrase, and is never remembered: a conversation chosen only
+        // because no other was found mustn't keep its place once the real one is. Remembered per account,
+        // so another account's, or the one before a change of phrase, is never taken for this one's.
         let found = try core.conversationsFiltered(filter: filter)
-        let pinKey = "SyncSystemConversation.\(kind).\(device)"
+        let user = try core.userKey()
+        let pinKey = "SyncSystemConversation.\(user).\(kind).\(device)"
         if let pinned = UserDefaults.standard.string(forKey: pinKey),
             let conversation = found.first(where: { $0.scope == pinned })
         {
             return conversation
         }
-        let me = "u:" + (try core.userKey())
-        let chosen =
-            found.first { conversation in
-                conversation.members.allSatisfy { !$0.principal.hasPrefix("u:") || $0.principal == me }
-            } ?? found.first
-        if let chosen { UserDefaults.standard.set(chosen.scope, forKey: pinKey) }
-        return chosen
+        let me = "u:" + user
+        if let own = found.first(where: { conversation in
+            conversation.members.allSatisfy { !$0.principal.hasPrefix("u:") || $0.principal == me }
+        }) {
+            UserDefaults.standard.set(own.scope, forKey: pinKey)
+            return own
+        }
+        return found.first
     }
 
     /// This device's conversation of `kind`, made when missing.

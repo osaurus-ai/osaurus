@@ -99,13 +99,19 @@ enum SyncWorkflowOutput {
             if let description = artifact.description, !description.isEmpty {
                 entry["description"] = .string(description)
             }
-            let readable = artifact.problem == nil && FileManager.default.isReadableFile(atPath: artifact.path)
+            // The file as it is now, not as the run recorded it: a plain file (not a link, which could point
+            // anywhere on this Mac, `~/.ssh` say) at its size now, which the caps are checked against.
+            let attributes = try? FileManager.default.attributesOfItem(atPath: artifact.path)
+            let size = (attributes?[.size] as? NSNumber)?.intValue ?? 0
+            let readable =
+                artifact.problem == nil && attributes?[.type] as? FileAttributeType == .typeRegular
+                && FileManager.default.isReadableFile(atPath: artifact.path)
             if !readable {
                 entry["skipped"] = .string("missing")
-            } else if artifact.fileSize > fileLimit || total + artifact.fileSize > totalLimit {
+            } else if size > fileLimit || total + size > totalLimit {
                 entry["skipped"] = .string("tooLarge")
             } else {
-                total += artifact.fileSize
+                total += size
                 blobs.append(AttachmentFile(path: artifact.path, mediaType: artifact.mimeType, name: artifact.filename))
                 entry["blob"] = .number(Double(blobs.count - 1))
             }

@@ -387,14 +387,27 @@ final class SyncManageFeed {
             in: conversation,
             writtenByThatDevice: true
         )
+        // Unsigned (written before 0.1.0-beta.6): kept for what a request could do then, as the shared list
+        // below is. Starting a workflow, or sending a run's files, needs a request its device signed.
+        let signed = Set(
+            SyncDeviceFeedContract.perDevice(
+                SyncDeviceFeedContract.ManageRequests.self,
+                prefix: SyncDeviceFeedContract.manageRequestNamespacePrefix,
+                in: conversation,
+                writtenByThatDevice: true,
+                signedOnly: true
+            ).keys)
         for (device, list) in lists.sorted(by: { $0.key < $1.key }) where deviceNames[device] != nil {
+            let requests =
+                signed.contains(device)
+                ? list.requests : list.requests.filter { $0.op != .runWorkflow && $0.op != .workflowOutput }
             let results =
                 SyncHostedRunContract.read(
                     SyncDeviceFeedContract.ManageResults.self,
                     SyncDeviceFeedContract.manageResultNamespace(device: device),
                     from: conversation
                 )?.results ?? [:]
-            sources.append(RequestSource(device: device, requests: list.requests, results: results))
+            sources.append(RequestSource(device: device, requests: requests, results: results))
         }
         // The shared list from before per-device ones has no signer to check, so it keeps only what it
         // could ask for then: starting a workflow, or sending a run's files, needs a request this
@@ -876,6 +889,12 @@ extension SyncDeviceFeedContract.ManageResults {
             .map(\.key)
         for key in oldestFirst where kept[key]?.data != nil {
             kept[key]?.data = nil
+            if fits(kept) { return Self(v: v, results: kept) }
+        }
+        // Then their messages: a stub of whether it worked still answers the request. Dropped, a request the
+        // Mac had done looked unanswered, and an iPhone asking again (a workflow to run, say) had it done twice.
+        for key in oldestFirst where kept[key]?.message != nil {
+            kept[key]?.message = nil
             if fits(kept) { return Self(v: v, results: kept) }
         }
         for key in oldestFirst {
