@@ -53,8 +53,15 @@ final class SyncAgentDirectory: ObservableObject {
                 MainActor.assumeIsolated { SyncAgentDirectory.shared.schedulePublish() }
             })
         AgentManager.shared.$agents
-            .map { agents in agents.filter(SyncHostRunner.canHost).map(Self.entry(for:)) }
+            .map { agents in agents.filter(SyncHostRunner.canHost).map { Self.entry(for: $0) } }
             .removeDuplicates()
+            .receive(on: DispatchQueue.main)
+            .sink { _ in MainActor.assumeIsolated { SyncAgentDirectory.shared.schedulePublish() } }
+            .store(in: &cancellables)
+        // The entries carry each agent's model: the Default agent's, Architect's and Configurator's are kept
+        // in the configuration, not the agent list, as the manage feed also follows.
+        NotificationCenter.default.publisher(for: .agentUpdated)
+            .merge(with: NotificationCenter.default.publisher(for: .appConfigurationChanged))
             .receive(on: DispatchQueue.main)
             .sink { _ in MainActor.assumeIsolated { SyncAgentDirectory.shared.schedulePublish() } }
             .store(in: &cancellables)
@@ -92,12 +99,20 @@ final class SyncAgentDirectory: ObservableObject {
     /// What this Mac offers: the user's agents and its Default agent
     /// (marked, so other Macs, which have their own, skip it), or nothing
     /// when the setting is off.
-    nonisolated static func entries(agents: [Agent], hosting: Bool) -> [SyncHostedRunContract.DirectoryEntry] {
+    nonisolated static func entries(
+        agents: [Agent],
+        hosting: Bool,
+        models: [UUID: String] = [:]
+    ) -> [SyncHostedRunContract.DirectoryEntry] {
         guard hosting else { return [] }
-        return agents.filter(SyncHostRunner.canHost).map(entry(for:)).sorted { $0.id < $1.id }
+        return agents.filter(SyncHostRunner.canHost).map { entry(for: $0, model: models[$0.id]) }
+            .sorted { $0.id < $1.id }
     }
 
-    nonisolated private static func entry(for agent: Agent) -> SyncHostedRunContract.DirectoryEntry {
+    nonisolated private static func entry(
+        for agent: Agent,
+        model: String? = nil
+    ) -> SyncHostedRunContract.DirectoryEntry {
         let description = agent.routingDescription
         let isDefault = agent.id == Agent.defaultId
         return SyncHostedRunContract.DirectoryEntry(
@@ -106,7 +121,8 @@ final class SyncAgentDirectory: ObservableObject {
             name: isDefault ? agent.displayName : agent.name,
             description: description.isEmpty ? nil : description,
             avatar: agent.avatar,
-            isDefault: isDefault ? true : nil
+            isDefault: isDefault ? true : nil,
+            model: model
         )
     }
 
@@ -115,9 +131,15 @@ final class SyncAgentDirectory: ObservableObject {
         publishTask = Task { @MainActor in
             try? await Task.sleep(for: Self.publishDebounce)
             guard !Task.isCancelled else { return }
+            let manager = AgentManager.shared
+            var models: [UUID: String] = [:]
+            for agent in manager.agents {
+                if let model = manager.effectiveModel(for: agent.id), !model.isEmpty { models[agent.id] = model }
+            }
             let entries = Self.entries(
-                agents: AgentManager.shared.agents,
-                hosting: SyncConfigurationStore.load().hostAgentsForOtherDevices
+                agents: manager.agents,
+                hosting: SyncConfigurationStore.load().hostAgentsForOtherDevices,
+                models: models
             )
             await Task.detached(priority: .utility) {
                 do {

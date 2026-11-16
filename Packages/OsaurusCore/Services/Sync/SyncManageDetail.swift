@@ -184,11 +184,22 @@ final class SyncManageDetail {
     /// `payloads`: changed ones rewritten, new ones sent, a deleted agent's
     /// removed. Nothing happens before the manage state made the conversation.
     nonisolated static func write(_ payloads: [Payload], core: SyncCore) throws {
-        guard
-            let conversation = try SyncDeviceFeedContract.conversation(
-                kind: SyncDeviceFeedContract.manageKind, device: core.deviceKey(), core: core)
-        else { return }
-        let scope = conversation.scope
+        if let manage = try SyncDeviceFeedContract.conversation(
+            kind: SyncDeviceFeedContract.manageKind, device: core.deviceKey(), core: core)
+        {
+            try write(payloads, scope: manage.scope, core: core)
+        }
+        // The models message in the agent directory too (`directory_models`): the directory reaches a new
+        // iPhone first, in seconds, where the manage conversation, with its long history, comes last, and
+        // its model picker waited for it.
+        if let directory = try SyncDeviceFeedContract.conversation(
+            kind: SyncHostedRunContract.directoryKind, device: core.deviceKey(), core: core)
+        {
+            try write(payloads.filter { $0.agentId == nil }, scope: directory.scope, core: core)
+        }
+    }
+
+    nonisolated private static func write(_ payloads: [Payload], scope: String, core: SyncCore) throws {
         var existing: [String: (id: String, digest: String?)] = [:]
         var stale: [String] = []
         // Only a message written as this user can have its app data replaced (sync error 103 otherwise,

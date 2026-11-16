@@ -62,6 +62,7 @@ iPhone did over HTTP. A Mac's build says what it supports in its directory's `fe
 | `workflow_push` | Workflow notifications on the iPhone through the push service: push registrations on the manage conversation, `pushRegistered` in the manage state (§5.6) |
 | `agent_calls` | Agents calling the user back: PushKit grants in push registrations, `call-answer/1`, `call` in the manage state (§5.7) |
 | `workflow_step_details` | `steps` on every `workflow_outputs` message, an empty list for a run without any (§5.5) |
+| `directory_models` | each directory entry carries the agent's `model`, and the agent directory conversation carries the models message (§5.2) too, so a new iPhone has both before the manage conversation arrives |
 
 - The iPhone MUST check a flag before it writes a record or op that the flag covers, and MUST
   NOT expect a v2 record from a Mac whose directory doesn't list its flag. A directory without

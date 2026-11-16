@@ -63,6 +63,7 @@ enum SyncDeviceFeedContract {
         "workflow_push",
         "agent_calls",
         "workflow_step_details",
+        "directory_models",
     ]
 
     /// Each device's record under `prefix`, keyed by device key. With
