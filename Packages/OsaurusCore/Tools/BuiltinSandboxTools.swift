@@ -2805,7 +2805,7 @@ internal struct SandboxExecTool: OsaurusTool, @unchecked Sendable {
                     // Taken now, while this call's secret scope is bound.
                     let secrets = agentSecretValues(agentId: agentId)
                     onExit = { killedByUser, tail in
-                        let scrubbed = SecretScrubber.scrub(tail, secrets: secrets)
+                        let scrubbed = BackgroundExecLogTail.trimmed(SecretScrubber.scrub(tail, secrets: secrets))
                         let text = HostContinuationInbox.processEndedMessage(
                             command: command, pid: pid, killedByUser: killedByUser, logTail: scrubbed)
                         await MainActor.run {
@@ -3052,15 +3052,28 @@ private func registerBackgroundLiveExec(
 
 /// The end of a background job's log, for `notify_on_exit`.
 enum BackgroundExecLogTail {
+    /// What reaches the chat, at most.
     static let maxBytes = 2048
+    /// What's read: twice that, so secrets are scrubbed before the cut. Cut first, a secret across the
+    /// cut was left as a part that no longer matched it, and reached the chat.
+    static let readBytes = 4096
 
     static func read(_ url: URL) -> String {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return "" }
         defer { try? handle.close() }
         let size = (try? handle.seekToEnd()) ?? 0
-        try? handle.seek(toOffset: size > UInt64(maxBytes) ? size - UInt64(maxBytes) : 0)
+        try? handle.seek(toOffset: size > UInt64(readBytes) ? size - UInt64(readBytes) : 0)
         let data = (try? handle.readToEnd()) ?? Data()
         return String(decoding: data, as: UTF8.self)
+    }
+
+    /// The last `maxBytes` of an already scrubbed tail, from the start of a line when it was cut.
+    static func trimmed(_ text: String) -> String {
+        guard text.utf8.count > maxBytes else { return text }
+        var tail = Substring(text)
+        while tail.utf8.count > maxBytes { tail = tail.dropFirst() }
+        if let newline = tail.firstIndex(of: "\n") { tail = tail[tail.index(after: newline)...] }
+        return String(tail)
     }
 }
 
