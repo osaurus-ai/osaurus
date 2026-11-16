@@ -59,6 +59,8 @@ final class SyncAgentCalls {
 
     enum Outcome: String, Sendable {
         case answered, declined, missed, busy, unavailable
+        /// The run that placed the call stopped while it rang.
+        case cancelled
     }
 
     struct Request: Sendable {
@@ -159,16 +161,21 @@ final class SyncAgentCalls {
         let id = UUID().uuidString.lowercased()
         Self.trace("ringing \(rang.count) devices for \(request.agentName), call \(id.prefix(8))")
         setState(.init(callId: id, state: "ringing"))
-        return await withCheckedContinuation { continuation in
-            current = Active(id: id, request: request, rang: rang, continuation: continuation)
-            current?.timeout = Task { @MainActor in
-                try? await Task.sleep(for: .seconds(Self.ringSeconds + Self.answerSlackSeconds))
-                guard !Task.isCancelled else { return }
-                SyncAgentCalls.shared.finish(id, outcome: .missed)
+        // The run that placed it stopped (a new message, Stop): the call is called off everywhere.
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                current = Active(id: id, request: request, rang: rang, continuation: continuation)
+                current?.timeout = Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(Self.ringSeconds + Self.answerSlackSeconds))
+                    guard !Task.isCancelled else { return }
+                    SyncAgentCalls.shared.finish(id, outcome: .missed)
+                }
+                for target in rang {
+                    send(.ring, call: id, request: request, to: target)
+                }
             }
-            for target in rang {
-                send(.ring, call: id, request: request, to: target)
-            }
+        } onCancel: {
+            Task { @MainActor in SyncAgentCalls.shared.finish(id, outcome: .cancelled) }
         }
     }
 
@@ -329,7 +336,7 @@ final class SyncAgentCalls {
         Self.log.info("call \(id.prefix(8), privacy: .public): \(outcome.rawValue, privacy: .public)")
         Self.trace("call \(id.prefix(8)) \(outcome.rawValue)\(answeredBy.map { " by \($0.prefix(8))" } ?? "")")
         // Devices still ringing stop: those that took or turned down the call already have.
-        if outcome == .answered || outcome == .missed {
+        if outcome == .answered || outcome == .missed || outcome == .cancelled {
             for target in active.rang where active.answers[target.device] == nil {
                 send(.cancel, call: id, request: active.request, to: target)
             }
