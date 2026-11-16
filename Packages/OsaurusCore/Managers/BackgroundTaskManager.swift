@@ -1436,8 +1436,8 @@ public final class BackgroundTaskManager: ObservableObject {
                 id,
                 agentId: request.agentId,
                 workspace: request.workspaceTarget,
-                bringsHostText: request.taskIntent == .hostContinuation
-                    && !request.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                hostContinuation: request.taskIntent == .hostContinuation,
+                bringsHostText: !request.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             )
         }
         guard request.reattachSession,
@@ -1512,12 +1512,14 @@ public final class BackgroundTaskManager: ObservableObject {
 
     /// The stored session `id`, when it belongs to `agentId` and nothing else
     /// is running it. Its latest turn must be the one to answer, unless the
-    /// run brings its own: host text (a helper's report) sent as
-    /// `.hostContinuation`, which becomes that turn.
+    /// run is a `.hostContinuation` that brings its own (host text, a
+    /// helper's report, becomes that turn) or picks up after a tool row (a
+    /// parked workflow call whose result has landed).
     private func lookupContinuedSession(
         _ id: UUID,
         agentId: UUID?,
         workspace: WorkspaceAgentRef? = nil,
+        hostContinuation: Bool = false,
         bringsHostText: Bool = false
     ) -> (data: ChatSessionData, live: ChatSession?)? {
         let db = ConversationStores.current
@@ -1528,7 +1530,8 @@ public final class BackgroundTaskManager: ObservableObject {
         guard backgroundTasks[id]?.status.isActive != true,
             let data = db.loadSession(id: id),
             Self.continues(data, agentId: agentId, workspace: workspace),
-            bringsHostText || data.turns.last?.role == .user
+            data.turns.last?.role == .user
+                || (hostContinuation && (bringsHostText || data.turns.last?.role == .tool))
         else { return nil }
         let live = ChatWindowManager.shared.session(forSessionId: id)
             ?? LiveChatSessionRegistry.shared.liveSession(for: id)

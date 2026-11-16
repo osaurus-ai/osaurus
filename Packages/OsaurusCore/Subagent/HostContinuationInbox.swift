@@ -35,6 +35,11 @@ final class HostContinuationInbox {
         /// Continuations this entry's chat has had in a row from the inbox,
         /// counting this one; see `maxChain`.
         var chain: Int
+        /// Set when the chat parked on this workflow run (a Work Mode call
+        /// waiting on a form) and the run has ended: its result goes into the
+        /// call's row, and the chat continues once none of its runs is left.
+        /// `text` is empty then.
+        var resumesRun: UUID?
     }
 
     struct State: Codable, Equatable, Sendable {
@@ -71,7 +76,43 @@ final class HostContinuationInbox {
             ) { _ in
                 MainActor.assumeIsolated { HostContinuationInbox.shared.drain() }
             })
+        observers.append(
+            NotificationCenter.default.addObserver(
+                forName: .workflowRunFinished, object: nil, queue: .main
+            ) { note in
+                guard let runID = note.userInfo?["runID"] as? UUID else { return }
+                MainActor.assumeIsolated { HostContinuationInbox.shared.workflowRunEnded(runID) }
+            })
         drain()
+    }
+
+    /// A workflow run ended. A chat parked on it (`parkOnWorkflowRun`) that
+    /// is loaded resumes itself; one that isn't gets an entry here, which
+    /// checks its saved parked calls when delivered.
+    private func workflowRunEnded(_ runID: UUID) {
+        guard let run = WorkflowRunStore.shared.run(id: runID),
+            let sessionId = run.caller.sessionID.flatMap(UUID.init(uuidString:)),
+            Self.liveSession(sessionId) == nil,
+            !state.entries.contains(where: { $0.resumesRun == runID })
+        else { return }
+        state.entries.append(
+            Entry(
+                id: UUID(),
+                sessionId: sessionId,
+                agentId: run.caller.agentID,
+                text: "",
+                createdMs: Self.nowMs(),
+                chain: 0,
+                resumesRun: runID
+            ))
+        Store.save(state)
+        drain()
+    }
+
+    private static func liveSession(_ id: UUID) -> ChatSession? {
+        LiveChatSessionRegistry.shared.liveSession(for: id)
+            ?? ChatWindowManager.shared.session(forSessionId: id)
+            ?? BackgroundTaskManager.shared.backgroundTasks[id]?.chatSession
     }
 
     // MARK: - Adding
@@ -113,29 +154,26 @@ final class HostContinuationInbox {
         guard !draining, !state.entries.isEmpty else { return }
         draining = true
         Task { @MainActor in
-            defer { draining = false }
             prune()
             // One at a time, oldest first; a chat with two results gets the
             // second once the first's run has ended.
-            var waiting: [Entry] = []
+            let batch = state.entries
+            var done: Set<UUID> = []
             var busy: Set<UUID> = []
-            for entry in state.entries {
-                if busy.contains(entry.sessionId) {
-                    waiting.append(entry)
-                    continue
-                }
-                if await deliver(entry) {
-                    let key = entry.sessionId.uuidString.lowercased()
-                    state.chains[key] = entry.chain
-                    busy.insert(entry.sessionId)
-                } else {
-                    waiting.append(entry)
-                    busy.insert(entry.sessionId)
+            for entry in batch where !busy.contains(entry.sessionId) {
+                busy.insert(entry.sessionId)
+                guard await deliver(entry) else { continue }
+                done.insert(entry.id)
+                if entry.resumesRun == nil {
+                    state.chains[entry.sessionId.uuidString.lowercased()] = entry.chain
                 }
             }
-            state.entries = waiting
+            // Entries added while this ran stay, after the batch's leftovers.
+            state.entries.removeAll { done.contains($0.id) }
             Store.save(state)
-            scheduleRetry()
+            draining = false
+            let addedMeanwhile = state.entries.contains { entry in !batch.contains { $0.id == entry.id } }
+            if addedMeanwhile { drain() } else { scheduleRetry() }
         }
     }
 
@@ -143,6 +181,7 @@ final class HostContinuationInbox {
     /// take it now (busy, or storage not open yet); true once it is done
     /// with, delivered or dropped for good.
     private func deliver(_ entry: Entry) async -> Bool {
+        if let runID = entry.resumesRun { return await resume(entry, runID: runID) }
         // Loaded again meanwhile (the user opened it): the live path applies.
         if let live = LiveChatSessionRegistry.shared.liveSession(for: entry.sessionId)
             ?? ChatWindowManager.shared.session(forSessionId: entry.sessionId)
@@ -152,7 +191,56 @@ final class HostContinuationInbox {
             Self.log.info("delivered to the open chat \(entry.sessionId, privacy: .public)")
             return true
         }
-        switch await SyncHostRunner.shared.continueWithHostText(entry.text, sessionId: entry.sessionId) {
+        return await continueStored(entry, text: entry.text)
+    }
+
+    /// Lands the results of the chat's parked workflow calls whose runs have
+    /// ended, as `reparkWorkflowRuns` does when a chat loads, then continues
+    /// it once none is left. Not when the run was cancelled (the person
+    /// stopped it), nor when the chat moved on meanwhile (a reply was typed).
+    private func resume(_ entry: Entry, runID: UUID) async -> Bool {
+        // Loaded again meanwhile: it reparks and resumes itself.
+        if Self.liveSession(entry.sessionId) != nil { return true }
+        let id = entry.sessionId
+        guard
+            let stored = await Task.detached(priority: .utility, operation: {
+                ConversationStores.current.loadSession(id: id)
+            }).value
+        else { return false }
+
+        var session = stored
+        var landed = false
+        for call in stored.parkedWorkflowRuns {
+            guard let run = WorkflowRunStore.shared.run(id: call.runID), run.status.isTerminal,
+                !WorkflowRunService.shared.isActive(call.runID)
+            else { continue }
+            let result = WorkflowToolCall.envelope(
+                WorkflowCallResult(run: run), workflow: run.workflowName, tool: call.toolName)
+            if let i = session.turns.lastIndex(where: { $0.role == .tool && $0.toolCallId == call.callId }) {
+                session.turns[i].content = result
+            }
+            if let i = session.turns.lastIndex(where: { $0.toolCalls?.contains { $0.id == call.callId } ?? false }) {
+                session.turns[i].toolResults[call.callId] = result
+            }
+            session.parkedWorkflowRuns.removeAll { $0.runID == call.runID }
+            landed = true
+        }
+        if landed {
+            session.updatedAt = Date()
+            // Ordered before the continuation's read: the store reads after
+            // its queued writes.
+            ChatSessionsManager.shared.saveAsync(session)
+        }
+        guard session.parkedWorkflowRuns.isEmpty, session.turns.last?.role == .tool,
+            WorkflowRunStore.shared.run(id: runID)?.status != .cancelled
+        else { return true }
+        return await continueStored(entry, text: "")
+    }
+
+    /// Continues the saved chat: as a hosted run when other devices see it,
+    /// else as any local chat. `text` empty continues from a tool row.
+    private func continueStored(_ entry: Entry, text: String) async -> Bool {
+        switch await SyncHostRunner.shared.continueWithHostText(text, sessionId: entry.sessionId) {
         case .started:
             Self.log.info("continued the synced chat \(entry.sessionId, privacy: .public)")
             return true
@@ -166,7 +254,7 @@ final class HostContinuationInbox {
             break
         }
         let request = DispatchRequest(
-            prompt: entry.text,
+            prompt: text,
             agentId: entry.agentId,
             showToast: false,
             source: .chat,
@@ -202,6 +290,23 @@ final class HostContinuationInbox {
     }
 
     nonisolated static func nowMs() -> Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
+
+    /// The turn a background process asked to report its end
+    /// (`sandbox_exec` with `notify_on_exit`) sends. Prefixed like a helper
+    /// report, so the model (and the user) can tell it from a user message.
+    /// The exit code isn't known: the job runs detached, and only its log
+    /// is kept.
+    nonisolated static func processEndedMessage(
+        command: String,
+        pid: String,
+        killedByUser: Bool,
+        logTail: String
+    ) -> String {
+        let how = killedByUser ? "was stopped by the user" : "ended"
+        let tail = logTail.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lines = tail.isEmpty ? "(the log is empty)" : "Last lines of its log:\n" + tail
+        return "[Process finished] `\(command)` (pid \(pid)) \(how). \(lines)"
+    }
 
     // MARK: - Storage
 
