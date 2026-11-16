@@ -61,6 +61,8 @@ final class SyncAgentCalls {
         case answered, declined, missed, busy, unavailable
         /// The run that placed the call stopped while it rang.
         case cancelled
+        /// The push service couldn't be reached, or failed, for every device.
+        case notSent
     }
 
     struct Request: Sendable {
@@ -88,6 +90,7 @@ final class SyncAgentCalls {
         let rang: [CallTarget]
         var answers: [String: String] = [:]
         var failedSends = 0
+        var droppedSends = 0
         var continuation: CheckedContinuation<Outcome, Never>?
         var timeout: Task<Void, Never>?
     }
@@ -207,8 +210,12 @@ final class SyncAgentCalls {
         Self.trace("\(kind.rawValue) to \(target.device.prefix(8)) not sent: \(outcome)")
         guard kind == .ring, current?.id == id else { return }
         current?.failedSends += 1
+        if case .dropGrant = outcome { current?.droppedSends += 1 }
         if let active = current, active.failedSends >= active.rang.count {
-            finish(id, outcome: .unavailable)
+            // Every device's grant refused: none can ring. Otherwise the push service couldn't be
+            // reached or failed, which says nothing about the devices (2026-11-16: a stopped local
+            // service read as "no device is set to ring").
+            finish(id, outcome: active.droppedSends == active.rang.count ? .unavailable : .notSent)
         }
     }
 

@@ -176,7 +176,7 @@ final class AgentCallPolicy {
             guard decision == .onItsOwn else { return }
             state.missedInRow[agentId, default: 0] += 1
             state.lastMissMs[agentId] = nowMs
-        case .busy, .unavailable, .cancelled:
+        case .busy, .unavailable, .cancelled, .notSent:
             return
         }
         save()
@@ -294,6 +294,9 @@ final class CallUserTool: OsaurusTool, @unchecked Sendable {
             return "No device is set to ring for agent calls. Tell the user in the chat instead."
         case .cancelled:
             return "The call was called off before anyone answered."
+        case .notSent:
+            return "The call couldn't be placed: Osaurus couldn't reach its push service. Tell the user in the chat "
+                + "instead, and that calls aren't getting through right now."
         }
     }
 }
