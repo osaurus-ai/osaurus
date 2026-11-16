@@ -34,6 +34,10 @@ struct SyncApprovalPushTests {
     func summary() {
         let twoLines = Self.approval(description: "Run `sleep 60`\nin the sandbox")
         #expect(SyncApprovalPush.summary(twoLines) == "Run `sleep 60`")
+        // A tool's own description, as `shell_run`'s reads: its first sentence only.
+        let toolDescription = Self.approval(
+            description: "Run a shell command in the working directory. **Reserve this for builds, tests, git.**")
+        #expect(SyncApprovalPush.summary(toolDescription) == "Run a shell command in the working directory")
         #expect(SyncApprovalPush.summary(Self.approval(description: "  \n")) == "shell_run")
         let long = String(repeating: "x", count: 500)
         #expect(SyncApprovalPush.summary(Self.approval(description: long)).count == 160)

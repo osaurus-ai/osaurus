@@ -69,10 +69,14 @@ final class SyncApprovalPush {
         }
     }
 
-    /// What the approval is for, short: the tool's own description, else its name.
+    /// What the approval is for, short: the first sentence of the tool's own description (written
+    /// for the model, a paragraph long), else its name. Never the arguments: a command read out
+    /// in the call means nothing by ear, and the card shows it.
     nonisolated static func summary(_ approval: SyncHostedRunContract.PendingApproval) -> String {
         let description = approval.description.trimmingCharacters(in: .whitespacesAndNewlines)
-        let line = description.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+        var line = description.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
+        if let end = line.range(of: ". ") { line = String(line[..<end.lowerBound]) }
+        line = line.trimmingCharacters(in: CharacterSet(charactersIn: ". "))
         return String((line.isEmpty ? approval.tool : line).prefix(160))
     }
 
