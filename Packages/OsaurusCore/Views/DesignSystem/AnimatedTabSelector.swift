@@ -124,7 +124,9 @@ extension ThemeProtocol {
     /// `stroke.default` to zero, which would hide the hairline.
     var selectionStroke: CGFloat { isDark ? stroke.default : unscopedTheme.stroke.default }
 
-    private var unscopedTheme: any ThemeProtocol {
+    /// The app theme outside any component family scope. Content that
+    /// leaves its family (a card presented from a sidebar row) draws with it.
+    var unscopedTheme: any ThemeProtocol {
         if let scoped = self as? CatalogResolvedTheme { return scoped.base.unscopedTheme }
         return self
     }

@@ -563,24 +563,37 @@ struct WorkflowsSidebarWorkflowRow: View {
                     .anchoredCard(
                         isPresented: $showsAutomate,
                         size: CGSize(width: WorkflowAutomatePopover.width, height: automateHeight),
-                        besideAnchor: true, accessibilityLabel: L("Automate \(row.name)")
+                        besideAnchor: true, shadowPadding: theme.space.s20, shadowPassesThrough: true,
+                        accessibilityLabel: L("Automate \(row.name)")
                     ) {
-                        ScrollView(.vertical) {
-                            if showsAutomate, let card = automatePopover({ showsAutomate = false }) {
-                                card
-                                    .fixedSize(horizontal: false, vertical: true)
-                                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
-                                        if abs(automateHeight - height) > 0.5 { automateHeight = max(1, height) }
-                                    }
-                            }
-                        }
-                        .scrollIndicators(.hidden)
+                        automateCard
                     }
             }
             SettingsIconButton("play", help: "Run now", size: .extraExtraSmall, role: .secondary, action: onRun)
                 .accessibilityLabel(Text("Run \(row.name) now", bundle: .module))
         }
         .transition(.opacity)
+    }
+
+    /// The card leaves the sidebar, so it draws with the app theme rather
+    /// than the sidebar's family scope, which would give it the sidebar's
+    /// fill and no border. The surface wraps the scroll view so its shadow
+    /// is not clipped.
+    private var automateCard: some View {
+        let cardTheme = theme.unscopedTheme
+        return ScrollView(.vertical) {
+            if showsAutomate, let card = automatePopover({ showsAutomate = false }) {
+                card
+                    .fixedSize(horizontal: false, vertical: true)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
+                        if abs(automateHeight - height) > 0.5 { automateHeight = max(1, height) }
+                    }
+            }
+        }
+        .scrollIndicators(.hidden)
+        .clipShape(RoundedRectangle(cornerRadius: cardTheme.radius.xlarge, style: .continuous))
+        .settingsChrome(.overlay)
+        .environment(\.theme, cardTheme)
     }
 }
 
@@ -606,7 +619,8 @@ struct WorkflowStatusMark: View {
                 Circle().fill(theme.statusInk(.success))
                     .frame(width: theme.space.s8, height: theme.space.s8)
             case .manual:
-                Circle().strokeBorder(theme.text.tertiary, lineWidth: theme.stroke.default)
+                // The sidebar's family scope sets `stroke.default` to zero.
+                Circle().strokeBorder(theme.text.tertiary, lineWidth: theme.unscopedTheme.stroke.default)
                     .frame(width: theme.space.s8, height: theme.space.s8)
             }
         }
