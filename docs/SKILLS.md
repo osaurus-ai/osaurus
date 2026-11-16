@@ -13,11 +13,11 @@ Osaurus comes with 9 built-in skills ready to use. Each one teaches the AI a con
 | Skill | Description |
 |-------|-------------|
 | **Web Researcher** | Live web research with source retrieval, cross-checking, and cited reports |
-| **Content Summarizer** | Retrieve pages or files, then distill them into structured summaries |
+| **Content Summarizer** | Extract key points and create structured summaries |
 | **Mac Automator** | Control and query Mac apps with AppleScript automation |
 | **Personal Organizer** | Manage calendar events, reminders, email, and messages |
 | **Document Builder** | Create spreadsheets and presentations, delivered as downloadable files |
-| **Workspace Assistant** | Read, edit, search, and commit files in the mounted working folder |
+| **Workspace Assistant** | Work on files in the mounted folder: read, edit, search, run commands, commit |
 | **Data Keeper** | Keep structured records across chats in the agent's private database |
 | **Autonomous Scheduler** | Set up recurring or delayed self-running tasks with notifications |
 | **Data Visualizer** | Render charts and graphs from attached, retrieved, or computed data |
@@ -28,7 +28,7 @@ Osaurus comes with 9 built-in skills ready to use. Each one teaches the AI a con
 2. Browse the library — every installed skill is automatically available to your custom agents
 3. Start a chat — the AI discovers and loads relevant skills on demand, or type `/skill-name` to invoke one explicitly for a single message
 
-There are no enable/disable toggles and no per-agent assignment: installing or creating a skill puts it in the library, and deleting it (or uninstalling its plugin) removes it. The built-in Osaurus configuration agent is the one exception — it does not use skills.
+There are no enable/disable toggles: installing or creating a skill puts it in the library for every custom agent, and deleting it (or uninstalling its plugin) removes it. A custom agent can narrow the library with **Limit to selected skills** (Agents → the agent → Abilities → Tools; `agents[].skills` in the declarative document). The built-in Osaurus configuration agent does not use skills.
 
 ---
 
@@ -38,10 +38,10 @@ There are no enable/disable toggles and no per-agent assignment: installing or c
 
 Import skills from any GitHub repository that includes a skills marketplace:
 
-1. Click **Import** → **From GitHub**
+1. Click **Add Skill** → **Import Claude plugin from GitHub**
 2. Enter the repository URL (e.g., `github.com/owner/repo` or `owner/repo`)
 3. Browse available skills and select which to import
-4. Click **Import Selected**
+4. Click **Import N Skills** (or **Install N Plugins** for full plugins)
 
 Osaurus looks for `.claude-plugin/marketplace.json` in the repository to discover available skills.
 
@@ -51,15 +51,14 @@ Osaurus looks for `.claude-plugin/marketplace.json` in the repository to discove
 
 Import skills from local files:
 
-1. Click **Import** → **From File**
-2. Select a skill file
+1. Click **Add Skill** → **Import Skill**
+2. Select a `SKILL.md` / `.md` file or a `.zip` bundle
 
 **Supported formats:**
 
 | Format | Description |
 |--------|-------------|
 | `.md` / `SKILL.md` | Agent Skills format (Markdown with YAML frontmatter) |
-| `.json` | JSON export format |
 | `.zip` | ZIP archive with `SKILL.md` and optional `references/` and `assets/` folders |
 
 Local file imports are checked before they are saved:
@@ -73,9 +72,9 @@ Local file imports are checked before they are saved:
 
 ## Managing Skills
 
-### Library Filters
+### Library Tabs
 
-The Skills view groups the library by source: **All**, **Built-in**, **Yours**, and **From Plugins**. Built-ins are view-only, your own skills support the full edit/export/delete lifecycle, and plugin skills are removed by uninstalling their plugin.
+The Skills view has three tabs: **All** (every installed skill), **Custom** (skills you created or imported), and **Claude Plugins** (the plugin marketplace and your installed Claude plugins). Built-ins are view-only, your own skills support the full edit/export/delete lifecycle, and plugin skills are removed by uninstalling their plugin.
 
 ### Edit
 
@@ -94,8 +93,7 @@ Export skills to share with others:
 
 1. Expand a skill and click **Export**
 2. Choose a format:
-   - **JSON** — Osaurus format for backup
-   - **Markdown** — Agent Skills compatible `.md` file
+   - **SKILL.md** — Agent Skills compatible Markdown file
    - **ZIP** — Complete package with references and assets
 
 ### Delete
@@ -104,7 +102,7 @@ Click **Delete** to remove a custom skill. Built-in skills cannot be deleted.
 
 ### Installed Plugins
 
-When you import a full Claude plugin from GitHub, the **Installed Plugins** card appears at the top of the Skills view. Each row shows the plugin name, source slug, and chips for its skill / schedule / command / MCP counts. Click **Uninstall** to remove every artifact the plugin contributed (skills, schedules, slash commands, MCP providers, and any Keychain-stored tokens) in one shot.
+Full Claude plugins you import from GitHub appear on the **Claude Plugins** tab, one card per plugin with its name, source, and what it contributed. Click **Uninstall** on the card (or in its detail view) to remove every artifact the plugin contributed (skills, schedules, slash commands, MCP providers, and any Keychain-stored tokens) in one shot.
 
 Only plugins imported via the GitHub flow are listed here — Osaurus's built-in tool plugins are managed separately. See [Claude Plugins](CLAUDE_PLUGINS.md) for the full lifecycle.
 
@@ -114,7 +112,7 @@ Only plugins imported via the GitHub flow are listed here — Osaurus's built-in
 
 Create your own skills with the built-in editor:
 
-1. Click **Create Skill**
+1. Click **Add Skill** → **Create Skill**
 2. Fill in the details:
    - **Name** — A clear, descriptive name
    - **Description** — Brief summary (shown in the skill list)
@@ -234,7 +232,7 @@ The AI starts with the manifest plus a fixed "hot set" of always-loaded tools, t
 
 ## Agent Integration
 
-Skills are available to all custom agents automatically. The capabilities manifest lists the installed skill library for each agent, and `capabilities_discover` reaches the full catalog regardless of which custom agent is active.
+Skills are available to all custom agents automatically, unless an agent turns on **Limit to selected skills**. With it on, only the ticked skills appear in the agent's capabilities manifest, `capabilities_load`, and its slash commands.
 
 **How it works with agents:**
 
@@ -243,7 +241,7 @@ Skills are available to all custom agents automatically. The capabilities manife
 - The agent loads skill instructions on demand via `capabilities_discover` / `capabilities_load`
 - Typing `/skill-name` forces a specific skill for a single message
 
-No per-agent skill configuration is needed — agent configuration only scopes **tools**. The built-in Osaurus configuration agent does not use skills.
+No per-agent skill configuration is needed; **Limit to selected skills** is the only per-agent control, and it starts off. The built-in Osaurus configuration agent does not use skills.
 
 ---
 
@@ -256,7 +254,8 @@ No per-agent skill configuration is needed — agent configuration only scopes *
 - Check that the skill's description clearly describes its purpose (the search uses this too)
 - Start a new chat session — the capabilities manifest is frozen when a chat starts, so skills added mid-conversation aren't listed until the next chat (they remain reachable via `capabilities_discover`)
 - Type `/skill-name` to invoke the skill explicitly for one message — this injects the full instructions deterministically and doesn't depend on search at all
-- Skills require **Auto** tool mode with tools enabled; Manual tool mode and the built-in Osaurus configuration agent don't use the skill library
+- Skills require **Auto** tool mode with tools enabled; **Custom** tool mode and the built-in Osaurus configuration agent don't use the skill library
+- If the agent has **Limit to selected skills** on, check the skill is ticked under **Choose Skills…**
 
 ### GitHub import fails
 
@@ -275,7 +274,6 @@ No per-agent skill configuration is needed — agent configuration only scopes *
 
 - For `.md` files: Ensure valid YAML frontmatter between `---` markers
 - For `.zip` files: Ensure `SKILL.md` is at the root or in a named folder
-- For `.json` files: Validate JSON syntax
 
 ---
 

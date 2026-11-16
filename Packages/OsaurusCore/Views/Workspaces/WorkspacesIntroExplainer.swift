@@ -171,13 +171,13 @@ struct WorkspacesIntroExplainer: View {
     // MARK: - Stage chips
 
     private var stageChips: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: theme.space.s6) {
             ForEach(WorkspacesIntroStage.allCases) { candidate in
                 let selected = candidate == stage
                 Button {
                     select(candidate)
                 } label: {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         Text(verbatim: "\(candidate.rawValue + 1)")
                             .font(SettingsFont.chip)
                             .foregroundStyle(selected ? theme.action.primary.default.foreground : theme.text.secondary)
@@ -438,7 +438,7 @@ private struct WorkspacesIntroCanvas: View {
 
     private var owner: some View {
         let isRules = stage == .yourRules || stage == .oneBill
-        return VStack(spacing: 5) {
+        return VStack(spacing: theme.space.s4) {
             ZStack {
                 Circle()
                     .fill(theme.status.info.background)
@@ -447,7 +447,7 @@ private struct WorkspacesIntroCanvas: View {
                     .stroke(theme.border.strong, lineWidth: theme.stroke.default)
                     .frame(width: 44, height: 44)
                 Image(systemName: isRules ? "checkmark.shield" : "building.2.fill")
-                    .glyphSize(18, weight: .semibold)
+                    .glyphSize(.large, weight: .semibold)
                     .foregroundStyle(theme.text.link)
                     .contentTransition(.symbolEffect(.replace))
             }
@@ -560,9 +560,9 @@ private struct WorkspacesIntroCanvas: View {
         subtle: Bool = false,
         filled: Bool = false
     ) -> some View {
-        HStack(spacing: 7) {
+        HStack(spacing: theme.space.s6) {
             Image(systemName: glyph)
-                .glyphSize(11, weight: .semibold)
+                .glyphSize(.footnote, weight: .semibold)
                 .foregroundStyle(tint)
                 .frame(width: 14)
                 .contentTransition(.symbolEffect(.replace))
@@ -577,11 +577,11 @@ private struct WorkspacesIntroCanvas: View {
         .frame(width: width, height: 30)
         .background(
             RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
-                .fill(filled ? tint.opacity(0.14) : theme.surface.raised)
+                .fill(filled ? theme.wash(behind: tint) : theme.surface.raised)
         )
         .overlay(
             RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
-                .stroke(subtle ? theme.border.subtle : tint.opacity(0.45), lineWidth: theme.stroke.default)
+                .stroke(subtle ? theme.border.subtle : theme.rule(around: tint), lineWidth: theme.stroke.default)
         )
     }
 
@@ -589,13 +589,13 @@ private struct WorkspacesIntroCanvas: View {
 
     private var networkBadge: some View {
         let visible = stage == .yourRules
-        return VStack(spacing: 4) {
+        return VStack(spacing: theme.space.s4) {
             ZStack {
                 Circle()
                     .fill(theme.status.success.background)
                     .frame(width: 34, height: 34)
                 Image(systemName: "lock.fill")
-                    .glyphSize(14, weight: .semibold)
+                    .glyphSize(.body, weight: .semibold)
                     .foregroundStyle(theme.status.success.foreground)
             }
             Text("Private network", bundle: .module)
@@ -609,13 +609,13 @@ private struct WorkspacesIntroCanvas: View {
 
     private var scrubGate: some View {
         let visible = stage == .yourRules
-        return VStack(spacing: 4) {
+        return VStack(spacing: theme.space.s4) {
             ZStack {
                 RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
                     .fill(theme.status.warning.background)
                     .frame(width: 40, height: 40)
                 Image(systemName: "line.3.horizontal.decrease.circle")
-                    .glyphSize(18, weight: .semibold)
+                    .glyphSize(.large, weight: .semibold)
                     .foregroundStyle(theme.status.warning.foreground)
             }
             Text("Scrubbed", bundle: .module)
@@ -629,9 +629,9 @@ private struct WorkspacesIntroCanvas: View {
 
     private var cloud: some View {
         let visible = stage == .yourRules
-        return VStack(spacing: 4) {
+        return VStack(spacing: theme.space.s4) {
             Image(systemName: "cloud")
-                .glyphSize(26)
+                .glyphSize(.display)
                 .foregroundStyle(theme.text.tertiary)
             Text("Cloud, only if you want", bundle: .module)
                 .font(SettingsFont.chip)
@@ -645,10 +645,10 @@ private struct WorkspacesIntroCanvas: View {
 
     private var pool: some View {
         let visible = stage == .oneBill
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 7) {
+        return VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: "creditcard")
-                    .glyphSize(12, weight: .semibold)
+                    .glyphSize(.caption, weight: .semibold)
                     .foregroundStyle(theme.text.link)
                 Text("One credit pool", bundle: .module)
                     .font(SettingsFont.compactLabel)
@@ -683,9 +683,9 @@ private struct WorkspacesIntroCanvas: View {
 
     private var localFreeTag: some View {
         let visible = stage == .yourRules || stage == .oneBill
-        return HStack(spacing: 5) {
+        return HStack(spacing: theme.space.s4) {
             Image(systemName: "bolt.fill")
-                .glyphSize(9, weight: .bold)
+                .glyphSize(.tiny, weight: .bold)
             Text("Local inference stays free", bundle: .module)
                 .font(SettingsFont.chip)
         }
@@ -946,7 +946,7 @@ private struct WorkspacesIntroCanvas: View {
                 from: CGPoint(x: Layout.gateX + 22, y: Layout.midY),
                 to: CGPoint(x: Layout.cloudX - 22, y: Layout.midY),
                 shown: stage == .yourRules,
-                color: theme.text.disabled,
+                color: theme.border.strong,
                 dashed: true
             )
         }
@@ -1100,13 +1100,13 @@ private struct Wire: Shape {
 #if DEBUG
     #Preview("Workspaces explainer") {
         WorkspacesIntroExplainer()
-            .padding(24)
+            .padding(ThemeManager.shared.currentTheme.space.s24)
             .frame(width: WorkspacesIntroExplainer.canvasDesignSize.width + 48)
     }
 
     #Preview("Workspaces explainer, narrow") {
         WorkspacesIntroExplainer()
-            .padding(24)
+            .padding(ThemeManager.shared.currentTheme.space.s24)
             .frame(width: 760)
     }
 #endif

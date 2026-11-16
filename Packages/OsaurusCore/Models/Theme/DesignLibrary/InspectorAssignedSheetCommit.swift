@@ -1,4 +1,3 @@
-#if OSAURUS_DESIGN_SYSTEM
 import AppKit
 import SwiftUI
 
@@ -45,4 +44,3 @@ struct InspectorAssignedSheetCommit: NSViewRepresentable {
         }
     }
 }
-#endif

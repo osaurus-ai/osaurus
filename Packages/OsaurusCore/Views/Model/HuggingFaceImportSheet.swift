@@ -35,11 +35,11 @@ struct HuggingFaceImportSheet: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             header
             Divider()
 
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: theme.space.s16) {
                 explainer
                 inputField
                 if let errorMessage {
@@ -56,10 +56,10 @@ struct HuggingFaceImportSheet: View {
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             Text("🤗")
                 .font(SettingsFont.cardTitle)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text("Import from Hugging Face", bundle: .module)
                     .font(SettingsFont.cardTitle)
                     .foregroundColor(theme.text.primary)
@@ -76,9 +76,9 @@ struct HuggingFaceImportSheet: View {
     }
 
     private var explainer: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: theme.space.s8) {
             Image(systemName: "info.circle")
-                .glyphSize(12, weight: .medium)
+                .glyphSize(.caption, weight: .medium)
                 .foregroundColor(theme.text.link)
                 .padding(.top, theme.space.s2)
             Text(
@@ -95,7 +95,7 @@ struct HuggingFaceImportSheet: View {
     }
 
     private var inputField: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             Text("Repository", bundle: .module)
                 .font(SettingsFont.compactLabel)
                 .foregroundColor(theme.text.tertiary)
@@ -110,9 +110,9 @@ struct HuggingFaceImportSheet: View {
     }
 
     private func errorBanner(_ message: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: theme.space.s8) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .glyphSize(12)
+                .glyphSize(.caption)
                 .foregroundColor(theme.status.warning.foreground)
                 .padding(.top, theme.space.s2)
             Text(message)

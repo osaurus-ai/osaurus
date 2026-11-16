@@ -358,6 +358,14 @@ struct ConfiguratorHandoffTests {
     }
 
     @Test
+    func theEvalHarnessWaitsForADelegatedTeammateRun() {
+        let run = RunWorkflowTool.toolName
+        #expect(CapabilityClaimsEvaluator.harnessTimeout(for: run, default: 25)
+            == CapabilityClaimsEvaluator.delegatedRunSeconds)
+        #expect(CapabilityClaimsEvaluator.harnessTimeout(for: run, default: nil) == nil)
+    }
+
+    @Test
     func resultsRoundTripThroughTheEnvelope() {
         let results: [HandoffResult] = [
             .answer("a"), .applied("b"), .needsSetup("c"), .declined("d"),

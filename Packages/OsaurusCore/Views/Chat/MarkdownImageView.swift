@@ -58,7 +58,7 @@ struct MarkdownImageView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             imageContainer
                 .onTapGesture {
                     if loadedImage != nil {
@@ -127,10 +127,8 @@ struct MarkdownImageView: View {
     }
 
     private var loadingView: some View {
-        VStack(spacing: 12) {
-            ProgressView()
-                .scaleEffect(0.8)
-                .progressViewStyle(CircularProgressViewStyle(tint: theme.text.tertiary))
+        VStack(spacing: theme.space.s12) {
+            SettingsSpinner(size: .large, tint: theme.text.tertiary)
             Text("Loading image...", bundle: .module)
                 .textStyle(.caption)
                 .foregroundColor(theme.text.tertiary)
@@ -138,12 +136,12 @@ struct MarkdownImageView: View {
     }
 
     private func errorView(_ error: Error) -> some View {
-        VStack(spacing: 12) {
+        VStack(spacing: theme.space.s12) {
             Image(systemName: "photo.badge.exclamationmark")
-                .glyphSize(32, weight: .light)
+                .glyphSize(.hero, weight: .light)
                 .foregroundColor(theme.text.tertiary)
 
-            VStack(spacing: 4) {
+            VStack(spacing: theme.space.s4) {
                 Text("Failed to load image", bundle: .module)
                     .textStyle(.label)
                     .foregroundColor(theme.text.secondary)
@@ -155,19 +153,7 @@ struct MarkdownImageView: View {
                 }
             }
 
-            Button(action: loadImage) {
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.clockwise")
-                        .glyphSize(11, weight: .medium)
-                    Text("Retry", bundle: .module)
-                        .textStyle(.caption, weight: 500)
-                }
-                .foregroundColor(theme.status.info.foreground)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(Capsule().fill(theme.status.info.background))
-            }
-            .buttonStyle(.plain)
+            SettingsButton(.secondary, "Retry", icon: "arrow.clockwise", size: .compact, action: loadImage)
         }
     }
 
@@ -266,7 +252,7 @@ struct ImageHoverToolbar: View {
     let image: NSImage
 
     var body: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: theme.space.s2) {
             imageToolbarButton("arrow.down.to.line", help: "Save Image") {
                 ImageActions.saveImageToFile(image)
             }
@@ -279,13 +265,13 @@ struct ImageHoverToolbar: View {
             RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
                 .fill(FixedPalette.mediaScrim(0.6))
         )
-        .padding(8)
+        .padding(theme.space.s8)
     }
 
     private func imageToolbarButton(_ icon: String, help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .glyphSize(12, weight: .semibold)
+                .glyphSize(.caption, weight: .semibold)
                 .frame(width: 28, height: 28)
         }
         .buttonStyle(.plain)
@@ -656,7 +642,7 @@ struct ImageFullScreenView: View {
                             ImageActions.saveImageToFile(image)
                         } label: {
                             Image(systemName: "arrow.down.to.line.circle.fill")
-                                .glyphSize(28)
+                                .glyphSize(.display)
                                 .foregroundColor(FixedPalette.onMedia.opacity(0.8))
                                 .themeElevation(theme.elevation.overlay)
                         }
@@ -665,7 +651,7 @@ struct ImageFullScreenView: View {
                     }
                     Button(action: { close() }) {
                         Image(systemName: "xmark.circle.fill")
-                            .glyphSize(28)
+                            .glyphSize(.display)
                             .foregroundColor(FixedPalette.onMedia.opacity(0.8))
                             .themeElevation(theme.elevation.overlay)
                     }
@@ -679,10 +665,10 @@ struct ImageFullScreenView: View {
                     Text(altText)
                         .textStyle(.label)
                         .foregroundColor(FixedPalette.onMedia.opacity(0.9))
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 10)
+                        .padding(.horizontal, theme.space.s20)
+                        .padding(.vertical, theme.space.s10)
                         .background(Capsule().fill(FixedPalette.mediaScrim(0.5)))
-                        .padding(.bottom, 40)
+                        .padding(.bottom, theme.space.s40)
                 }
             }
         }
@@ -709,8 +695,10 @@ extension View {
 
 #if DEBUG
     struct MarkdownImageView_Previews: PreviewProvider {
+        @MainActor private static var theme: any ThemeProtocol { ThemeManager.shared.currentTheme }
+
         static var previews: some View {
-            VStack(spacing: 20) {
+            VStack(spacing: theme.space.s20) {
                 MarkdownImageView(
                     urlString: "https://placekitten.com/400/300",
                     altText: "A cute kitten",

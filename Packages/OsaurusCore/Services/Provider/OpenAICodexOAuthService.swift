@@ -547,7 +547,7 @@ public enum OpenAICodexOAuthService {
     /// catalog for older or unrecognized versions (non-semver values like
     /// "osaurus-1.2.3" get the wrong subset entirely). Bump this to the
     /// current Codex CLI release when new models stop appearing in discovery.
-    public static let codexClientVersion = "0.155.1"
+    public static let codexClientVersion = "0.169.0"
 
     /// Codex CLI-style `User-Agent`, mirroring codex-rs's
     /// `get_codex_user_agent()` format:

@@ -2,14 +2,9 @@
 //  OrchestratorSessionTools.swift
 //  osaurus
 //
-//  The Orchestrator's two session tools:
-//
-//    - `status`: read-only. The resident model, running and parked runs,
-//      and what is waiting on the user.
-//    - `state`: rewrite the whole session state object (goal, decisions,
-//      facts, open items). Hidden in chat; recorded with the request in
-//      Insights. The last call in a turn wins, and `in_flight` stays the
-//      harness's (`SessionStateRegistry`).
+//  The Orchestrator's session tool, `status`: read-only. The resident
+//  model, running and parked runs, and what is waiting on the user. The
+//  session state object is the harness's (`SessionStateExtraction`).
 //
 
 import Foundation
@@ -79,58 +74,5 @@ final class StatusTool: OsaurusTool, @unchecked Sendable {
             ["name": input.name, "type": input.type, "required": input.required]
         }
         return row
-    }
-}
-
-// MARK: - state
-
-final class StateTool: OsaurusTool, @unchecked Sendable {
-    static let toolName = "state"
-    let name = StateTool.toolName
-    let description =
-        "Rewrite this chat's session state: the WHOLE object every turn (anything left out is dropped), "
-        + "never an addition. Call once per turn, after handling the message. Running workflows are "
-        + "tracked for you."
-    let parameters: JSONValue? = .object([
-        "type": .string("object"),
-        "additionalProperties": .bool(false),
-        "properties": .object([
-            "goal": .object([
-                "type": .string("string"),
-                "description": .string("What the user is trying to get done, in one line."),
-            ]),
-            "decisions": .object([
-                "type": .string("array"),
-                "items": .object(["type": .string("string")]),
-                "description": .string("Choices the user made that still hold."),
-            ]),
-            "facts": .object([
-                "type": .string("array"),
-                "items": .object(["type": .string("string")]),
-                "description": .string("Facts learned that later turns need (names, values, results)."),
-            ]),
-            "open_items": .object([
-                "type": .string("array"),
-                "items": .object(["type": .string("string")]),
-                "description": .string("What is still to do or still unanswered."),
-            ]),
-        ]),
-    ])
-
-    func execute(argumentsJSON: String) async throws -> String {
-        guard ChatExecutionContext.currentAgentId == Agent.defaultId,
-            let sessionId = ChatExecutionContext.currentSessionId, !sessionId.isEmpty
-        else {
-            return ToolEnvelope.failure(
-                kind: .unavailable, message: "`state` is only available in an Osaurus chat.", tool: name,
-                retryable: false)
-        }
-        guard let state = SessionState.fromModelArguments(argumentsJSON) else {
-            return ToolEnvelope.failure(
-                kind: .invalidArgs, message: "Pass the state as an object: {goal, decisions, facts, open_items}.",
-                tool: name)
-        }
-        await MainActor.run { SessionStateRegistry.shared.recordModelWrite(sessionId: sessionId, state: state) }
-        return ToolEnvelope.success(tool: name, text: "Saved.")
     }
 }

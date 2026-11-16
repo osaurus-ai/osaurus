@@ -53,6 +53,58 @@ struct ArchitectConfigurationStoreTests {
         #expect(decoded.customAvatarFilename == nil)
         #expect(decoded.systemPrompt == "")
         #expect(decoded.resolvedDisplayName == nil)
+        #expect(decoded.localModelAcknowledged == false)
+    }
+
+    @Test
+    @MainActor
+    func localModelAcknowledged_roundTripsWithoutTouchingOtherFields() async throws {
+        try await StoragePathsTestLock.shared.run {
+            try await Self.withTempOverride {
+                ArchitectConfigurationStore.save(ArchitectConfiguration(model: "local-test-model", displayName: "Blueprint"))
+                ArchitectConfigurationStore.update { $0.localModelAcknowledged = true }
+                ArchitectConfigurationStore.resetCacheForTests()
+                let reloaded = ArchitectConfigurationStore.load()
+                #expect(reloaded.localModelAcknowledged)
+                #expect(reloaded.model == "local-test-model")
+                #expect(reloaded.displayName == "Blueprint")
+
+                ArchitectConfigurationStore.update { $0.localModelAcknowledged = false }
+                ArchitectConfigurationStore.resetCacheForTests()
+                #expect(ArchitectConfigurationStore.load().localModelAcknowledged == false)
+            }
+        }
+    }
+
+    @Test
+    @MainActor
+    func modelGuidance_showsOnlyForTheArchitectOnAnOnDeviceModel() {
+        let remote = ModelPickerItem.Source.remote(
+            providerName: "Osaurus", providerId: RemoteProviderManager.osaurusRouterProviderId)
+        func applies(
+            _ source: ModelPickerItem.Source?,
+            agent: UUID? = Agent.architectId,
+            harness: Bool = false,
+            locked: Bool = false,
+            streaming: Bool = false
+        ) -> Bool {
+            ArchitectModelGuidance.applies(
+                agentId: agent, source: source, isHarness: harness, isLocked: locked, isStreaming: streaming)
+        }
+        #expect(applies(.local))
+        #expect(applies(.foundation))
+        #expect(!applies(remote))
+        #expect(!applies(nil), "no model selected yet")
+        #expect(!applies(.local, agent: Agent.defaultId), "only the Architect's chat")
+        #expect(!applies(.local, agent: UUID()))
+        #expect(!applies(.local, agent: nil))
+        #expect(!applies(.local, harness: true))
+        #expect(!applies(.local, locked: true))
+        #expect(!applies(.local, streaming: true))
+
+        #expect(ArchitectModelGuidance.shouldShow(applies: true, acknowledged: false))
+        #expect(!ArchitectModelGuidance.shouldShow(applies: true, acknowledged: true))
+        #expect(!ArchitectModelGuidance.shouldShow(applies: false, acknowledged: false))
     }
 
     @Test

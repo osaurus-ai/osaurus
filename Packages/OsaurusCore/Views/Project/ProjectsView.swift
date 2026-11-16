@@ -11,7 +11,7 @@
 import AppKit
 import SwiftUI
 
-/// Opens Settings → Projects from outside the management window (a
+/// Opens Settings → Projects from outside Settings (a
 /// project's gear in the chat sidebar).
 @MainActor
 enum ProjectsSettingsLink {

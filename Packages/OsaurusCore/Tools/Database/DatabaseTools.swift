@@ -34,9 +34,8 @@ enum DatabaseToolHelpers {
                 ToolEnvelope.failure(
                     kind: .unavailable,
                     message:
-                        "Agent DB tools require an active agent context. "
-                        + "This usually means the agent hasn't enabled the database "
-                        + "feature, or the call originated outside a chat session.",
+                        "Agent DB tools require an active agent context, "
+                        + "and this call came from outside an agent's chat session.",
                     tool: tool,
                     retryable: false
                 )

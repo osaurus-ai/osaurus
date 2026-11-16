@@ -29,11 +29,11 @@ struct ToastView: View {
     }
 
     var body: some View {
-        HStack(alignment: verticalAlignment, spacing: theme.catalogLayoutMetric("component.library.18.elements.layout.toastView.body.horizontalGap", inheriting: theme.catalogMetric("gap", fallback: 12))) {
+        HStack(alignment: verticalAlignment, spacing: theme.catalogLayoutMetric("component.library.18.elements.layout.toastView.body.horizontalGap", inheriting: theme.catalogMetric("gap", fallback: theme.space.s12))) {
             leadingContent
 
-            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.18.elements.layout.toastView.body.verticalGap", inheriting: theme.catalogMetric("gap", fallback: 8))) {
-                HStack(alignment: .top, spacing: theme.catalogLayoutMetric("component.library.18.elements.layout.toastView.body.horizontalGap2", inheriting: theme.catalogMetric("gap", fallback: 8))) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.18.elements.layout.toastView.body.verticalGap", inheriting: theme.catalogMetric("gap", fallback: theme.space.s8))) {
+                HStack(alignment: .top, spacing: theme.catalogLayoutMetric("component.library.18.elements.layout.toastView.body.horizontalGap2", inheriting: theme.catalogMetric("gap", fallback: theme.space.s8))) {
                     textContent
                     Spacer(minLength: 4)
                     dismissButton
@@ -44,16 +44,10 @@ struct ToastView: View {
                 }
             }.catalogLayoutTarget("component.library.18.elements.layout.toastView.body.verticalGap")
         }.catalogLayoutTarget("component.library.18.elements.layout.toastView.body.horizontalGap")
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.18.elements.layout.toastView.body.paddingX", inheriting: theme.catalogMetric("padding", fallback: 14))).catalogLayoutTarget("component.library.18.elements.layout.toastView.body.paddingX")
-        .padding(.vertical, theme.catalogLayoutMetric("component.library.18.elements.layout.toastView.body.paddingY", inheriting: theme.catalogMetric("padding", fallback: 12))).catalogLayoutTarget("component.library.18.elements.layout.toastView.body.paddingY")
-        #if OSAURUS_DESIGN_SYSTEM
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.18.elements.layout.toastView.body.paddingX", inheriting: theme.catalogMetric("padding", fallback: theme.space.s14))).catalogLayoutTarget("component.library.18.elements.layout.toastView.body.paddingX")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.18.elements.layout.toastView.body.paddingY", inheriting: theme.catalogMetric("padding", fallback: theme.space.s12))).catalogLayoutTarget("component.library.18.elements.layout.toastView.body.paddingY")
         .frame(minHeight: theme.catalogMetric("height", fallback: 0))
         .assignedBaseChrome(18)
-        #else
-        .background(ToastBackground())
-        .clipShape(RoundedRectangle(cornerRadius: ToastStyle.cornerRadius, style: .continuous))
-        .overlay(ToastBorder(tone: tone, isHovering: isHovering))
-        #endif
         .toastShadow(theme: theme, isHovering: isHovering)
         .onHover { hovering in
             withAnimation(theme.motion.quick) {
@@ -100,14 +94,10 @@ struct ToastView: View {
                 // A TimelineView-driven arc, not ProgressView: a scaled
                 // CircularProgressViewStyle can render as a static circle in
                 // the toast overlay panel (no spin), reading as a bare dot.
-                #if OSAURUS_DESIGN_SYSTEM
-                ProgressView().controlSize(.regular).assignedProgressIndicator(tintOverride: tone.foreground)
-                #else
-                ToastSpinnerIcon(color: tone.foreground, size: 16)
-                #endif
+                SettingsSpinner(size: .large, tint: tone.foreground)
             } else {
                 Image(systemName: toast.type.iconName)
-                    .glyphSize(14, weight: .semibold)
+                    .glyphSize(.body, weight: .semibold)
                     .foregroundColor(tone.foreground)
             }
         }
@@ -116,38 +106,23 @@ struct ToastView: View {
     // MARK: - Text Content
 
     private var textContent: some View {
-        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.18.elements.layout.toastView.textContent.verticalGap", inheriting: theme.catalogMetric("gap", fallback: 3))) {
+        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.18.elements.layout.toastView.textContent.verticalGap", inheriting: theme.catalogMetric("gap", fallback: theme.space.s2))) {
             Text(toast.title)
-                #if OSAURUS_DESIGN_SYSTEM
                 .assignedTypography("component.library.18.label", fallback: SettingsFont.rowTitle)
-                #else
-                .textStyle(.label, weight: 600)
-                #endif
                 .foregroundColor(theme.text.primary)
                 .lineLimit(2)
 
             if let message = toast.message {
                 Text(message)
-                    #if OSAURUS_DESIGN_SYSTEM
                     .assignedTypography("component.library.18.caption", fallback: SettingsFont.rowDescription)
-                    #else
-                    .textStyle(.caption)
-                    #endif
                     .foregroundColor(theme.text.secondary)
                     .lineLimit(3)
             }
 
             if toast.type == .loading, let progress = toast.progress {
-                #if OSAURUS_DESIGN_SYSTEM
                 SettingsProgressBar(value: progress)
                     .accessibilityLabel(Text("Loading progress", bundle: .module))
-                    .padding(.top, theme.catalogLayoutMetric("component.library.18.elements.layout.toastView.textContent.paddingY", inheriting: theme.catalogMetric("gap", fallback: 4))).catalogLayoutTarget("component.library.18.elements.layout.toastView.textContent.paddingY")
-                #else
-                ProgressView(value: progress)
-                    .progressViewStyle(ToastProgressStyle(color: tone.foreground))
-                    .frame(height: 4)
-                    .padding(.top, 4)
-                #endif
+                    .padding(.top, theme.catalogLayoutMetric("component.library.18.elements.layout.toastView.textContent.paddingY", inheriting: theme.catalogMetric("gap", fallback: theme.space.s4))).catalogLayoutTarget("component.library.18.elements.layout.toastView.textContent.paddingY")
             }
         }.catalogLayoutTarget("component.library.18.elements.layout.toastView.textContent.verticalGap")
     }
@@ -236,33 +211,14 @@ struct ToastSpinnerShape: Shape {
 
 // MARK: - Toast Progress Style
 
-private struct ToastProgressStyle: ProgressViewStyle {
-    @Environment(\.theme) private var theme
-    let color: Color
-
-    func makeBody(configuration: Configuration) -> some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: theme.radius.small)
-                    .fill(color.opacity(0.2))
-                    .frame(height: 4)
-
-                RoundedRectangle(cornerRadius: theme.radius.small)
-                    .fill(color)
-                    .frame(width: geometry.size.width * (configuration.fractionCompleted ?? 0), height: 4)
-                    .animation(theme.motion.standard, value: configuration.fractionCompleted)
-            }
-        }
-        .frame(height: 4)
-    }
-}
-
 // MARK: - Preview
 
 #if DEBUG
     struct ToastView_Previews: PreviewProvider {
+        @MainActor private static var theme: any ThemeProtocol { ThemeManager.shared.currentTheme }
+
         static var previews: some View {
-            VStack(spacing: 16) {
+            VStack(spacing: theme.space.s16) {
                 ToastView(
                     toast: Toast(
                         type: .success,

@@ -303,7 +303,7 @@ import SwiftUI
         let encoder = JSONEncoder(); encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         try encoder.encode(export).write(to: file, options: .atomic)
         let editable = folder.appendingPathComponent(file.deletingPathExtension().lastPathComponent + "-editable.json")
-        try encoder.encode(document).write(to: editable, options: .atomic)
+        try encoder.encode(DesignLibraryDefinition.pruned(document, baseline: baseline)).write(to: editable, options: .atomic)
         status = "Exported resolved changes and editable primitives: \(file.path)"; return file
     }
     private func validate(_ candidate: DesignWorkingDocument) throws {

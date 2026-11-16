@@ -1,4 +1,3 @@
-#if OSAURUS_DESIGN_SYSTEM
 import SwiftUI
 import AppKit
 
@@ -9,35 +8,21 @@ struct CatalogResolvedTheme: ThemeProtocol {
     let base: any ThemeProtocol
     let family: Int
     var enabled = true
-    var authoritative = false
     private var snapshot: DesignThemeSnapshot? { DesignThemeOverlay.shared.current() }
     private var mode: String { isDark ? "dark" : "light" }
     /// Everything besides the snapshot, family and property that a scoped
     /// read depends on.
     private func memoKey(_ property: String, kind: Int) -> DesignThemeOverlay.MemoKey {
-        let flags = (authoritative ? 1 : 0) | (isDark ? 2 : 0) | (base is CatalogResolvedTheme ? 4 : 0)
+        let flags = (isDark ? 2 : 0) | (base is CatalogResolvedTheme ? 4 : 0)
         return .init(property: property, family: family, flags: flags, kind: kind)
     }
-    private func value(_ property: String) -> JSONValue? {
+    func value(_ property: String) -> JSONValue? {
         DesignThemeOverlay.shared.memoized(memoKey(property, kind: 0)) { resolve(property, in: $0) }
     }
     private func resolve(_ property: String, in snapshot: DesignThemeSnapshot?) -> JSONValue? {
-        // User-message headings are rich-text content (31), not a new bubble heading.
-        if family == 28 && ["heading", "label", "code"].contains(property) { return nil }
-        if family == 29 && ["label", "caption", "avatarSize", "secondary"].contains(property) { return nil }
-        let legacyKey = "component.library.\(family).\(property)"
-        let key = CatalogElementAssignments.routed(legacyKey, mappings: snapshot?.document.mappings ?? [:])
-        // Containers are compositions, not a license to override every child's
-        // typography/radius. Preserve explicit edits, otherwise keep app recipes.
-        if [10, 13, 14, 15, 16, 17, 57].contains(family),
-           snapshot?.reassignedProperties.contains(key) != true,
-           snapshot?.reassignedProperties.contains(legacyKey) != true { return nil }
-        // Rich-text body defaults inherit the owning message. An edited child
-        // assignment or its token becomes the explicit inner override.
-        if family == 31, ["text", "foreground", "accent"].contains(property),
-           base is CatalogResolvedTheme, !RichTextInspectionStyle.hasOverride(property) { return nil }
-        guard let snapshot, (family <= 20 || authoritative || snapshot.changedAssignments.contains(key) || snapshot.changedAssignments.contains(legacyKey)),
-              let role = snapshot.document.mappings[key] else { return nil }
+        guard let snapshot else { return nil }
+        let key = CatalogElementAssignments.routed("component.library.\(family).\(property)", mappings: snapshot.document.mappings)
+        guard let role = snapshot.document.mappings[key] else { return nil }
         return snapshot.document.tokens[role]?[mode]
     }
     private func color(_ property: String, _ original: Color) -> Color {
@@ -58,6 +43,8 @@ struct CatalogResolvedTheme: ThemeProtocol {
             return try? JSONDecoder().decode(ThemeTextStyle.self, from: JSONEncoder().encode(JSONValue.object(object)))
         }
     }
+    /// The family lists mirror which roles each component's design reaches;
+    /// a role outside its family's reach keeps the surrounding theme value.
     var colors: ThemeColorRoles<Color> {
         var c = base.colors
         c.surface.raised = color("background", c.surface.raised)
@@ -88,7 +75,7 @@ struct CatalogResolvedTheme: ThemeProtocol {
         c.status.success.foreground = color("success", c.status.success.foreground)
         c.status.warning.foreground = color("warning", c.status.warning.foreground)
         if family >= 43 || [18,34,35,36,37,38,39,40,41,42].contains(family) { c.status.info.foreground = color("accent", c.status.info.foreground) }
-        if (family <= 20 || authoritative) && !enabled {
+        if !enabled {
             let ink = color("disabledForeground", c.text.disabled)
             let fill = color("disabledBackground", c.surface.disabled)
             c.text.primary = ink; c.text.secondary = ink; c.text.tertiary = ink
@@ -102,7 +89,7 @@ struct CatalogResolvedTheme: ThemeProtocol {
     /// The component property that scopes a text style.
     private static func typographyProperty(_ role: ThemeTextStyleRole) -> String {
         switch role {
-        case .heading, .title, .display, .subheading: return "heading"
+        case .heading, .title, .display, .hero, .lead, .subheading: return "heading"
         case .body, .bodySmall, .chatBody, .bodyEmphasis: return "text"
         case .label, .labelEmphasis: return "label"
         case .caption, .footnote, .micro: return "caption"
@@ -121,6 +108,7 @@ struct CatalogResolvedTheme: ThemeProtocol {
         var t = base.typography
         if let s = recipe("heading") {
             t.styles.heading = s; t.styles.title = s; t.styles.display = s; t.styles.subheading = s
+            t.styles.hero = s; t.styles.lead = s
         }
         if let s = recipe("text") {
             t.styles.body = s; t.styles.bodySmall = s; t.styles.chatBody = s; t.styles.bodyEmphasis = s
@@ -158,12 +146,11 @@ struct CatalogResolvedTheme: ThemeProtocol {
         hasher.combine(base.inspectionRevision)
         hasher.combine(family)
         hasher.combine(enabled)
-        hasher.combine(authoritative)
         return hasher.finalize()
     }
     func nativeAssignedFont(_ role: ThemeTextStyleRole) -> NSFont? {
         let property = Self.typographyProperty(role)
-        guard case .object? = value(property) else { return family == 31 ? base.nsFont(role) : nil }
+        guard case .object? = value(property) else { return nil }
         return assignedNativeFont("component.library.\(family).\(property)", fallback: base.nsFont(role))
     }
     var space: ThemeSpaceScale { base.space }
@@ -179,4 +166,3 @@ struct CatalogResolvedTheme: ThemeProtocol {
     var codeHighlightTheme: String? { base.codeHighlightTheme }
     var customThemeConfig: CustomTheme? { base.customThemeConfig }
 }
-#endif

@@ -13,10 +13,8 @@ import AppKit
 struct ChatFindBar: View {
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var enabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(44, enabled: enabled, authoritative: true) }
-    #if OSAURUS_DESIGN_SYSTEM
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(44, enabled: enabled) }
     @State private var composing = false
-    #endif
 
     @Binding var query: String
     /// Bumped by the window's Cmd+F handler; every change re-focuses the
@@ -36,12 +34,11 @@ struct ChatFindBar: View {
     @FocusState private var isFieldFocused: Bool
 
     var body: some View {
-        HStack(spacing: theme.catalogLayoutMetric("component.library.44.elements.layout.chatFindBar.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(44, "gap", 8, theme))) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.44.elements.layout.chatFindBar.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(44, "gap", theme.space.s8, theme))) {
             Image(systemName: "magnifyingglass")
-                .glyphSize(11, weight: .medium)
+                .glyphSize(.footnote, weight: .medium)
                 .foregroundColor(theme.text.tertiary)
 
-            #if OSAURUS_DESIGN_SYSTEM
             ZStack(alignment: .leading) {
                 if query.isEmpty {
                     Text(L("Find in conversation"))
@@ -60,36 +57,9 @@ struct ChatFindBar: View {
                     .accessibilityLabel(L("Find in conversation"))
             }
             .frame(minWidth: 96, maxWidth: .infinity).frame(minHeight: theme.assignedLineHeight("component.library.44.text", fallback: theme.scaledTextStyle(.caption).lineHeight))
-            #else
-            TextField(L("Find in conversation"), text: $query)
-                .textFieldStyle(.plain)
-                .componentInspectionText(44, role: .body, fallback: .caption, theme: theme)
-                .foregroundColor(theme.text.primary)
-                .frame(minWidth: 96, maxWidth: .infinity)
-                .focused($isFieldFocused)
-                .onSubmit {
-                    // Enter advances; Shift+Enter is handled by the ⌃/⌄
-                    // buttons since TextField can't distinguish it here.
-                    onNext()
-                }
-                // Arrow keys cycle matches while the field keeps focus, so
-                // the user can step through occurrences without leaving the
-                // keyboard. Consumed even with zero matches — a caret jump
-                // to start/end of the query is never what Up/Down means here.
-                .onKeyPress(.upArrow) {
-                    onPrevious()
-                    return .handled
-                }
-                .onKeyPress(.downArrow) {
-                    onNext()
-                    return .handled
-                }
-            #endif
 
             if isSearching {
-                ProgressView()
-                    .controlSize(.small)
-                    .scaleEffect(0.6)
+                SettingsSpinner(size: .mini)
                     .frame(minWidth: 34, alignment: .center)
             } else {
                 Text(matchCountLabel)
@@ -107,7 +77,7 @@ struct ChatFindBar: View {
 
             Button(action: onClose) {
                 Image(systemName: "xmark")
-                    .glyphSize(9, weight: .semibold)
+                    .glyphSize(.tiny, weight: .semibold)
                     .foregroundColor(theme.text.secondary)
                     .frame(width: NativeComponentInspectionStyle.metric(44, "height", 18, theme), height: NativeComponentInspectionStyle.metric(44, "height", 18, theme))
                     .componentInspectionSurface(44, background: .clear, radius: theme.radius.small)
@@ -116,8 +86,8 @@ struct ChatFindBar: View {
             .buttonStyle(.plain)
             .help(Text("Close find bar", bundle: .module))
         }.catalogLayoutTarget("component.library.44.elements.layout.chatFindBar.body.horizontalGap")
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.44.elements.layout.chatFindBar.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(44, "padding", 12, theme))).catalogLayoutTarget("component.library.44.elements.layout.chatFindBar.body.paddingX")
-        .padding(.vertical, theme.catalogLayoutMetric("component.library.44.elements.layout.chatFindBar.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(44, "padding", 8, theme))).catalogLayoutTarget("component.library.44.elements.layout.chatFindBar.body.paddingY")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.44.elements.layout.chatFindBar.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(44, "padding", theme.space.s12, theme))).catalogLayoutTarget("component.library.44.elements.layout.chatFindBar.body.paddingX")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.44.elements.layout.chatFindBar.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(44, "padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.44.elements.layout.chatFindBar.body.paddingY")
         .background(
             RoundedRectangle(cornerRadius: theme.radius.medium)
                 .fill(theme.assignedColor("component.library.44.background", fallback: theme.surface.subtle))
@@ -125,11 +95,9 @@ struct ChatFindBar: View {
         )
         .overlay(
             RoundedRectangle(cornerRadius: theme.radius.medium)
-                .stroke(theme.border.subtle, lineWidth: theme.stroke.default)
+                .stroke(theme.assignedColor("component.library.44.border", fallback: theme.border.default), lineWidth: theme.stroke.default)
         )
-        #if OSAURUS_DESIGN_SYSTEM
         .nativeCatalogTarget(["background", "border", "borderWidth", "radius", "padding", "gap"].map { NativeCatalogAssignment.key("component.library.44." + $0, theme: theme) }, "Conversation search bar")
-        #endif
         .onAppear {
             // Setting @FocusState synchronously in onAppear races the
             // overlay's insertion into the window's responder chain and
@@ -150,7 +118,7 @@ struct ChatFindBar: View {
     private func navButton(systemName: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .glyphSize(10, weight: .semibold)
+                .glyphSize(.micro, weight: .semibold)
                 .foregroundColor(matchCount > 0 ? theme.text.primary : theme.assignedColor("component.library.44.disabledForeground", fallback: theme.text.tertiary))
                 .frame(width: NativeComponentInspectionStyle.metric(44, "height", 18, theme), height: NativeComponentInspectionStyle.metric(44, "height", 18, theme))
                 .componentInspectionSurface(44, background: .clear, radius: theme.radius.small)

@@ -766,6 +766,9 @@ public struct EvalReport: Sendable, Codable {
         var lines: [String] = []
         lines.append("Eval report")
         lines.append("  model:     \(modelId)")
+        if let embeddingModel = environment?.embeddingModel {
+            lines.append("  embedder:  \(embeddingModel)")
+        }
         lines.append("  startedAt: \(startedAt)")
         let c = counts
         lines.append(

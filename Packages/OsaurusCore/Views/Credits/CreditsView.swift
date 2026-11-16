@@ -13,38 +13,26 @@ struct CreditsView: View {
     private static let ledgerMatchLimit = 500
 
     private var theme: any ThemeProtocol {
-        #if OSAURUS_DESIGN_SYSTEM
         if let inspectionTheme { return inspectionTheme }
-        #endif
         return themeManager.currentTheme
     }
 
-#if OSAURUS_DESIGN_SYSTEM
     private var inspectionTheme: (any ThemeProtocol)?
     var inspectionBalance: InspectorWalletBalance?
-#endif
     private var displayedFrozen: Bool {
-#if OSAURUS_DESIGN_SYSTEM
         if let value = inspectionBalance { return value.frozen }
-#endif
         return accountService.isFrozen
     }
     private var displayedBalance: String {
-#if OSAURUS_DESIGN_SYSTEM
         if let value = inspectionBalance { return value.value }
-#endif
         return accountService.formattedBalanceValue
     }
     private var displayedLoading: Bool {
-#if OSAURUS_DESIGN_SYSTEM
         if let value = inspectionBalance { return value.loading }
-#endif
         return accountService.isLoadingBalance
     }
     private var displayedError: String? {
-#if OSAURUS_DESIGN_SYSTEM
         if let value = inspectionBalance { return value.error }
-#endif
         return accountService.lastError
     }
 
@@ -247,7 +235,7 @@ struct CreditsView: View {
                             .foregroundColor(theme.text.secondary)
                     }
                     if displayedLoading {
-                        ProgressView().controlSize(.small)
+                        SettingsSpinner()
                     }
                 }
                 Group {
@@ -332,7 +320,7 @@ struct CreditsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                     } icon: {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .glyphSize(10)
+                            .glyphSize(.micro)
                             .foregroundColor(theme.status.warning.foreground)
                     }
                 }
@@ -397,7 +385,7 @@ struct CreditsView: View {
         let exhausted = allowance.remainingTotal <= 0
         return HStack(spacing: theme.space.s8) {
             Image(systemName: icon)
-                .glyphSize(11, weight: .semibold)
+                .glyphSize(.footnote, weight: .semibold)
                 .foregroundColor(exhausted ? theme.text.tertiary : theme.text.link)
             VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(verbatim: title)
@@ -705,9 +693,9 @@ struct CreditsView: View {
     private func timelineBadge(icon: String, tint: Color) -> some View {
         ZStack {
             Circle()
-                .fill(tint.opacity(0.13))
+                .fill(theme.wash(behind: tint))
             Image(systemName: icon)
-                .glyphSize(10, weight: .semibold)
+                .glyphSize(.micro, weight: .semibold)
                 .foregroundColor(tint)
         }
         .frame(width: 26, height: 26)
@@ -974,13 +962,12 @@ private enum CreditsTimelineEntry: Identifiable {
     }
 }
 
-#if OSAURUS_DESIGN_SYSTEM
 extension CreditsView {
     static func inspectionBalances(_ state: String, theme: any ThemeProtocol) -> some View {
         var view = CreditsView()
         view.inspectionTheme = theme
         view.inspectionBalance = InspectorWalletBalance(value: "12,345.67", frozen: state == "Frozen", loading: state == "Loading", error: state == "Error" ? "Local account error display." : nil)
-        return VStack(alignment: .leading, spacing: 12) {
+        return VStack(alignment: .leading, spacing: theme.space.s12) {
             view.balanceCard
             HStack {
                 view.grantMeter(title: "Search credits", allowance: OsaurusRouterWebAllowance(includedTotal: 100, usedTotal: 23, remainingTotal: 77), icon: "magnifyingglass")
@@ -1003,13 +990,10 @@ extension CreditsView {
             .allowsHitTesting(false)
     }
 }
-#endif
 
-#if OSAURUS_DESIGN_SYSTEM
 struct InspectorWalletBalance {
     var value: String
     var frozen: Bool
     var loading: Bool
     var error: String?
 }
-#endif

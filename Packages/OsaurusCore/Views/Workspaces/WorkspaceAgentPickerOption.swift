@@ -96,7 +96,6 @@ extension WorkspaceRosterStore.Presence {
 // Appearance-only mapping for the existing agent picker. Presence remains advisory.
 extension WorkspaceRosterStore.Presence {
     func agentPickerIndicatorColor(theme: any ThemeProtocol, enabled: Bool = true) -> Color {
-        #if OSAURUS_DESIGN_SYSTEM
         if !enabled { return AgentPickerInspectionStyle.color("disabledForeground", theme.text.disabled, theme) }
         let property: String
         switch self {
@@ -105,8 +104,5 @@ extension WorkspaceRosterStore.Presence {
         case .unknown: property = "error"
         }
         return AgentPickerInspectionStyle.color(property, indicatorColor(theme: theme), theme)
-        #else
-        return indicatorColor(theme: theme)
-        #endif
     }
 }

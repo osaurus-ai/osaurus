@@ -37,15 +37,15 @@ struct WorkflowShareCardView: View {
 
     let content: WorkflowShareCardContent
 
-    private let ink = Color(red: 0x11 / 255, green: 0x10 / 255, blue: 0x0F / 255)
-    private let paper = Color(red: 0xFD / 255, green: 0xFC / 255, blue: 0xFA / 255)
-    private let muted = Color(red: 0xE0 / 255, green: 0xE0 / 255, blue: 0xD6 / 255)
-    private let lime = Color(red: 0xC0 / 255, green: 0xEC / 255, blue: 0x51 / 255)
+    private let ink = BrandPalette.ShareCard.ink
+    private let paper = BrandPalette.ShareCard.paper
+    private let muted = BrandPalette.ShareCard.muted
+    private let lime = BrandPalette.ShareCard.lime
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             ink
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: theme.space.s0) {
                 Text(verbatim: "Osaurus Workflow")
                     .font(SettingsFont.pageTitle)
                     .foregroundColor(ink)
@@ -55,7 +55,7 @@ struct WorkflowShareCardView: View {
 
                 Spacer(minLength: 0)
 
-                VStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: theme.space.s20) {
                     Text(verbatim: content.name)
                         .font(.system(size: content.name.count > 36 ? 60 : 76, weight: .bold))
                         .tracking(-2)
@@ -81,7 +81,7 @@ struct WorkflowShareCardView: View {
 
                 Spacer(minLength: 0)
 
-                HStack(alignment: .lastTextBaseline, spacing: 0) {
+                HStack(alignment: .lastTextBaseline, spacing: theme.space.s0) {
                     Text(verbatim: content.handle)
                         .font(SettingsFont.pageTitle)
                         .foregroundColor(lime)
@@ -103,7 +103,7 @@ struct WorkflowShareCardView: View {
                     .scaledToFit()
                     .padding(theme.space.s12)
                     .frame(width: 184, height: 184)
-                    .background(RoundedRectangle(cornerRadius: theme.radius.xlarge).fill(.white))
+                    .background(RoundedRectangle(cornerRadius: theme.radius.xlarge).fill(FixedPalette.qrPaper))
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                     .padding(.top, theme.space.s64)
                     .padding(.trailing, theme.space.s64)
@@ -211,7 +211,7 @@ struct ShareCardActions: View {
     @State private var presentingShare = false
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Button {
                 guard let image else { return }
                 WorkflowShareCard.copy(image)

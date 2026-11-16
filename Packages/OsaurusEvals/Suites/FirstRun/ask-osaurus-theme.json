@@ -1,0 +1,31 @@
+{
+  "id": "firstrun.ask-osaurus-theme",
+  "domain": "orchestrator",
+  "label": "first run • Osaurus card: how do I change how Osaurus looks",
+  "query": "How do I change how Osaurus looks?",
+  "notes": "Routing on, with the day-one team (Planner, Courier, Keeper, Scout) created from the bundled templates in a scratch folder, as a fresh install has it. The Osaurus card's second ask. A question about Osaurus goes through `configurator_handoff`.",
+  "fixtures": {
+    "seedTeammates": [
+      "planner",
+      "courier",
+      "keeper",
+      "scout"
+    ]
+  },
+  "expect": {
+    "defaultAgent": {
+      "mustCallTools": [
+        "configurator_handoff"
+      ],
+      "mustNotCallTools": [
+        "architect_handoff",
+        "spawn_agent",
+        "run_workflow"
+      ],
+      "rubric": [
+        "Tells the user where the appearance or theme setting is in Osaurus, without claiming it was changed."
+      ],
+      "maxIterations": 4
+    }
+  }
+}

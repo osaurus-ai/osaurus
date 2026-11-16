@@ -69,16 +69,11 @@ final class SyncReachabilityPrompt {
 
     static var confirmTitle: String { L("Turn On Anywhere") }
 
-    /// The focused chat window, else Settings, else the screen-level overlay,
-    /// like the app's other one-time prompts: the overlay floats above other
-    /// apps, so it's only for when no Osaurus window is up.
-    static func scope(
-        focusedChat: UUID?,
-        chatVisible: (UUID) -> Bool,
-        managementVisible: Bool
-    ) -> ThemedAlertScope {
+    /// The focused chat window, else the screen-level overlay, like the
+    /// app's other one-time prompts: the overlay floats above other apps, so
+    /// it's only for when no Osaurus window is up.
+    static func scope(focusedChat: UUID?, chatVisible: (UUID) -> Bool) -> ThemedAlertScope {
         if let focusedChat, chatVisible(focusedChat) { return .chat(focusedChat) }
-        if managementVisible { return .management }
         return .toastOverlay
     }
 
@@ -86,8 +81,7 @@ final class SyncReachabilityPrompt {
         let id = UUID()
         let scope = Self.scope(
             focusedChat: ChatWindowManager.shared.lastFocusedWindowId,
-            chatVisible: { ChatWindowManager.shared.getNSWindow(id: $0)?.isVisible == true },
-            managementVisible: WindowManager.shared.isVisible(.management)
+            chatVisible: { ChatWindowManager.shared.getNSWindow(id: $0)?.isVisible == true }
         )
         ThemedAlertCenter.shared.present(
             ThemedAlertRequest(

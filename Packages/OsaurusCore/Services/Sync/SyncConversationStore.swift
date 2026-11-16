@@ -93,6 +93,30 @@ final class SyncConversationStore: ConversationStore, @unchecked Sendable {
     private var droppedSeen: [UUID: Seen] = [:]
     private var observer: NSObjectProtocol?
 
+    /// A turn as the last save of its session encoded it. Encoding is a pure
+    /// function of the turn, its tool name and the stored extras, so an
+    /// unchanged turn reuses it instead of being encoded and hashed again on
+    /// every save of a long chat.
+    private struct EncodedTurnMemo {
+        let turn: ChatTurnData
+        let toolName: String?
+        let extras: JSONObject?
+        let encoded: SyncConversationMapper.EncodedTurn
+        let contentHash: String
+        let appDataHash: String
+    }
+
+    struct PreparedTurn {
+        var encoded: SyncConversationMapper.EncodedTurn
+        let contentHash: String
+        let appDataHash: String
+    }
+
+    /// By session, then turn. Touched only on `queue`.
+    private var encodedTurnMemos: [UUID: [UUID: EncodedTurnMemo]] = [:]
+    private var encodedTurnMemoOrder: [UUID] = []
+    private static let encodedTurnMemoSessions = 8
+
     private init() {
         queue.setSpecific(key: queueKey, value: ())
         observer = NotificationCenter.default.addObserver(
@@ -336,25 +360,62 @@ final class SyncConversationStore: ConversationStore, @unchecked Sendable {
         }
         lock.withLock { drafts[session.id] = nil }
 
-        let encoded = try session.turns.map { turn in
-            try SyncConversationMapper.encode(
-                turn: turn,
-                toolName: SyncConversationMapper.toolName(for: turn, in: session.turns),
-                existing: lock.withLock { indexes[session.id]?.refs[turn.id]?.extras }
-            )
-        }
+        let prepared = try prepareTurns(of: session)
         var overflow: [UUID: JSONObject] = [:]
-        for (turn, encodedTurn) in zip(session.turns, encoded) where !encodedTurn.overflow.isEmpty {
-            overflow[turn.id] = encodedTurn.overflow
+        for (turn, preparedTurn) in zip(session.turns, prepared) where !preparedTurn.encoded.overflow.isEmpty {
+            overflow[turn.id] = preparedTurn.encoded.overflow
         }
 
         if let existingScope {
             try updateMetadata(of: session, scope: existingScope, core: core)
-            try saveTurns(of: session, encoded: encoded, seen: seen, scope: existingScope, core: core)
+            try saveTurns(of: session, prepared: prepared, seen: seen, scope: existingScope, core: core)
         } else {
-            try create(session, encoded: encoded, core: core)
+            try create(session, encoded: prepared.map(\.encoded), core: core)
         }
         SyncLocalSessionStore.save(SyncLocalSessionStore.state(for: session, overflow: overflow), for: session.id)
+    }
+
+    /// Runs on `queue`. Every turn encoded with its hashes, reusing the last
+    /// save's encoding of each unchanged turn. Turn detail reads file sizes
+    /// from disk, so it is always rebuilt.
+    private func prepareTurns(of session: ChatSessionData) throws -> [PreparedTurn] {
+        let toolNames = SyncConversationMapper.toolNamesByCallId(in: session.turns)
+        let refs = lock.withLock { indexes[session.id]?.refs }
+        let previous = encodedTurnMemos[session.id] ?? [:]
+        var next: [UUID: EncodedTurnMemo] = [:]
+        let prepared = try session.turns.map { turn -> PreparedTurn in
+            let toolName = turn.role == .tool ? turn.toolCallId.flatMap { toolNames[$0] } : nil
+            let extras = refs?[turn.id]?.extras
+            if let memo = previous[turn.id], memo.turn == turn, memo.toolName == toolName,
+                Self.sameExtras(memo.extras, extras)
+            {
+                next[turn.id] = memo
+                var encoded = memo.encoded
+                encoded.detail = try SyncConversationMapper.detailWrite(for: turn)
+                return PreparedTurn(encoded: encoded, contentHash: memo.contentHash, appDataHash: memo.appDataHash)
+            }
+            let encoded = try SyncConversationMapper.encode(turn: turn, toolName: toolName, existing: extras)
+            let memo = EncodedTurnMemo(
+                turn: turn, toolName: toolName, extras: extras, encoded: encoded,
+                contentHash: SyncConversationMapper.sha256Hex(Data(encoded.content.utf8)),
+                appDataHash: SyncConversationMapper.sha256Hex(encoded.appData))
+            next[turn.id] = memo
+            return PreparedTurn(encoded: encoded, contentHash: memo.contentHash, appDataHash: memo.appDataHash)
+        }
+        encodedTurnMemos[session.id] = next
+        encodedTurnMemoOrder.removeAll { $0 == session.id }
+        encodedTurnMemoOrder.append(session.id)
+        while encodedTurnMemoOrder.count > Self.encodedTurnMemoSessions {
+            encodedTurnMemos[encodedTurnMemoOrder.removeFirst()] = nil
+        }
+        return prepared
+    }
+
+    private static func sameExtras(_ a: JSONObject?, _ b: JSONObject?) -> Bool {
+        let a = a ?? [:]
+        let b = b ?? [:]
+        if a.isEmpty && b.isEmpty { return true }
+        return NSDictionary(dictionary: a).isEqual(to: b)
     }
 
     private func create(_ session: ChatSessionData, encoded: [SyncConversationMapper.EncodedTurn], core: SyncCore)
@@ -406,7 +467,7 @@ final class SyncConversationStore: ConversationStore, @unchecked Sendable {
 
     private func saveTurns(
         of session: ChatSessionData,
-        encoded: [SyncConversationMapper.EncodedTurn],
+        prepared: [PreparedTurn],
         seen: Seen?,
         scope: String,
         core: SyncCore
@@ -424,7 +485,7 @@ final class SyncConversationStore: ConversationStore, @unchecked Sendable {
             session.turns.map(\.id).filter {
                 seen?.before.contains($0) == true && index.refs[$0] == nil && !ownRemovals.contains($0)
             })
-        let turns = zip(session.turns, encoded).filter { !removedElsewhere.contains($0.0.id) }
+        let turns = zip(session.turns, prepared).filter { !removedElsewhere.contains($0.0.id) }
         let desired = turns.map(\.0.id)
         let desiredSet = Set(desired)
 
@@ -457,9 +518,10 @@ final class SyncConversationStore: ConversationStore, @unchecked Sendable {
         let files = TemporaryFiles()
         defer { files.removeAll() }
         var agent = agentSender(forSession: session.id)
-        for (turn, encodedTurn) in turns {
-            let contentHash = SyncConversationMapper.sha256Hex(Data(encodedTurn.content.utf8))
-            let appDataHash = SyncConversationMapper.sha256Hex(encodedTurn.appData)
+        for (turn, preparedTurn) in turns {
+            let encodedTurn = preparedTurn.encoded
+            let contentHash = preparedTurn.contentHash
+            let appDataHash = preparedTurn.appDataHash
             if kept.contains(turn.id), var ref = index.refs[turn.id] {
                 // Only the author may change a message (`only the author can set a
                 // message's app data`): one another device wrote, an iPhone's prompt

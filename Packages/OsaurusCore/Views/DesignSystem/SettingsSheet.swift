@@ -10,7 +10,6 @@
 
 import SwiftUI
 
-#if OSAURUS_DESIGN_SYSTEM
 private struct InspectorSheetPreviewThemeKey: EnvironmentKey {
     static let defaultValue = false
 }
@@ -20,7 +19,6 @@ extension EnvironmentValues {
         set { self[InspectorSheetPreviewThemeKey.self] = newValue }
     }
 }
-#endif
 
 // MARK: - Sheet Header
 
@@ -72,7 +70,7 @@ struct SettingsSheetHeader: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             HStack(spacing: theme.catalogLayoutMetric("component.library.17.elements.layout.settingsSheetHeader.body.horizontalGap", inheriting: theme.catalogMetric("gap", fallback: theme.space.s12))) {
                 if let leading {
                     leading.frame(width: 28, height: 28)
@@ -163,23 +161,28 @@ struct SettingsSheetFooter: View {
     /// of the shortcut hint, for "you still need to…" guidance that must
     /// stay next to the button that triggered it.
     var warning: String? = nil
+    /// Inside a themed alert's card, which supplies the inset and surface;
+    /// Return commits, as in every alert.
+    var embedded = false
 
     init(
         primary: Action? = nil,
         secondary: Action? = nil,
         destructive: Action? = nil,
         hint: LocalizedStringKey? = nil,
-        warning: String? = nil
+        warning: String? = nil,
+        embedded: Bool = false
     ) {
         self.primary = primary
         self.secondary = secondary
         self.destructive = destructive
         self.hint = hint
         self.warning = warning
+        self.embedded = embedded
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             ThemeHairlineDivider(color: theme.border.default)
 
             HStack(spacing: theme.catalogLayoutMetric("component.library.17.elements.layout.settingsSheetFooter.body.horizontalGap", inheriting: theme.catalogMetric("gap", fallback: theme.space.s8))) {
@@ -195,7 +198,7 @@ struct SettingsSheetFooter: View {
                     HStack(alignment: .top, spacing: theme.catalogLayoutMetric("component.library.17.elements.layout.settingsSheetFooter.body.horizontalGap2", inheriting: theme.catalogMetric("gap", fallback: theme.space.s6))) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(SettingsFont.glyphSmall)
-                            .padding(.top, 1)
+                            .padding(.top, theme.space.s2)
                         Text(verbatim: warning)
                             .assignedTypography("component.library.17.caption", fallback: SettingsFont.smallLabel)
                             .fixedSize(horizontal: false, vertical: true)
@@ -231,10 +234,7 @@ struct SettingsSheetFooter: View {
                     let button = Button(action: primary.handler) {
                         HStack(spacing: theme.catalogLayoutMetric("component.library.17.elements.layout.settingsSheetFooter.body.horizontalGap4", inheriting: theme.catalogMetric("gap", fallback: theme.space.s6))) {
                             if primary.isLoading {
-                                ProgressView()
-                                    .controlSize(.small)
-                                    .tint(
-                                        primary.isDestructive
+                                SettingsSpinner(tint: primary.isDestructive
                                             ? theme.action.destructive.default.foreground
                                             : theme.action.primary.default.foreground)
                             }
@@ -242,7 +242,7 @@ struct SettingsSheetFooter: View {
                         }.catalogLayoutTarget("component.library.17.elements.layout.settingsSheetFooter.body.horizontalGap4")
                     }
                     .disabled(!primary.isEnabled || primary.isLoading)
-                    .keyboardShortcut(.return, modifiers: .command)
+                    .keyboardShortcut(.return, modifiers: embedded ? [] : .command)
                     if primary.isDestructive {
                         button.assignedSettingsButtonStyle(.destructive)
                     } else {
@@ -250,14 +250,13 @@ struct SettingsSheetFooter: View {
                     }
                 }
             }.catalogLayoutTarget("component.library.17.elements.layout.settingsSheetFooter.body.horizontalGap")
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.17.elements.layout.settingsSheetFooter.body.paddingX2", inheriting: theme.catalogMetric("padding", fallback: theme.settingsSheetInset))).catalogLayoutTarget("component.library.17.elements.layout.settingsSheetFooter.body.paddingX2")
-            .padding(.vertical, theme.catalogLayoutMetric("component.library.17.elements.layout.settingsSheetFooter.body.paddingY2", inheriting: theme.catalogMetric("padding", fallback: theme.space.s16))).catalogLayoutTarget("component.library.17.elements.layout.settingsSheetFooter.body.paddingY2")
-            .background(theme.surface.subtle)
+            .padding(.horizontal, embedded ? theme.space.s0 : theme.catalogLayoutMetric("component.library.17.elements.layout.settingsSheetFooter.body.paddingX2", inheriting: theme.catalogMetric("padding", fallback: theme.settingsSheetInset))).catalogLayoutTarget("component.library.17.elements.layout.settingsSheetFooter.body.paddingX2")
+            .padding(.top, theme.catalogLayoutMetric("component.library.17.elements.layout.settingsSheetFooter.body.paddingY2", inheriting: theme.catalogMetric("padding", fallback: theme.space.s16))).catalogLayoutTarget("component.library.17.elements.layout.settingsSheetFooter.body.paddingY2")
+            .padding(.bottom, embedded ? theme.space.s0 : theme.catalogLayoutMetric("component.library.17.elements.layout.settingsSheetFooter.body.paddingY2", inheriting: theme.catalogMetric("padding", fallback: theme.space.s16)))
+            .background(embedded ? Color.clear : theme.surface.subtle)
         }
-        #if OSAURUS_DESIGN_SYSTEM
         .background(InspectorAssignedSheetCommit(action: primary?.handler,
             isEnabled: baseComponentEnabled && primary?.isEnabled == true && primary?.isLoading == false))
-        #endif
     }
 }
 
@@ -282,9 +281,7 @@ struct SettingsSheet<Content: View>: View {
     @Environment(\.isEnabled) private var baseComponentEnabled
     private var theme: any ThemeProtocol { baseTheme.catalogFamily(17, enabled: baseComponentEnabled) }
     @ObservedObject private var themeManager = ThemeManager.shared
-    #if OSAURUS_DESIGN_SYSTEM
     @Environment(\.inspectorSheetPreviewTheme) private var usesPreviewTheme
-    #endif
 
     let icon: String?
     let title: LocalizedStringKey
@@ -358,7 +355,7 @@ struct SettingsSheet<Content: View>: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             header
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { headerHeight = $0 }
 
@@ -366,10 +363,8 @@ struct SettingsSheet<Content: View>: View {
                 VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.17.elements.layout.settingsSheet.body.verticalGap", inheriting: theme.catalogMetric("gap", fallback: theme.settingsSectionGap))) {
                     content
                 }.catalogLayoutTarget("component.library.17.elements.layout.settingsSheet.body.verticalGap")
-                #if OSAURUS_DESIGN_SYSTEM
                 .assignedTypography("component.library.17.text", fallback: SettingsFont.body)
                 .foregroundColor(theme.text.primary)
-                #endif
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, theme.catalogLayoutMetric("component.library.17.elements.layout.settingsSheet.body.padding.horizontal", inheriting: theme.catalogMetric("padding", fallback: theme.settingsSheetInset))).padding(.vertical, theme.catalogLayoutMetric("component.library.17.elements.layout.settingsSheet.body.padding.vertical", inheriting: theme.catalogMetric("padding", fallback: theme.settingsSheetInset))).catalogLayoutTarget("component.library.17.elements.layout.settingsSheet.body.padding.horizontal").catalogLayoutTarget("component.library.17.elements.layout.settingsSheet.body.padding.vertical")
             }
@@ -383,11 +378,7 @@ struct SettingsSheet<Content: View>: View {
         }
         .frame(width: width)
         .settingsSheetSurface()
-        #if OSAURUS_DESIGN_SYSTEM
         .environment(\.theme, usesPreviewTheme ? baseTheme : themeManager.currentTheme)
-        #else
-        .environment(\.theme, themeManager.currentTheme)
-        #endif
     }
 }
 
@@ -407,11 +398,9 @@ private struct SettingsSheetSurfaceModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .frame(minHeight: theme.catalogMetric("height", fallback: 0))
-            #if OSAURUS_DESIGN_SYSTEM
             .presentationCornerRadius(theme.radius.xlarge)
             .presentationBackground(.clear)
             .background(InspectorAssignedSheetSurface(radius: theme.radius.xlarge))
-            #endif
             .assignedBaseChrome(17, fallback: nil)
             .background(theme.surface.overlay)
             .clipShape(RoundedRectangle(cornerRadius: theme.radius.xlarge, style: .continuous))

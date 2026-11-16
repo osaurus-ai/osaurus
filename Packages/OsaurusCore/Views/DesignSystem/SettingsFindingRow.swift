@@ -38,7 +38,7 @@ struct SettingsFindingRow: View {
                 .font(SettingsFont.glyphSmall)
                 .foregroundColor(tint)
                 .frame(width: 14)
-                .padding(.top, 1)
+                .padding(.top, theme.space.s2)
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: theme.settingsTitleToDescription) {
@@ -74,7 +74,7 @@ struct SettingsFindingRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(10)
+        .padding(theme.space.s10)
         .settingsChrome(statusKind.map { .status($0) } ?? .inset)
         .accessibilityElement(children: .combine)
         .accessibilityValue(Text(verbatim: severityLabel))

@@ -25,7 +25,7 @@ struct IncomingPairSheet: View {
     private var displayName: String { invite.name.isEmpty ? L("Untitled Agent") : invite.name }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             SettingsSheetHeader(
                 icon: "person.crop.circle.badge.plus",
                 title: "Add Shared Agent",
@@ -44,7 +44,7 @@ struct IncomingPairSheet: View {
                                 AgentAvatarView(
                                     mascotId: nil,
                                     name: displayName,
-                                    tint: agentColorFor(invite.name),
+                                    tint: theme.dataInk(seed: invite.name),
                                     diameter: 36,
                                     monogramFontSize: 15,
                                     borderWidth: theme.stroke.default

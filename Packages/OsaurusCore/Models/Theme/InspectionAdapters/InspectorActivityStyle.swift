@@ -10,22 +10,13 @@ enum ActivityInspectionStyle {
         theme.assignedMetric(key + property, fallback: fallback)
     }
     static func headerHeight(_ theme: any ThemeProtocol, fallback: CGFloat = 48, property: String = "label") -> CGFloat {
-        #if OSAURUS_DESIGN_SYSTEM
         return max(metric("height", fallback, theme), max(28, fieldHeight(property, theme), fieldHeight("caption", theme)) + 2 * layout(property == "heading" ? "headerPaddingY" : "toolHeaderPaddingY", "padding", 0, theme))
-        #else
-        return fallback
-        #endif
     }
     static func fieldHeight(_ property: String, _ theme: any ThemeProtocol, fallback: CGFloat = 18) -> CGFloat {
-        #if OSAURUS_DESIGN_SYSTEM
         let font = theme.assignedNativeFont(key + property, fallback: theme.nsFont(.caption))
         return max(ceil(font.ascender - font.descender + font.leading), theme.assignedLineHeight(key + property, fallback: fallback))
-        #else
-        return fallback
-        #endif
     }
     static func label(_ field: NSTextField, property: String, theme: any ThemeProtocol) {
-        #if OSAURUS_DESIGN_SYSTEM
         // Preserve semantic colors and links already present in composite titles.
         // The leading run is the title; trailing metadata (source, duration,
         // repeat count) keeps the caption face so it reads as secondary.
@@ -39,10 +30,8 @@ enum ActivityInspectionStyle {
         text.addAttribute(.font, value: theme.assignedNativeFont(key + property, fallback: theme.nsFont(.caption)), range: titleRange)
         field.attributedStringValue = text
         field.catalogAssignmentTarget([key + property], name: "Text “" + field.stringValue + "”", theme: theme)
-        #endif
     }
 }
-#if OSAURUS_DESIGN_SYSTEM
 /// Presentation behind the existing header hit target; it never handles clicks.
 final class InspectorActivityHeaderSurface: NSView {
     private var theme: (any ThemeProtocol)?
@@ -69,4 +58,3 @@ final class InspectorActivityHeaderSurface: NSView {
     override func mouseEntered(with event: NSEvent) { super.mouseEntered(with: event); hovered = true; refresh() }
     override func mouseExited(with event: NSEvent) { super.mouseExited(with: event); hovered = false; refresh() }
 }
-#endif

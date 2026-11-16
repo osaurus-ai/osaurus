@@ -31,11 +31,9 @@ import SwiftUI
         }
 
         private func content(verifyStep: ProvisioningStepState) -> some View {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .controlSize(.small)
-                        .scaleEffect(0.75)
+            VStack(alignment: .leading, spacing: theme.space.s12) {
+                HStack(spacing: theme.space.s8) {
+                    SettingsSpinner(size: .mini)
                     Text("Restoring plugins", bundle: .module)
                         .font(SettingsFont.cardTitle)
                         .foregroundColor(theme.text.primary)
@@ -49,11 +47,11 @@ import SwiftUI
                 }
 
                 if !pluginManager.installProgress.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: theme.space.s6) {
                         ForEach(sortedProgress, id: \.0) { _, progress in
-                            HStack(spacing: 8) {
+                            HStack(spacing: theme.space.s8) {
                                 Image(systemName: "puzzlepiece.extension")
-                                    .glyphSize(11)
+                                    .glyphSize(.footnote)
                                     .foregroundColor(theme.text.link)
                                 Text(progress.pluginName)
                                     .font(SettingsFont.compactLabel)

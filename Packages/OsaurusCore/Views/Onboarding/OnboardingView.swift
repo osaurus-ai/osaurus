@@ -41,7 +41,7 @@ final class OnboardingPointer: ObservableObject {
 public struct OnboardingView: View {
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(55, enabled: inspectionEnabled) }
     let onComplete: () -> Void
 
     @State private var currentStep: OnboardingStep

@@ -986,7 +986,8 @@ struct OsaurusConfigToolHighRiskGateTests {
             }
         }
         // Refused as unanswerable, never reported as the user saying no.
-        #expect(result.contains("permission_denied"))
+        #expect(result.contains("\"kind\":\"rejected\""))
+        #expect(!result.contains("permission_denied"))
         #expect(!result.contains("declined"))
         #expect(!result.contains("\"status\":\"applied\""))
         // And the tool policy must be unchanged afterwards.
@@ -1107,7 +1108,8 @@ struct OsaurusConfigToolHighRiskGateTests {
             }
         }
         // Refused as unanswerable, never reported as the user saying no.
-        #expect(result.contains("permission_denied"))
+        #expect(result.contains("\"kind\":\"rejected\""))
+        #expect(!result.contains("permission_denied"))
         #expect(!result.contains("declined"))
         let policy = await MainActor.run {
             ConfigExporter.export().tools?.policies?["update_skill"]

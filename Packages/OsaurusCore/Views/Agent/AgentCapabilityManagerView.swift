@@ -141,6 +141,9 @@ enum CapabilityRowBuilder {
         /// macOS permissions an enabled Apple app still lacks; drives the
         /// "Permission needed" badge on that app's header.
         var appleAppMissingPermissions: [AppleApp: [SystemPermission]] = [:]
+        /// The saved custom agent whose own tool policies the enabled rows
+        /// show and edit. Nil for drafts and built-in agents.
+        var policyAgentId: UUID? = nil
     }
 
     /// Badge text on Apple rows explaining why one switch flips six tools.
@@ -269,24 +272,33 @@ enum CapabilityRowBuilder {
 
             for tool in toolsForRows {
                 let availability = availability(forTool: tool, input: input)
+                let enabled = input.enabledToolNames.contains(tool.name)
                 rows.append(
                     .tool(
                         id: "\(groupId)::tool::\(tool.name)",
                         name: tool.name,
                         description: tool.description,
-                        enabled: input.enabledToolNames.contains(tool.name),
+                        enabled: enabled,
                         availability: availability,
                         // Informational sources were filtered above; every
                         // tool that reaches this point is toggleable — Apple
                         // rows flip their whole app and say so.
                         groupToggleLabel: source.togglesAsGroup ? appleGroupToggleLabel : nil,
                         catalogTokens: tool.estimatedTokens,
-                        estimatedTokens: tool.estimatedTokens
+                        estimatedTokens: tool.estimatedTokens,
+                        policy: enabled ? toolPolicy(tool.name, agentId: input.policyAgentId) : nil
                     )
                 )
             }
         }
         return rows
+    }
+
+    static func toolPolicy(_ toolName: String, agentId: UUID?) -> CapabilityToolPolicy? {
+        guard let agentId, let info = ToolRegistry.shared.policyInfo(for: toolName, agentId: agentId) else {
+            return nil
+        }
+        return CapabilityToolPolicy(agentId: agentId, override: info.configuredPolicy, effective: info.effectivePolicy)
     }
 
     /// "Permission needed" on an enabled Apple app whose macOS grant is
@@ -504,13 +516,11 @@ struct AgentCapabilityManagerView: View {
     @State private var plugins: [PluginManager.LoadedPlugin] = []
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             stickyHeader
                 .background(theme.surface.canvas)
                 .overlay(
-                    Rectangle()
-                        .fill(theme.border.subtle)
-                        .frame(height: 1)
+                    ThemeHairlineDivider()
                         .opacity(compact ? 0 : 1),
                     alignment: .bottom
                 )
@@ -569,7 +579,7 @@ struct AgentCapabilityManagerView: View {
                     if onDismiss != nil { doneButton }
 
                     Image(systemName: "info.circle")
-                        .glyphSize(10)
+                        .glyphSize(.micro)
                         .foregroundColor(theme.text.tertiary)
                     Text(
                         "Pick which tools this agent can use. Skills come from the shared library; limit them below.",
@@ -593,13 +603,17 @@ struct AgentCapabilityManagerView: View {
                 filterChips
             }
 
+            if case .live(let agentId) = source, agentManager.agent(for: agentId)?.isBuiltIn == false {
+                AgentToolApprovalsCard(agentId: agentId)
+            }
+
             autoDiscoverCard
 
             if case .live(let agentId) = source, agentId != Agent.defaultId {
                 AgentSkillAllowListCard(agentId: agentId)
             }
         }
-        .padding(.horizontal, compact ? 20 : 24)
+        .padding(.horizontal, compact ? theme.space.s20 : theme.space.s24)
         .padding(.vertical, theme.space.s12)
     }
 
@@ -609,7 +623,7 @@ struct AgentCapabilityManagerView: View {
             Button(action: onDismiss) {
                 HStack(spacing: theme.space.s4) {
                     Image(systemName: "chevron.left")
-                        .glyphSize(11, weight: .semibold)
+                        .glyphSize(.footnote, weight: .semibold)
                     Text("Done", bundle: .module)
                         .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                 }
@@ -658,7 +672,7 @@ struct AgentCapabilityManagerView: View {
     private var autoDiscoverCard: some View {
         HStack(spacing: theme.space.s12) {
             Image(systemName: toolMode == .auto ? "sparkles" : "list.bullet.rectangle")
-                .glyphSize(13, weight: .semibold)
+                .glyphSize(.label, weight: .semibold)
                 .foregroundColor(toolMode == .auto ? theme.text.link : theme.text.secondary)
                 .frame(width: 26, height: 26)
                 .settingsChrome(toolMode == .auto ? .selected : .inset)
@@ -750,9 +764,17 @@ struct AgentCapabilityManagerView: View {
                 filter: filter,
                 expandedGroups: expandedGroups,
                 includesAppleApps: includesAppleApps,
-                appleAppMissingPermissions: appleAppMissingPermissions
+                appleAppMissingPermissions: appleAppMissingPermissions,
+                policyAgentId: policyAgentId
             )
         )
+    }
+
+    private var policyAgentId: UUID? {
+        guard case .live(let agentId) = source, agentManager.agent(for: agentId)?.isBuiltIn == false else {
+            return nil
+        }
+        return agentId
     }
 
     /// Permissions each enabled Apple app still lacks, from the permission

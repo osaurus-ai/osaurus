@@ -25,7 +25,7 @@ struct RenameInstalledWorkflowSheet: View {
 
     var body: some View {
         let workflow = store.workflow(id: workflowID)
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             SettingsSheetHeader(
                 icon: "pencil",
                 title: "Rename Workflow",
@@ -79,7 +79,7 @@ struct RenameInstalledWorkflowSheet: View {
     @ViewBuilder
     private func details(_ workflow: InstalledWorkflow) -> some View {
         let next = store.renamedName(for: trimmed, id: workflow.id)
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             if let next, next != workflow.name {
                 if next != trimmed {
                     note(L("Another workflow or tool already uses “\(trimmed)”, so it will be named “\(next)”."))
@@ -94,7 +94,7 @@ struct RenameInstalledWorkflowSheet: View {
             }
             let pinned = workflow.template.name.trimmingCharacters(in: .whitespacesAndNewlines)
             if !pinned.isEmpty, pinned != workflow.name, pinned != trimmed {
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     note(L("Version \(workflow.templateVersion) is named “\(pinned)”"))
                     SettingsButton(.tertiary, L("Use “\(pinned)”"), size: .compact, verbatim: true) { name = pinned }
                 }

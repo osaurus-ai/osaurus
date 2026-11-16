@@ -30,13 +30,13 @@ struct CompactionDialogView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             header
-            Divider().opacity(0.4)
+            ThemeHairlineDivider()
             content
-                .padding(.horizontal, 20)
-                .padding(.vertical, 18)
-            Divider().opacity(0.4)
+                .padding(.horizontal, theme.space.s20)
+                .padding(.vertical, theme.space.s16)
+            ThemeHairlineDivider()
             footer
         }
         .frame(width: 440)
@@ -46,16 +46,16 @@ struct CompactionDialogView: View {
     // MARK: - Header
 
     private var header: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             ZStack {
                 RoundedRectangle(cornerRadius: theme.radius.medium)
                     .fill(theme.status.info.background)
                     .frame(width: 32, height: 32)
                 Image(systemName: "arrow.down.right.and.arrow.up.left")
-                    .glyphSize(13, weight: .semibold)
+                    .glyphSize(.label, weight: .semibold)
                     .foregroundColor(theme.status.info.foreground)
             }
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text("Compact Conversation", bundle: .module)
                     .textStyle(.label, weight: 600)
                     .foregroundColor(theme.text.primary)
@@ -65,8 +65,8 @@ struct CompactionDialogView: View {
             }
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
+        .padding(.horizontal, theme.space.s20)
+        .padding(.vertical, theme.space.s14)
     }
 
     // MARK: - Content
@@ -89,7 +89,7 @@ struct CompactionDialogView: View {
     }
 
     private var modelSelectionContent: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             Text(
                 "This conversation is close to the model's context limit. Osaurus can summarize the older messages with a model of your choice, so the chat can continue with full awareness of what happened — your visible transcript is never changed.",
                 bundle: .module
@@ -98,7 +98,7 @@ struct CompactionDialogView: View {
             .foregroundColor(theme.text.secondary)
             .fixedSize(horizontal: false, vertical: true)
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 Text("Compaction model", bundle: .module)
                     .textStyle(.footnote, weight: 600)
                     .foregroundColor(theme.text.secondary)
@@ -119,9 +119,9 @@ struct CompactionDialogView: View {
         return Button {
             showModelPicker.toggle()
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: "cube.fill")
-                    .glyphSize(11, weight: .medium)
+                    .glyphSize(.footnote, weight: .medium)
                     .foregroundColor(
                         selectedModelId == nil ? theme.text.tertiary : theme.text.secondary)
                 if let currentItem {
@@ -141,11 +141,11 @@ struct CompactionDialogView: View {
                 }
                 Spacer()
                 Image(systemName: "chevron.up.chevron.down")
-                    .glyphSize(10, weight: .medium)
+                    .glyphSize(.micro, weight: .medium)
                     .foregroundColor(theme.text.tertiary)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .padding(.horizontal, theme.space.s12)
+            .padding(.vertical, theme.space.s10)
             .background(
                 RoundedRectangle(cornerRadius: theme.radius.medium)
                     .fill(theme.surface.raised)
@@ -167,22 +167,16 @@ struct CompactionDialogView: View {
     }
 
     private func progressContent(phase: ContextCompactionPhase) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                ProgressView()
-                    .controlSize(.small)
-                    .scaleEffect(0.7)
-                    .frame(width: 14, height: 14)
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            HStack(spacing: theme.space.s8) {
+                SettingsSpinner(size: .mini)
                 Text(verbatim: phase.label)
                     .textStyle(.caption, weight: 500)
                     .foregroundColor(theme.text.primary)
                     .contentTransition(.opacity)
                 Spacer(minLength: 0)
             }
-            ProgressView(value: phase.progressFraction)
-                .progressViewStyle(.linear)
-                .tint(theme.status.info.foreground)
-                .animation(theme.motion.standard, value: phase.progressFraction)
+            SettingsProgressBar(value: phase.progressFraction, tint: theme.status.info.foreground)
             Text(
                 "Older messages are being summarized. Your visible chat stays exactly as it is.",
                 bundle: .module
@@ -194,11 +188,11 @@ struct CompactionDialogView: View {
     }
 
     private func completedContent(savedTokens: Int) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             Image(systemName: "checkmark.circle.fill")
-                .glyphSize(18)
+                .glyphSize(.large)
                 .foregroundColor(theme.status.success.foreground)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text("Conversation compacted", bundle: .module)
                     .textStyle(.caption, weight: 600)
                     .foregroundColor(theme.text.primary)
@@ -215,11 +209,11 @@ struct CompactionDialogView: View {
     }
 
     private func failedContent(message: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: theme.space.s10) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .glyphSize(16)
+                .glyphSize(.medium)
                 .foregroundColor(theme.status.warning.foreground)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text("Compaction didn't finish", bundle: .module)
                     .textStyle(.caption, weight: 600)
                     .foregroundColor(theme.text.primary)
@@ -235,7 +229,7 @@ struct CompactionDialogView: View {
                     .textStyle(.micro)
                     .foregroundColor(theme.text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 4)
+                    .padding(.top, theme.space.s4)
                 }
             }
             Spacer(minLength: 0)
@@ -246,7 +240,7 @@ struct CompactionDialogView: View {
 
     @ViewBuilder
     private var footer: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             Spacer(minLength: 0)
             switch session.compactionState {
             case .needsModelSelection, .idle:
@@ -315,7 +309,7 @@ struct CompactionDialogView: View {
                 .keyboardShortcut(.defaultAction)
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 13)
+        .padding(.horizontal, theme.space.s20)
+        .padding(.vertical, theme.space.s12)
     }
 }

@@ -116,7 +116,7 @@ struct EmailAccountSheet: View {
     // MARK: Fields
 
     private var imapFields: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             SettingsFieldRow(label: "Server", hint: L("For example imap.gmail.com or imap.mail.me.com."), verbatimHint: true) {
                 SettingsTextField(placeholder: "imap.example.com", text: $host, icon: "server.rack", monospaced: true)
             }
@@ -179,7 +179,7 @@ struct EmailAccountSheet: View {
     }
 
     private var smtpFields: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             SettingsFieldRow(
                 label: "Reply Server (SMTP)",
                 hint: L("Replies are sent through this server with the same user name and password. Leave empty to only read."),
@@ -214,7 +214,7 @@ struct EmailAccountSheet: View {
     }
 
     private var mailAppFields: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             EventEditorLabeled(L("Mail account")) {
                 HStack(spacing: theme.space.s8) {
                     SettingsMenuPicker(selection: $mailAccount) {

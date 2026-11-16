@@ -17,12 +17,12 @@ struct CopyableURLField: View {
     @State private var isHovering = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             Text(LocalizedStringKey(label), bundle: .module)
                 .font(SettingsFont.compactLabel)
                 .foregroundColor(theme.text.secondary)
 
-            HStack(spacing: 12) {
+            HStack(spacing: theme.space.s12) {
                 Text(url)
                     .font(SettingsFont.mono)
                     .foregroundColor(theme.text.primary)
@@ -36,7 +36,7 @@ struct CopyableURLField: View {
                 Button(action: copyURL) {
                     ZStack {
                         Image(systemName: showCopied ? "checkmark" : "doc.on.doc")
-                            .glyphSize(14, weight: .medium)
+                            .glyphSize(.body, weight: .medium)
                             .foregroundColor(showCopied ? theme.status.success.foreground : theme.text.primary)
                     }
                     .frame(width: 36, height: 36)
@@ -78,80 +78,22 @@ struct CopyableURLField: View {
     }
 }
 
-// MARK: - Status Badge
-struct StatusBadge: View {
-    @Environment(\.theme) private var theme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    let status: String
-    /// Status tone; `nil` draws the neutral (stopped / inactive) badge.
-    let kind: ThemeStatusKind?
-    let isAnimating: Bool
-
-    private var pulses: Bool { isAnimating && !reduceMotion }
-
-    /// Neutral badges reuse the subtle surface with tertiary text.
-    private var tone: ThemeStatusSet<Color> {
-        if let kind { return theme.status[kind] }
-        return ThemeStatusSet(
-            foreground: theme.text.tertiary, background: theme.surface.subtle, border: theme.border.default)
-    }
-
-    private var color: Color { tone.foreground }
-
-    var body: some View {
-        HStack(spacing: 6) {
-            ZStack {
-                // Pulse ring
-                Circle()
-                    .stroke(color.opacity(0.3), lineWidth: theme.stroke.focus)
-                    .frame(width: 12, height: 12)
-                    .scaleEffect(pulses ? 1.6 : 1.0)
-                    .opacity(pulses ? 0 : 0.6)
-                    .animation(
-                        pulses ? theme.motion.loop(.easeOut, duration: 1.2) : theme.motion.standard,
-                        value: pulses
-                    )
-
-                // Core dot
-                Circle()
-                    .fill(color)
-                    .frame(width: 8, height: 8)
-            }
-
-            Text(status)
-                .font(SettingsFont.smallLabel)
-                .foregroundColor(color)
-        }
-        .padding(.horizontal, theme.space.s12)
-        .padding(.vertical, theme.space.s6)
-        .background(Capsule().fill(tone.background))
-        .overlay(
-            Capsule()
-                .strokeBorder(
-                    tone.border,
-                    lineWidth: theme.stroke.default
-                )
-        )
-    }
-}
-
 // MARK: - System Resource Monitor
 struct SystemResourceMonitor: View {
     @Environment(\.theme) private var theme
     @ObservedObject private var monitor = SystemMonitorService.shared
     @State private var isHoveringCPU = false
     @State private var isHoveringRAM = false
-    @State private var isHoveringModels = false
     @State private var showResourcePopover = false
     @State private var cachedModelCount: Int = 0
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             // CPU Usage
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 4) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
+                HStack(spacing: theme.space.s4) {
                     Image(systemName: "cpu")
-                        .glyphSize(11, weight: .medium)
+                        .glyphSize(.footnote, weight: .medium)
                         .foregroundColor(theme.text.secondary)
                     Text("CPU", bundle: .module)
                         .font(SettingsFont.smallLabel)
@@ -163,9 +105,7 @@ struct SystemResourceMonitor: View {
                         .contentTransition(.numericText())
                 }
 
-                ProgressView(value: monitor.cpuUsage / 100.0)
-                    .progressViewStyle(MinimalProgressViewStyle(color: colorForUsage(monitor.cpuUsage)))
-                    .frame(height: 4)
+                SettingsProgressBar(value: monitor.cpuUsage / 100, tint: colorForUsage(monitor.cpuUsage))
                     .help(Text(localized: "CPU Usage: \(String(format: "%.1f", monitor.cpuUsage))%"))
                     .onHover { hovering in
                         isHoveringCPU = hovering
@@ -196,10 +136,10 @@ struct SystemResourceMonitor: View {
             .frame(minWidth: 50)
 
             // RAM Usage
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 4) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
+                HStack(spacing: theme.space.s4) {
                     Image(systemName: "memorychip")
-                        .glyphSize(11, weight: .medium)
+                        .glyphSize(.footnote, weight: .medium)
                         .foregroundColor(theme.text.secondary)
                     Text("RAM", bundle: .module)
                         .font(SettingsFont.smallLabel)
@@ -207,9 +147,9 @@ struct SystemResourceMonitor: View {
 
                     // Models indicator button
                     Button(action: { showResourcePopover.toggle() }) {
-                        HStack(spacing: 2) {
+                        HStack(spacing: theme.space.s2) {
                             Image(systemName: "cube.box")
-                                .glyphSize(9, weight: .medium)
+                                .glyphSize(.tiny, weight: .medium)
 
                             if cachedModelCount > 0 {
                                 Text("\(cachedModelCount)", bundle: .module)
@@ -217,26 +157,8 @@ struct SystemResourceMonitor: View {
                                     .contentTransition(.numericText())
                             }
                         }
-                        .foregroundColor(
-                            isHoveringModels
-                                ? theme.action.tertiary.hover.foreground : theme.text.tertiary
-                        )
-                        .padding(.horizontal, theme.space.s4)
-                        .padding(.vertical, theme.space.s2)
-                        .background(
-                            Capsule()
-                                .fill(
-                                    isHoveringModels
-                                        ? theme.action.tertiary.hover.background
-                                        : theme.action.tertiary.default.background)
-                        )
                     }
-                    .buttonStyle(PlainButtonStyle())
-                    .onHover { hovering in
-                        withAnimation(theme.motion.quick) {
-                            isHoveringModels = hovering
-                        }
-                    }
+                    .assignedSettingsButtonStyle(.tertiary, size: .extraExtraSmall)
                     .help(Text(localized: "Loaded Models\(cachedModelCount > 0 ? " (\(cachedModelCount))" : "")"))
 
                     Spacer()
@@ -247,9 +169,7 @@ struct SystemResourceMonitor: View {
                         .contentTransition(.numericText())
                 }
 
-                ProgressView(value: monitor.memoryUsage / 100.0)
-                    .progressViewStyle(MinimalProgressViewStyle(color: colorForUsage(monitor.memoryUsage)))
-                    .frame(height: 4)
+                SettingsProgressBar(value: monitor.memoryUsage / 100, tint: colorForUsage(monitor.memoryUsage))
                     .help(
                         Text(
                             "Memory: \(String(format: "%.1f", monitor.usedMemoryGB)) GB / \(String(format: "%.1f", monitor.totalMemoryGB)) GB",
@@ -340,27 +260,4 @@ struct SystemResourceMonitor: View {
     }
 }
 
-// MARK: - Minimal Progress View Style
-struct MinimalProgressViewStyle: ProgressViewStyle {
-    @Environment(\.theme) private var theme
-    let color: Color
 
-    func makeBody(configuration: Configuration) -> some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .leading) {
-                // Tint the track with the fill color so it stays visible on
-                // any background. `tertiaryBackground` sits too close to
-                // `primaryBackground` in the dark themes to read as a track.
-                RoundedRectangle(cornerRadius: theme.radius.small)
-                    .fill(color.opacity(0.18))
-                    .frame(height: 4)
-
-                RoundedRectangle(cornerRadius: theme.radius.small)
-                    .fill(color)
-                    .frame(width: geometry.size.width * (configuration.fractionCompleted ?? 0), height: 4)
-                    .animation(theme.motion.standard, value: configuration.fractionCompleted)
-            }
-        }
-        .frame(height: 4)
-    }
-}

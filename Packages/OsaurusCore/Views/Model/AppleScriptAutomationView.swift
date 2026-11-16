@@ -72,7 +72,7 @@ struct AppleScriptAutomationView: View {
     /// grant up front so the first real run isn't interrupted.
     private var permissionSection: some View {
         SettingsSection(title: "Automation Permission") {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 Text(
                     "Running AppleScript that controls another app needs macOS Automation permission. The first time an agent controls an app, macOS asks you to allow it for Osaurus. You can prime the System Events grant now.",
                     bundle: .module
@@ -82,7 +82,7 @@ struct AppleScriptAutomationView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     statusPill
                     Spacer()
                     SettingsButton(.secondary, "Test Automation", size: .compact) {
@@ -163,11 +163,12 @@ struct AppleScriptAutomationView: View {
 /// "(unavailable)" row when the stored id is no longer on disk so the choice
 /// isn't silently dropped.
 struct AppleScriptDefaultModelGroup: View {
+    @Environment(\.theme) private var theme
     @ObservedObject var editor: SubagentConfigurationEditorModel
     @State private var installedModels: [MLXModel] = []
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             SettingsSectionHeader(title: "AppleScript")
             SettingsGroup {
                 SettingsRow(

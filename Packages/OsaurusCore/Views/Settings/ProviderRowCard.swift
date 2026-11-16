@@ -137,13 +137,13 @@ struct ProviderIconTile: View {
                                 colors: preset?.gradient ?? [],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing))
-                        : AnyShapeStyle(tint.opacity(0.12))
+                        : AnyShapeStyle(theme.wash(behind: tint))
                 )
             if let preset {
-                ProviderIcon(preset: preset, size: size * 0.45, color: lit ? .white : tint)
+                ProviderIcon(preset: preset, size: size * 0.45, color: lit ? FixedPalette.onMedia : tint)
             } else {
                 Image(systemName: "cloud.fill")
-                    .glyphSize(size * 0.45)
+                    .glyphSize(points: size * 0.45)
                     .foregroundColor(tint)
             }
         }

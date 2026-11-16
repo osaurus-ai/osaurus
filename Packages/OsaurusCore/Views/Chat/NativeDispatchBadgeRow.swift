@@ -22,11 +22,7 @@ final class NativeDispatchBadgeRow: NSView {
     static let rowHeight: CGFloat = 22
     static let maxVisibleBadges = 4
     static func height(for theme: any ThemeProtocol) -> CGFloat {
-        #if OSAURUS_DESIGN_SYSTEM
         return max(rowHeight, theme.assignedLineHeight("component.library.28.caption", fallback: 16) + 6)
-        #else
-        return rowHeight
-        #endif
     }
 
     private let stack = NSStackView()
@@ -109,21 +105,17 @@ final class NativeDispatchBadgeRow: NSView {
             last.removeFromSuperview()
         }
 
-        #if OSAURUS_DESIGN_SYSTEM
         // Preserve the original count, middle truncation and full tooltips,
         // while keeping larger labels inside the owning message's width.
         let widths = visible.map { min(CGFloat(160), ($0.label as NSString).size(withAttributes: [.font: theme.assignedNativeFont("component.library.28.caption", fallback: theme.nsFont(.footnote))]).width) }
         let total = widths.reduce(0, +)
         let budget = max(0, (availableWidth ?? bounds.width) - CGFloat(visible.count) * 32 - CGFloat(max(0, visible.count - 1)) * 6)
         let factor = total > 0 ? min(1, budget / total) : 1
-        #endif
         // Theme colors can change without the badges changing (theme switch),
         // so always push the palette; only the text/icon work is skipped.
         for (index, badge) in visible.enumerated() {
             guard let chip = stack.arrangedSubviews[index] as? DispatchBadgeChipView else { continue }
-            #if OSAURUS_DESIGN_SYSTEM
             chip.setMaximumLabelWidth(widths[index] * factor)
-            #endif
             chip.configure(badge: badge, theme: theme, contentUnchanged: sameBadges)
         }
     }
@@ -206,16 +198,16 @@ private final class DispatchBadgeChipView: NSView {
         switch badge.tone {
         case .neutral:
             tint = NSColor(theme.text.secondary)
-            fill = NSColor(theme.surface.hover).withAlphaComponent(0.6)
-            border = NSColor(theme.border.subtle).withAlphaComponent(0.5)
+            fill = NSColor(theme.surface.hover)
+            border = NSColor(theme.border.subtle)
         case .warning:
             tint = NSColor(theme.status.warning.foreground)
-            fill = NSColor(theme.status.warning.foreground).withAlphaComponent(0.12)
-            border = NSColor(theme.status.warning.foreground).withAlphaComponent(0.35)
+            fill = NSColor(theme.status.warning.background)
+            border = NSColor(theme.status.warning.border)
         case .error:
             tint = NSColor(theme.status.error.foreground)
-            fill = NSColor(theme.status.error.foreground).withAlphaComponent(0.12)
-            border = NSColor(theme.status.error.foreground).withAlphaComponent(0.35)
+            fill = NSColor(theme.status.error.background)
+            border = NSColor(theme.status.error.border)
         }
         layer?.backgroundColor = fill.cgColor
         layer?.borderColor = border.cgColor

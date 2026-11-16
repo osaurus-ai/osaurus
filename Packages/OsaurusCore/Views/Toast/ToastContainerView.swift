@@ -53,7 +53,7 @@ public struct ToastContainerView: View {
 
     @ViewBuilder
     private var toastStack: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: theme.space.s10) {
             // Regular toasts ordered based on position
             ForEach(orderedToasts) { toast in
                 ToastView(

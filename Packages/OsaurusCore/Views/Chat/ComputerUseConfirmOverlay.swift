@@ -26,24 +26,18 @@ struct ComputerUseConfirmOverlay: View {
     /// When set, Approve also auto-approves similar actions in this app for the run.
     @State private var approveRemaining = false
 
-    private var theme: ThemeProtocol { environmentTheme.catalogFamily(36, authoritative: true) }
+    private var theme: ThemeProtocol { environmentTheme.catalogFamily(36) }
 
-#if OSAURUS_DESIGN_SYSTEM
     var inspectionRequest: ConfirmRequest?
     var inspectionConsent: CloudVisionConsentRequest?
     var inspectionAction: ((String) -> Void)?
     private var isInspectionDisplay: Bool { inspectionAction != nil }
-#endif
 
     var body: some View {
         ZStack {
-#if OSAURUS_DESIGN_SYSTEM
             if let request = inspectionRequest { confirmCard(for: request) }
             else if let consent = inspectionConsent { consentCard(for: consent) }
             else { queuedCard }
-#else
-            queuedCard
-#endif
         }
         .onChange(of: queue.pending.first?.id) { _, _ in
             payloadExpanded = false
@@ -53,15 +47,11 @@ struct ComputerUseConfirmOverlay: View {
         // whose confirm would otherwise park forever (chat window closed,
         // background dispatch) fails fast with a typed reason instead.
         .onAppear {
-#if OSAURUS_DESIGN_SYSTEM
             if isInspectionDisplay { return }
-#endif
             queue.registerPresenter()
         }
         .onDisappear {
-#if OSAURUS_DESIGN_SYSTEM
             if isInspectionDisplay { return }
-#endif
             queue.unregisterPresenter()
         }
         .animation(theme.motion.springAnimation, value: queue.pending.first?.id)
@@ -85,8 +75,8 @@ struct ComputerUseConfirmOverlay: View {
         VStack {
             Spacer()
             content()
-                .padding(.horizontal, theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.bottomCard.paddingX", inheriting: PromptInspectionStyle.metric("padding", 16, theme))).catalogLayoutTarget("component.library.36.elements.layout.computerUseConfirmOverlay.bottomCard.paddingX")
-                .padding(.bottom, 16)
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.bottomCard.paddingX", inheriting: PromptInspectionStyle.metric("padding", theme.space.s16, theme))).catalogLayoutTarget("component.library.36.elements.layout.computerUseConfirmOverlay.bottomCard.paddingX")
+                .padding(.bottom, theme.space.s16)
                 .transition(.move(edge: .bottom).combined(with: .opacity))
         }
     }
@@ -96,10 +86,10 @@ struct ComputerUseConfirmOverlay: View {
     private func confirmCard(for request: ConfirmRequest) -> some View {
         let preview = request.preview
         return cardChrome {
-            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.confirmCard.verticalGap", inheriting: PromptInspectionStyle.metric("gap", 12, theme))) {
-                HStack(spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.confirmCard.horizontalGap", inheriting: PromptInspectionStyle.metric("gap", 8, theme))) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.confirmCard.verticalGap", inheriting: PromptInspectionStyle.metric("gap", theme.space.s12, theme))) {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.confirmCard.horizontalGap", inheriting: PromptInspectionStyle.metric("gap", theme.space.s8, theme))) {
                     Image(systemName: "questionmark.circle.fill")
-                        .glyphSize(16)
+                        .glyphSize(.medium)
                         .foregroundColor(theme.status.warning.foreground)
                     Text("Confirm action", bundle: .module)
                         .promptText(.heading, fallback: .label, weight: 600, theme: theme)
@@ -110,7 +100,7 @@ struct ComputerUseConfirmOverlay: View {
 
                 // Structured fields, so the user sees exactly app / action /
                 // target / payload rather than one truncated line.
-                VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.confirmCard.verticalGap2", inheriting: PromptInspectionStyle.metric("gap", 6, theme))) {
+                VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.confirmCard.verticalGap2", inheriting: PromptInspectionStyle.metric("gap", theme.space.s6, theme))) {
                     field(label: L("Action"), value: preview.actionLabel, prominent: true)
                     if let app = preview.appName, !app.isEmpty {
                         field(label: L("App"), value: app)
@@ -148,18 +138,14 @@ struct ComputerUseConfirmOverlay: View {
                     .settingsSwitch(showsLabel: true)
                 }
 
-                HStack(spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.confirmCard.horizontalGap2", inheriting: PromptInspectionStyle.metric("gap", 10, theme))) {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.confirmCard.horizontalGap2", inheriting: PromptInspectionStyle.metric("gap", theme.space.s10, theme))) {
                     Spacer()
                     secondaryButton(L("Deny")) {
-#if OSAURUS_DESIGN_SYSTEM
                         if let inspectionAction { inspectionAction("Deny"); return }
-#endif
                         queue.resolve(id: request.id, approved: false)
                     }
                     primaryButton(L("Allow")) {
-#if OSAURUS_DESIGN_SYSTEM
                         if let inspectionAction { inspectionAction(approveRemaining ? "Allow similar · local callback" : "Allow · local callback"); return }
-#endif
                         if approveRemaining {
                             queue.resolveApprovingRest(id: request.id)
                         } else {
@@ -173,7 +159,7 @@ struct ComputerUseConfirmOverlay: View {
 
     @ViewBuilder
     private func field(label: String, value: String, prominent: Bool = false) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.field.horizontalGap", inheriting: PromptInspectionStyle.metric("gap", 8, theme))) {
+        HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.field.horizontalGap", inheriting: PromptInspectionStyle.metric("gap", theme.space.s8, theme))) {
             Text(label)
                 .promptText(.caption, fallback: .micro, weight: 600, theme: theme)
                 .foregroundColor(theme.text.tertiary)
@@ -190,8 +176,8 @@ struct ComputerUseConfirmOverlay: View {
     private func typedTextField(_ text: String) -> some View {
         let isLong = text.count > 40
         let shown = (isLong && !payloadExpanded) ? String(text.prefix(40)) + "…" : text
-        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.typedTextField.verticalGap", inheriting: PromptInspectionStyle.metric("gap", 4, theme))) {
-            HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.typedTextField.horizontalGap", inheriting: PromptInspectionStyle.metric("gap", 8, theme))) {
+        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.typedTextField.verticalGap", inheriting: PromptInspectionStyle.metric("gap", theme.space.s4, theme))) {
+            HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.typedTextField.horizontalGap", inheriting: PromptInspectionStyle.metric("gap", theme.space.s8, theme))) {
                 Text("Text", bundle: .module)
                     .promptText(.caption, fallback: .micro, weight: 600, theme: theme)
                     .foregroundColor(theme.text.tertiary)
@@ -210,7 +196,7 @@ struct ComputerUseConfirmOverlay: View {
                         .foregroundColor(theme.text.link)
                 }
                 .buttonStyle(PlainButtonStyle())
-                .padding(.leading, 60)
+                .padding(.leading, theme.space.s64)
             }
         }.catalogLayoutTarget("component.library.36.elements.layout.computerUseConfirmOverlay.typedTextField.verticalGap")
     }
@@ -221,7 +207,7 @@ struct ComputerUseConfirmOverlay: View {
     /// off-screen.
     @ViewBuilder
     private func scriptField(_ script: String) -> some View {
-        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.scriptField.verticalGap", inheriting: PromptInspectionStyle.metric("gap", 4, theme))) {
+        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.scriptField.verticalGap", inheriting: PromptInspectionStyle.metric("gap", theme.space.s4, theme))) {
             Text("Script", bundle: .module)
                 .promptText(.caption, fallback: .micro, weight: 600, theme: theme)
                 .foregroundColor(theme.text.tertiary)
@@ -232,7 +218,7 @@ struct ComputerUseConfirmOverlay: View {
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.scriptField.padding.horizontal", inheriting: PromptInspectionStyle.metric("padding", 8, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.scriptField.padding.vertical", inheriting: PromptInspectionStyle.metric("padding", 8, theme))).catalogLayoutTarget("component.library.36.elements.layout.computerUseConfirmOverlay.scriptField.padding.horizontal").catalogLayoutTarget("component.library.36.elements.layout.computerUseConfirmOverlay.scriptField.padding.vertical")
+                    .padding(.horizontal, theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.scriptField.padding.horizontal", inheriting: PromptInspectionStyle.metric("padding", theme.space.s8, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.scriptField.padding.vertical", inheriting: PromptInspectionStyle.metric("padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.36.elements.layout.computerUseConfirmOverlay.scriptField.padding.horizontal").catalogLayoutTarget("component.library.36.elements.layout.computerUseConfirmOverlay.scriptField.padding.vertical")
             }
             .frame(maxHeight: 160)
             .background(
@@ -249,10 +235,10 @@ struct ComputerUseConfirmOverlay: View {
 
     private func consentCard(for request: CloudVisionConsentRequest) -> some View {
         cardChrome {
-            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.consentCard.verticalGap", inheriting: PromptInspectionStyle.metric("gap", 12, theme))) {
-                HStack(spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.consentCard.horizontalGap", inheriting: PromptInspectionStyle.metric("gap", 8, theme))) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.consentCard.verticalGap", inheriting: PromptInspectionStyle.metric("gap", theme.space.s12, theme))) {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.consentCard.horizontalGap", inheriting: PromptInspectionStyle.metric("gap", theme.space.s8, theme))) {
                     Image(systemName: "eye.trianglebadge.exclamationmark")
-                        .glyphSize(16)
+                        .glyphSize(.medium)
                         .foregroundColor(theme.status.info.foreground)
                     Text("Use Cloud vision?", bundle: .module)
                         .promptText(.heading, fallback: .label, weight: 600, theme: theme)
@@ -267,24 +253,18 @@ struct ComputerUseConfirmOverlay: View {
                 .foregroundColor(theme.text.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-                HStack(spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.consentCard.horizontalGap2", inheriting: PromptInspectionStyle.metric("gap", 10, theme))) {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.consentCard.horizontalGap2", inheriting: PromptInspectionStyle.metric("gap", theme.space.s10, theme))) {
                     Spacer()
                     secondaryButton(L("Not now")) {
-#if OSAURUS_DESIGN_SYSTEM
                         if let inspectionAction { inspectionAction("Not now · local callback"); return }
-#endif
                         queue.resolveConsent(id: request.id, choice: .deny)
                     }
                     secondaryButton(L("Allow once")) {
-#if OSAURUS_DESIGN_SYSTEM
                         if let inspectionAction { inspectionAction("Allow once · local callback"); return }
-#endif
                         queue.resolveConsent(id: request.id, choice: .allowOnce)
                     }
                     primaryButton(L("Always allow")) {
-#if OSAURUS_DESIGN_SYSTEM
                         if let inspectionAction { inspectionAction("Always allow · local callback"); return }
-#endif
                         queue.resolveConsent(id: request.id, choice: .allowAlways)
                     }
                 }.catalogLayoutTarget("component.library.36.elements.layout.computerUseConfirmOverlay.consentCard.horizontalGap2")
@@ -297,7 +277,7 @@ struct ComputerUseConfirmOverlay: View {
     @ViewBuilder
     private func cardChrome<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
         content()
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.cardChrome.padding.horizontal", inheriting: PromptInspectionStyle.metric("padding", 16, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.cardChrome.padding.vertical", inheriting: PromptInspectionStyle.metric("padding", 16, theme))).catalogLayoutTarget("component.library.36.elements.layout.computerUseConfirmOverlay.cardChrome.padding.horizontal").catalogLayoutTarget("component.library.36.elements.layout.computerUseConfirmOverlay.cardChrome.padding.vertical")
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.cardChrome.padding.horizontal", inheriting: PromptInspectionStyle.metric("padding", theme.space.s16, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.36.elements.layout.computerUseConfirmOverlay.cardChrome.padding.vertical", inheriting: PromptInspectionStyle.metric("padding", theme.space.s16, theme))).catalogLayoutTarget("component.library.36.elements.layout.computerUseConfirmOverlay.cardChrome.padding.horizontal").catalogLayoutTarget("component.library.36.elements.layout.computerUseConfirmOverlay.cardChrome.padding.vertical")
             .frame(minHeight: PromptInspectionStyle.metric("height", 0, theme))
             .environment(\.theme, theme)
             .assignedBaseChrome(36, fallback: .overlay)
@@ -320,7 +300,6 @@ struct ComputerUseConfirmOverlay: View {
     }
 }
 
-#if OSAURUS_DESIGN_SYSTEM
 extension ComputerUseConfirmOverlay {
     @MainActor static func inspectionCard(consent: Bool, onAction: @escaping (String) -> Void = { _ in }) -> some View {
         var renderer = ComputerUseConfirmOverlay()
@@ -337,4 +316,3 @@ extension ComputerUseConfirmOverlay {
         return renderer
     }
 }
-#endif

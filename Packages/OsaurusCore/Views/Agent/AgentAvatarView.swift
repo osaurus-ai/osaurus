@@ -87,42 +87,39 @@ struct AgentAvatarView: View {
     /// (no inner inset). Use for hero treatments; leave default for small
     /// list/sidebar avatars where the inset reads as more iconic.
     var bleedsToEdge: Bool = false
+    /// False keeps `diameter` over the library's avatar size, for an avatar
+    /// whose size is part of its layout (the setup's team list).
+    var followsLibrarySize: Bool = true
 
     @Environment(\.theme) private var baseTheme
     @Environment(\.isEnabled) private var baseComponentEnabled
     private var theme: any ThemeProtocol { baseTheme.catalogFamily(11, enabled: baseComponentEnabled) }
     @Environment(\.displayScale) private var displayScale
 
-    private var resolvedDiameter: CGFloat { theme.catalogMetric("avatarSize", fallback: diameter) }
+    private var resolvedDiameter: CGFloat {
+        followsLibrarySize ? theme.catalogMetric("avatarSize", fallback: diameter) : diameter
+    }
+    /// A circle unless the library pins a numeric radius (`radius.pill` is
+    /// not a number). A pinned radius is set for the library's avatar size
+    /// and scales with the avatar, so a hero keeps the same shape as a row.
+    private var cornerRadius: CGFloat {
+        let half = resolvedDiameter / 2
+        let radius = theme.catalogMetric("radius", fallback: .infinity)
+        guard radius.isFinite else { return half }
+        let librarySize = theme.catalogMetric("avatarSize", fallback: resolvedDiameter)
+        guard librarySize > 0 else { return min(radius, half) }
+        return min(radius * resolvedDiameter / librarySize, half)
+    }
     private var avatarShape: AnyShape {
-        #if OSAURUS_DESIGN_SYSTEM
-        AnyShape(RoundedRectangle(cornerRadius: theme.catalogMetric("radius", fallback: resolvedDiameter / 2)))
-        #else
-        AnyShape(Circle())
-        #endif
+        AnyShape(RoundedRectangle(cornerRadius: cornerRadius))
     }
     var body: some View {
         ZStack {
             if let artwork {
-                #if OSAURUS_DESIGN_SYSTEM
                 avatarShape.fill(theme.assignedColor("component.library.11." + (baseComponentEnabled ? "background" : "disabledBackground"), fallback: theme.surface.raised))
-                #else
-                Circle()
-                    .fill(
-                        LinearGradient(
-                            colors: [tint.opacity(0.2), tint.opacity(0.05)],
-                            startPoint: .topLeading,
-                            endPoint: .bottomTrailing
-                        )
-                    )
-                #endif
                 Image(nsImage: artwork)
-                #if OSAURUS_DESIGN_SYSTEM
-                RoundedRectangle(cornerRadius: theme.catalogMetric("radius", fallback: resolvedDiameter / 2))
-                    .strokeBorder(theme.assignedColor("component.library.11.border", fallback: tint.opacity(0.5)), lineWidth: theme.catalogMetric("borderWidth", fallback: borderWidth))
-                #else
-                Circle().strokeBorder(tint.opacity(0.5), lineWidth: borderWidth)
-                #endif
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .strokeBorder(theme.assignedColor("component.library.11.border", fallback: theme.rule(around: tint)), lineWidth: theme.catalogMetric("borderWidth", fallback: borderWidth))
             } else {
                 monogram
             }
@@ -146,14 +143,21 @@ struct AgentAvatarView: View {
 
     /// No artwork: the name's initial on a soft wash of the agent's own
     /// colour, borderless, so a list of letter avatars reads as a set of
-    /// distinct agents rather than a column of keycaps.
+    /// distinct agents rather than a column of keycaps. In light mode the
+    /// letter uses primary ink: an agent colour such as yellow cannot hold
+    /// text contrast on a light surface.
     private var monogram: some View {
         ZStack {
             avatarShape.fill(tint.opacity(baseComponentEnabled ? 0.18 : 0.08))
             Text(name.isEmpty ? "?" : name.prefix(1).uppercased())
-                .glyphSize(min(monogramFontSize, resolvedDiameter * 0.5), weight: .semibold, design: .rounded)
-                .foregroundStyle(baseComponentEnabled ? tint : theme.text.disabled)
+                .glyphSize(points: min(monogramFontSize, resolvedDiameter * 0.5), weight: .semibold, design: .rounded)
+                .foregroundStyle(monogramInk)
         }
+    }
+
+    private var monogramInk: Color {
+        guard baseComponentEnabled else { return theme.text.disabled }
+        return theme.isDark ? tint : theme.text.primary
     }
 
     /// Mascot edge length in points: full bleed, or inset 8% per side. The

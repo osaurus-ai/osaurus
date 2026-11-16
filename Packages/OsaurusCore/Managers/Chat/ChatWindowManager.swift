@@ -138,6 +138,27 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         return createWindowInternal(agentId: agentId, sessionData: sessionData, showImmediately: showImmediately)
     }
 
+    /// "Open in New Window": move a conversation into a window of its own.
+    /// `createWindow(sessionData:)` focuses the tab that already holds a
+    /// chat, so the owning tab is released first; the new window then
+    /// hydrates the saved transcript, or re-attaches the live run the
+    /// registry adopted. A blank chat has nothing to move and gets a blank
+    /// window for its agent.
+    @discardableResult
+    func openSessionInNewWindow(_ sessionData: ChatSessionData, agentId: UUID? = nil) -> UUID {
+        let agentId = agentId ?? sessionData.agentId
+        guard let owner = windowStates.values.first(where: { state in
+            state.tabs.contains { $0.session.sessionId == sessionData.id }
+        }) else {
+            return createWindow(agentId: agentId, sessionData: sessionData)
+        }
+        guard owner.releaseTab(forSessionId: sessionData.id) else {
+            return createWindow(agentId: agentId)
+        }
+        let released = ChatSessionStore.load(id: sessionData.id) ?? sessionData
+        return createWindow(agentId: agentId, sessionData: released)
+    }
+
     /// Internal implementation for creating windows
     private func createWindowInternal(
         agentId: UUID?,
@@ -435,10 +456,60 @@ public final class ChatWindowManager: NSObject, ObservableObject {
         showWindow(id: state.windowId)
     }
 
+    /// Settings in the window the person is in (else a new one), on `tab`
+    /// when given. Every Settings entry point lands here.
+    func showSettingsSurface(tab: ManagementTab? = nil) {
+        let state: ChatWindowState
+        if let current = shortcutTargetState {
+            state = current
+        } else {
+            let id = createWindow()
+            guard let created = windowStates[id] else { return }
+            state = created
+        }
+        state.showSettings(tab: tab)
+        showWindow(id: state.windowId)
+    }
+
+    /// Insights in the window the person is in (else a new one). Every
+    /// Insights entry point, including legacy Settings links, lands here.
+    func showInsightsSurface() {
+        let state: ChatWindowState
+        if let current = shortcutTargetState {
+            state = current
+        } else {
+            let id = createWindow()
+            guard let created = windowStates[id] else { return }
+            state = created
+        }
+        state.showMainSurface(.insights)
+        showWindow(id: state.windowId)
+    }
+
+    /// The New Agent creator in the window the person is in (else a new
+    /// one). `AgentCreatorController` holds the chat and its draft.
+    func showNewAgentSurface() {
+        let state: ChatWindowState
+        if let current = shortcutTargetState {
+            state = current
+        } else {
+            let id = createWindow()
+            guard let created = windowStates[id] else { return }
+            state = created
+        }
+        state.showMainSurface(.newAgent)
+        showWindow(id: state.windowId)
+    }
+
     /// ⌘B: hide/show the focused chat window's session sidebar, mirroring
     /// the toolbar's sidebar button.
     public func toggleSidebarInFocusedWindow() {
         guard let state = shortcutTargetState else { return }
+        if state.mainSurface == .settings {
+            withAnimation(state.theme.motion.springAnimation) { state.isSettingsSidebarCollapsed.toggle() }
+            return
+        }
+        if state.mainSurface == .insights || state.mainSurface == .help || state.mainSurface == .newAgent { return }
         withAnimation(state.theme.motion.quick) {
             state.toggleSidebar()
         }
@@ -1532,20 +1603,21 @@ private struct ChatWindowRootView: View {
 /// sidebar toggle leading, tab strip centered, the File Changes / History /
 /// Pin row trailing.
 private struct ChatFullScreenHeaderView: View {
+    @Environment(\.theme) private var theme
     @ObservedObject var windowState: ChatWindowState
 
     var body: some View {
-        HStack(spacing: 0) {
+        HStack(spacing: theme.space.s0) {
             if !windowState.isFullScreen {
                 // 58pt native traffic-light group plus 16pt separation.
                 Color.clear.frame(width: 74, height: windowState.theme.assignedMetric("component.button.size.small.height", fallback: 28))
                     .allowsHitTesting(false)
             }
             ChatToolbarSidebarView(windowState: windowState)
-            Spacer(minLength: windowState.theme.assignedMetric("component.library.43.gap", fallback: 8))
+            Spacer(minLength: windowState.theme.assignedMetric("component.library.43.gap", fallback: windowState.theme.space.s8))
             ChatToolbarTrailingView(windowState: windowState)
         }
-        .padding(windowState.theme.assignedMetric("component.library.43.padding", fallback: 8))
+        .padding(windowState.theme.assignedMetric("component.library.43.padding", fallback: windowState.theme.space.s8))
         .frame(height: ChatView.headerHeight(windowState.theme))
         .background(Color.clear)
     }
@@ -1563,6 +1635,14 @@ private final class ChatPanel: NSPanel {
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
+
+    /// NSPanel closes on an Esc nothing else took. On Settings and Insights
+    /// the pages' own Esc shortcuts and fields have had it by now, and the
+    /// window must stay open.
+    override func cancelOperation(_ sender: Any?) {
+        if chatWindowState?.showsPageSurface == true { return }
+        super.cancelOperation(sender)
+    }
 
     // MARK: Window controls
 
@@ -1722,9 +1802,7 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
     ]
 
     private weak var windowState: ChatWindowState?
-    #if OSAURUS_DESIGN_SYSTEM
     private var inspectionSizing: AnyCancellable?
-    #endif
 
     init(windowState: ChatWindowState) {
         self.windowState = windowState
@@ -1812,12 +1890,10 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
         let minimum = hostingView.widthAnchor.constraint(greaterThanOrEqualToConstant: ChatTabStripView.minimumItemWidth)
         let height = hostingView.heightAnchor.constraint(equalToConstant: ChatTabStripView.stripHeight)
         NSLayoutConstraint.activate([minimum, hostingView.widthAnchor.constraint(lessThanOrEqualToConstant: 10_000), height])
-        #if OSAURUS_DESIGN_SYSTEM
         inspectionSizing = windowState?.$theme.sink { theme in
             minimum.constant = ChatTabStripView.inspectionMinimumItemWidth(theme)
             height.constant = ChatTabStripView.inspectionStripHeight(theme)
         }
-        #endif
         hostingView.setContentHuggingPriority(.defaultLow - 1, for: .horizontal)
         hostingView.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
         item.view = hostingView
@@ -1830,12 +1906,22 @@ private final class ChatToolbarDelegate: NSObject, NSToolbarDelegate {
 
 // MARK: - Toolbar Item Views
 
-/// Sidebar toggle button.
+/// Sidebar toggle button, then the way back when a link opened this surface.
 private struct ChatToolbarSidebarView: View {
     @ObservedObject var windowState: ChatWindowState
 
     var body: some View {
-        Group {
+        HStack(spacing: windowState.theme.space.s8) {
+            sidebarControl
+            if windowState.mainSurface != .workflows, let back = windowState.surfaceBack {
+                SurfaceBackButton(windowState: windowState, back: back)
+            }
+        }
+        .environment(\.theme, windowState.theme)
+    }
+
+    @ViewBuilder
+    private var sidebarControl: some View {
         if windowState.mainSurface == .chat {
         HeaderActionButton(
             icon: "sidebar.left",
@@ -1849,19 +1935,49 @@ private struct ChatToolbarSidebarView: View {
         } else if windowState.mainSurface == .workflows {
             WorkflowsTitleBarBackButton(windowState: windowState)
                 .environment(\.theme, windowState.theme)
+        } else if windowState.mainSurface == .settings {
+            HeaderActionButton(
+                icon: "sidebar.left",
+                help: windowState.isSettingsSidebarCollapsed ? "Expand Sidebar" : "Collapse Sidebar"
+            ) {
+                withAnimation(windowState.theme.motion.springAnimation) {
+                    windowState.isSettingsSidebarCollapsed.toggle()
+                }
+            }
+            .environment(\.theme, windowState.theme)
         }
+    }
+}
+
+/// Back to the surface a link came from, named for the page it returns to.
+private struct SurfaceBackButton: View {
+    @ObservedObject var windowState: ChatWindowState
+    let back: ChatWindowState.SurfaceReturn
+
+    var body: some View {
+        // Settings' child pages and Insights' detail page keep ⌘[ for
+        // their own back buttons.
+        SettingsBackButton(
+            title: back.title,
+            verbatim: true,
+            shortcut: windowState.showsPageSurface ? nil : KeyboardShortcut("[", modifiers: .command)
+        ) {
+            withAnimation(windowState.theme.motion.quick) { _ = windowState.returnToPreviousSurface() }
         }
     }
 }
 
 /// The one back button of every Workflows screen but the home: from the
 /// editor to the page under it, or from a pushed page to the one before.
+/// While the page a link opened is on screen, back returns to the link.
 private struct WorkflowsTitleBarBackButton: View {
     @ObservedObject var windowState: ChatWindowState
 
     var body: some View {
         let path = windowState.workflowsPath
-        if !windowState.showsWorkflowLibrary {
+        if let back = windowState.surfaceBack {
+            SurfaceBackButton(windowState: windowState, back: back)
+        } else if !windowState.showsWorkflowLibrary {
             SettingsBackButton(title: WorkflowsView.backTitle(to: path.last), verbatim: true) {
                 windowState.goBack()
             }
@@ -1915,10 +2031,11 @@ private struct InboxToolbarButton: View {
 /// the unchanged object reference and skips this body when only a
 /// published property (e.g. `fileChangesCount` after an undo) changed.
 private struct ChatToolbarTrailingView: View {
+    @Environment(\.theme) private var theme
     @ObservedObject var windowState: ChatWindowState
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             InboxToolbarButton()
             if windowState.mainSurface == .chat, windowState.hasContextPanel {
                 HeaderActionButton(

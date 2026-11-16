@@ -32,42 +32,159 @@ struct ToolApprovalPresentation: Equatable, Sendable {
         var network: Network
     }
 
+    /// Where a path on this Mac sits for a workflow run.
+    enum PathOrigin: Equatable, Sendable {
+        /// The run's own workspace, which Osaurus creates and keeps.
+        case runWorkspace
+        /// Elsewhere in the Osaurus data folder.
+        case osaurusData
+        /// The working folder of the agent the run or step works as.
+        case workingFolder
+        /// Picked in the run form or a dialog, bound in setup, or allowed
+        /// while the run went.
+        case chosen
+        /// In none of the run's folders.
+        case outside
+
+        var isOsaurusManaged: Bool { self == .runWorkspace || self == .osaurusData }
+
+        var tag: String {
+            switch self {
+            case .runWorkspace: L("Osaurus · run workspace")
+            case .osaurusData: L("Osaurus data")
+            case .workingFolder: L("Agent's working folder")
+            case .chosen: L("Chosen for this run")
+            case .outside: L("Outside this run's folders")
+            }
+        }
+
+        var explanation: String {
+            switch self {
+            case .runWorkspace: L("This run's own workspace. Osaurus creates it and keeps it with the run.")
+            case .osaurusData: L("Inside the Osaurus data folder.")
+            case .workingFolder: L("The working folder of the agent this step runs as.")
+            case .chosen: L("A folder or file this run was given: picked when it started, bound in setup, or allowed while it ran.")
+            case .outside: L("Not in any of this run's folders. The step can't use it unless you allow that folder.")
+            }
+        }
+    }
+
+    /// One path on this Mac, in full, with where it sits for the run.
+    struct PathEntry: Equatable, Sendable, Identifiable {
+        /// "From" / "To" for a copy; nil for a single path.
+        var role: String?
+        var url: URL
+        var origin: PathOrigin
+
+        var id: String { (role ?? "") + "\u{0}" + url.path }
+        /// The full path with the home folder as `~`.
+        var displayPath: String { (url.path as NSString).abbreviatingWithTildeInPath }
+    }
+
     /// The scopes a workflow run's file tools are held to, read from the
     /// run's bound execution context.
     struct WorkflowFacts: Equatable, Sendable {
         struct Place: Equatable, Sendable {
             var name: String
             var writes: Bool
+            var url: URL? = nil
+            var origin: PathOrigin = .chosen
         }
 
-        /// Each folder or file on this Mac the run may use, beyond its workspace.
+        /// Each folder or file on this Mac the run may use, its workspace first.
         var places: [Place]
         /// Replacing a file that's already on this Mac asks first.
         var asksBeforeReplacing: Bool
+        /// Where a step's relative paths land. Nil when its file tools have
+        /// no folder on this Mac.
+        var folderRoot: URL? = nil
+        /// `/workspace/...` paths go to the sandbox, not this Mac.
+        var sandboxPathsRouteToVM: Bool = false
 
         /// `granted` are the run's host paths; `writable` the roots saves are
-        /// held to (nil: saves aren't narrowed); `workspace` the run's own.
-        static func make(granted: [URL], writable: [URL]?, workspace: URL?, asksBeforeReplacing: Bool) -> WorkflowFacts {
-            func inside(_ path: String, _ root: String) -> Bool { path == root || path.hasPrefix(root + "/") }
+        /// held to (nil: saves aren't narrowed); `workspace` the run's own;
+        /// `folderRoot` the folder relative paths resolve in.
+        static func make(
+            granted: [URL], writable: [URL]?, workspace: URL?, folderRoot: URL? = nil, asksBeforeReplacing: Bool,
+            sandboxPathsRouteToVM: Bool = false, osaurusRoot: URL = OsaurusPaths.root()
+        ) -> WorkflowFacts {
             let grantedPaths = granted.map(\.standardized.path)
             let writablePaths = writable.map { $0.map(\.standardized.path) }
             let workspacePath = workspace?.standardized.path
+            let rootPath = folderRoot?.standardized.path
+            let osaurusPath = osaurusRoot.standardized.path
+            func origin(_ path: String) -> PathOrigin {
+                if path == workspacePath { return .runWorkspace }
+                if inside(path, osaurusPath) { return .osaurusData }
+                if path == rootPath { return .workingFolder }
+                return .chosen
+            }
             var places: [Place] = []
+            var seen: Set<String> = []
+            func add(_ path: String, name: String, writes: Bool) {
+                guard seen.insert(path).inserted else { return }
+                places.append(
+                    Place(name: name, writes: writes, url: URL(fileURLWithPath: path), origin: origin(path)))
+            }
+            if let workspace, let workspacePath, grantedPaths.contains(workspacePath) {
+                add(workspacePath, name: WorkflowAccessScope.displayName(workspace), writes: true)
+            }
             for (url, path) in zip(granted, grantedPaths) {
                 let writes = writablePaths.map { roots in roots.contains { inside(path, $0) } } ?? true
-                places.append(Place(name: WorkflowAccessScope.displayName(url), writes: writes))
+                add(path, name: WorkflowAccessScope.displayName(url), writes: writes)
+            }
+            // Relative paths and paths under the folder root resolve there
+            // without a grant, and saves there aren't narrowed.
+            if let folderRoot, let rootPath, !grantedPaths.contains(where: { inside(rootPath, $0) }) {
+                add(rootPath, name: WorkflowAccessScope.displayName(folderRoot), writes: true)
             }
             for path in writablePaths ?? [] where path != workspacePath && !grantedPaths.contains(path) {
                 guard grantedPaths.contains(where: { inside(path, $0) }) else { continue }
-                places.append(
-                    Place(name: WorkflowHostWrite.displayName(URL(fileURLWithPath: path), roots: granted), writes: true))
+                add(path, name: WorkflowHostWrite.displayName(URL(fileURLWithPath: path), roots: granted), writes: true)
             }
-            return WorkflowFacts(places: places, asksBeforeReplacing: asksBeforeReplacing)
+            return WorkflowFacts(
+                places: places, asksBeforeReplacing: asksBeforeReplacing, folderRoot: folderRoot,
+                sandboxPathsRouteToVM: sandboxPathsRouteToVM)
         }
+
+        static func inside(_ path: String, _ root: String) -> Bool { path == root || path.hasPrefix(root + "/") }
+
+        /// The places beyond the run's own workspace.
+        var placesBeyondWorkspace: [Place] { places.filter { $0.origin != .runWorkspace } }
 
         /// "dinos (read), dinos/png (write)".
         var accessList: String {
-            places.map { $0.writes ? L("\($0.name) (write)") : L("\($0.name) (read)") }.joined(separator: ", ")
+            placesBeyondWorkspace.map { $0.writes ? L("\($0.name) (write)") : L("\($0.name) (read)") }
+                .joined(separator: ", ")
+        }
+
+        /// Every place with a known path, workspace first.
+        var pathEntries: [PathEntry] {
+            places.compactMap { place in place.url.map { PathEntry(role: nil, url: $0, origin: place.origin) } }
+        }
+
+        /// A tool's path argument as the run's file tools resolve it on this
+        /// Mac (`FolderToolHelpers.resolvePath`): `~/` is home, relative is
+        /// under the folder root. Nil when it doesn't land on this Mac.
+        func resolve(_ raw: String) -> URL? {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let folderRoot, !trimmed.isEmpty else { return nil }
+            if sandboxPathsRouteToVM, trimmed.hasPrefix("/workspace") { return nil }
+            let expanded =
+                trimmed == "~" || trimmed.hasPrefix("~/") ? (trimmed as NSString).expandingTildeInPath : trimmed
+            if expanded.hasPrefix("/") { return URL(fileURLWithPath: expanded).standardized }
+            return folderRoot.appendingPathComponent(expanded).standardized
+        }
+
+        /// The innermost place holding `url` decides; none is `.outside`.
+        func origin(of url: URL) -> PathOrigin {
+            let path = url.standardized.path
+            var best: (length: Int, origin: PathOrigin)?
+            for place in places {
+                guard let root = place.url?.standardized.path, Self.inside(path, root) else { continue }
+                if root.count > (best?.length ?? -1) { best = (root.count, place.origin) }
+            }
+            return best?.origin ?? .outside
         }
     }
 
@@ -85,6 +202,8 @@ struct ToolApprovalPresentation: Equatable, Sendable {
         let icon: String
         let title: String
         let detail: String
+        /// The folders the row is about, each in full.
+        var paths: [PathEntry] = []
     }
 
     let toolName: String
@@ -99,6 +218,10 @@ struct ToolApprovalPresentation: Equatable, Sendable {
     let summary: String?
     /// One line, paths shortened.
     let preview: String?
+    /// The `path` argument as given, for Copy Path when it can't be resolved.
+    let rawPath: String?
+    /// The paths a workflow file step uses on this Mac, resolved in full.
+    let targets: [PathEntry]
     /// The exact command for shell tools (shown in full), or the arguments
     /// as pretty JSON for everything else (behind "Show details").
     let fullDetail: String?
@@ -148,6 +271,18 @@ struct ToolApprovalPresentation: Equatable, Sendable {
             fullDetail = prettyArguments(argumentsJSON)
         }
 
+        let rawPath = command == nil ? (arguments["path"] as? String) : nil
+        var targets: [PathEntry] = []
+        if let workflow, surface != .sandboxVM, workflowScopedFileTools.contains(toolName) {
+            let keys: [(String, String?)] =
+                arguments["source"] != nil || arguments["destination"] != nil
+                ? [("source", L("From")), ("destination", L("To"))] : [("path", nil)]
+            targets = keys.compactMap { key, role in
+                guard let raw = arguments[key] as? String, let url = workflow.resolve(raw) else { return nil }
+                return PathEntry(role: role, url: url, origin: workflow.origin(of: url))
+            }
+        }
+
         let network = sandbox?.network ?? .unknown
         let risk = command.map {
             ShellCommandRiskScanner.scan(
@@ -164,6 +299,8 @@ struct ToolApprovalPresentation: Equatable, Sendable {
             reason: stepReason.flatMap(cleanReason),
             summary: summary,
             preview: preview,
+            rawPath: rawPath,
+            targets: targets,
             fullDetail: fullDetail,
             isShell: isShell,
             guarantees: guarantees(
@@ -243,9 +380,10 @@ struct ToolApprovalPresentation: Equatable, Sendable {
             rows.append(
                 Guarantee(
                     kind: .enforced, icon: "folder",
-                    title: workflow.places.isEmpty
+                    title: workflow.placesBeyondWorkspace.isEmpty
                         ? L("Only this run's workspace") : L("Access to \(workflow.accessList)"),
-                    detail: L("This run's file steps can't read or save anywhere else on your Mac without asking you.")))
+                    detail: L("This run's file steps can't read or save anywhere else on your Mac without asking you."),
+                    paths: workflow.pathEntries))
             if WorkflowAccessScope.writeTools.contains(toolName) {
                 if workflow.asksBeforeReplacing {
                     rows.append(

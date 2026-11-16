@@ -1261,7 +1261,7 @@ struct BuiltinSandboxToolsTests {
     // MARK: - Merged write/edit (`sandbox_write_file`)
 
     /// `sandbox_write_file` with `content` writes the whole file (the
-    /// pre-merge behavior): `mkdir -p` the parent then `printf … > path`.
+    /// pre-merge behavior): `mkdir -p` the parent `&& printf … > path`.
     @Test @MainActor
     func sandboxWriteFile_contentWritesWholeFile() async throws {
         let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
@@ -1312,7 +1312,7 @@ struct BuiltinSandboxToolsTests {
 
         let calls = await runner.calls
         let printfs = calls.compactMap { call -> String? in
-            guard case .agent(_, let c) = call, c.hasPrefix("printf") else { return nil }
+            guard case .agent(_, let c) = call, c.contains("printf '%s'") else { return nil }
             return c
         }
         #expect(printfs.count == SandboxWriteFileTool.shellWriteParts(content).count)
@@ -1337,7 +1337,7 @@ struct BuiltinSandboxToolsTests {
             )
         }
         let appendPrintfs = (await appendRunner.calls).compactMap { call -> String? in
-            guard case .agent(_, let c) = call, c.hasPrefix("printf") else { return nil }
+            guard case .agent(_, let c) = call, c.contains("printf '%s'") else { return nil }
             return c
         }
         #expect(appendPrintfs.count == printfs.count)
@@ -1357,8 +1357,7 @@ struct BuiltinSandboxToolsTests {
             agentResults: [
                 .init(stdout: "# Hello\n\nFrom the VM.\n", stderr: "", exitCode: 0),  // cat source
                 .init(stdout: "0\n", stderr: "", exitCode: 0),  // readForDiff: no prior file
-                .init(stdout: "", stderr: "", exitCode: 0),  // mkdir -p
-                .init(stdout: "", stderr: "", exitCode: 0),  // printf write
+                .init(stdout: "", stderr: "", exitCode: 0),  // mkdir -p && printf write
             ]
         )
         let bridge = SandboxReadBridge(agentName: "test-agent", home: "/workspace/agents/test-agent")
@@ -1380,7 +1379,7 @@ struct BuiltinSandboxToolsTests {
             return c
         }
         #expect(commands.first == "cat '/workspace/agents/test-agent/in.md'", "\(commands)")
-        #expect(commands.contains { $0.hasPrefix("printf '%s' '# Hello\n\nFrom the VM.\n'") }, "\(commands)")
+        #expect(commands.contains { $0.contains("printf '%s' '# Hello\n\nFrom the VM.\n'") }, "\(commands)")
     }
 
     /// A `source_path` the sandbox sanitizer rejects (outside the agent home
@@ -1688,12 +1687,10 @@ struct BuiltinSandboxToolsTests {
     }
 
     /// Host-vs-sandbox confusion regression: a small model handed a host
-    /// filesystem path to `sandbox_read_file`. The rejection must redirect
-    /// it to the `file_*` host tools instead of just saying "outside the
-    /// agent home". (`ToolRegistry.execute` rebinds `hostReadOnlyScope`
-    /// from its own combined-mode policy, which is nil in this harness, so
-    /// the broad macOS-path branch produces the redirect here; the precise
-    /// workspace-scope wording is pinned in `HostPathRedirectTests`.)
+    /// filesystem path to `sandbox_read_file`. The rejection must say the
+    /// sandbox cannot reach the Mac and point at the Folder chip, never at
+    /// `file_read`, which runs inside the same VM in sandbox mode. The full
+    /// wording is pinned in `HostPathRedirectTests`.
     @Test @MainActor
     func sandboxReadFile_hostPathRedirectsToFileTools() async throws {
         let runner = MockSandboxToolCommandRunner(rootResults: [], agentResults: [])
@@ -1709,7 +1706,8 @@ struct BuiltinSandboxToolsTests {
         let payload = try failurePayload(output)
         #expect(payload["kind"] as? String == "invalid_args")
         let message = payload["message"] as? String ?? ""
-        #expect(message.contains("file_read"))
+        #expect(message.contains("Folder chip"))
+        #expect(!message.contains("file_read"))
 
         // The read must NOT have run against the sandbox.
         let calls = await runner.calls
@@ -2007,7 +2005,7 @@ struct BuiltinSandboxToolsTests {
     }
 
     /// WRITABLE combined mode: `file_write` on a `/workspace/...` path
-    /// routes to the sandbox writer (readForDiff → mkdir → printf) and
+    /// routes to the sandbox writer (readForDiff → mkdir + printf) and
     /// re-labels the success envelope with the calling tool's name, so
     /// `file_write` keeps one output shape on both routes.
     @Test @MainActor
@@ -2016,8 +2014,7 @@ struct BuiltinSandboxToolsTests {
             rootResults: [],
             agentResults: [
                 .init(stdout: "0\n", stderr: "", exitCode: 0),  // readForDiff: no prior file
-                .init(stdout: "", stderr: "", exitCode: 0),  // mkdir -p
-                .init(stdout: "", stderr: "", exitCode: 0),  // printf write
+                .init(stdout: "", stderr: "", exitCode: 0),  // mkdir -p && printf write
             ]
         )
         let bridge = SandboxReadBridge(

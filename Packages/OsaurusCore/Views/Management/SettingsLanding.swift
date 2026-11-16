@@ -50,6 +50,10 @@ enum SettingsLanding {
             )
             return true
         }
+        if entry.tab == .insights {
+            ChatWindowManager.shared.showInsightsSurface()
+            return true
+        }
         return false
     }
 

@@ -31,7 +31,7 @@ struct SlashCommandPopup: View {
     private let maxVisibleRows: Int = 6
 
     var body: some View {
-        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.40.elements.layout.slashCommandPopup.body.verticalGap", inheriting: SuggestionInspectionStyle.metric("gap", 4, theme))) {
+        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.40.elements.layout.slashCommandPopup.body.verticalGap", inheriting: SuggestionInspectionStyle.metric("gap", theme.space.s4, theme))) {
             PickerCardHeading(title: title, assignmentFamily: 25) {
                 if !commands.isEmpty { PickerCardKeyHints() }
             }
@@ -40,7 +40,7 @@ struct SlashCommandPopup: View {
                 Text(verbatim: emptyMessage)
                     .suggestionTextStyle(.label, property: "text")
                     .suggestionInk("secondary", fallback: theme.text.secondary)
-                    .padding(.vertical, theme.catalogLayoutMetric("component.library.40.elements.layout.slashCommandPopup.body.paddingY", inheriting: SuggestionInspectionStyle.metric("padding", 14, theme))).catalogLayoutTarget("component.library.40.elements.layout.slashCommandPopup.body.paddingY")
+                    .padding(.vertical, theme.catalogLayoutMetric("component.library.40.elements.layout.slashCommandPopup.body.paddingY", inheriting: SuggestionInspectionStyle.metric("padding", theme.space.s14, theme))).catalogLayoutTarget("component.library.40.elements.layout.slashCommandPopup.body.paddingY")
             } else { commandList }
             Group {
                 if commands.isEmpty && usesTertiaryEmptyAction {
@@ -53,15 +53,13 @@ struct SlashCommandPopup: View {
             .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { footerHeight = $0 }
         }.catalogLayoutTarget("component.library.40.elements.layout.slashCommandPopup.body.verticalGap")
         .padding(.horizontal, theme.catalogLayoutMetric("component.library.40.elements.layout.slashCommandPopup.body.paddingX", inheriting: SuggestionInspectionStyle.metric("padding", PickerCardMetrics.padding, theme))).catalogLayoutTarget("component.library.40.elements.layout.slashCommandPopup.body.paddingX")
-        .padding(.top, theme.catalogLayoutMetric("component.library.40.elements.layout.slashCommandPopup.body.paddingY2", inheriting: SuggestionInspectionStyle.metric("padding", 14, theme))).catalogLayoutTarget("component.library.40.elements.layout.slashCommandPopup.body.paddingY2")
-        .padding(.bottom, theme.catalogLayoutMetric("component.library.40.elements.layout.slashCommandPopup.body.paddingY3", inheriting: SuggestionInspectionStyle.metric("padding", 6, theme))).catalogLayoutTarget("component.library.40.elements.layout.slashCommandPopup.body.paddingY3")
+        .padding(.top, theme.catalogLayoutMetric("component.library.40.elements.layout.slashCommandPopup.body.paddingY2", inheriting: SuggestionInspectionStyle.metric("padding", theme.space.s14, theme))).catalogLayoutTarget("component.library.40.elements.layout.slashCommandPopup.body.paddingY2")
+        .padding(.bottom, theme.catalogLayoutMetric("component.library.40.elements.layout.slashCommandPopup.body.paddingY3", inheriting: SuggestionInspectionStyle.metric("padding", theme.space.s6, theme))).catalogLayoutTarget("component.library.40.elements.layout.slashCommandPopup.body.paddingY3")
         .frame(maxWidth: .infinity)
         .pickerCardSurface(elevated: true, assignmentFamily: 25)
-        #if OSAURUS_DESIGN_SYSTEM
         // Size the surface as well as its content before the composer's
         // overlay proposes the (much smaller) input-card height.
         .fixedSize(horizontal: false, vertical: true)
-        #endif
         .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { height in
             // Report the natural height even when the list is constrained,
             // so resizing can expand it again without a feedback loop.
@@ -85,9 +83,9 @@ struct SlashCommandPopup: View {
     private var listHeight: CGFloat {
         guard fitsPresentedHeight, let presentedMetrics else { return naturalListHeight }
         let chrome = headingHeight + footerHeight
-            + SuggestionInspectionStyle.metric("padding", 14, theme)
-            + SuggestionInspectionStyle.metric("padding", 6, theme)
-            + 2 * SuggestionInspectionStyle.metric("gap", 4, theme)
+            + SuggestionInspectionStyle.metric("padding", theme.space.s14, theme)
+            + SuggestionInspectionStyle.metric("padding", theme.space.s6, theme)
+            + 2 * SuggestionInspectionStyle.metric("gap", theme.space.s4, theme)
         return min(naturalListHeight, max(0, presentedMetrics.visibleSize.height - chrome))
     }
 
@@ -118,9 +116,9 @@ struct SlashCommandPopup: View {
         return Button {
             onSelect(command)
         } label: {
-            HStack(spacing: theme.catalogLayoutMetric("component.library.40.elements.layout.slashCommandPopup.commandRow.horizontalGap", inheriting: SuggestionInspectionStyle.metric("gap", 8, theme))) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.40.elements.layout.slashCommandPopup.commandRow.horizontalGap", inheriting: SuggestionInspectionStyle.metric("gap", theme.space.s8, theme))) {
                 Image(systemName: command.icon)
-                    .glyphSize(12, weight: .medium)
+                    .glyphSize(.caption, weight: .medium)
                     .suggestionInk("accent", fallback: isHighlighted ? theme.text.primary : theme.text.secondary)
                     .frame(width: 16)
                 Text(verbatim: showsCommandPrefix ? "/\(command.name)" : command.name)
@@ -131,9 +129,6 @@ struct SlashCommandPopup: View {
                 if !command.description.isEmpty {
                     Text(verbatim: command.description)
                         .suggestionTextStyle(.label, property: "text")
-                        #if !OSAURUS_DESIGN_SYSTEM
-                        .fontWeight(.regular)
-                        #endif
                         .suggestionInk("secondary", fallback: theme.text.secondary)
                         .lineLimit(1)
                         .truncationMode(.tail)

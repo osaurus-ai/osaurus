@@ -76,10 +76,10 @@ struct SandboxPluginEditorView: View {
 private extension SandboxPluginEditorView {
 
     var editorPanel: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             editorHeader
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: theme.space.s20) {
                     identitySection
                     dependenciesSection
                     setupSection
@@ -95,7 +95,7 @@ private extension SandboxPluginEditorView {
     }
 
     var editorHeader: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             HStack {
                 Text(isNew ? L("Create Custom Tool") : L("Edit Custom Tool"))
                     .font(SettingsFont.detailTitle)
@@ -121,7 +121,7 @@ private extension SandboxPluginEditorView {
                 .foregroundColor(theme.text.tertiary)
             }
             Spacer()
-            HStack(spacing: 12) {
+            HStack(spacing: theme.space.s12) {
                 Button {
                     dismiss(); onDismiss()
                 } label: {
@@ -130,7 +130,7 @@ private extension SandboxPluginEditorView {
                 .assignedSettingsButtonStyle(.secondary)
                 .keyboardShortcut(.cancelAction)
                 Button(action: savePlugin) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: theme.space.s4) {
                         if showSaveConfirmation { Image(systemName: "checkmark") }
                         Text(
                             LocalizedStringKey(
@@ -254,9 +254,9 @@ private extension SandboxPluginEditorView {
             }
 
             if !metadataValid {
-                HStack(spacing: 4) {
+                HStack(spacing: theme.space.s4) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .glyphSize(10)
+                        .glyphSize(.micro)
                     Text("Invalid JSON", bundle: .module)
                         .font(SettingsFont.rowDescription)
                 }
@@ -271,10 +271,10 @@ private extension SandboxPluginEditorView {
 private extension SandboxPluginEditorView {
 
     func toolCard(index: Int, tool: SandboxToolSpec) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             HStack {
                 Image(systemName: "wrench")
-                    .glyphSize(10)
+                    .glyphSize(.micro)
                     .foregroundColor(theme.text.link)
                 Text(tool.id.isEmpty ? L("New Tool") : tool.id)
                     .font(SettingsFont.compactLabel)
@@ -282,7 +282,7 @@ private extension SandboxPluginEditorView {
                 Spacer()
                 Button(action: { removeTool(at: index) }) {
                     Image(systemName: "trash")
-                        .glyphSize(11)
+                        .glyphSize(.footnote)
                         .foregroundColor(theme.status.error.foreground)
                 }
                 .buttonStyle(PlainButtonStyle())
@@ -304,7 +304,7 @@ private extension SandboxPluginEditorView {
     }
 
     func parametersEditor(toolIndex: Int) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             HStack {
                 Text("Parameters", bundle: .module)
                     .font(SettingsFont.smallLabel)
@@ -328,7 +328,7 @@ private extension SandboxPluginEditorView {
     }
 
     func parameterRow(key: String, toolIndex: Int) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             HStack {
                 Text(key.isEmpty ? "new_param" : key)
                     .font(SettingsFont.monoSmall)
@@ -336,7 +336,7 @@ private extension SandboxPluginEditorView {
                 Spacer()
                 Button(action: { removeParameter(key, from: toolIndex) }) {
                     Image(systemName: "trash")
-                        .glyphSize(10)
+                        .glyphSize(.micro)
                         .foregroundColor(theme.status.error.foreground)
                 }
                 .buttonStyle(PlainButtonStyle())
@@ -377,10 +377,10 @@ private extension SandboxPluginEditorView {
 private extension SandboxPluginEditorView {
 
     func fileCard(path: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: "doc.text")
-                    .glyphSize(10)
+                    .glyphSize(.micro)
                     .foregroundColor(theme.text.link)
                 DeferredRenameField(
                     "filename.ext",
@@ -391,7 +391,7 @@ private extension SandboxPluginEditorView {
                 }
                 Button(action: { removeFile(path) }) {
                     Image(systemName: "minus.circle")
-                        .glyphSize(12)
+                        .glyphSize(.caption)
                         .foregroundColor(theme.status.error.foreground)
                 }
                 .buttonStyle(PlainButtonStyle())
@@ -408,7 +408,7 @@ private extension SandboxPluginEditorView {
 private extension SandboxPluginEditorView {
 
     var previewPanel: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             HStack {
                 Text("JSON Preview", bundle: .module)
                     .font(SettingsFont.cardTitle)
@@ -619,13 +619,13 @@ private extension SandboxPluginEditorView {
         @ViewBuilder content: () -> Content
     ) -> some View {
         let isCollapsed = collapsedSections.contains(title)
-        return VStack(alignment: .leading, spacing: 10) {
+        return VStack(alignment: .leading, spacing: theme.space.s10) {
             Button(action: {
                 withAnimation(theme.motion.quick) {
                     if isCollapsed { collapsedSections.remove(title) } else { collapsedSections.insert(title) }
                 }
             }) {
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     Text(title)
                         .font(SettingsFont.compactLabel)
                         .foregroundColor(theme.text.secondary)
@@ -634,7 +634,7 @@ private extension SandboxPluginEditorView {
                     }
                     Spacer()
                     Image(systemName: "chevron.right")
-                        .glyphSize(10, weight: .semibold)
+                        .glyphSize(.micro, weight: .semibold)
                         .foregroundColor(theme.text.tertiary)
                         .rotationEffect(.degrees(isCollapsed ? 0 : 90))
                 }
@@ -643,7 +643,7 @@ private extension SandboxPluginEditorView {
             .buttonStyle(PlainButtonStyle())
 
             if !isCollapsed {
-                VStack(alignment: .leading, spacing: 8) { content() }
+                VStack(alignment: .leading, spacing: theme.space.s8) { content() }
                     .padding(theme.space.s12)
                     .settingsChrome(.surface)
                     .transition(.opacity.combined(with: .move(edge: .top)))
@@ -667,7 +667,7 @@ private extension SandboxPluginEditorView {
     }
 
     func labeledField<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
             Text(LocalizedStringKey(label), bundle: .module)
                 .font(SettingsFont.smallLabel)
                 .foregroundColor(theme.text.secondary)
@@ -676,9 +676,9 @@ private extension SandboxPluginEditorView {
     }
 
     func stringListEditor(binding: Binding<[String]>, placeholder: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             ForEach(Array(binding.wrappedValue.enumerated()), id: \.offset) { index, _ in
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     editorTextField(
                         placeholder,
                         text: Binding(
@@ -690,7 +690,7 @@ private extension SandboxPluginEditorView {
                     )
                     Button(action: { binding.wrappedValue.remove(at: index) }) {
                         Image(systemName: "minus.circle")
-                            .glyphSize(12)
+                            .glyphSize(.caption)
                             .foregroundColor(theme.status.error.foreground)
                     }
                     .buttonStyle(PlainButtonStyle())

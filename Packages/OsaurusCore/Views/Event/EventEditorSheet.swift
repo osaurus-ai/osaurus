@@ -155,7 +155,7 @@ struct EventEditorSheet: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             header
             if let template {
                 ScrollView {
@@ -243,7 +243,7 @@ struct EventEditorSheet: View {
 
                 HStack(alignment: .firstTextBaseline, spacing: theme.space.s6) {
                     Image(systemName: "bubble.left.and.bubble.right")
-                        .glyphSize(11)
+                        .glyphSize(.footnote)
                         .foregroundColor(theme.text.tertiary)
                     Text(
                         "Want an agent to answer messages on Slack, Discord or another channel? Add a routing rule on that channel in Channels.",
@@ -266,7 +266,7 @@ struct EventEditorSheet: View {
                 } label: {
                     VStack(alignment: .leading, spacing: theme.space.s8) {
                         Image(systemName: option.icon)
-                            .glyphSize(18, weight: .semibold)
+                            .glyphSize(.large, weight: .semibold)
                             .foregroundColor(theme.text.link)
                             // Same box for every symbol, so titles line up.
                             .frame(width: 24, height: 22, alignment: .leading)

@@ -50,30 +50,22 @@ private struct PickerCardSurfaceModifier: ViewModifier {
     @Environment(\.theme) private var baseTheme
     @Environment(\.isEnabled) private var enabled
     @Environment(\.anchoredCardMetrics) private var cardMetrics
-    private var theme: any ThemeProtocol { baseTheme.catalogFamily(assignmentFamily, enabled: enabled, authoritative: assignmentFamily > 20) }
+    private var theme: any ThemeProtocol { baseTheme.catalogFamily(assignmentFamily, enabled: enabled) }
 
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: theme.radius.xlarge, style: .continuous)
         content
-            #if OSAURUS_DESIGN_SYSTEM
             .frame(minHeight: min(theme.catalogMetric("height", fallback: 0), cardMetrics?.visibleSize.height ?? .greatestFiniteMagnitude))
-            #endif
             .background(theme.surface.overlay, in: shape)
             .clipShape(shape)
             .overlay {
                 shape.strokeBorder(theme.border.default, lineWidth: theme.stroke.default)
             }
             .themeElevation(elevated ? theme.elevation.overlay : theme.elevation.none)
-            #if OSAURUS_DESIGN_SYSTEM
             .assignedTypography("component.library.\(assignmentFamily).text", fallback: SettingsFont.body)
-            #else
-            .textStyle(.body)
-            #endif
             .foregroundStyle(theme.text.primary)
-            #if OSAURUS_DESIGN_SYSTEM
             .nativeCatalogTarget(["background", "border", "borderWidth", "radius", "height"].map { "component.library.\(assignmentFamily).elements.container." + $0 }, "Picker container")
             .environment(\.theme, theme)
-            #endif
     }
 }
 
@@ -117,13 +109,9 @@ struct PickerCardHeading<Accessory: View>: View {
     @Environment(\.isEnabled) private var enabled
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: theme.assignedMetric("component.library.\(assignmentFamily).gap", fallback: 8)) {
+        HStack(alignment: .firstTextBaseline, spacing: theme.assignedMetric("component.library.\(assignmentFamily).gap", fallback: theme.space.s8)) {
             Text(title)
-                #if OSAURUS_DESIGN_SYSTEM
                 .assignedTypography("component.library.\(assignmentFamily)." + (assignmentFamily == 25 ? "label" : "heading"), fallback: SettingsFont.body)
-                #else
-                .textStyle(.body)
-                #endif
                 .foregroundStyle(theme.assignedColor("component.library.\(assignmentFamily)." + (enabled ? "foreground" : "disabledForeground"), fallback: theme.text.secondary))
                 .lineLimit(1)
                 .accessibilityAddTraits(.isHeader)
@@ -133,11 +121,7 @@ struct PickerCardHeading<Accessory: View>: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         
         
-        #if OSAURUS_DESIGN_SYSTEM
-        .padding(.bottom, assignmentFamily == 26 ? 0 : theme.assignedMetric("component.library.\(assignmentFamily).gap", fallback: 4))
-        #else
-        .padding(.bottom, theme.assignedMetric("component.library.\(assignmentFamily).gap", fallback: 4))
-        #endif
+        .padding(.bottom, assignmentFamily == 26 ? 0 : theme.assignedMetric("component.library.\(assignmentFamily).gap", fallback: theme.space.s4))
     }
 }
 
@@ -156,26 +140,18 @@ struct PickerCardSectionTitle<Accessory: View>: View {
     @Environment(\.isEnabled) private var enabled
 
     var body: some View {
-        HStack(alignment: .lastTextBaseline, spacing: theme.assignedMetric("component.library.\(assignmentFamily).gap", fallback: 6)) {
+        HStack(alignment: .lastTextBaseline, spacing: theme.assignedMetric("component.library.\(assignmentFamily).gap", fallback: theme.space.s6)) {
             Text(title)
                 .lineLimit(1)
                 .accessibilityAddTraits(.isHeader)
             Spacer(minLength: 0)
             accessory()
         }
-        #if OSAURUS_DESIGN_SYSTEM
         .assignedTypography("component.library.\(assignmentFamily).label", fallback: SettingsFont.rowTitle)
-        #else
-        .textStyle(.label)
-        #endif
         .foregroundStyle(theme.assignedColor("component.library.\(assignmentFamily)." + (enabled ? "foreground" : "disabledForeground"), fallback: theme.text.tertiary))
         .padding(.horizontal, theme.assignedMetric("component.library.\(assignmentFamily).padding", fallback: PickerCardMetrics.rowInset))
-        #if OSAURUS_DESIGN_SYSTEM
         .frame(minHeight: PickerCardMetrics.sectionTitleHeight, alignment: .bottomLeading)
-        #else
-        .frame(height: PickerCardMetrics.sectionTitleHeight, alignment: .bottomLeading)
-        #endif
-        .padding(.bottom, theme.assignedMetric("component.library.\(assignmentFamily).gap", fallback: 2))
+        .padding(.bottom, theme.assignedMetric("component.library.\(assignmentFamily).gap", fallback: theme.space.s2))
         
         
         
@@ -198,11 +174,7 @@ struct PickerCardFootnote: View {
 
     var body: some View {
         Text(verbatim: text)
-            #if OSAURUS_DESIGN_SYSTEM
             .assignedTypography("component.library.\(assignmentFamily).caption", fallback: SettingsFont.caption)
-            #else
-            .textStyle(.footnote)
-            #endif
             .foregroundStyle(enabled ? (color ?? theme.text.secondary) : theme.assignedColor("component.library.\(assignmentFamily).disabledForeground", fallback: color ?? theme.text.secondary))
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -228,17 +200,13 @@ struct PickerCardTextLink: View {
 
     private var subduedTextColor: Color { theme.isDark ? theme.text.tertiary : theme.text.secondary }
     private var linkInk: Color {
-        #if OSAURUS_DESIGN_SYSTEM
         if let assignmentFamily {
             return theme.assignedColor("component.library.\(assignmentFamily)." + (enabled ? "accent" : "disabledForeground"), fallback: theme.text.link)
         }
-        #endif
         return tint ?? (hovered ? theme.text.primary : subduedTextColor)
     }
     private var glyphInk: Color {
-        #if OSAURUS_DESIGN_SYSTEM
         if assignmentFamily != nil { return linkInk }
-        #endif
         return tint ?? (hovered ? theme.text.primary : theme.text.tertiary)
     }
     private func metric(_ property: String, _ fallback: CGFloat) -> CGFloat {
@@ -248,10 +216,10 @@ struct PickerCardTextLink: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: metric("gap", 5)) {
+            HStack(spacing: metric("gap", theme.space.s4)) {
                 Text(title).underline(hovered)
                     .foregroundStyle(linkInk)
-                Image(systemName: icon).glyphSize(11).accessibilityHidden(true)
+                Image(systemName: icon).glyphSize(.footnote).accessibilityHidden(true)
             }
             .modifier(PickerCardLinkTypography(family: assignmentFamily, tinted: tint != nil))
             .foregroundStyle(glyphInk)
@@ -278,13 +246,9 @@ private struct PickerCardLinkTypography: ViewModifier {
     let tinted: Bool
     @Environment(\.theme) private var theme
     @ViewBuilder func body(content: Content) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         if let family {
             content.assignedTypography("component.library.\(family).caption", fallback: SettingsFont.body)
         } else { content.font(theme.font(size: theme.pointSize(.bodySmall), weight: tinted ? .medium : .regular)) }
-        #else
-        content.font(theme.font(size: theme.pointSize(.bodySmall), weight: tinted ? .medium : .regular))
-        #endif
     }
 }
 
@@ -321,13 +285,9 @@ struct ChatContextMenu<Content: View>: View {
     let content: Content
     init(@ViewBuilder content: () -> Content) { self.content = content() }
     private var theme: any ThemeProtocol {
-        #if OSAURUS_DESIGN_SYSTEM
         var base = inheritedTheme
         while let scoped = base as? CatalogResolvedTheme { base = scoped.base }
         return base
-        #else
-        return inheritedTheme
-        #endif
     }
     var body: some View {
         VStack(alignment: .leading, spacing: theme.inspectionNumber("component.contextMenu.container.gap", fallback: theme.space.s4)) { content }

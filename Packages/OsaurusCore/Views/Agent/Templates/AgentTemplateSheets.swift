@@ -47,7 +47,7 @@ struct SaveAgentTemplateSheet: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             SettingsSheetHeader(
                 icon: saved == nil ? "square.on.square.dashed" : "checkmark.circle",
                 title: saved == nil ? "Save as Template" : "Saved",
@@ -81,12 +81,12 @@ struct SaveAgentTemplateSheet: View {
     /// sheet as the card's Share button, so the next step is one click.
     @ViewBuilder
     private func savedBody(_ template: AgentTemplate) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            HStack(alignment: .top, spacing: theme.space.s10) {
                 Image(systemName: "checkmark.seal.fill")
-                    .glyphSize(18, weight: .medium)
+                    .glyphSize(.large, weight: .medium)
                     .foregroundColor(theme.status.success.foreground)
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: theme.space.s4) {
                     Text(template.name)
                         .font(SettingsFont.compactLabel)
                         .foregroundColor(theme.text.primary)
@@ -117,8 +117,8 @@ struct SaveAgentTemplateSheet: View {
     @ViewBuilder
     private var form: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s16) {
+                VStack(alignment: .leading, spacing: theme.space.s6) {
                     SettingsFieldLabel("Template Name")
                     SettingsTextField(placeholder: L("e.g., Cloud Agent"), text: $name, icon: "textformat")
                         .overlay(
@@ -131,9 +131,9 @@ struct SaveAgentTemplateSheet: View {
                     if let collision {
                         // Inline, under the field it concerns: the footer
                         // button reads Replace Template while this shows.
-                        HStack(alignment: .top, spacing: 6) {
+                        HStack(alignment: .top, spacing: theme.space.s6) {
                             Image(systemName: "exclamationmark.triangle.fill")
-                                .glyphSize(10, weight: .semibold)
+                                .glyphSize(.micro, weight: .semibold)
                                 .padding(.top, theme.space.s2)
                             Text("A template named \"\(collision.name)\" already exists. Saving adds version \(collision.version + 1); earlier versions stay in its history.", bundle: .module)
                                 .font(SettingsFont.rowDescription)
@@ -142,34 +142,20 @@ struct SaveAgentTemplateSheet: View {
                         .foregroundColor(theme.status.warning.foreground)
                     }
                 }
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: theme.space.s6) {
                     SettingsFieldLabel("Summary")
                     SettingsTextField(
                         placeholder: L("One line about what this agent is for"), text: $summary,
                         icon: "text.alignleft")
                 }
                 includeSection
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Available to the Orchestrator", bundle: .module)
-                            .font(SettingsFont.compactLabel)
-                            .foregroundColor(theme.text.primary)
-                        Text(
-                            "Lets the Orchestrator base new agents on this template when you ask for it by name.",
-                            bundle: .module
-                        )
-                        .font(SettingsFont.rowDescription)
-                        .foregroundColor(theme.text.tertiary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    }
-                    Spacer(minLength: 12)
-                    Toggle("", isOn: $availableToOrchestrator)
-                        .settingsSwitch()
-                }
-                .padding(theme.space.s8)
-                .settingsChrome(.inset)
+                SettingsToggle(
+                    title: "Available to the Orchestrator",
+                    description: "Lets the Orchestrator base new agents on this template when you ask for it by name.",
+                    isOn: $availableToOrchestrator
+                )
                 if let draft, !draft.requires.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: theme.space.s6) {
                         SettingsFieldLabel("Travels With the Template")
                         Text(
                             "Whoever imports this will be asked to set these up on their Mac.",
@@ -178,9 +164,9 @@ struct SaveAgentTemplateSheet: View {
                         .font(SettingsFont.rowDescription)
                         .foregroundColor(theme.text.tertiary)
                         ForEach(draft.requires) { requirement in
-                            HStack(spacing: 8) {
+                            HStack(spacing: theme.space.s8) {
                                 Image(systemName: requirement.kind.icon)
-                                    .glyphSize(10, weight: .medium)
+                                    .glyphSize(.micro, weight: .medium)
                                     .foregroundColor(theme.text.tertiary)
                                     .frame(width: 14)
                                 Text(requirement.kind.title)
@@ -224,17 +210,17 @@ struct SaveAgentTemplateSheet: View {
     /// wants to share a tool setup but keep the prompt private, or drop the
     /// folder hint, flips the section off here.
     private var includeSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             SettingsFieldLabel("Include in Template")
-            VStack(spacing: 0) {
+            VStack(spacing: theme.space.s0) {
                 ForEach(Array(availableSections.enumerated()), id: \.element) { index, section in
-                    if index > 0 { Divider().opacity(0.4) }
-                    HStack(spacing: 12) {
+                    if index > 0 { ThemeHairlineDivider() }
+                    HStack(spacing: theme.space.s12) {
                         Image(systemName: Self.icon(for: section))
-                            .glyphSize(11, weight: .medium)
+                            .glyphSize(.footnote, weight: .medium)
                             .foregroundColor(theme.text.tertiary)
                             .frame(width: 16)
-                        VStack(alignment: .leading, spacing: 1) {
+                        VStack(alignment: .leading, spacing: theme.space.s2) {
                             Text(Self.title(for: section))
                                 .font(SettingsFont.compactLabel)
                                 .foregroundColor(theme.text.primary)
@@ -389,9 +375,9 @@ struct RenameAgentTemplateSheet: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             SettingsSheetHeader(icon: "pencil", title: "Rename Template", subtitleText: template.name, onClose: onDone)
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
                 SettingsFieldLabel("New Name")
                 SettingsTextField(placeholder: L("Template Name"), text: $name, icon: "textformat")
                 if collides {

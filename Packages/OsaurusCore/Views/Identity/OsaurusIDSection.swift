@@ -147,8 +147,8 @@ struct OsaurusIDSection: View {
     }
 
     private func unreachableRow(_ message: String) -> some View {
-        HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 2) {
+        HStack(spacing: theme.space.s12) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text("Couldn't reach Osaurus", bundle: .module)
                     .font(SettingsFont.sectionTitle)
                     .foregroundColor(theme.text.primary)
@@ -179,7 +179,7 @@ struct OsaurusIDSection: View {
     // MARK: - Unclaimed: claim row
 
     private var claimContent: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             Text(
                 "Your public handle across Osaurus. Workspaces, invites, and usage show it instead of your master address.",
                 bundle: .module
@@ -188,7 +188,7 @@ struct OsaurusIDSection: View {
             .foregroundColor(theme.text.secondary)
             .fixedSize(horizontal: false, vertical: true)
 
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 handleField
                 Button(action: requestClaim) {
                     Text("Claim", bundle: .module)
@@ -256,8 +256,8 @@ struct OsaurusIDSection: View {
                 )
                 .foregroundColor(theme.text.tertiary)
             } else if isCheckingAvailability {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.mini)
+                HStack(spacing: theme.space.s6) {
+                    SettingsSpinner(size: .mini)
                     Text("Checking availability…", bundle: .module)
                         .foregroundColor(theme.text.secondary)
                 }
@@ -318,9 +318,9 @@ struct OsaurusIDSection: View {
     // MARK: - Claimed: profile card
 
     private func claimedContent(_ profile: OsaurusIDProfile) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            HStack(alignment: .top, spacing: theme.space.s12) {
+                VStack(alignment: .leading, spacing: theme.space.s4) {
                     Text(profile.handle)
                         .font(SettingsFont.mono)
                         .foregroundColor(theme.text.primary)
@@ -343,9 +343,9 @@ struct OsaurusIDSection: View {
 
                 if !isEditing {
                     Button(action: beginEditing) {
-                        HStack(spacing: 4) {
+                        HStack(spacing: theme.space.s4) {
                             Image(systemName: "pencil")
-                                .glyphSize(11, weight: .medium)
+                                .glyphSize(.footnote, weight: .medium)
                             Text("Edit", bundle: .module)
                         }
                     }
@@ -353,9 +353,9 @@ struct OsaurusIDSection: View {
                     .accessibilityIdentifier("identity.osaurusId.edit")
 
                     Button(action: { copy(profile.handle) }) {
-                        HStack(spacing: 4) {
+                        HStack(spacing: theme.space.s4) {
                             Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                                .glyphSize(11, weight: .medium)
+                                .glyphSize(.footnote, weight: .medium)
                             Text(copied ? L("Copied") : L("Copy"))
                         }
                         .foregroundColor(copied ? theme.status.success.foreground : theme.text.primary)
@@ -381,7 +381,7 @@ struct OsaurusIDSection: View {
     }
 
     private func editForm(_ profile: OsaurusIDProfile) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             SettingsFieldRow(label: "Display Name") {
                 SettingsTextField(placeholder: profile.osaurusID, text: $draftDisplayName)
                     .onChange(of: draftDisplayName) { _, value in
@@ -392,7 +392,7 @@ struct OsaurusIDSection: View {
                     .accessibilityIdentifier("identity.osaurusId.displayName")
             }
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
                 HStack {
                     Text("Bio", bundle: .module)
                         .font(SettingsFont.smallLabel)
@@ -418,7 +418,7 @@ struct OsaurusIDSection: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 Spacer()
                 Button(action: cancelEditing) {
                     Text("Cancel", bundle: .module)

@@ -32,18 +32,34 @@ struct ToolPermissionView: View {
     /// service presents one card at a time; telling the user more are coming
     /// explains why another card appears right after this decision.
     var queuedBehind: Int = 0
+    /// Agent-scoped "Don't ask again" entries, for a custom agent's own run
+    /// on this Mac. Nil keeps the single **Always Allow…**.
+    var agentChoices: AgentChoices? = nil
+
+    struct AgentChoices {
+        let agentName: String
+        let onAlwaysAllowForAgent: () -> Void
+        let onNeverAskForAgent: () -> Void
+    }
+
+    private enum Confirmation {
+        case everyAgent
+        case thisAgent(String)
+        case neverAsk(String)
+    }
 
     @ObservedObject private var themeManager = ThemeManager.shared
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     @State private var showsDetails = false
-    @State private var showAlwaysAllowConfirm = false
+    @State private var confirmation: Confirmation?
+    @State private var alertCardHeight: CGFloat = 0
     @State private var appeared = false
     @State private var alertScopeId = UUID()
     private var alertScope: ThemedAlertScope { .toolPermission(alertScopeId) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             header
                 .padding(.horizontal, theme.settingsSheetInset)
                 .padding(.top, theme.settingsSheetInset)
@@ -73,6 +89,10 @@ struct ToolPermissionView: View {
         .opacity(appeared ? 1 : 0)
         .offset(y: appeared ? 0 : -6)
         .frame(width: 440)
+        .frame(
+            minHeight: confirmation == nil ? nil : alertCardHeight + 2 * theme.space.s16,
+            alignment: .top
+        )
         .fixedSize(horizontal: true, vertical: true)
         .clipShape(RoundedRectangle(cornerRadius: theme.radius.xlarge, style: .continuous))
         .settingsChrome(.overlay)
@@ -83,17 +103,15 @@ struct ToolPermissionView: View {
         }
         .environment(\.theme, themeManager.currentTheme)
         .themedAlert(
-            L("Always Allow \"\(presentation.title)\"?"),
-            isPresented: $showAlwaysAllowConfirm,
-            message:
-                L(
-                    "This tool will be automatically allowed to run without prompting in the future. You can change this in the Tools settings."
-                ),
-            primaryButton: .primary(L("Always Allow")) { onAlwaysAllow() },
+            confirmationTitle,
+            isPresented: Binding(get: { confirmation != nil }, set: { if !$0 { confirmation = nil } }),
+            message: confirmationMessage,
+            primaryButton: confirmationButton,
             secondaryButton: .cancel(L("Cancel"))
         )
         .themedAlertScope(alertScope)
         .overlay(ThemedAlertHost(scope: alertScope))
+        .onPreferenceChange(ThemedAlertCardHeightKey.self) { alertCardHeight = $0 }
     }
 
     // MARK: - Header
@@ -101,7 +119,7 @@ struct ToolPermissionView: View {
     private var header: some View {
         HStack(spacing: theme.space.s12) {
             Image(systemName: presentation.icon)
-                .glyphSize(15, weight: .semibold)
+                .glyphSize(.medium, weight: .semibold)
                 .foregroundColor(theme.text.secondary)
                 .frame(width: theme.space.s32 + theme.space.s4, height: theme.space.s32 + theme.space.s4)
                 .settingsChrome(.subtle)
@@ -162,7 +180,15 @@ struct ToolPermissionView: View {
     /// click away.
     @ViewBuilder
     private var arguments: some View {
-        if presentation.preview != nil || presentation.fullDetail != nil {
+        if !presentation.targets.isEmpty {
+            HStack(alignment: .top, spacing: theme.settingsControlGap) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
+                    ForEach(presentation.targets) { PermissionPathRow(entry: $0) }
+                }
+                .accessibilityIdentifier("toolPermission.targets")
+                detailsToggle
+            }
+        } else if presentation.preview != nil || presentation.fullDetail != nil {
             HStack(spacing: theme.settingsControlGap) {
                 if let preview = presentation.preview {
                     Text(verbatim: preview)
@@ -170,21 +196,30 @@ struct ToolPermissionView: View {
                         .foregroundColor(theme.text.primary)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                        .help(presentation.rawPath ?? preview)
                 }
                 Spacer(minLength: 0)
-                if presentation.fullDetail != nil {
-                    SettingsButton(.tertiary, showsDetails ? "Hide details" : "Show details", size: .compact) {
-                        withAnimation(theme.motion.quick) { showsDetails.toggle() }
-                    }
-                    .fixedSize()
+                if let rawPath = presentation.rawPath {
+                    PathActionsMenu(path: rawPath, revealURL: nil)
                 }
+                detailsToggle
             }
-            if showsDetails, let fullDetail = presentation.fullDetail {
-                ContentSizedScrollView(maxHeight: 180) {
-                    SettingsCodeBlock(code: fullDetail)
-                }
-                .accessibilityIdentifier("toolPermission.fullDetail")
+        }
+        if showsDetails, let fullDetail = presentation.fullDetail {
+            ContentSizedScrollView(maxHeight: 180) {
+                SettingsCodeBlock(code: fullDetail)
             }
+            .accessibilityIdentifier("toolPermission.fullDetail")
+        }
+    }
+
+    @ViewBuilder
+    private var detailsToggle: some View {
+        if presentation.fullDetail != nil {
+            SettingsButton(.tertiary, showsDetails ? "Hide details" : "Show details", size: .compact) {
+                withAnimation(theme.motion.quick) { showsDetails.toggle() }
+            }
+            .fixedSize()
         }
     }
 
@@ -223,17 +258,76 @@ struct ToolPermissionView: View {
     @ViewBuilder
     private var leaseControl: some View {
         if !perCallApprovalOnly {
-            if let onAllowForRun {
+            if let agentChoices {
+                SettingsMenuButton(.tertiary, "Don't ask again", size: .compact) {
+                    if let onAllowForRun {
+                        Button(presentation.leaseActionTitle, action: onAllowForRun)
+                    }
+                    Button(L("Always Allow for \(agentChoices.agentName)…")) {
+                        confirmation = .thisAgent(agentChoices.agentName)
+                    }
+                    Button(L("Always Allow for Every Agent…")) { confirmation = .everyAgent }
+                    Divider()
+                    Button(L("Never Ask for \(agentChoices.agentName)…")) {
+                        confirmation = .neverAsk(agentChoices.agentName)
+                    }
+                }
+                .fixedSize()
+                .accessibilityIdentifier("toolPermission.lease")
+            } else if let onAllowForRun {
                 SettingsMenuButton(.tertiary, "Don't ask again", size: .compact) {
                     Button(presentation.leaseActionTitle, action: onAllowForRun)
-                    Button(L("Always Allow…")) { showAlwaysAllowConfirm = true }
+                    Button(L("Always Allow…")) { confirmation = .everyAgent }
                 }
                 .fixedSize()
                 .accessibilityIdentifier("toolPermission.lease")
             } else {
-                SettingsButton(.tertiary, "Always Allow…", size: .compact) { showAlwaysAllowConfirm = true }
+                SettingsButton(.tertiary, "Always Allow…", size: .compact) { confirmation = .everyAgent }
                     .accessibilityIdentifier("toolPermission.alwaysAllow")
             }
+        }
+    }
+
+    // MARK: - Confirmation
+
+    private var confirmationTitle: String {
+        switch confirmation {
+        case .neverAsk(let agentName):
+            return ToolApprovalEducation.neverAskConfirmTitle(agentName: agentName)
+        case .thisAgent(let agentName):
+            return L("Always Allow \"\(presentation.title)\" for \(agentName)?")
+        case .everyAgent where agentChoices != nil:
+            return L("Always Allow \"\(presentation.title)\" for Every Agent?")
+        case .everyAgent, nil:
+            return L("Always Allow \"\(presentation.title)\"?")
+        }
+    }
+
+    private var confirmationMessage: String {
+        switch confirmation {
+        case .neverAsk(let agentName):
+            return ToolApprovalEducation.neverAskConfirmMessage(agentName: agentName)
+        case .thisAgent(let agentName):
+            return ToolApprovalEducation.alwaysAllowForAgentMessage(agentName: agentName)
+        case .everyAgent where agentChoices != nil:
+            return ToolApprovalEducation.alwaysAllowForEveryAgentMessage
+        case .everyAgent, nil:
+            return L(
+                "This tool will be automatically allowed to run without prompting in the future. You can change this under Tools & MCP → All Tools."
+            )
+        }
+    }
+
+    private var confirmationButton: AlertButtonConfig {
+        switch confirmation {
+        case .neverAsk:
+            let action = agentChoices?.onNeverAskForAgent ?? {}
+            return .destructive(ToolApprovalEducation.neverAskConfirmButton, action: action)
+        case .thisAgent:
+            let action = agentChoices?.onAlwaysAllowForAgent ?? {}
+            return .primary(L("Always Allow"), action: action)
+        case .everyAgent, nil:
+            return .primary(L("Always Allow"), action: onAlwaysAllow)
         }
     }
 }
@@ -256,15 +350,16 @@ struct PermissionFact: Identifiable, Equatable {
     let icon: String
     let title: String
     let detail: String?
+    var paths: [ToolApprovalPresentation.PathEntry] = []
 
     /// Things to watch for first, then protections, then what came back
     /// clean.
     static func facts(for presentation: ToolApprovalPresentation) -> [PermissionFact] {
-        var rows: [(Tone, String, String, String?)] = []
+        var rows: [(Tone, String, String, String?, [ToolApprovalPresentation.PathEntry])] = []
         for finding in presentation.risk?.findings ?? [] {
             rows.append(
                 (finding.signal == .runsInBackground ? .info : .warning, icon(for: finding.signal),
-                 finding.title, finding.detail))
+                 finding.title, finding.detail, []))
         }
         for guarantee in presentation.guarantees {
             let tone: Tone =
@@ -273,13 +368,13 @@ struct PermissionFact: Identifiable, Equatable {
                 case .caution: .warning
                 case .note: .neutral
                 }
-            rows.append((tone, guarantee.icon, guarantee.title, guarantee.detail))
+            rows.append((tone, guarantee.icon, guarantee.title, guarantee.detail, guarantee.paths))
         }
         if let clean = presentation.risk?.cleanSummary {
-            rows.append((.clean, "checkmark.circle", clean, nil))
+            rows.append((.clean, "checkmark.circle", clean, nil, []))
         }
         return rows.enumerated().map { index, row in
-            PermissionFact(id: index, tone: row.0, icon: row.1, title: row.2, detail: row.3)
+            PermissionFact(id: index, tone: row.0, icon: row.1, title: row.2, detail: row.3, paths: row.4)
         }
     }
 
@@ -318,10 +413,16 @@ private struct PermissionFactRow: View {
                         .foregroundColor(theme.text.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
+                if !fact.paths.isEmpty {
+                    VStack(alignment: .leading, spacing: theme.space.s8) {
+                        ForEach(fact.paths) { PermissionPathRow(entry: $0) }
+                    }
+                    .padding(.top, theme.space.s4)
+                }
             }
             Spacer(minLength: 0)
         }
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: fact.paths.isEmpty ? .combine : .contain)
         .accessibilityValue(accessibilityTone)
     }
 
@@ -340,6 +441,80 @@ private struct PermissionFactRow: View {
         case .protection: Text("Enforced", bundle: .module)
         case .info, .clean, .neutral: Text(verbatim: "")
         }
+    }
+}
+
+/// One path on this Mac in full, with where it sits for the run and its
+/// Copy Path / Show in Finder menu.
+private struct PermissionPathRow: View {
+    let entry: ToolApprovalPresentation.PathEntry
+
+    @Environment(\.theme) private var theme
+
+    var body: some View {
+        HStack(alignment: .top, spacing: theme.space.s8) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
+                HStack(spacing: theme.space.s4) {
+                    if let role = entry.role {
+                        Text(verbatim: role)
+                            .font(SettingsFont.footnote)
+                            .foregroundColor(theme.text.secondary)
+                    }
+                    Text(verbatim: entry.displayPath)
+                        .font(SettingsFont.monoSmall)
+                        .foregroundColor(theme.text.primary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                        .help(entry.url.path)
+                }
+                StatusChip(entry.origin.tag, tone: tone, help: entry.origin.explanation)
+            }
+            Spacer(minLength: 0)
+            PathActionsMenu(path: entry.url.path, revealURL: entry.url)
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private var tone: StatusChip.Tone {
+        switch entry.origin {
+        case .runWorkspace, .osaurusData: .info
+        case .outside: .warning
+        case .workingFolder, .chosen: .neutral
+        }
+    }
+}
+
+/// Copy Path, and Show in Finder when the path is on this Mac. Nothing is
+/// created: a path that doesn't exist yet opens its nearest existing folder.
+private struct PathActionsMenu: View {
+    let path: String
+    let revealURL: URL?
+
+    var body: some View {
+        SettingsOverflowMenu(help: "More actions", size: .compact) {
+            Button(L("Copy Path")) {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(path, forType: .string)
+            }
+            if let revealURL {
+                Button(L("Show in Finder")) { Self.reveal(revealURL) }
+            }
+        }
+        .accessibilityIdentifier("toolPermission.pathActions")
+    }
+
+    static func reveal(_ url: URL) {
+        let fileManager = FileManager.default
+        if fileManager.fileExists(atPath: url.path) {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+            return
+        }
+        var folder = url.deletingLastPathComponent()
+        while !fileManager.fileExists(atPath: folder.path), folder.path != "/" {
+            folder = folder.deletingLastPathComponent()
+        }
+        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: folder.path)
     }
 }
 
@@ -371,7 +546,7 @@ private struct CommandWell: View {
                     .clipped()
                     .mask {
                         if collapsed {
-                            VStack(spacing: 0) {
+                            VStack(spacing: theme.space.s0) {
                                 Rectangle()
                                 LinearGradient(colors: [.black, .clear], startPoint: .top, endPoint: .bottom)
                                     .frame(height: theme.space.s32)
@@ -445,6 +620,38 @@ private struct ContentSizedScrollView<Content: View>: View {
             onAllow: {}, onDeny: {}, onAlwaysAllow: {}, onAllowForRun: {}
         )
         .environment(\.theme, CustomizableTheme.light())
+        .padding()
+    }
+
+    #Preview("Permission sheet - custom agent") {
+        ToolPermissionView(
+            presentation: previewPresentation(
+                "shell_run", #"{"command": "git status"}"#, surface: .sandboxVM),
+            onAllow: {}, onDeny: {}, onAlwaysAllow: {}, onAllowForRun: {},
+            agentChoices: .init(agentName: "Researcher", onAlwaysAllowForAgent: {}, onNeverAskForAgent: {})
+        )
+        .environment(\.theme, CustomizableTheme.light())
+        .padding()
+    }
+
+    #Preview("Permission sheet - workflow file step") {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let workspace = home.appendingPathComponent(
+            ".osaurus/workflows/6f1c2e9a-0b7d-4a51-9c3e-2d8f4b6a1e70/runs/484436d8-5405-44d0-917e-edd96b738134")
+        let dinos = home.appendingPathComponent("Downloads/dinos")
+        let facts = ToolApprovalPresentation.WorkflowFacts.make(
+            granted: [workspace, dinos], writable: [workspace, dinos.appendingPathComponent("png")],
+            workspace: workspace, folderRoot: workspace, asksBeforeReplacing: true)
+        ToolPermissionView(
+            presentation: ToolApprovalPresentation.make(
+                toolName: "file_write", description: "", descriptionIsForModel: true,
+                argumentsJSON: #"{"path":"p-architecture.drawio","content":"<mxfile/>"}"#,
+                surface: .nativeHost, stepReason: "Write the .drawio file into the run's folder.", sandbox: nil,
+                workflow: facts),
+            onAllow: {}, onDeny: {}, onAlwaysAllow: {}, onAllowForRun: {}
+        )
+        .environment(\.theme, CustomizableTheme.dark())
+        .preferredColorScheme(.dark)
         .padding()
     }
 

@@ -73,7 +73,7 @@ struct SharedWithYouSection: View {
                 AgentAvatarView(
                     mascotId: agent.avatar,
                     name: agent.name,
-                    tint: agentColorFor(agent.name),
+                    tint: theme.dataInk(seed: agent.name),
                     diameter: 26,
                     monogramFontSize: 11,
                     borderWidth: theme.stroke.default

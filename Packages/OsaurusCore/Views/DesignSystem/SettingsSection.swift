@@ -37,14 +37,10 @@ struct SettingsGroup<Content: View>: View {
     @Environment(\.theme) private var baseTheme
     @Environment(\.isEnabled) private var baseComponentEnabled
     private static var inspectionDefaultFamily: Int {
-        #if OSAURUS_DESIGN_SYSTEM
         return 57
-        #else
-        return 14
-        #endif
     }
     private var resolvedFamily: Int { baseTheme.inspectionProductFamily(for: "background", fallback: assignmentFamily == 13 ? (Self.inspectionDefaultFamily == 57 ? 57 : 13) : assignmentFamily) }
-    private var theme: any ThemeProtocol { baseTheme.catalogFamily(resolvedFamily, enabled: baseComponentEnabled, authoritative: resolvedFamily > 20) }
+    private var theme: any ThemeProtocol { baseTheme.catalogFamily(resolvedFamily, enabled: baseComponentEnabled) }
     var assignmentFamily: Int
     @ViewBuilder let content: Content
 
@@ -55,7 +51,7 @@ struct SettingsGroup<Content: View>: View {
 
     var body: some View {
         Group(subviews: content) { subviews in
-            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.57.elements.layout.settingsGroup.body.verticalGap", inheriting: theme.catalogMetric("gap", fallback: 0))) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.57.elements.layout.settingsGroup.body.verticalGap", inheriting: theme.catalogMetric("gap", fallback: theme.space.s0))) {
                 ForEach(Array(subviews.enumerated()), id: \.element.id) { index, subview in
                     subview
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -69,10 +65,8 @@ struct SettingsGroup<Content: View>: View {
         }
         .environment(\.settingsInGroup, true)
         .assignedBaseChrome(resolvedFamily, fallback: .surface)
-        #if OSAURUS_DESIGN_SYSTEM
         .environment(\.theme, theme)
         .environment(\.baseAssignmentFamily, 14)
-        #endif
     }
 }
 
@@ -81,17 +75,13 @@ struct SettingsGroupDivider: View {
     @Environment(\.theme) private var baseTheme
     @Environment(\.isEnabled) private var baseComponentEnabled
     private static var inspectionDefaultFamily: Int {
-        #if OSAURUS_DESIGN_SYSTEM
         return 57
-        #else
-        return 14
-        #endif
     }
     private var resolvedFamily: Int { baseTheme.inspectionProductFamily(for: "heading", fallback: Self.inspectionDefaultFamily) }
-    private var theme: any ThemeProtocol { baseTheme.catalogFamily(resolvedFamily, enabled: baseComponentEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { baseTheme.catalogFamily(resolvedFamily, enabled: baseComponentEnabled) }
 
     var body: some View {
-        ThemeHairlineDivider(color: theme.assignedColor("component.library.\(resolvedFamily).border", fallback: theme.border.subtle))
+        ThemeHairlineDivider(color: theme.assignedColor("component.library.\(resolvedFamily).border", fallback: theme.rowRule))
             .padding(.leading, theme.space.s16)
     }
 }
@@ -104,14 +94,10 @@ struct SettingsSectionHeader<Accessory: View>: View {
     @Environment(\.theme) private var baseTheme
     @Environment(\.isEnabled) private var baseComponentEnabled
     private static var inspectionDefaultFamily: Int {
-        #if OSAURUS_DESIGN_SYSTEM
         return 57
-        #else
-        return 14
-        #endif
     }
     private var resolvedFamily: Int { baseTheme.inspectionProductFamily(for: "heading", fallback: Self.inspectionDefaultFamily) }
-    private var theme: any ThemeProtocol { baseTheme.catalogFamily(resolvedFamily, enabled: baseComponentEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { baseTheme.catalogFamily(resolvedFamily, enabled: baseComponentEnabled) }
 
     let title: String
     /// Already-localized, dynamic caption; rendered verbatim.
@@ -143,7 +129,7 @@ struct SettingsSectionHeader<Accessory: View>: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: theme.catalogLayoutMetric("component.library.57.elements.layout.settingsSectionHeader.body.horizontalGap", inheriting: theme.catalogMetric("gap", fallback: theme.space.s8))) {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.57.elements.layout.settingsSectionHeader.body.horizontalGap2", inheriting: theme.catalogMetric("gap", fallback: theme.space.s8))) {
                     if let icon {
                         Image(systemName: icon)
@@ -172,7 +158,7 @@ struct SettingsSectionHeader<Accessory: View>: View {
             Spacer(minLength: theme.space.s8)
             accessory
         }.catalogLayoutTarget("component.library.57.elements.layout.settingsSectionHeader.body.horizontalGap")
-        .padding(.leading, 2)
+        .padding(.leading, theme.space.s2)
         .frame(minHeight: theme.catalogMetric("height", fallback: 22))
     }
 
@@ -186,14 +172,10 @@ struct SettingsGroupFooter: View {
     @Environment(\.theme) private var baseTheme
     @Environment(\.isEnabled) private var baseComponentEnabled
     private static var inspectionDefaultFamily: Int {
-        #if OSAURUS_DESIGN_SYSTEM
         return 57
-        #else
-        return 14
-        #endif
     }
     private var resolvedFamily: Int { baseTheme.inspectionProductFamily(for: "heading", fallback: Self.inspectionDefaultFamily) }
-    private var theme: any ThemeProtocol { baseTheme.catalogFamily(resolvedFamily, enabled: baseComponentEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { baseTheme.catalogFamily(resolvedFamily, enabled: baseComponentEnabled) }
 
     let text: String
 
@@ -206,7 +188,7 @@ struct SettingsGroupFooter: View {
             .assignedTypography("component.library.\(resolvedFamily).caption", fallback: SettingsFont.rowDescription)
             .foregroundColor(theme.text.tertiary)
             .fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 2)
+            .padding(.horizontal, theme.space.s2)
     }
 }
 
@@ -219,14 +201,10 @@ struct SettingsSection<Accessory: View, Content: View>: View {
     @Environment(\.theme) private var baseTheme
     @Environment(\.isEnabled) private var baseComponentEnabled
     private static var inspectionDefaultFamily: Int {
-        #if OSAURUS_DESIGN_SYSTEM
         return 57
-        #else
-        return 14
-        #endif
     }
     private var resolvedFamily: Int { baseTheme.inspectionProductFamily(for: "heading", fallback: Self.inspectionDefaultFamily) }
-    private var theme: any ThemeProtocol { baseTheme.catalogFamily(resolvedFamily, enabled: baseComponentEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { baseTheme.catalogFamily(resolvedFamily, enabled: baseComponentEnabled) }
     enum Layout {
         case grouped
         case plain
@@ -291,10 +269,8 @@ struct SettingsSection<Accessory: View, Content: View>: View {
             }
         }.catalogLayoutTarget("component.library.57.elements.layout.settingsSection.body.verticalGap")
         .settingsLandingAnchor(anchorId)
-        #if OSAURUS_DESIGN_SYSTEM
         .environment(\.theme, theme)
         .environment(\.baseAssignmentFamily, 14)
-        #endif
     }
 }
 

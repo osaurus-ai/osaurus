@@ -27,10 +27,10 @@ struct GitHubTokenPromptSheet: View {
     @State private var tokenInput: String = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s16) {
+            HStack(spacing: theme.space.s10) {
                 Image(systemName: "chevron.left.forwardslash.chevron.right")
-                    .glyphSize(20)
+                    .glyphSize(.xlarge)
                     .foregroundColor(theme.text.link)
                 Text("Connect GitHub to update plugins", bundle: .module)
                     .font(SettingsFont.cardTitle)
@@ -45,7 +45,7 @@ struct GitHubTokenPromptSheet: View {
             .foregroundColor(theme.text.secondary)
             .fixedSize(horizontal: false, vertical: true)
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 stepRow(1, text: Text("Sign in (or sign up free) at github.com", bundle: .module))
                 // Markdown link deep-links straight to GitHub's new-token form.
                 // No scopes are needed to read public plugin repositories.
@@ -64,7 +64,7 @@ struct GitHubTokenPromptSheet: View {
 
             GitHubTokenField(tokenInput: $tokenInput) { save() }
 
-            HStack(spacing: 12) {
+            HStack(spacing: theme.space.s12) {
                 Button(action: { dismiss() }) {
                     Text("Cancel", bundle: .module)
                 }
@@ -86,7 +86,7 @@ struct GitHubTokenPromptSheet: View {
     }
 
     private func stepRow(_ number: Int, text: Text) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: theme.space.s8) {
             Text("\(number)")
                 .font(SettingsFont.monoSmall)
                 .foregroundColor(theme.text.link)
@@ -157,12 +157,12 @@ struct GitHubTokenCard: View {
 
     private var disconnectedCard: some View {
         cardSurface {
-            HStack(spacing: 10) {
+            HStack(spacing: theme.space.s10) {
                 Image(systemName: "chevron.left.forwardslash.chevron.right")
-                    .glyphSize(15)
+                    .glyphSize(.medium)
                     .foregroundColor(theme.text.link)
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text("Stop plugin update errors", bundle: .module)
                         .font(SettingsFont.sectionTitle)
                         .foregroundColor(theme.text.primary)
@@ -189,13 +189,13 @@ struct GitHubTokenCard: View {
 
     private var connectedCard: some View {
         cardSurface {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 10) {
+            VStack(alignment: .leading, spacing: theme.space.s10) {
+                HStack(spacing: theme.space.s10) {
                     Image(systemName: "checkmark.seal.fill")
-                        .glyphSize(15)
+                        .glyphSize(.medium)
                         .foregroundColor(theme.status.success.foreground)
 
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: theme.space.s2) {
                         Text("GitHub connected", bundle: .module)
                             .font(SettingsFont.sectionTitle)
                             .foregroundColor(theme.text.primary)
@@ -238,7 +238,7 @@ struct GitHubTokenCard: View {
                 }
 
                 if isReplacing {
-                    HStack(spacing: 8) {
+                    HStack(spacing: theme.space.s8) {
                         GitHubTokenField(tokenInput: $replaceInput) { replaceToken() }
 
                         Button(action: replaceToken) {

@@ -49,6 +49,11 @@ final class SyncInboundApplier {
     /// Replies other devices are streaming into open chats, by session.
     private var remoteStreams: [UUID: StreamUpdate] = [:]
     private var renderTasks: [UUID: Task<Void, Never>] = [:]
+    /// Pending-delivery lookups in flight, by session. The lookup calls into
+    /// the sync core, which can block, so it never runs on the main actor.
+    private var pendingDeliveryTasks: [UUID: Task<Void, Never>] = [:]
+    /// Sessions whose sync status changed while a lookup was in flight.
+    private var pendingDeliveryRerun: Set<UUID> = []
     /// Chats whose streamed reply's message has arrived: the next reload
     /// swaps the bubble for it.
     private var committedReplies: Set<UUID> = []
@@ -96,11 +101,13 @@ final class SyncInboundApplier {
     private func detach() {
         listSubscription?.cancel()
         listSubscription = nil
+        cancelPendingDeliveryRefreshes()
         for watch in scopeWatches.values { watch.subscription.cancel() }
         scopeWatches.removeAll()
     }
 
     private func identityReplaced() {
+        cancelPendingDeliveryRefreshes()
         for watch in scopeWatches.values { watch.subscription.cancel() }
         scopeWatches.removeAll()
         for id in Array(remoteStreams.keys) { endRemoteReply(id) }
@@ -129,6 +136,8 @@ final class SyncInboundApplier {
         committedReplies.remove(sessionId)
         remoteStreams[sessionId] = nil
         renderTasks.removeValue(forKey: sessionId)?.cancel()
+        pendingDeliveryTasks.removeValue(forKey: sessionId)?.cancel()
+        pendingDeliveryRerun.remove(sessionId)
     }
 
     /// A chat that's still a draft has no conversation yet; it's subscribed
@@ -207,29 +216,53 @@ final class SyncInboundApplier {
     }
 
     /// How many of the chat's messages haven't reached another device yet.
-    /// Off the main thread: `syncStatus` waits on the core's lock, which catching up holds for long
-    /// stretches, and froze the app at launch (2026-11-16, paused in `__psynch_mutexwait`). Status
-    /// changes during a read get one more read after it, not one each.
+    ///
+    /// `syncStatus` is a blocking call into the sync core (it can wait on the
+    /// core's internal locks while sync is busy, e.g. right after launch), so
+    /// it runs off the main actor and the count is applied when it returns.
     private func refreshPendingDelivery(_ sessionId: UUID) {
-        guard pendingDeliveryReads[sessionId] == nil else {
-            pendingDeliveryAgain.insert(sessionId)
+        guard let scope = scopeWatches[sessionId]?.scope, let core = SyncService.shared.core else { return }
+        guard pendingDeliveryTasks[sessionId] == nil else {
+            pendingDeliveryRerun.insert(sessionId)
             return
         }
-        guard let scope = scopeWatches[sessionId]?.scope, let core = SyncService.shared.core else { return }
-        pendingDeliveryReads[sessionId] = Task { @MainActor [weak self] in
-            let pending = await Task.detached(priority: .utility) {
-                Int((try? core.syncStatus(scope: scope))?.pendingOutbox ?? 0)
+        pendingDeliveryTasks[sessionId] = Task { @MainActor [weak self] in
+            let result: Result<Int, any Error> = await Task.detached(priority: .utility) {
+                do {
+                    return .success(Int(try core.syncStatus(scope: scope).pendingOutbox))
+                } catch {
+                    return .failure(error)
+                }
             }.value
-            guard let self else { return }
-            self.pendingDeliveryReads[sessionId] = nil
+            guard let self, !Task.isCancelled else { return }
+            self.pendingDeliveryTasks[sessionId] = nil
+            // The chat was closed or now follows another conversation.
+            guard self.watchers[sessionId] != nil, self.scopeWatches[sessionId]?.scope == scope else {
+                self.pendingDeliveryRerun.remove(sessionId)
+                return
+            }
+            let pending: Int
+            switch result {
+            case .success(let count):
+                pending = count
+            case .failure(let error):
+                Self.log.error("sync status failed: \(error.syncLogDetail, privacy: .public)")
+                pending = 0
+            }
             for session in Self.liveSessions(for: sessionId) where session.syncPendingCount != pending {
                 session.syncPendingCount = pending
             }
-            if self.pendingDeliveryAgain.remove(sessionId) != nil { self.refreshPendingDelivery(sessionId) }
+            if self.pendingDeliveryRerun.remove(sessionId) != nil {
+                self.refreshPendingDelivery(sessionId)
+            }
         }
     }
-    private var pendingDeliveryReads: [UUID: Task<Void, Never>] = [:]
-    private var pendingDeliveryAgain: Set<UUID> = []
+
+    private func cancelPendingDeliveryRefreshes() {
+        for task in pendingDeliveryTasks.values { task.cancel() }
+        pendingDeliveryTasks.removeAll()
+        pendingDeliveryRerun.removeAll()
+    }
 
     private func scheduleStreamRender(_ sessionId: UUID) {
         guard renderTasks[sessionId] == nil else { return }

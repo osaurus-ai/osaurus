@@ -39,12 +39,16 @@ def validate(document, shipped):
         check(document[key] == shipped[key], f"{key} differs. Use an export for this source revision.")
     tokens = document["tokens"]
     mappings = document["mappings"]
-    check(set(mappings) == set(shipped["mappings"]), "Assignment keys differ. Update the source contract before publishing.")
+    # The library is pruned to assignments that paint, so editing a property that
+    # used its component recipe adds a key and reverting one removes it.
+    check("editedAssignments" in document, "Export is not pruned. Re-export from the current Inspector.")
     check(set(document.get("explicitAssignments", [])) <= set(mappings), "An explicit assignment has no mapping.")
+    check(set(document["editedAssignments"]) <= set(mappings), "An edited assignment has no mapping.")
     for path, role in mappings.items():
-        previous = shipped["mappings"][path]
         check(role in tokens, f"Unknown token for {path}: {role}")
-        check(tokens[role]["type"] == shipped["tokens"][previous]["type"], f"Wrong token type for {path}: {role}")
+        previous = shipped["mappings"].get(path)
+        if previous is not None:
+            check(tokens[role]["type"] == shipped["tokens"][previous]["type"], f"Wrong token type for {path}: {role}")
     for name, previous in shipped["tokens"].items():
         check(name in tokens and tokens[name]["type"] == previous["type"], f"Missing token or incompatible type: {name}")
     for name, token in tokens.items():

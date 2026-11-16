@@ -520,7 +520,7 @@ struct OnboardingAgentTurnTests {
     }
 
     @Test
-    func theFirstResult_endsSetup_withNothingOfferedAfterIt() async throws {
+    func theFirstResult_endsTheWalkthrough_andTheOfferWaitsForTheRunsEnd() async throws {
         try await ChatHistoryTestStorage.run {
             let engine = CapturingEngine()
             let (session, run, recorder) = walkthrough(engine) {
@@ -536,6 +536,123 @@ struct OnboardingAgentTurnTests {
             #expect(!run.routesTypedMessage(in: session))
             #expect(session.turns.last?.id == result.id, "nothing is appended under the result")
             #expect(recorder.orchestrator.isEmpty)
+        }
+    }
+
+    @Test
+    func aTasksReply_offersAnotherTeammate_untilDone() async throws {
+        try await ChatHistoryTestStorage.run {
+            let engine = CapturingEngine()
+            let (session, run, recorder) = walkthrough(engine) {
+                $0.select(pathId: "planner")
+                $0.requestOutcome = .granted
+                $0.finish(.firstTask, askId: "planner.today")
+            }
+            defer { restoreSeams(run) }
+            let reply = ChatTurn(role: .assistant, content: "You have two meetings today.")
+            session.appendAuthoredTurn(reply)
+            run.runEnded(in: session)
+            let offer = try #require(run.panel(for: session))
+            #expect(offer.turnId == reply.id && offer.panel.step == .explore)
+
+            run.perform(.exploreTeam, in: session, echo: true)
+            #expect(session.turns.suffix(2).map(\.content) == ["Meet Another Teammate", OnboardingFirstRun.exploreLine])
+            #expect(run.panel(for: session)?.panel.step == .team)
+            run.perform(.selectPath("keeper"), in: session, echo: false)
+            let keeper = try #require(run.panel(for: session)?.panel)
+            #expect(keeper.step == .firstTask && keeper.buttons.first?.action == .request)
+            #expect(run.plan?.pathId == "planner" && run.plan?.firstAskId == "planner.today")
+            run.perform(.back, in: session, echo: false)
+            #expect(run.panel(for: session)?.panel.step == .team)
+
+            run.perform(.doneExploring, in: session, echo: false)
+            #expect(run.plan?.isClosed == true)
+            #expect(run.panel(for: session) == nil)
+            #expect(session.turns.last?.content == "Setup is done. Ask me anything.")
+            #expect(!run.routesTypedMessage(in: session))
+            #expect(recorder.orchestrator.isEmpty && recorder.generations.isEmpty)
+            #expect(await engine.requests.isEmpty)
+        }
+    }
+
+    @Test
+    func aTypedMessage_underTheOffer_goesToTheOrchestrator_andEndsSetup() async throws {
+        try await ChatHistoryTestStorage.run {
+            let engine = CapturingEngine()
+            let (session, run, recorder) = walkthrough(engine) {
+                $0.select(pathId: "planner")
+                $0.finish(.firstTask)
+            }
+            defer { restoreSeams(run) }
+            session.appendAuthoredTurn(ChatTurn(role: .assistant, content: "Done."))
+            run.runEnded(in: session)
+            #expect(run.routesTypedMessage(in: session))
+            session.send("Draft a packing list for Lisbon")
+            await run.waitForRouting()
+            #expect(recorder.orchestrator == ["Draft a packing list for Lisbon"])
+            #expect(run.plan?.isClosed == true)
+            #expect(recorder.generations.isEmpty)
+        }
+    }
+
+    @Test
+    func aRunTheWalkthroughDidNotSend_endsExploring() async throws {
+        try await ChatHistoryTestStorage.run {
+            let engine = CapturingEngine()
+            let (session, run, _) = walkthrough(engine) {
+                $0.select(pathId: "planner")
+                $0.finish(.firstTask)
+            }
+            defer { restoreSeams(run) }
+            session.appendAuthoredTurn(ChatTurn(role: .assistant, content: "Done."))
+            run.runEnded(in: session)
+            #expect(run.plan?.offerTurnId != nil)
+            session.appendAuthoredTurn(ChatTurn(role: .user, content: "and tomorrow?"))
+            session.appendAuthoredTurn(ChatTurn(role: .assistant, content: "Nothing tomorrow."))
+            run.runEnded(in: session)
+            #expect(run.plan?.isClosed == true)
+            #expect(run.panel(for: session) == nil)
+        }
+    }
+
+    @Test
+    func aTappedAsk_endsOnTheOffer() async throws {
+        try await ChatHistoryTestStorage.run {
+            let engine = CapturingEngine()
+            let (session, run, _) = walkthrough(engine) {
+                $0.select(pathId: "planner")
+                $0.requestOutcome = .granted
+            }
+            defer { restoreSeams(run) }
+            run.perform(.ask("planner.today"), in: session, echo: false)
+            #expect(run.plan?.offerPending == true)
+            try await waitUntil { !session.isStreaming && session.turns.last?.role == .assistant }
+            if let task = session.currentSendTaskForTesting { await task.value }
+            try await waitUntil { run.plan?.offerPending != true }
+            #expect(run.plan?.offerTurnId == session.turns.last?.id)
+            #expect(run.panel(for: session)?.panel.buttons.contains { $0.action == .exploreTeam } == true)
+        }
+    }
+
+    @Test
+    func aRunEndingOnAToolResult_stillGetsTheOffer() async throws {
+        try await ChatHistoryTestStorage.run {
+            let engine = CapturingEngine()
+            let (session, run, _) = walkthrough(engine) {
+                $0.select(pathId: "planner")
+                $0.finish(.firstTask)
+            }
+            defer { restoreSeams(run) }
+            session.appendAuthoredTurn(ChatTurn(role: .assistant, content: "Today's calendar: standup at 10."))
+            let stateStep = ChatTurn(role: .assistant, content: "")
+            session.appendAuthoredTurn(stateStep)
+            let result = ChatTurn(role: .tool, content: "{\"ok\":true}")
+            session.appendAuthoredTurn(result)
+            run.runEnded(in: session)
+            #expect(run.plan?.offerTurnId == stateStep.id)
+            #expect(run.panel(for: session)?.turnId == stateStep.id)
+            #expect(run.panel(for: session)?.panel.buttons.contains { $0.action == .exploreTeam } == true)
+            #expect(run.routesTypedMessage(in: session))
         }
     }
 

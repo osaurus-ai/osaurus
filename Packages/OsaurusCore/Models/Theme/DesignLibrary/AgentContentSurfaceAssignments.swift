@@ -1,4 +1,3 @@
-#if OSAURUS_DESIGN_SYSTEM
 import SwiftUI
 
 /// Editable semantic assignments for actual agent-content surfaces. Nested code
@@ -50,4 +49,3 @@ enum AgentContentSurfaceAssignments {
         theme.assignedColor(key(family, part, state), fallback: theme.surface.canvas)
     }
 }
-#endif

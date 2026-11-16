@@ -357,7 +357,7 @@ struct KeysView: View {
                 }
             },
             leading: {
-                LibraryIcon(symbol: record.origin.symbol, tint: record.origin.tint, size: 32)
+                LibraryIcon(symbol: record.origin.symbol, tint: theme.dataInk(record.origin.ink), size: 32)
             },
             badges: {
                 if record.exposeToSandbox {
@@ -510,7 +510,7 @@ struct KeysView: View {
                                 subtitle: [row.detail, row.purpose].compactMap { $0 }.joined(separator: "\n"),
                                 anchorId: row.store == .tts ? "keys.appKeys.tts" : nil,
                                 action: { appKeyEditor = row },
-                                leading: { LibraryIcon(symbol: group.symbol, tint: group.tint, size: 32) },
+                                leading: { LibraryIcon(symbol: group.symbol, tint: theme.dataInk(group.ink), size: 32) },
                                 trailing: {
                                     HStack(spacing: theme.space.s8) {
                                         StatusChip(

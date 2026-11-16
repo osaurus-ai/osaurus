@@ -77,7 +77,7 @@ struct PromptCardFootnote {
 /// instead of a forked view-builder.
 private struct DescriptionTreatment: ViewModifier {
     @Environment(\.theme) private var environmentTheme
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(36, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(36) }
     let boxed: Bool
     let background: Color
     let border: Color
@@ -97,9 +97,9 @@ private struct DescriptionTreatment: ViewModifier {
                 )
         } else {
             content
-                .padding(.horizontal, theme.catalogLayoutMetric("component.library.36.elements.layout.descriptionTreatment.body.paddingX", inheriting: PromptInspectionStyle.metric("padding", 4, theme))).catalogLayoutTarget("component.library.36.elements.layout.descriptionTreatment.body.paddingX")
-                .padding(.top, 2)
-                .padding(.bottom, 4)
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.36.elements.layout.descriptionTreatment.body.paddingX", inheriting: PromptInspectionStyle.metric("padding", theme.space.s4, theme))).catalogLayoutTarget("component.library.36.elements.layout.descriptionTreatment.body.paddingX")
+                .padding(.top, theme.space.s2)
+                .padding(.bottom, theme.space.s4)
         }
     }
 }
@@ -124,7 +124,7 @@ struct PromptCard<BodyContent: View, InputRow: View>: View {
 
     @Environment(\.theme) private var environmentTheme
     @Environment(\.isEnabled) private var componentEnabled
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(36, enabled: componentEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(36, enabled: componentEnabled) }
 
     var body: some View {
         VStack(spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.promptCard.body.verticalGap", inheriting: PromptInspectionStyle.metric("gap", theme.space.s16, theme))) {
@@ -172,7 +172,7 @@ struct PromptCard<BodyContent: View, InputRow: View>: View {
     // MARK: - Header
 
     private var header: some View {
-        HStack(alignment: .center, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.promptCard.header.horizontalGap", inheriting: PromptInspectionStyle.metric("gap", 12, theme))) {
+        HStack(alignment: .center, spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.promptCard.header.horizontalGap", inheriting: PromptInspectionStyle.metric("gap", theme.space.s12, theme))) {
             pill
             Spacer()
             cancelButton
@@ -249,7 +249,7 @@ struct PromptCard<BodyContent: View, InputRow: View>: View {
                     }
                     HStack(spacing: theme.catalogLayoutMetric("component.library.36.elements.layout.promptCard.descriptionStack.horizontalGap", inheriting: PromptInspectionStyle.metric("gap", theme.space.s4, theme))) {
                         Image(systemName: footnote.icon)
-                            .glyphSize(10)
+                            .glyphSize(.micro)
                         Text(footnote.text, bundle: .module)
                             .promptText(.caption, fallback: .footnote, theme: theme)
                     }.catalogLayoutTarget("component.library.36.elements.layout.promptCard.descriptionStack.horizontalGap")
@@ -308,12 +308,12 @@ struct PromptOverlayHost<Card: View>: View {
     @ViewBuilder let card: () -> Card
 
     @Environment(\.theme) private var environmentTheme
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(36, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(36) }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isAppearing = false
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             Spacer(minLength: ChatView.headerHeight(theme) + theme.space.s12)
 
             card()

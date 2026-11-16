@@ -38,7 +38,7 @@ struct PublishedByYouLine: View {
 
     var body: some View {
         if let summary = Self.summary(liveCount: live.count, installs: registryRecords.totalInstalls(kind: kind)) {
-            HStack(spacing: 6) {
+            HStack(spacing: theme.space.s6) {
                 Text(verbatim: summary)
                     .font(SettingsFont.smallLabel)
                     .foregroundColor(theme.text.secondary)

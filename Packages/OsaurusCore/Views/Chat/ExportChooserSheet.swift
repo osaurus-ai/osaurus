@@ -77,14 +77,14 @@ struct ExportChooserSheet: View {
     // MARK: - Page 1: format
 
     private var formatPage: some View {
-        VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 8) {
+        VStack(spacing: theme.space.s0) {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
                 Text("Choose a format to export this conversation.", bundle: .module)
                     .textStyle(.bodySmall)
                     .foregroundColor(theme.text.secondary)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity)
-                    .padding(.bottom, 4)
+                    .padding(.bottom, theme.space.s4)
 
                 formatRow(.markdown, icon: "doc.text", label: "Markdown")
                 formatRow(.pdf, icon: "doc.richtext", label: "PDF")
@@ -93,16 +93,12 @@ struct ExportChooserSheet: View {
 
             Spacer(minLength: 0)
 
-            HStack {
-                Spacer()
-                actionButton(
-                    label: "Next",
-                    isPrimary: true,
-                    isDisabled: selectedFormat == nil
-                ) {
+            SettingsSheetFooter(
+                primary: .init(label: "Next", isEnabled: selectedFormat != nil) {
                     navigate(to: .options, direction: .forward)
-                }
-            }
+                },
+                embedded: true
+            )
         }
         .frame(width: contentWidth, height: pageHeight)
     }
@@ -114,9 +110,9 @@ struct ExportChooserSheet: View {
         return Button {
             selectedFormat = format
         } label: {
-            HStack(spacing: 10) {
+            HStack(spacing: theme.space.s10) {
                 Image(systemName: icon)
-                    .glyphSize(14)
+                    .glyphSize(.body)
                     .foregroundColor(isSelected ? theme.text.primary : theme.text.secondary)
                     .frame(width: 18)
                 Text(label, bundle: .module)
@@ -125,12 +121,12 @@ struct ExportChooserSheet: View {
                 Spacer()
                 if isSelected {
                     Image(systemName: "checkmark")
-                        .glyphSize(11, weight: .bold)
+                        .glyphSize(.footnote, weight: .bold)
                         .foregroundColor(theme.text.primary)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
+            .padding(.horizontal, theme.space.s12)
+            .padding(.vertical, theme.space.s10)
             .background(
                 RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
                     .fill(isSelected ? theme.surface.selected : theme.surface.raised)
@@ -146,8 +142,8 @@ struct ExportChooserSheet: View {
     // MARK: - Page 2: options
 
     private var optionsPage: some View {
-        VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 10) {
+        VStack(spacing: theme.space.s0) {
+            VStack(alignment: .leading, spacing: theme.space.s10) {
                 Text("Include in export", bundle: .module)
                     .textStyle(.caption, weight: 600)
                     .foregroundColor(theme.text.secondary)
@@ -157,35 +153,29 @@ struct ExportChooserSheet: View {
                 toggleRow("Token usage", binding: $options.includeTokenUsage)
 
                 if !hasTimingData, hydratedHasTimingData == nil {
-                    ProgressView().controlSize(.small)
+                    SettingsSpinner()
                 } else if !hasTimingData {
                     Text("No timing data captured for this conversation.", bundle: .module)
                         .textStyle(.footnote)
                         .foregroundColor(theme.text.tertiary)
-                        .padding(.top, 2)
+                        .padding(.top, theme.space.s2)
                 }
             }
 
             Spacer(minLength: 0)
 
-            HStack {
-                actionButton(label: "Back", isPrimary: false, isDisabled: false) {
-                    navigate(to: .format, direction: .backward)
-                }
-
-                Spacer()
-
-                actionButton(
-                    label: "Export",
-                    isPrimary: true,
-                    isDisabled: selectedFormat == nil
-                ) {
+            SettingsSheetFooter(
+                primary: .init(label: "Export", isEnabled: selectedFormat != nil) {
                     options.saveAsLast()
                     if let selectedFormat {
                         onExport(selectedFormat, options)
                     }
-                }
-            }
+                },
+                secondary: .init(label: "Back") {
+                    navigate(to: .format, direction: .backward)
+                },
+                embedded: true
+            )
         }
         .frame(width: contentWidth, height: pageHeight)
     }
@@ -201,44 +191,5 @@ struct ExportChooserSheet: View {
                 .settingsSwitch()
                 .disabled(!hasTimingData)
         }
-    }
-
-    // MARK: - Shared button styling
-
-    /// Capsule-style button used for both Next/Export (primary, accent-
-    /// filled) and Back (secondary, neutral fill). Keeps the two nav
-    /// buttons visually consistent — same shape, same padding, only the
-    /// fill / text color differ.
-    private func actionButton(
-        label: LocalizedStringKey,
-        isPrimary: Bool,
-        isDisabled: Bool,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Text(label, bundle: .module)
-                .textStyle(.label, weight: 600)
-                .foregroundColor(actionTextColor(isPrimary: isPrimary, isDisabled: isDisabled))
-                .padding(.horizontal, 18)
-                .padding(.vertical, 8)
-                .background(
-                    RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
-                        .fill(actionBackground(isPrimary: isPrimary, isDisabled: isDisabled))
-                )
-        }
-        .buttonStyle(PlainButtonStyle())
-        .disabled(isDisabled)
-    }
-
-    private func actionTextColor(isPrimary: Bool, isDisabled: Bool) -> Color {
-        if isDisabled { return theme.text.tertiary }
-        if isPrimary { return theme.action.primary.default.foreground }
-        return theme.text.primary
-    }
-
-    private func actionBackground(isPrimary: Bool, isDisabled: Bool) -> Color {
-        if isDisabled { return theme.surface.hover }
-        if isPrimary { return theme.action.primary.default.background }
-        return theme.surface.hover
     }
 }

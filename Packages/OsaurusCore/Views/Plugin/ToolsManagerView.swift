@@ -78,7 +78,7 @@ struct ToolsManagerView: View {
     @State private var toolsNeedingPermissionCount: Int = 0
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             headerBar
                 .settingsHeaderEntrance(hasAppeared: hasAppeared)
 
@@ -213,7 +213,7 @@ struct ToolsManagerView: View {
             // `VStack`), since a nested stack would be realized as one eager
             // child and defeat virtualization. Row spacing is 8; section
             // headers and intro cards add 8 more top padding for a 16 gap.
-            LazyVStack(spacing: 8) {
+            LazyVStack(spacing: theme.space.s8) {
                 let builtIn = visibleTools(builtInSectionToolEntries, section: .builtIn)
                 let pluginGroups = visiblePluginGroups()
                 let remoteGroups = visibleRemoteGroups()
@@ -330,7 +330,7 @@ struct ToolsManagerView: View {
 
     /// Plain-language toolbar for narrowing the catalog by status and source.
     private var filterToolbar: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             ToolFilterMenu(
                 icon: "square.grid.2x2",
                 accessibilityTitle: L("Filter by source"),
@@ -757,7 +757,7 @@ private struct ToolPluginCard: View {
                 SettingsIconTile(
                     icon: plugin.hasLoadError ? "exclamationmark.triangle.fill" : "puzzlepiece.extension.fill",
                     size: 32,
-                    tint: plugin.hasLoadError ? theme.statusInk.error : nil
+                    tint: plugin.hasLoadError ? theme.statusInk(.error) : nil
                 )
             } badges: {
                 if plugin.hasLoadError {

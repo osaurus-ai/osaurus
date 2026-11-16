@@ -76,7 +76,7 @@ public final class ManagementStateManager: ObservableObject {
 
     static let selectedTabDefaultsKey = "managementSelectedTab"
 
-    /// The tab on screen. Persisted so the window reopens where the user
+    /// The tab on screen. Persisted so Settings reopens where the user
     /// left it, across launches; first open lands on Agents.
     @Published public var selectedTab: ManagementTab =
         UserDefaults.standard.string(forKey: ManagementStateManager.selectedTabDefaultsKey)
@@ -86,42 +86,6 @@ public final class ManagementStateManager: ObservableObject {
             guard selectedTab != oldValue else { return }
             UserDefaults.standard.set(selectedTab.rawValue, forKey: Self.selectedTabDefaultsKey)
         }
-    }
-
-    // MARK: - Minimum Window Size
-
-    /// The size below which the settings layout stops working: the sidebar
-    /// plus a content pane wide enough for the two-column panels, and
-    /// enough height that the tallest tabs don't scroll immediately.
-    /// Windows on screens that can show this much use it verbatim; see
-    /// `minimumContentSize`.
-    public static let designMinimumContentSize = CGSize(width: 940, height: 640)
-
-    /// The effective minimum content size for the settings window: the
-    /// design minimum, clamped to what its screen can actually show.
-    /// `ManagementView` applies it as `.frame(minWidth:minHeight:)`, which
-    /// the hosting controller mirrors into the window's `contentMinSize`.
-    /// Without the clamp, a screen whose visible area is smaller than the
-    /// design minimum (e.g. a 13" MacBook Air at "Larger Text", 1024x666)
-    /// gets a window AppKit cannot shrink to fit, so its title bar hides
-    /// under the menu bar and the bottom of the sidebar is cut off (#2761).
-    /// Pushed by `WindowManager` on creation and whenever the window
-    /// changes screen. Same scheme as `ChatWindowState.minimumContentSize`.
-    @Published public private(set) var minimumContentSize: CGSize =
-        ManagementStateManager.designMinimumContentSize
-
-    /// Clamp the design minimum to `availableContentSize`, the largest
-    /// content area the window's screen can show (visible frame minus the
-    /// window's own titlebar chrome). An axis at or below zero means "no
-    /// screen known" and keeps the design value, so a transient
-    /// measurement can't collapse the floor.
-    public func updateMinimumContentSize(availableContentSize available: CGSize) {
-        let design = Self.designMinimumContentSize
-        var next = design
-        if available.width > 0 { next.width = min(design.width, floor(available.width)) }
-        if available.height > 0 { next.height = min(design.height, floor(available.height)) }
-        guard next != minimumContentSize else { return }
-        minimumContentSize = next
     }
 
     /// One-shot request to show a model kind on Local Models (Image, Speech,
@@ -184,18 +148,18 @@ public final class ManagementStateManager: ObservableObject {
     @Published public var pendingPluginDetailId: String?
 
     /// One-shot request to open the inspector for a specific model repo id
-    /// on the Models tab, from outside the management window.
+    /// on the Models tab, from outside Settings.
     /// `LocalModelsCatalogPage` observes this and resets it to nil after applying.
     @Published public var pendingModelDetailId: String?
 
     /// A Hugging Face model link to apply on the Models tab: prefill the
     /// search with the repo, make sure it is in the catalog, and select its
-    /// row. Delivered through shared state
-    /// rather than by rebuilding the management window's hosting controller:
-    /// that rebuild orphans any SwiftUI sheet that is up (the linked model's
-    /// own import sheet, after the previous link) and traps inside SwiftUI
-    /// on the next window resize (Sentry APPLE-MACOS-EF, reproduced live
-    /// with two consecutive links). `LocalModelsCatalogPage` consumes and clears.
+    /// row. Delivered through shared state rather than by rebuilding the
+    /// view: a rebuild orphans any SwiftUI sheet that is up (the linked
+    /// model's own import sheet, after the previous link) and traps inside
+    /// SwiftUI on the next window resize (Sentry APPLE-MACOS-EF, reproduced
+    /// live with two consecutive links). `LocalModelsCatalogPage` consumes
+    /// and clears.
     public struct ModelDeepLinkRequest: Equatable, Sendable {
         public let modelId: String
         public let file: String?

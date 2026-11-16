@@ -19,39 +19,26 @@ enum AttachmentInspectionStyle {
     }
     /// Space between attachments is independent of spacing inside a file pill.
     static func rowGap(_ theme: any ThemeProtocol) -> CGFloat {
-        theme.assignedMetric(key + "elements.container.gap", fallback: 6)
+        theme.assignedMetric(key + "elements.container.gap", fallback: theme.space.s6)
     }
     static func documentHeight(_ theme: any ThemeProtocol) -> CGFloat {
-        #if OSAURUS_DESIGN_SYSTEM
         let line = max(theme.assignedLineHeight(key + "text", fallback: 16),
             theme.assignedLineHeight(key + "caption", fallback: 13))
         let fontHeight = max(theme.assignedNativeFont(key + "text", fallback: theme.nsFont(.footnote)).boundingRectForFont.height,
             theme.assignedNativeFont(key + "caption", fallback: theme.nsFont(.micro)).boundingRectForFont.height)
-        let fileHeight = max(metric("height", 26, theme), max(20, line, fontHeight) + 2 * metric("padding", 5, theme))
+        let fileHeight = max(metric("height", 26, theme), max(20, line, fontHeight) + 2 * metric("padding", theme.space.s4, theme))
         let imageHeight = imageMetric("height", 32, theme) + 2 * imageMetric("padding", 0, theme)
         return ceil(max(fileHeight, imageHeight))
-        #else
-        return 26
-        #endif
     }
     static func imageHeight(_ theme: any ThemeProtocol, fallback: CGFloat = 96) -> CGFloat {
-        #if OSAURUS_DESIGN_SYSTEM
         return documentHeight(theme)
-        #else
-        return fallback
-        #endif
     }
     static func geometrySignature(_ theme: any ThemeProtocol) -> String {
-        #if OSAURUS_DESIGN_SYSTEM
-        return "\(documentHeight(theme))|\(imageHeight(theme))|\(rowGap(theme))|\(metric("gap", 6, theme))|\(metric("padding", 8, theme))"
-        #else
-        return "original"
-        #endif
+        return "\(documentHeight(theme))|\(imageHeight(theme))|\(rowGap(theme))|\(metric("gap", theme.space.s6, theme))|\(metric("padding", theme.space.s8, theme))"
     }
     static func text(_ string: String, property: String, role: ThemeTextStyleRole,
         color: Color, theme: any ThemeProtocol) -> NSAttributedString {
         var attributes = theme.textAttributes(role)
-        #if OSAURUS_DESIGN_SYSTEM
         let font = theme.assignedNativeFont(key + property, fallback: theme.nsFont(role))
         let paragraph = NSMutableParagraphStyle()
         // These are single-line NSTextField labels. The chip's measured height
@@ -61,7 +48,6 @@ enum AttachmentInspectionStyle {
         attributes[.font] = font
         attributes[.paragraphStyle] = paragraph
         attributes[.kern] = theme.assignedTracking(key + property) ?? 0
-        #endif
         attributes[.foregroundColor] = NSColor(color)
         return NSAttributedString(string: string, attributes: attributes)
     }
@@ -69,22 +55,13 @@ enum AttachmentInspectionStyle {
 
 extension View {
     @ViewBuilder func attachmentTextStyle(_ role: ThemeTextStyleRole, property: String, weight: Int? = nil) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         assignedTypography(AttachmentInspectionStyle.key + property, fallback: SettingsFont(role: role, weightOverride: weight))
-        #else
-        textStyle(role, weight: weight)
-        #endif
     }
     @ViewBuilder func attachmentInk(_ property: String, fallback: Color) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         modifier(InspectorAttachmentInk(property: property, fallback: fallback))
-        #else
-        foregroundColor(fallback)
-        #endif
     }
 }
 
-#if OSAURUS_DESIGN_SYSTEM
 private struct InspectorAttachmentInk: ViewModifier {
     @Environment(\.theme) private var theme
     @Environment(\.isEnabled) private var enabled
@@ -94,15 +71,10 @@ private struct InspectorAttachmentInk: ViewModifier {
         content.foregroundStyle(AttachmentInspectionStyle.color(enabled ? property : "disabledForeground", fallback, theme))
     }
 }
-#endif
 
 struct AttachmentImageChrome: ViewModifier {
     @ViewBuilder func body(content: Content) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         content.assignedBaseChrome(24, fallback: nil, element: "image")
-        #else
-        content
-        #endif
     }
 }
 

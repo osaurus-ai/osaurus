@@ -160,9 +160,11 @@ public final class WorkflowRunDatabase: @unchecked Sendable {
     }()
 
     /// Returns the ids of older runs of the workflow dropped past
-    /// `retentionPerWorkflow`, whose files the caller removes.
+    /// `retentionPerWorkflow`, whose files the caller removes. Only an
+    /// insert can push a run past retention, so a caller that knows the row
+    /// already exists passes `pruneOlder: false`.
     @discardableResult
-    public func upsert(_ run: WorkflowRun) throws -> [UUID] {
+    public func upsert(_ run: WorkflowRun, pruneOlder: Bool = true) throws -> [UUID] {
         let json = String(decoding: try Self.encoder.encode(run), as: UTF8.self)
         try prepareAndExecute(
             """
@@ -183,6 +185,7 @@ public final class WorkflowRunDatabase: @unchecked Sendable {
                     throw WorkflowRunDatabaseError.failedToExecute("upsert run")
                 }
             })
+        guard pruneOlder else { return [] }
         var pruned: [UUID] = []
         try prepareAndExecute(
             """

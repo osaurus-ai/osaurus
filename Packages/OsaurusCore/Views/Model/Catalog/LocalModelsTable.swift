@@ -22,20 +22,37 @@ struct LocalModelsTable: View {
             columns: columns.map(\.tableColumn),
             rows: items,
             sort: $sort,
+            defaultSort: LocalModelColumn.defaultSort,
             selection: $selection,
             isLoading: isLoading
         ) { item, column in
             LocalModelCell(item: item, column: LocalModelColumn(rawValue: column.id) ?? .model, perform: perform)
+                .equatable()
         }
     }
 }
 
-private struct LocalModelCell: View {
+/// Sources rebuild every row on each manager publish (several a second
+/// while downloading), with fresh closures. Comparing what the cell draws
+/// lets unchanged rows skip their body, overflow menu included.
+private struct LocalModelCell: View, Equatable {
     @Environment(\.theme) private var theme
 
     let item: LocalModelCatalogItem
     let column: LocalModelColumn
     let perform: (LocalModelCatalogItem.Action) -> Void
+    private let drawn: LocalModelCatalogItem.Drawn
+
+    init(item: LocalModelCatalogItem, column: LocalModelColumn, perform: @escaping (LocalModelCatalogItem.Action) -> Void) {
+        self.item = item
+        self.column = column
+        self.perform = perform
+        self.drawn = item.drawn
+    }
+
+    nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.column == rhs.column && lhs.drawn == rhs.drawn
+    }
 
     var body: some View {
         switch column {
@@ -51,7 +68,7 @@ private struct LocalModelCell: View {
     private var modelCell: some View {
         HStack(spacing: theme.settingsControlGap) {
             Image(systemName: item.icon)
-                .glyphSize(13, weight: .medium)
+                .glyphSize(.label, weight: .medium)
                 .foregroundColor(theme.text.tertiary)
                 .frame(width: theme.space.s16)
                 .accessibilityHidden(true)
@@ -64,7 +81,7 @@ private struct LocalModelCell: View {
                         .truncationMode(.middle)
                     if item.isTopPick {
                         Image(systemName: "star.fill")
-                            .glyphSize(9, weight: .semibold)
+                            .glyphSize(.tiny, weight: .semibold)
                             .foregroundColor(theme.status.warning.foreground)
                             .help(Text("Top Pick", bundle: .module))
                             .accessibilityLabel(Text("Top Pick", bundle: .module))
@@ -141,7 +158,7 @@ struct LocalModelStatusCell: View {
                 } else {
                     HStack(spacing: theme.space.s4) {
                         Image(systemName: "checkmark.circle.fill")
-                            .glyphSize(11)
+                            .glyphSize(.footnote)
                             .foregroundColor(theme.status.success.foreground)
                         Text("On this Mac", bundle: .module)
                             .font(SettingsFont.caption)
@@ -196,7 +213,7 @@ struct LocalModelStatusCell: View {
                 if let progress {
                     SettingsProgressBar(value: progress, tint: isPaused ? theme.text.tertiary : nil)
                 } else {
-                    ProgressView().controlSize(.small)
+                    SettingsSpinner()
                 }
                 Text(verbatim: progressLabel(progress: progress, isPaused: isPaused))
                     .font(SettingsFont.caption.monospacedDigit())

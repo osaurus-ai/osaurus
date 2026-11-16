@@ -44,12 +44,12 @@ struct AgentSkillAllowListCard: View {
     var body: some View {
         HStack(spacing: theme.space.s12) {
             Image(systemName: "lightbulb")
-                .glyphSize(13, weight: .semibold)
+                .glyphSize(.label, weight: .semibold)
                 .foregroundColor(isLimited ? theme.text.link : theme.text.secondary)
                 .frame(width: Self.glyphTileSize, height: Self.glyphTileSize)
                 .settingsChrome(isLimited ? .selected : .inset)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text("Limit to selected skills", bundle: .module)
                     .font(SettingsFont.compactLabel)
                     .foregroundColor(theme.text.primary)
@@ -87,14 +87,14 @@ struct AgentSkillAllowListCard: View {
     }
 
     private var picker: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             Text("Skills this agent can use", bundle: .module)
                 .font(SettingsFont.compactLabel)
                 .foregroundColor(theme.text.primary)
                 .padding(theme.space.s12)
             Divider()
             ScrollView {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     ForEach(installed) { skill in
                         Toggle(
                             isOn: Binding(
@@ -102,7 +102,7 @@ struct AgentSkillAllowListCard: View {
                                 set: { setSkill(skill, allowed: $0) }
                             )
                         ) {
-                            VStack(alignment: .leading, spacing: 1) {
+                            VStack(alignment: .leading, spacing: theme.space.s2) {
                                 Text(skill.name)
                                     .font(SettingsFont.body)
                                     .foregroundColor(theme.text.primary)
@@ -121,7 +121,7 @@ struct AgentSkillAllowListCard: View {
                     ForEach(agent?.missingAllowListedSkills(in: installed) ?? [], id: \.self) { name in
                         HStack(spacing: theme.space.s6) {
                             Image(systemName: "exclamationmark.triangle")
-                                .glyphSize(10)
+                                .glyphSize(.micro)
                                 .foregroundColor(theme.status.warning.foreground)
                             Text("\(name) — not installed", bundle: .module)
                                 .font(SettingsFont.body)

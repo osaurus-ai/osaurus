@@ -34,7 +34,7 @@ public enum ConfigurationToolBase {
                 kind: .unavailable,
                 message:
                     "Configuration tools require a chat session context. "
-                    + "They are only available from the Default agent inside Osaurus.",
+                    + "Osaurus settings are changed from the main Osaurus chat inside the app.",
                 tool: tool,
                 retryable: false
             )
@@ -62,8 +62,8 @@ public enum ConfigurationToolBase {
             return ToolEnvelope.failure(
                 kind: .unavailable,
                 message:
-                    "Configuration tools are only available to the Default agent. "
-                    + "Switch to the Default agent in the sidebar to configure Osaurus.",
+                    "This agent can't change Osaurus settings. Tell the user to ask for the change "
+                    + "in the main Osaurus chat.",
                 tool: tool,
                 retryable: false
             )

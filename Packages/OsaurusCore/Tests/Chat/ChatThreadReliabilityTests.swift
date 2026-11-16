@@ -104,6 +104,46 @@ struct ChatThreadReliabilityTests {
         expectClickable(button, in: row, "after streaming reconfigures")
     }
 
+    // MARK: - Expanded sections
+
+    private func descendants<T: NSView>(_ view: NSView, _ type: T.Type) -> [T] {
+        view.subviews.flatMap { subview -> [T] in
+            let own: [T] = (subview as? T).map { [$0] } ?? []
+            return own + descendants(subview, type)
+        }
+    }
+
+    @Test func expandedRowFitsItsArgumentsAndErrorResult() throws {
+        let (window, row) = hostedRow()
+        defer { window.close() }
+        row.widthAnchor.constraint(equalToConstant: 640).isActive = true
+        let item = ToolCallItem(
+            call: ToolCall(
+                id: "call_handoff_" + UUID().uuidString,
+                type: "function",
+                function: ToolCallFunction(
+                    name: "configurator_handoff",
+                    arguments: #"{"brief": "Tour of Osaurus features and capabilities", "user_message": "What can Osaurus do? Give me a quick tour of its features."}"#
+                )
+            ),
+            result: #"{"ok":false,"kind":"user_denied","message":"Stopped by the user.","retryable":false,"tool":"configurator_handoff"}"#
+        )
+        configure(row, item, expanded: true)
+        window.contentView?.layoutSubtreeIfNeeded()
+
+        let blocks = descendants(row, NativeCodeBlockView.self).map { $0.convert($0.bounds, to: row) }
+        try #require(blocks.count == 2, "arguments and result details each render a code block")
+        let fromTop = { (rect: NSRect) in row.isFlipped ? rect.maxY : row.bounds.height - rect.minY }
+        for block in blocks {
+            #expect(fromTop(block) <= row.measuredHeight(), "a code block runs past the row's measured height")
+        }
+        let result = try #require(descendants(row, NSTextField.self).first { $0.stringValue == L("RESULT") })
+        let title = result.convert(result.bounds, to: row)
+        let args = try #require(blocks.min { fromTop($0) < fromTop($1) })
+        let gap = row.isFlipped ? title.minY - args.maxY : args.minY - title.maxY
+        #expect(gap >= 8, "RESULT sits \(gap)pt below the arguments block")
+    }
+
     // MARK: - Markdown reuse
 
     private func renderedStrings(_ view: NSView) -> [String] {
@@ -158,7 +198,6 @@ struct ChatThreadReliabilityTests {
         init(viewportHeight: CGFloat) {
             tableView = MessageTableRepresentable.makeTableView()
             scrollView = MessageTableRepresentable.makeScrollView(documentView: tableView)
-            scrollView.contentInsets = NSEdgeInsetsZero
             window = NSWindow(
                 contentRect: NSRect(x: 0, y: 0, width: 700, height: viewportHeight), styleMask: [.titled],
                 backing: .buffered, defer: false)
@@ -205,7 +244,9 @@ struct ChatThreadReliabilityTests {
 
         var originY: CGFloat { scrollView.contentView.bounds.origin.y }
 
+        /// The reader moving the thread (a scroller drag or keyboard scroll).
         func scroll(toY y: CGFloat) {
+            coordinator.userDidScroll()
             scrollView.contentView.setBoundsOrigin(NSPoint(x: scrollView.contentView.bounds.origin.x, y: y))
             scrollView.reflectScrolledClipView(scrollView.contentView)
         }
@@ -255,7 +296,7 @@ struct ChatThreadReliabilityTests {
     }
 
     private func distanceFromBottom(_ t: Thread) -> CGFloat {
-        t.tableView.frame.height - (t.originY + t.scrollView.contentView.bounds.height)
+        t.coordinator.scrollAnchor.distanceFromBottom
     }
 
     @Test func pinnedReaderFollowsTheStream() async {
@@ -275,7 +316,7 @@ struct ChatThreadReliabilityTests {
         defer { t.window.close() }
         #expect(t.coordinator.scrollAnchor.isPinnedToBottom)
 
-        // Stay inside the 50pt band that otherwise still counts as "at bottom".
+        // Stay close to the bottom: a small scroll up must stop following too.
         let bottom = t.originY
         t.wheelUp(by: 8)
         if t.originY >= bottom - 0.5 {
@@ -287,9 +328,7 @@ struct ChatThreadReliabilityTests {
         await t.settle()
         let readingAt = t.originY
         #expect(readingAt < bottom - 0.5)
-        #expect(
-            distanceFromBottom(t) < t.coordinator.scrollAnchor.bottomThreshold,
-            "scrolled past the band: \(distanceFromBottom(t))pt")
+        #expect(distanceFromBottom(t) < 50, "scrolled too far: \(distanceFromBottom(t))pt")
         #expect(!t.coordinator.scrollAnchor.isPinnedToBottom, "a reader who scrolled up must not stay pinned")
         let documentBefore = t.tableView.frame.height
 
@@ -327,7 +366,7 @@ struct ChatThreadReliabilityTests {
         await stream(60, into: streaming, t)
         #expect(abs(t.originY - readingAt) <= 0.5, "streaming pulled the reader from \(readingAt) to \(t.originY)")
 
-        t.scroll(toY: t.tableView.frame.height - t.scrollView.contentView.bounds.height)
+        t.scroll(toY: t.coordinator.scrollAnchor.bottomOriginY)
         await t.settle()
         #expect(t.coordinator.scrollAnchor.isPinnedToBottom, "scrolling back to the bottom resumes following")
         await stream(30, into: streaming, t)
@@ -373,7 +412,6 @@ struct ChatThreadReliabilityTests {
     @Test func rowsScrolledIntoThePaddingStayClickable() async {
         let t = Thread(viewportHeight: 400)
         defer { t.window.close() }
-        t.scrollView.contentInsets = NSEdgeInsets(top: 32, left: 0, bottom: 60, right: 0)
         for i in 1 ... 12 {
             t.turns.append(ChatTurn(role: .user, content: "Question \(i)"))
             t.turns.append(ChatTurn(role: .assistant, content: "\(Thread.paragraph)\n\n\(Thread.paragraph)"))

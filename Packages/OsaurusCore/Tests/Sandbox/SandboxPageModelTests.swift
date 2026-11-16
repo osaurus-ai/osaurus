@@ -52,6 +52,21 @@ struct SandboxPageModelTests {
     }
 
     @Test
+    func environmentsUsePrecomputedSizes() {
+        let sized = UUID().uuidString.lowercased()
+        let unsized = UUID().uuidString.lowercased()
+        let sizes: [String: Int64] = [sized: 42_000_000]
+        let entries = SandboxEnvironmentEntry.entries(
+            environments: [(name: sized, lastUsedAt: Date()), (name: unsized, lastUsedAt: nil)],
+            runningMembers: [],
+            agentNames: [:],
+            allocatedBytes: { sizes[$0] }
+        )
+        #expect(entries.first { $0.name == sized }?.allocatedBytes == 42_000_000)
+        #expect(entries.first { $0.name == unsized }?.allocatedBytes == nil)
+    }
+
+    @Test
     func memoryWarnsAboveHalfTheMac() {
         let eightGB: UInt64 = 8 * 1_073_741_824
         #expect(SandboxHostResourceWarning.memory(vmGB: 4, hostBytes: eightGB) == nil)

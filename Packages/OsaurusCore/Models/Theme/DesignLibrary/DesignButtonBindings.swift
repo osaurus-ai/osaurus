@@ -1,4 +1,3 @@
-#if OSAURUS_DESIGN_SYSTEM
 import SwiftUI
 
 /// Component assignment resolver for the real SettingsButtonStyle. Values come
@@ -47,14 +46,6 @@ enum DesignButtonBindings {
     private static func resolve(_ key:String,family:String?,isDark:Bool,snapshot:DesignThemeSnapshot?)->JSONValue? {
         let scopedKey = CatalogElementAssignments.childKey(key, family: family)
         let resolvedKey = snapshot?.document.mappings[scopedKey] == nil ? key : scopedKey
-        let parts = resolvedKey.split(separator: ".")
-        if parts.count > 2, parts[0] == "component", parts[1] == "library",
-           let family = Int(parts[2]), [10, 13, 14, 15, 16, 17, 57].contains(family), let snapshot {
-            let routed = CatalogElementAssignments.routed(resolvedKey, mappings: snapshot.document.mappings)
-            if !snapshot.reassignedProperties.contains(routed) && !snapshot.reassignedProperties.contains(resolvedKey) {
-                return nil // Unedited gallery defaults must not replace the app's own recipe.
-            }
-        }
         let token=snapshot?.document.tokens[role(resolvedKey)]
         return isDark ? token?.dark : token?.light
     }
@@ -82,4 +73,3 @@ enum DesignButtonBindings {
         return ThemeActionState(background:color(prefix+"background",theme:theme,fallback:fallback.background),foreground:color(prefix+"foreground",theme:theme,fallback:fallback.foreground))
     }
 }
-#endif

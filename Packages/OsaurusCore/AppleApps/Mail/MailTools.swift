@@ -45,6 +45,7 @@ final class MailMailboxesTool: AppleToolBase, @unchecked Sendable {
     }
     override func run(args: [String: Any]) async throws -> AppleToolPayload {
         let boxes = try await service.mailboxes()
+        try await MailAccountCheck.throwIfNoAccount(boxes, service: service)
         return AppleToolPayload(["mailboxes": boxes, "count": boxes.count])
     }
 }
@@ -73,6 +74,7 @@ final class MailListTool: AppleToolBase, @unchecked Sendable {
         query.since = try AppleArgs.date(args, "since")?.date
         query.limit = try AppleArgs.limit(args, default: Self.defaultLimit, max: 200)
         let messages = try await service.list(query)
+        try await MailAccountCheck.throwIfNoAccount(messages, service: service)
         return AppleToolPayload([
             "messages": messages, "count": messages.count, "mailbox_path": query.mailboxPath ?? "INBOX",
             "truncated": messages.count >= query.limit,
@@ -129,6 +131,7 @@ final class MailSearchTool: AppleToolBase, @unchecked Sendable {
         query.mailboxPath = try AppleArgs.string(args, "mailbox_path")
         query.limit = try AppleArgs.limit(args, default: Self.defaultLimit, max: 200)
         let messages = try await service.search(query)
+        try await MailAccountCheck.throwIfNoAccount(messages, service: service)
         return AppleToolPayload([
             "messages": messages, "count": messages.count, "query": text, "field": fieldRaw,
             "mailbox_path": query.mailboxPath ?? "INBOX", "truncated": messages.count >= query.limit,

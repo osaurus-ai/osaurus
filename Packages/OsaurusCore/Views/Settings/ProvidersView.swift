@@ -161,7 +161,7 @@ struct ProvidersView: View {
     /// summary and a single ⋯ menu (filter + maintenance); there is no
     /// separate status panel.
     private var servicesSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             SettingsSectionHeader(title: "Services", caption: servicesCaption) {
                 if !manager.configuration.providers.isEmpty {
                     servicesMenu
@@ -208,7 +208,7 @@ struct ProvidersView: View {
     private var servicesMenu: some View {
         HStack(spacing: theme.space.s6) {
             if probingAll || reconnectingAll {
-                ProgressView().controlSize(.small)
+                SettingsSpinner()
             }
             if providerFilter != .all {
                 Text(providerFilter.displayName)
@@ -467,7 +467,7 @@ struct ProvidersView: View {
     /// Always-visible provider directory as a flat list. Tapping a row opens
     /// the Add Service sheet directly on that service's setup step.
     private var directorySection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             SettingsSectionHeader(title: "Directory") {
                 SearchField(text: $directoryQuery, placeholder: "Search services")
             }
@@ -538,7 +538,7 @@ private struct MCPProviderErrorText: View {
 
     var body: some View {
         let presentation = MCPProviderErrorPresenter.present(raw, providerName: providerName)
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
             Text(presentation.message)
                 .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
                 .foregroundColor(color)
@@ -617,7 +617,7 @@ private struct ProviderCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             providerHeader
 
             // Auth-required prompt. Branched so OAuth providers get a Sign In
@@ -638,9 +638,9 @@ private struct ProviderCard: View {
                 // For the common "command not found on PATH" case we add an
                 // inline "Edit" CTA so nvm/asdf users can jump straight to
                 // the command field without hunting through the row.
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: theme.space.s8) {
                     Image(systemName: errorIcon(for: error))
-                        .glyphSize(11)
+                        .glyphSize(.footnote)
                         .foregroundColor(theme.status.error.foreground)
                     MCPProviderErrorText(raw: error, providerName: provider.name, color: theme.status.error.foreground)
                     if isCommandNotFoundError(error) {
@@ -698,7 +698,7 @@ private struct ProviderCard: View {
             }
         } trailing: {
             if isTesting {
-                ProgressView().controlSize(.small)
+                SettingsSpinner()
             }
             connectionButton
             Toggle(
@@ -765,8 +765,7 @@ private struct ProviderCard: View {
     private var connectionButton: some View {
         Group {
             if isConnecting {
-                ProgressView()
-                    .controlSize(.small)
+                SettingsSpinner()
                     .frame(width: 76, height: 24)
             } else if isConnected {
                 SettingsButton(.destructive, "Disconnect", size: .compact, action: onDisconnect)
@@ -856,14 +855,14 @@ private struct ProviderCard: View {
     @ViewBuilder
     private var oauthAuthBanner: some View {
         let signInError = state?.lastError
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             Image(
                 systemName: signInError == nil
                     ? "person.badge.key.fill" : "exclamationmark.triangle.fill"
             )
             .textStyle(.footnote)
             .foregroundColor(signInError == nil ? theme.status.warning.foreground : theme.status.error.foreground)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text("Sign in required", bundle: .module)
                     .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                     .foregroundColor(theme.text.primary)
@@ -894,12 +893,12 @@ private struct ProviderCard: View {
     @ViewBuilder
     private var bearerTokenAuthBanner: some View {
         let lastError = state?.lastError
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(spacing: theme.space.s10) {
                 Image(systemName: "key.fill")
-                    .glyphSize(11)
+                    .glyphSize(.footnote)
                     .foregroundColor(theme.status.warning.foreground)
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text("API token required", bundle: .module)
                         .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                         .foregroundColor(theme.text.primary)
@@ -922,7 +921,7 @@ private struct ProviderCard: View {
                 Spacer()
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 SettingsTextField(
                     placeholder: L("Paste API token here"),
                     text: $inlineBearerToken,
@@ -949,12 +948,12 @@ private struct ProviderCard: View {
     }
 
     private var expandedContent: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             // Settings summary. Streaming is HTTP-only — stdio providers
             // multiplex over a single subprocess and don't have a
             // "streaming vs request/response" knob, so we hide that chip
             // for them (mirrors the editor, which already does the same).
-            HStack(spacing: 16) {
+            HStack(spacing: theme.space.s16) {
                 if provider.transport == .http {
                     settingItem(
                         icon: "bolt.fill",
@@ -975,9 +974,9 @@ private struct ProviderCard: View {
 
             // Custom headers summary
             if !provider.customHeaders.isEmpty || !provider.secretHeaderKeys.isEmpty {
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     Image(systemName: "list.bullet.rectangle")
-                        .glyphSize(11)
+                        .glyphSize(.footnote)
                         .foregroundColor(theme.text.tertiary)
                     Text(
                         "\(provider.customHeaders.count + provider.secretHeaderKeys.count) custom header\(provider.customHeaders.count + provider.secretHeaderKeys.count == 1 ? "" : "s")",
@@ -990,12 +989,12 @@ private struct ProviderCard: View {
 
             // Discovered tools list
             if isConnected, let tools = state?.discoveredToolSummaries, !tools.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
                     Text("Provides:", bundle: .module)
                         .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                         .foregroundColor(theme.text.secondary)
 
-                    ToolPillsFlowLayout(spacing: 6) {
+                    ToolPillsFlowLayout(spacing: theme.space.s6) {
                         ForEach(tools) { tool in
                             StatusChip(
                                 tool.displayName,
@@ -1030,9 +1029,9 @@ private struct ProviderCard: View {
     }
 
     private func settingItem(icon: String, label: String, value: String) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: theme.space.s6) {
             Image(systemName: icon)
-                .glyphSize(10)
+                .glyphSize(.micro)
                 .foregroundColor(theme.text.tertiary)
             Text("\(label):", bundle: .module)
                 .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
@@ -1196,7 +1195,7 @@ struct ProviderEditSheet: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             sheetHeader
 
             ScrollView {
@@ -1270,10 +1269,10 @@ struct ProviderEditSheet: View {
     private var sheetHeader: some View {
         let info = headerInfo
         let theme = themeManager.currentTheme
-        return HStack(spacing: 12) {
+        return HStack(spacing: theme.space.s12) {
 SettingsIconTile(icon: info.icon, size: 32)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 info.title
                     .textStyle(.heading)
                     .foregroundColor(theme.text.primary)
@@ -1295,9 +1294,7 @@ SettingsIconTile(icon: info.icon, size: 32)
         .padding(.bottom, theme.space.s16)
         .background(theme.surface.canvas)
         .overlay(
-            Rectangle()
-                .fill(theme.border.subtle)
-                .frame(height: 1),
+            ThemeHairlineDivider(),
             alignment: .bottom
         )
     }
@@ -1306,7 +1303,7 @@ SettingsIconTile(icon: info.icon, size: 32)
 
     @ViewBuilder
     private var sheetFooter: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             footerLeading
             Spacer()
             footerTrailing
@@ -1316,9 +1313,7 @@ SettingsIconTile(icon: info.icon, size: 32)
         .background(
             themeManager.currentTheme.surface.canvas
                 .overlay(
-                    Rectangle()
-                        .fill(themeManager.currentTheme.border.subtle)
-                        .frame(height: 1),
+                    ThemeHairlineDivider(color: themeManager.currentTheme.border.subtle),
                     alignment: .top
                 )
         )
@@ -1328,9 +1323,9 @@ SettingsIconTile(icon: info.icon, size: 32)
     private var footerLeading: some View {
         if phase != .chooseProvider, !isEditing {
             Button(action: backToCatalog) {
-                HStack(spacing: 4) {
+                HStack(spacing: theme.space.s4) {
                     Image(systemName: "chevron.left")
-                        .glyphSize(11, weight: .semibold)
+                        .glyphSize(.footnote, weight: .semibold)
                     Text("Use a different service", bundle: .module)
                         .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                 }
@@ -1382,22 +1377,22 @@ SettingsIconTile(icon: info.icon, size: 32)
         Button(action: {
             testConnection()
         }) {
-            HStack(spacing: 6) {
+            HStack(spacing: theme.space.s6) {
                 Group {
                     if isTesting {
-                        ProgressView().scaleEffect(0.6)
+                        SettingsSpinner()
                     } else if let result = testResult {
                         switch result {
                         case .success:
                             Image(systemName: "checkmark.circle.fill")
-                                .glyphSize(12)
+                                .glyphSize(.caption)
                         case .failure:
                             Image(systemName: "xmark.circle.fill")
-                                .glyphSize(12)
+                                .glyphSize(.caption)
                         }
                     } else {
                         Image(systemName: "antenna.radiowaves.left.and.right")
-                            .glyphSize(12)
+                            .glyphSize(.caption)
                     }
                 }
                 .frame(width: 16, height: 16)
@@ -1499,11 +1494,11 @@ SettingsIconTile(icon: info.icon, size: 32)
 
     @ViewBuilder
     private func configureKnownBody(template: MCPProviderTemplate) -> some View {
-        VStack(spacing: 24) {
+        VStack(spacing: theme.space.s24) {
             Spacer(minLength: 24)
 
             // Auth-specific block
-            VStack(spacing: 12) {
+            VStack(spacing: theme.space.s12) {
                 switch template.authType {
                 case .oauth:
                     if isOAuthSignedIn {
@@ -1545,7 +1540,7 @@ SettingsIconTile(icon: info.icon, size: 32)
 
     @ViewBuilder
     private func signInBlock(template: MCPProviderTemplate) -> some View {
-        VStack(spacing: 10) {
+        VStack(spacing: theme.space.s10) {
             oauthSignInButton(template: template, enabled: true)
 
             Text(
@@ -1567,11 +1562,9 @@ SettingsIconTile(icon: info.icon, size: 32)
     @ViewBuilder
     private func oauthSignInButton(template: MCPProviderTemplate, enabled: Bool) -> some View {
         Button(action: signInWithOAuth) {
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 if isSigningIn {
-                    ProgressView()
-                        .scaleEffect(0.7)
-                        .frame(width: 14, height: 14)
+                    SettingsSpinner()
                 } else {
                     Image(systemName: "person.badge.key.fill")
                 }
@@ -1590,10 +1583,10 @@ SettingsIconTile(icon: info.icon, size: 32)
 
     @ViewBuilder
     private func connectedBlock(template: MCPProviderTemplate) -> some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 8) {
+        VStack(spacing: theme.space.s12) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: "checkmark.circle.fill")
-                    .glyphSize(18)
+                    .glyphSize(.large)
                     .foregroundColor(themeManager.currentTheme.status.success.foreground)
                 Text("Connected to \(template.displayName)", bundle: .module)
                     .catalogTypography(.heading, theme: theme, fallback: SettingsFont.cardTitle)
@@ -1604,9 +1597,9 @@ SettingsIconTile(icon: info.icon, size: 32)
             .settingsChrome(.status(.success))
 
             if let scopes = oauthConfig?.scopes, !scopes.isEmpty {
-                HStack(spacing: 4) {
+                HStack(spacing: theme.space.s4) {
                     Image(systemName: "key.fill")
-                        .glyphSize(9)
+                        .glyphSize(.tiny)
                     Text(scopes.joined(separator: " "))
                         .catalogTypography(.caption, theme: theme, fallback: SettingsFont.monoSmall)
                         .lineLimit(2)
@@ -1617,9 +1610,9 @@ SettingsIconTile(icon: info.icon, size: 32)
             }
 
             Button(action: signInWithOAuth) {
-                HStack(spacing: 4) {
+                HStack(spacing: theme.space.s4) {
                     Image(systemName: "arrow.clockwise")
-                        .glyphSize(11)
+                        .glyphSize(.footnote)
                     Text("Re-authenticate", bundle: .module)
                         .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                 }
@@ -1646,14 +1639,14 @@ SettingsIconTile(icon: info.icon, size: 32)
             !manualClientId.trimmingCharacters(in: .whitespaces).isEmpty
             && !manualClientSecret.trimmingCharacters(in: .whitespaces).isEmpty
 
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             confidentialOAuthSetupCard(template: template, redirectURI: redirectURI)
 
             if let helpURL = template.oauthSetupHelpURL {
                 Button(action: { NSWorkspace.shared.open(helpURL) }) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: theme.space.s4) {
                         Image(systemName: "link.circle.fill")
-                            .glyphSize(11)
+                            .glyphSize(.footnote)
                         Text("Open \(template.displayName) docs", bundle: .module)
                             .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                     }
@@ -1662,7 +1655,7 @@ SettingsIconTile(icon: info.icon, size: 32)
                 .buttonStyle(PlainButtonStyle())
             }
 
-            VStack(spacing: 10) {
+            VStack(spacing: theme.space.s10) {
                 SettingsFieldRow(label: "Client ID") {
                     SettingsTextField(placeholder: L("Paste the Client ID"), text: $manualClientId, monospaced: true)
                 }
@@ -1698,7 +1691,7 @@ SettingsIconTile(icon: info.icon, size: 32)
         template: MCPProviderTemplate,
         redirectURI: String
     ) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             confidentialOAuthStep(
                 number: 1,
                 text: String(
@@ -1730,7 +1723,7 @@ SettingsIconTile(icon: info.icon, size: 32)
     /// steps are ordering-sensitive (URI must be registered before sign-in).
     @ViewBuilder
     private func confidentialOAuthStep(number: Int, text: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: theme.space.s8) {
             Text("\(number).")
                 .catalogTypography(.caption, theme: theme, fallback: SettingsFont.monoSmall)
                 .foregroundColor(themeManager.currentTheme.text.tertiary)
@@ -1749,7 +1742,7 @@ SettingsIconTile(icon: info.icon, size: 32)
     /// accidental edit here would silently break the next sign-in.
     @ViewBuilder
     private func redirectURIRow(_ uri: String) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Text(uri)
                 .catalogTypography(.caption, theme: theme, fallback: SettingsFont.monoSmall)
                 .foregroundColor(themeManager.currentTheme.text.primary)
@@ -1761,9 +1754,9 @@ SettingsIconTile(icon: info.icon, size: 32)
                 .truncationMode(.middle)
 
             Button(action: { copyToPasteboard(uri) }) {
-                HStack(spacing: 4) {
+                HStack(spacing: theme.space.s4) {
                     Image(systemName: "doc.on.doc")
-                        .glyphSize(11)
+                        .glyphSize(.footnote)
                     Text("Copy", bundle: .module)
                         .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
                 }
@@ -1787,7 +1780,7 @@ SettingsIconTile(icon: info.icon, size: 32)
 
     @ViewBuilder
     private func apiKeyBlock(template: MCPProviderTemplate) -> some View {
-        VStack(spacing: 10) {
+        VStack(spacing: theme.space.s10) {
             SettingsFieldRow(label: "API Key") {
                 SettingsTextField(placeholder: L("Paste your API key"), text: $token, monospaced: true, isSecure: true)
             }
@@ -1795,9 +1788,9 @@ SettingsIconTile(icon: info.icon, size: 32)
 
             if let helpURL = template.apiKeyHelpURL {
                 Button(action: { NSWorkspace.shared.open(helpURL) }) {
-                    HStack(spacing: 4) {
+                    HStack(spacing: theme.space.s4) {
                         Image(systemName: "link.circle.fill")
-                            .glyphSize(11)
+                            .glyphSize(.footnote)
                         Text("Where do I get my key?", bundle: .module)
                             .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                     }
@@ -1819,9 +1812,9 @@ SettingsIconTile(icon: info.icon, size: 32)
 
     @ViewBuilder
     private func noAuthBlock(template: MCPProviderTemplate) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: "lock.open.fill")
-                .glyphSize(13)
+                .glyphSize(.label)
                 .foregroundColor(themeManager.currentTheme.status.success.foreground)
             Text("This server doesn't require authentication.", bundle: .module)
                 .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
@@ -1850,9 +1843,9 @@ SettingsIconTile(icon: info.icon, size: 32)
     // MARK: - Configure Custom Server (Phase 2b)
 
     private var configureCustomBody: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: theme.space.s16) {
             SettingsSection(title: "Connection") {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: theme.space.s14) {
                     SettingsFieldRow(label: "Name") {
                         SettingsTextField(placeholder: L("My MCP Server"), text: $name)
                     }
@@ -1895,15 +1888,15 @@ SettingsIconTile(icon: info.icon, size: 32)
                 probeResultCard(result.probeResult)
             }
         }
-        .padding(0)
+        .padding(theme.space.s0)
     }
 
     private func probeResultCard(_ result: MCPProviderProbeResult) -> some View {
         SettingsSection(
             title: result.succeeded ? "Probe Passed" : "Probe Failed"
         ) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s10) {
+                HStack(spacing: theme.space.s8) {
                     probeChip(title: "Reason", value: result.reasonCode.rawValue)
                     probeChip(title: "Stage", value: result.stage.rawValue)
                     probeChip(title: "Tools", value: "\(result.toolCount)")
@@ -1922,9 +1915,9 @@ SettingsIconTile(icon: info.icon, size: 32)
                 }
 
                 Button(action: { copyProbeResult(result) }) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         Image(systemName: "doc.on.doc")
-                            .glyphSize(11, weight: .semibold)
+                            .glyphSize(.footnote, weight: .semibold)
                         Text("Copy Probe Result", bundle: .module)
                             .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                     }
@@ -1937,7 +1930,7 @@ SettingsIconTile(icon: info.icon, size: 32)
     }
 
     private func probeChip(title: String, value: String) -> some View {
-        HStack(spacing: 4) {
+        HStack(spacing: theme.space.s4) {
             Text(LocalizedStringKey(title), bundle: .module)
                 .catalogTypography(.caption, theme: theme, fallback: SettingsFont.chip)
                 .foregroundColor(themeManager.currentTheme.text.tertiary)
@@ -2012,7 +2005,7 @@ SettingsIconTile(icon: info.icon, size: 32)
     /// this view because it has a different layout (a list of rows).
     @ViewBuilder
     private var stdioFields: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             executionHostPicker
 
             executionHostExplainer
@@ -2067,9 +2060,9 @@ SettingsIconTile(icon: info.icon, size: 32)
             // will fail to start. Warn at selection time — the same
             // guidance the connect-time error gives.
             if SandboxBackend.current == .seatbelt {
-                HStack(alignment: .top, spacing: 8) {
+                HStack(alignment: .top, spacing: theme.space.s8) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .glyphSize(12, weight: .semibold)
+                        .glyphSize(.caption, weight: .semibold)
                         .foregroundColor(theme.status.warning.foreground)
                     Text(
                         "Sandboxed MCP servers require macOS 26 or later and will fail to start on this Mac. Choose Host to run this provider — note it will then run without sandbox protection.",
@@ -2082,9 +2075,9 @@ SettingsIconTile(icon: info.icon, size: 32)
                 .padding(theme.space.s8)
                 .settingsChrome(.status(.warning))
             } else {
-                HStack(alignment: .top, spacing: 8) {
+                HStack(alignment: .top, spacing: theme.space.s8) {
                     Image(systemName: "shippingbox.fill")
-                        .glyphSize(12, weight: .semibold)
+                        .glyphSize(.caption, weight: .semibold)
                         .foregroundColor(themeManager.currentTheme.text.link)
                     Text(
                         "Runs in an isolated Linux VM with no access to host files or credentials. Outbound network is on by default and can be turned off per agent in the agent's Sandbox settings.",
@@ -2099,9 +2092,9 @@ SettingsIconTile(icon: info.icon, size: 32)
             }
 
         case .host:
-            HStack(alignment: .top, spacing: 8) {
+            HStack(alignment: .top, spacing: theme.space.s8) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .glyphSize(12, weight: .semibold)
+                    .glyphSize(.caption, weight: .semibold)
                     .foregroundColor(theme.status.warning.foreground)
                 Text(
                     "Running on the host means this subprocess can access your files, network, and credentials. Only use Host for tools you trust.",
@@ -2121,7 +2114,7 @@ SettingsIconTile(icon: info.icon, size: 32)
     /// regardless of transport.
     private var advancedCard: some View {
         SettingsSection(title: "Advanced") {
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: theme.space.s0) {
                 Button(action: {
                     withAnimation(theme.motion.springAnimation) {
                         showAdvanced.toggle()
@@ -2133,7 +2126,7 @@ SettingsIconTile(icon: info.icon, size: 32)
                             .foregroundColor(themeManager.currentTheme.text.link)
                         Spacer()
                         Image(systemName: "chevron.right")
-                            .glyphSize(11, weight: .semibold)
+                            .glyphSize(.footnote, weight: .semibold)
                             .foregroundColor(themeManager.currentTheme.text.tertiary)
                             .rotationEffect(.degrees(showAdvanced ? 90 : 0))
                     }
@@ -2142,7 +2135,7 @@ SettingsIconTile(icon: info.icon, size: 32)
                 .buttonStyle(PlainButtonStyle())
 
                 if showAdvanced {
-                    VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: theme.space.s16) {
                         Divider().padding(.vertical, theme.space.s8)
 
                         // Streaming is HTTP-only (SSE); the stdio JSON-RPC
@@ -2164,7 +2157,7 @@ SettingsIconTile(icon: info.icon, size: 32)
 
                         Divider().padding(.vertical, theme.space.s4)
 
-                        VStack(alignment: .leading, spacing: 16) {
+                        VStack(alignment: .leading, spacing: theme.space.s16) {
                             SettingsSlider(
                                 title: "Discovery Timeout",
                                 valueText: "\(Int(discoveryTimeout))s",
@@ -2244,24 +2237,24 @@ SettingsIconTile(icon: info.icon, size: 32)
 
     @ViewBuilder
     private var oauthSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: "person.badge.key.fill")
-                    .glyphSize(11)
+                    .glyphSize(.footnote)
                     .foregroundColor(themeManager.currentTheme.text.tertiary)
                 Text("Sign in via the server's OAuth login flow", bundle: .module)
                     .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
                     .foregroundColor(themeManager.currentTheme.text.secondary)
             }
 
-            HStack(spacing: 10) {
+            HStack(spacing: theme.space.s10) {
                 Button(action: signInWithOAuth) {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         if isSigningIn {
-                            ProgressView().scaleEffect(0.6)
+                            SettingsSpinner()
                         } else {
                             Image(systemName: isOAuthSignedIn ? "arrow.clockwise" : "person.badge.key")
-                                .glyphSize(12)
+                                .glyphSize(.caption)
                         }
                         Text(
                             LocalizedStringKey(isOAuthSignedIn ? "Re-authenticate" : "Sign In"),
@@ -2274,9 +2267,9 @@ SettingsIconTile(icon: info.icon, size: 32)
                 .disabled(isSigningIn || url.trimmingCharacters(in: .whitespaces).isEmpty)
 
                 if isOAuthSignedIn {
-                    HStack(spacing: 4) {
+                    HStack(spacing: theme.space.s4) {
                         Image(systemName: "checkmark.circle.fill")
-                            .glyphSize(11)
+                            .glyphSize(.footnote)
                             .foregroundColor(themeManager.currentTheme.status.success.foreground)
                         Text("Signed in", bundle: .module)
                             .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
@@ -2295,9 +2288,9 @@ SettingsIconTile(icon: info.icon, size: 32)
             }
 
             if let config = oauthConfig, !config.scopes.isEmpty {
-                HStack(spacing: 4) {
+                HStack(spacing: theme.space.s4) {
                     Image(systemName: "key.fill")
-                        .glyphSize(9)
+                        .glyphSize(.tiny)
                         .foregroundColor(themeManager.currentTheme.text.tertiary)
                     Text(config.scopes.joined(separator: " "))
                         .catalogTypography(.caption, theme: theme, fallback: SettingsFont.monoSmall)
@@ -2315,13 +2308,13 @@ SettingsIconTile(icon: info.icon, size: 32)
     /// ship explicit endpoints in a Claude plugin's `.mcp.json oauth` block).
     /// When both endpoints are filled in, the OAuth service skips discovery.
     private var oauthAdvancedSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             Button(action: {
                 withAnimation(theme.motion.quick) { showOAuthAdvanced.toggle() }
             }) {
-                HStack(spacing: 4) {
+                HStack(spacing: theme.space.s4) {
                     Image(systemName: "chevron.right")
-                        .glyphSize(9, weight: .semibold)
+                        .glyphSize(.tiny, weight: .semibold)
                         .foregroundColor(themeManager.currentTheme.text.tertiary)
                         .rotationEffect(.degrees(showOAuthAdvanced ? 90 : 0))
                     Text("Manual endpoints (advanced)", bundle: .module)
@@ -2333,7 +2326,7 @@ SettingsIconTile(icon: info.icon, size: 32)
             .buttonStyle(PlainButtonStyle())
 
             if showOAuthAdvanced {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
                     Text(
                         "Fill these in only for servers that don't advertise OAuth metadata. Both the authorize and token URLs must be set to skip discovery.",
                         bundle: .module
@@ -2796,7 +2789,7 @@ private struct HeaderRow: View {
     let onDelete: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             SettingsTextField(placeholder: L("Key"), text: $header.key, monospaced: true)
                 .frame(width: 120)
 
@@ -2809,9 +2802,9 @@ private struct HeaderRow: View {
 
             // Secret toggle
             Button(action: { header.isSecret.toggle() }) {
-                HStack(spacing: 4) {
+                HStack(spacing: theme.space.s4) {
                     Image(systemName: header.isSecret ? "lock.fill" : "lock.open")
-                        .glyphSize(10)
+                        .glyphSize(.micro)
                     Text(LocalizedStringKey(header.isSecret ? "Secret" : "Plain"), bundle: .module)
                         .catalogTypography(.caption, theme: theme, fallback: SettingsFont.chip)
                 }
@@ -2829,7 +2822,7 @@ private struct HeaderRow: View {
             // Delete button
             Button(action: onDelete) {
                 Image(systemName: "trash")
-                    .glyphSize(11)
+                    .glyphSize(.footnote)
                     .foregroundColor(theme.status.error.foreground)
                     .frame(width: 28, height: 28)
                     .settingsChrome(.status(.error))

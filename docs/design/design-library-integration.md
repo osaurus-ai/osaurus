@@ -6,9 +6,10 @@ Where the app stands against the design handoff
 
 ## Verdict
 
-The library is shipped. `LibraryResources/design-library.json` is the
-handoff's saved file byte for byte, `OSAURUS_DESIGN_SYSTEM` is always
-defined, and System, Light and Dark all resolve through `DesignThemeOverlay`.
+The library is shipped. `LibraryResources/design-library.json` holds the
+handoff's tokens and every assignment that paints, the shared styling is
+unconditional (the former `OSAURUS_DESIGN_SYSTEM` flag is gone), and System,
+Light and Dark all resolve through `DesignThemeOverlay`.
 Custom themes, the chat tour, Pairing and the Project inspector were removed
 on purpose (`162919fb0`, `16ed0f119`); none of that is a regression.
 
@@ -24,10 +25,13 @@ appearances. `DesignLibraryTokenCoverageTests` enforces this: a token that
 lands nowhere fails the suite unless it is added to that test's `untyped`
 allowlist with a reason (the list is empty).
 
-The engineering seeds (`CustomTheme.lightDefault` / `.darkDefault`) still
-match the 132-token `semantic-tokens.json` contract
-(`SemanticTokenConformanceTests`). The library adds the rest; on the seeds
-those fields are empty or take the library's Light values:
+The engineering seeds (`CustomTheme.lightDefault` / `.darkDefault`) equal the
+library in every value they carry (`SemanticTokenConformanceTests`);
+regenerate them with `scripts/design-handoff/sync-theme-seeds.py`. Seeds hold
+no effect layers, and one seed serves both modes, so `type.labelEmphasis`
+(line height 22 in Light, 13 in Dark) is the one style that matches only
+Light. The library adds the rest; on the seeds those fields are empty or take
+the library's Light values:
 
 | Library tokens | Theme property |
 | --- | --- |
@@ -43,9 +47,24 @@ those fields are empty or take the library's Light values:
 No component mapping was changed to reach this. Today the badge corner and
 the two Workflows step-number discs read the typed values; nothing draws the
 brand action, the per-state borders, the new text styles or the effect
-recipes yet. 1,154 of the 1,155 `*.effect` mappings point at
-`effect.elevation.none`; the one exception is the family-25 input
-(`effect.elevation.2`).
+recipes yet. All 21 `*.effect` mappings point at `effect.elevation.none`.
+(The family-25 input's `effect.elevation.2` was an archived copy that routing
+never read; it was pruned with the other archives.)
+
+## Assignment format
+
+One rule: a mapping that is present paints; an absent mapping leaves the
+component its own recipe. The shipped file therefore holds 8,558 assignments,
+not the editor's ~19,400. `DesignLibraryPruning` drops copies that never
+paint: shared-control archives, legacy keys shadowed by an element key,
+layout slots the designer never set, the bubble properties owned by rich text
+(28/29), and unedited properties of the composite families
+(10, 13–17, 57). The file also records `editedAssignments` and `editedTokens`,
+so the app never loads the handoff baseline; `semantic-tokens.json`,
+`component-mappings.json`, `primitive-colors.json` and `figma-sync.json` ship
+only with the Inspector. The Inspector edits the full document and exports it
+pruned; `freeze-design.py` rejects an unpruned export.
+`DesignLibraryPruningTests` freezes the count and the invariants above.
 
 ## Values that need design review
 

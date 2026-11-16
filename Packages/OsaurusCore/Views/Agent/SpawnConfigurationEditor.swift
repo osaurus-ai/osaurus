@@ -45,10 +45,8 @@ struct SpawnConfigurationEditor: View {
     /// `.groupRows` emits each part as a direct child, so a `SettingsGroup`
     /// parent draws them as rows; `.stacked` is one self-contained column.
     var layout: Layout = .stacked
-    #if OSAURUS_DESIGN_SYSTEM
     /// Mount only the original picker composition, without roster/model tasks.
     var inspectionDisplay = false
-    #endif
 
     enum Layout {
         case stacked
@@ -75,25 +73,21 @@ struct SpawnConfigurationEditor: View {
     private var isOrchestrator: Bool { excludedAgentID == nil }
 
     var body: some View {
-        #if OSAURUS_DESIGN_SYSTEM
         if inspectionDisplay {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 allowedAgents
                 allowedWorkspaceAgents
             }
         } else {
             liveContent
         }
-        #else
-        liveContent
-        #endif
     }
 
     @ViewBuilder private var liveContent: some View {
         switch layout {
         case .groupRows:
             observingLifecycle(
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: theme.space.s12) {
                     allowedSubagentsHeading
                     allowedAgents
                 }
@@ -107,7 +101,7 @@ struct SpawnConfigurationEditor: View {
             advancedSection
         case .stacked:
             observingLifecycle(
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: theme.space.s12) {
                     allowedSubagentsHeading
                     allowedAgents
                     divider
@@ -116,7 +110,7 @@ struct SpawnConfigurationEditor: View {
                     permissionRow
                     workspacePermissionRow
                     divider
-                    VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: theme.space.s8) {
                         limitsHeader
                         budgetSteppers
                         currentLocalExecutionContract
@@ -169,7 +163,7 @@ struct SpawnConfigurationEditor: View {
     // MARK: - Allowed subagents
 
     private var allowedSubagentsHeading: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
             Text("Allowed subagents", bundle: .module)
                 .font(SettingsFont.rowTitle)
                 .foregroundColor(theme.text.primary)
@@ -193,7 +187,7 @@ struct SpawnConfigurationEditor: View {
         let addable = agentCandidates.filter { candidate in
             !selected.contains(candidate.id)
         }
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: theme.space.s8) {
             SettingsFieldLabel("Allowed agents")
             if selected.isEmpty {
                 if isOrchestrator, !agentCandidates.isEmpty {
@@ -209,7 +203,7 @@ struct SpawnConfigurationEditor: View {
                     )
                 }
             } else {
-                FlowLayout(spacing: 6) {
+                FlowLayout(spacing: theme.space.s6) {
                     ForEach(selected, id: \.self) { id in
                         if let candidate = agentCandidates.first(where: { $0.id == id }) {
                             removableChip(label: candidate.name) {
@@ -224,7 +218,7 @@ struct SpawnConfigurationEditor: View {
                         : "Agents with their own Working Folder read and write files there. Agents without one inherit this agent's chat folder for the run."
                 )
             }
-            HStack(spacing: 14) {
+            HStack(spacing: theme.space.s14) {
                 if agentCandidates.isEmpty {
                     emptyHint("No other agents yet — create one to make it spawnable.")
                 } else {
@@ -249,9 +243,9 @@ struct SpawnConfigurationEditor: View {
 
     /// Orchestrator-only notice for an empty pool while custom agents exist.
     private func emptyPoolNotice(agentCount: Int) -> some View {
-        HStack(alignment: .top, spacing: 6) {
+        HStack(alignment: .top, spacing: theme.space.s6) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .glyphSize(10, weight: .semibold)
+                .glyphSize(.micro, weight: .semibold)
                 .foregroundColor(theme.status.warning.foreground)
             Text(
                 String(
@@ -317,13 +311,13 @@ struct SpawnConfigurationEditor: View {
                     || candidate.name.localizedCaseInsensitiveContains(query)
                     || candidate.displayDescription.localizedCaseInsensitiveContains(query))
         }
-        return VStack(alignment: .leading, spacing: AgentPickerInspectionStyle.metric("gap", 8, theme)) {
+        return VStack(alignment: .leading, spacing: AgentPickerInspectionStyle.metric("gap", theme.space.s8, theme)) {
             SearchField(
                 text: $agentSearch,
                 placeholder: "Search agents",
                 width: 264)
             ScrollView {
-                VStack(alignment: .leading, spacing: AgentPickerInspectionStyle.metric("gap", 2, theme)) {
+                VStack(alignment: .leading, spacing: AgentPickerInspectionStyle.metric("gap", theme.space.s2, theme)) {
                     if filtered.isEmpty {
                         agentPickerEmptyHint("No matching agents.").padding(.vertical, theme.space.s6)
                     } else {
@@ -341,7 +335,7 @@ struct SpawnConfigurationEditor: View {
             }
             .frame(maxHeight: 220)
         }
-        .padding(.horizontal, AgentPickerInspectionStyle.metric("padding", 12, theme)).padding(.vertical, AgentPickerInspectionStyle.metric("padding", 12, theme))
+        .padding(.horizontal, AgentPickerInspectionStyle.metric("padding", theme.space.s12, theme)).padding(.vertical, AgentPickerInspectionStyle.metric("padding", theme.space.s12, theme))
         .agentPickerSurface()
         .frame(width: 292)
     }
@@ -389,7 +383,7 @@ struct SpawnConfigurationEditor: View {
             !roster.hasWorkspaces || candidates.contains { $0.ref == ref }
         }
         let addable = candidates.filter { !selected.contains($0.ref) }
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: theme.space.s8) {
             SettingsFieldLabel("Allowed shared agents")
             if selected.isEmpty {
                 emptyHint(
@@ -398,7 +392,7 @@ struct SpawnConfigurationEditor: View {
                         : "None yet. Add a teammate's shared agent to delegate a task to it. It runs on their Mac with their prompt and model; results come back over the relay."
                 )
             } else {
-                FlowLayout(spacing: 6) {
+                FlowLayout(spacing: theme.space.s6) {
                     ForEach(selected, id: \.key) { ref in
                         let candidate = candidates.first { $0.ref == ref }
                         workspaceAgentChip(ref: ref, candidate: candidate) {
@@ -435,7 +429,7 @@ struct SpawnConfigurationEditor: View {
         let presence = roster.presence(forAddress: ref.agentAddress, workspaceId: ref.workspaceId)
         let name = candidate?.name ?? AgentTargetResolver.displayName(for: ref)
         let workspaceName = candidate?.workspaceName ?? AgentTargetResolver.workspaceName(for: ref)
-        return HStack(spacing: 6) {
+        return HStack(spacing: theme.space.s6) {
             if candidate != nil {
                 Circle()
                     .fill(presenceColor(presence))
@@ -490,16 +484,16 @@ struct SpawnConfigurationEditor: View {
                     || (candidate.description ?? "").localizedCaseInsensitiveContains(query)
                     || candidate.ref.agentAddress.localizedCaseInsensitiveContains(query))
         }
-        return VStack(alignment: .leading, spacing: AgentPickerInspectionStyle.metric("gap", 8, theme)) {
+        return VStack(alignment: .leading, spacing: AgentPickerInspectionStyle.metric("gap", theme.space.s8, theme)) {
             SearchField(
                 text: $workspaceAgentSearch,
                 placeholder: "Search shared agents",
                 width: 296)
             ScrollView {
-                VStack(alignment: .leading, spacing: AgentPickerInspectionStyle.metric("gap", 2, theme)) {
+                VStack(alignment: .leading, spacing: AgentPickerInspectionStyle.metric("gap", theme.space.s2, theme)) {
                     if roster.isLoading, workspaceAgentCandidates.isEmpty {
-                        HStack(spacing: AgentPickerInspectionStyle.metric("gap", 8, theme)) {
-                            ProgressView().controlSize(.small)
+                        HStack(spacing: AgentPickerInspectionStyle.metric("gap", theme.space.s8, theme)) {
+                            SettingsSpinner()
                             agentPickerEmptyHint("Loading workspace rosters…")
                         }
                         .padding(.vertical, theme.space.s6)
@@ -523,7 +517,7 @@ struct SpawnConfigurationEditor: View {
             }
             .frame(maxHeight: 240)
         }
-        .padding(.horizontal, AgentPickerInspectionStyle.metric("padding", 12, theme)).padding(.vertical, AgentPickerInspectionStyle.metric("padding", 12, theme))
+        .padding(.horizontal, AgentPickerInspectionStyle.metric("padding", theme.space.s12, theme)).padding(.vertical, AgentPickerInspectionStyle.metric("padding", theme.space.s12, theme))
         .agentPickerSurface()
         .frame(width: 324)
     }
@@ -721,7 +715,7 @@ struct SpawnConfigurationEditor: View {
     // MARK: - Advanced
 
     private var advancedSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             Button {
                 withAnimation(theme.motion.quick) {
                     advancedExpanded.toggle()
@@ -743,7 +737,7 @@ struct SpawnConfigurationEditor: View {
             )
 
             if advancedExpanded {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: theme.space.s10) {
                     modelOverrideRow
                     handoffWarning
                 }
@@ -774,9 +768,9 @@ struct SpawnConfigurationEditor: View {
     @ViewBuilder
     private var handoffWarning: some View {
         if !localHandoffEnabled {
-            HStack(alignment: .top, spacing: 8) {
+            HStack(alignment: .top, spacing: theme.space.s8) {
                 Image(systemName: "exclamationmark.triangle.fill")
-                    .glyphSize(11)
+                    .glyphSize(.footnote)
                     .foregroundColor(theme.status.warning.foreground)
                 Text(
                     "\"Swap Local Models for Subagents\" is off. The invoking model stays loaded while a different local subagent runs, including under Server Strict. This uses more memory; memory checks can still refuse the child without evicting the parent. Change the shared setting in Settings → Orchestrator.",
@@ -1012,8 +1006,8 @@ struct SpawnConfigurationEditor: View {
         onAdd: @escaping () -> Void
     ) -> some View {
         Button(action: onAdd) {
-            HStack(spacing: AgentPickerInspectionStyle.metric("gap", 8, theme)) {
-                VStack(alignment: .leading, spacing: AgentPickerInspectionStyle.metric("gap", 2, theme)) {
+            HStack(spacing: AgentPickerInspectionStyle.metric("gap", theme.space.s8, theme)) {
+                VStack(alignment: .leading, spacing: AgentPickerInspectionStyle.metric("gap", theme.space.s2, theme)) {
                     Text(title)
                         .agentPickerFont(SettingsFont.compactLabel, property: "label")
                         .agentPickerInk("foreground", fallback: theme.text.primary)
@@ -1027,7 +1021,7 @@ struct SpawnConfigurationEditor: View {
                 }
                 Spacer(minLength: 8)
                 Image(systemName: "plus.circle.fill")
-                    .glyphSize(13)
+                    .glyphSize(.label)
                     .agentPickerInk("accent", fallback: theme.text.link)
             }
             .contentShape(Rectangle())

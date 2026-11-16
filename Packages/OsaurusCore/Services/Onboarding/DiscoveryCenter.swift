@@ -30,14 +30,15 @@ final class DiscoveryCenter {
     var snapshot: () -> DiscoverySnapshot = { DiscoveryCenter.liveSnapshot() }
     var now: () -> Date = { Date() }
     var turnOnAutomation: (EventEntry) async -> OnboardingKeep.Outcome = { await OnboardingKeep.turnOn($0) }
-    var pickFolder: @MainActor (_ message: String, _ directory: URL?) -> URL? = {
-        DiscoveryCenter.runFolderPanel(message: $0, directory: $1)
+    var pickFolder: @MainActor (_ message: String, _ directory: URL?) async -> URL? = {
+        await DiscoveryCenter.runFolderPanel(message: $0, directory: $1)
     }
     var openSetting: @MainActor (String) -> Void = { SettingsLanding.open(id: $0) }
     var sendAsk: (ChatSession, String, ServiceToolInvocation?) -> Bool = {
         $0.sendPreparedAsk(label: $1, dispatch: $2)
     }
     var createTeammate: (Teammate) async -> Void = { _ = await TeamSeeder.create([$0]) }
+    var createTeam: () async -> [Agent] = { await DiscoveryCenter.createLiveTeam() }
     /// An installed default workflow's name, by template id.
     var workflowName: (UUID) -> String? = { OnboardingPaths.installed($0)?.name }
     var isPermissionGranted: (SystemPermission) -> Bool = { SystemPermissionService.shared.isGranted($0) }
@@ -301,6 +302,8 @@ final class DiscoveryCenter {
         trial: (id: UUID, name: String)? = nil
     ) -> (title: String, note: String?)? {
         switch item {
+        case .team:
+            return (L("Create Team"), L("macOS asks before a teammate first opens one of your apps."))
         case .tryWorkflow:
             guard let trial else { return nil }
             return (String(format: L("Run %@"), trial.name), nil)
@@ -390,6 +393,19 @@ final class DiscoveryCenter {
             }
         }
         switch item {
+        case .team:
+            let created = await createTeam()
+            if created.isEmpty {
+                end(L("I could not add the team. You can try again in Settings → Agents → Delegation → Create starter agents."))
+            } else {
+                let names = ListFormatter.localizedString(byJoining: created.map(\.name))
+                end(
+                    String(
+                        format: created.count == 1
+                            ? L("%@ is on your team. Ask me about your day, your mail, or your files.")
+                            : L("%@ are on your team. Ask me about your day, your mail, or your files."),
+                        names))
+            }
         case .tryWorkflow:
             guard let trial = trialOffer(snapshot) else { return end() }
             overlays[sessionId] = nil
@@ -426,7 +442,9 @@ final class DiscoveryCenter {
             }
         case .keeperFolders:
             let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
-            guard let url = pickFolder(L("Choose a folder for the new teammate to read."), documents) else { return }
+            guard let url = await pickFolder(L("Choose a folder for the new teammate to read."), documents) else {
+                return
+            }
             configure(Self.folderTeammateRequest(path: url.path, folderName: url.lastPathComponent))
         case .keeperRedaction:
             configure(String(format: "Turn on the redaction tools for the agent named %@.", names[.keeper] ?? "Keeper"))
@@ -449,7 +467,7 @@ final class DiscoveryCenter {
                 session.rebuildVisibleBlocks()
                 return
             }
-            guard let url = pickFolder(L("Choose the project Builder works in."), nil),
+            guard let url = await pickFolder(L("Choose the project Builder works in."), nil),
                 let builder = AgentManager.shared.agents.first(where: { $0.teammate == .builder })
             else { return }
             AgentManager.shared.updateWorkingFolder(for: builder.id, bookmark: Self.bookmark(url), path: url.path)
@@ -506,7 +524,7 @@ final class DiscoveryCenter {
             end()
             openSetting("skills.overview")
         case .orchestratorFolder:
-            guard let url = pickFolder(L("Choose a folder for the Orchestrator to work in."), nil) else { return }
+            guard let url = await pickFolder(L("Choose a folder for the Orchestrator to work in."), nil) else { return }
             AgentManager.shared.updateWorkingFolder(for: Agent.defaultId, bookmark: Self.bookmark(url), path: url.path)
             end(String(format: L("The Orchestrator works in %@ now."), url.lastPathComponent))
         case .computerUse:
@@ -526,6 +544,15 @@ final class DiscoveryCenter {
         recentTrial = templateID
         guard workflowOffer(snapshot())?.id == templateID else { return }
         start(.turnOnWorkflow, in: session)
+    }
+
+    /// The day-one team, on the Orchestrator's list, with the install
+    /// marked seeded so deleting the team later does not bring the card back.
+    static func createLiveTeam() async -> [Agent] {
+        let created = await TeamSeeder.createTeam(developerMac: DeveloperMacSignal.isDeveloperMac())
+        for agent in created { AgentNodeExecutor.allowForOrchestrator(.local(agent.id, name: agent.name)) }
+        if !created.isEmpty { TeamSeeder.markSeeded() }
+        return created
     }
 
     // MARK: - Requests
@@ -618,9 +645,11 @@ final class DiscoveryCenter {
         }.map(\.0)
         let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
             .standardizedFileURL.path
+        s.teamSeeded = TeamSeeder.hasSeeded()
         for agent in manager.agents where agent.id != Agent.defaultId {
             let capabilities = manager.effectiveCapabilities(for: agent.id)
             s.enabledApps.formUnion(capabilities.enabledAppleApps)
+            if agent.teammate != nil { s.teammateExists = true }
             let folder = manager.workingFolder(for: agent)?.path
             switch agent.teammate {
             case .keeper:
@@ -688,7 +717,7 @@ final class DiscoveryCenter {
         try? url.bookmarkData(options: .withSecurityScope, includingResourceValuesForKeys: nil, relativeTo: nil)
     }
 
-    private static func runFolderPanel(message: String, directory: URL?) -> URL? {
+    private static func runFolderPanel(message: String, directory: URL?) async -> URL? {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -696,7 +725,7 @@ final class DiscoveryCenter {
         panel.prompt = L("Choose")
         panel.message = message
         panel.directoryURL = directory
-        return panel.runModal() == .OK ? panel.url : nil
+        return await panel.beginModal() == .OK ? panel.url : nil
     }
 
     /// Authored lines are shown, never sent to a model.

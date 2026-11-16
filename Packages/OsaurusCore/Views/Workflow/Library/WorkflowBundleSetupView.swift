@@ -124,11 +124,11 @@ struct WorkflowBundleSetupView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             SettingsSheetHeader(
                 icon: "flowchart", title: "Set Up Workflows",
                 subtitleText: bundle.subjects.map(\.name).joined(separator: ", "), onClose: cancel)
-            HStack(spacing: 0) {
+            HStack(spacing: theme.space.s0) {
                 SetupStepRail(steps: steps, current: $current, glowing: glowingStep, title: \.title) { step in
                     guard step != .review else { return .none }
                     let remaining = items(step)
@@ -239,7 +239,7 @@ struct WorkflowBundleSetupView: View {
 
     @ViewBuilder
     private var stepContent: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: theme.space.s16) {
             SettingsDetailHeader(icon: current.icon, title: current.title)
             switch current {
             case .models:
@@ -342,15 +342,15 @@ struct WorkflowBundleSetupView: View {
     }
 
     private var review: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             ForEach(Array(bundle.subjects.enumerated()), id: \.element.id) { index, subject in
                 let report = index < reports.count ? reports[index] : nil
-                HStack(spacing: 10) {
+                HStack(spacing: theme.space.s10) {
                     Image(systemName: report?.hasBlockers == false ? "checkmark.circle.fill" : "circle.dashed")
                         .foregroundColor(
                             report?.hasBlockers == false ? theme.status.success.foreground : theme.text.secondary
                         )
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: theme.space.s2) {
                         Text(subject.name)
                             .font(SettingsFont.rowTitle)
                             .foregroundColor(theme.text.primary)

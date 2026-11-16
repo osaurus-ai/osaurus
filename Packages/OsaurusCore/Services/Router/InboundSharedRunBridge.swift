@@ -524,6 +524,7 @@ final class InboundSharedRunBridge: ObservableObject {
         streamed.toolResults.merge(completed.toolResults) { _, completed in completed }
         streamed.toolCallDurations.merge(completed.toolCallDurations) { _, completed in completed }
         streamed.toolCallLogs.merge(completed.toolCallLogs) { _, completed in completed }
+        streamed.toolCallApprovalSkips.merge(completed.toolCallApprovalSkips) { _, completed in completed }
         // ChatMessage's completion projection carries only inline images,
         // and has no shared-artifact field. Empty lists therefore do not
         // revoke media/artifacts already recorded by the hosted run.

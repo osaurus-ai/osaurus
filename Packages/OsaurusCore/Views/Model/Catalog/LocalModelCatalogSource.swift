@@ -84,6 +84,7 @@ final class LocalModelCatalogSources: ObservableObject {
         case .language: created = LanguageCatalogSource()
         case .image: created = ImageCatalogSource()
         case .speech: created = SpeechCatalogSource()
+        case .embedding: created = EmbeddingCatalogSource()
         case .detection: created = PrivacyDetectionCatalogSource()
         case .appleScript: created = AppleScriptCatalogSource()
         }

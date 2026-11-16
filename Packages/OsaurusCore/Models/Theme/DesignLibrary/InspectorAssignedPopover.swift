@@ -1,4 +1,3 @@
-#if OSAURUS_DESIGN_SYSTEM
 import SwiftUI
 
 /// Reuses the app's existing anchored presenter. The original content and
@@ -31,4 +30,3 @@ struct InspectorAssignedPopover<Card: View>: ViewModifier {
         }
     }
 }
-#endif

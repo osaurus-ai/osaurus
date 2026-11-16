@@ -216,7 +216,7 @@ struct MemoryView: View {
 
     private var memoryContent: some View {
         ZStack {
-            VStack(spacing: 0) {
+            VStack(spacing: theme.space.s0) {
                 if selectedTab == nil {
                     headerView
                         .settingsHeaderEntrance(hasAppeared: hasAppeared)
@@ -350,7 +350,7 @@ struct MemoryView: View {
                 }
             }
         } detail: { tab in
-            VStack(spacing: 0) {
+            VStack(spacing: theme.space.s0) {
                 SettingsPageHeader(title: tab.title, subtitle: tab.subtitle)
                 switch tab {
                 case .identity: identityTab
@@ -496,7 +496,7 @@ struct MemoryView: View {
             } else {
                 HStack(spacing: theme.space.s8) {
                     Image(systemName: "info.circle")
-                        .glyphSize(13)
+                        .glyphSize(.label)
                         .foregroundColor(theme.text.tertiary)
                     Text(
                         "No identity yet. Chat with Osaurus and the memory system will build your identity from session distillations.",
@@ -527,7 +527,7 @@ struct MemoryView: View {
             if overrides.isEmpty {
                 HStack(spacing: theme.space.s8) {
                     Image(systemName: "info.circle")
-                        .glyphSize(13)
+                        .glyphSize(.label)
                         .foregroundColor(theme.text.tertiary)
                     Text(
                         "No overrides set. Add explicit facts that should always be in your identity.",

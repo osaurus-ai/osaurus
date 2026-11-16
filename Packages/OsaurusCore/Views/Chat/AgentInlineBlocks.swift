@@ -73,7 +73,7 @@ private enum Layout {
 /// floating-chrome look for both inline blocks (no component glass).
 private struct FloatingChromeSurface: View {
     @Environment(\.theme) private var environmentTheme
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(35, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(35) }
     let tint: Color
     let borderColor: Color
     var highlight: Color? = nil
@@ -81,15 +81,8 @@ private struct FloatingChromeSurface: View {
 
     var body: some View {
         ZStack {
-            #if OSAURUS_DESIGN_SYSTEM
             shape.fill(highlight ?? AgentContentSurfaceAssignments.color(35, surfacePart, theme))
                 .nativeCatalogTarget([AgentContentSurfaceAssignments.key(35, surfacePart)], surfacePart == "completion" ? "Agent completion card" : "Agent task progress")
-            #else
-            shape.fill(highlight ?? theme.surface.raised)
-            #endif
-            #if !OSAURUS_DESIGN_SYSTEM
-            shape.fill(tint)
-            #endif
             shape.strokeBorder(borderColor, lineWidth: theme.stroke.default)
         }
         .themeElevation(theme.elevation.overlay)
@@ -150,7 +143,7 @@ struct InlineTodoBlock: View {
     let todo: AgentTodo
 
     @Environment(\.theme) private var environmentTheme
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(35, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(35) }
     @State private var isHovered = false
     @State private var isPinned = false
     @State private var debouncer = HoverDebouncer()
@@ -158,7 +151,7 @@ struct InlineTodoBlock: View {
     private var isExpanded: Bool { isHovered || isPinned }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             pillRow
             if isExpanded { stepRows }
         }
@@ -184,7 +177,7 @@ struct InlineTodoBlock: View {
     private var pillRow: some View {
         HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.35.elements.layout.inlineTodoBlock.pillRow.horizontalGap", inheriting: AgentProgressInspectionStyle.metric("gap", Layout.interItemSpacing, theme))) {
             Image(systemName: "checklist")
-                .glyphSize(15)
+                .glyphSize(.medium)
                 .foregroundColor(theme.text.secondary)
 
             Text(localized: "Todo")
@@ -211,7 +204,7 @@ struct InlineTodoBlock: View {
     private var stateIcon: some View {
         let name = isPinned ? "pin.fill" : (isExpanded ? "chevron.up" : "chevron.down")
         return Image(systemName: name)
-            .glyphSize(10, weight: .bold)
+            .glyphSize(.micro, weight: .bold)
             .foregroundColor(isPinned ? theme.text.primary : theme.text.tertiary)
             .rotationEffect(.degrees(isPinned ? Layout.pinIconRotationDegrees : 0))
     }
@@ -239,7 +232,7 @@ struct InlineTodoBlock: View {
     private func todoItemRow(_ item: AgentTodoItem) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.35.elements.layout.inlineTodoBlock.todoItemRow.horizontalGap", inheriting: AgentProgressInspectionStyle.metric("gap", Layout.interItemSpacing, theme))) {
             Image(systemName: item.isDone ? "checkmark.circle.fill" : "circle")
-                .glyphSize(15)
+                .glyphSize(.medium)
                 .foregroundColor(item.isDone ? theme.status.success.foreground : theme.text.tertiary)
                 .frame(width: Layout.stepIconWidth, alignment: .center)
 
@@ -272,7 +265,7 @@ struct InlineCompleteBlock: View {
     var onDismiss: () -> Void
 
     @Environment(\.theme) private var environmentTheme
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(35, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(35) }
 
     private var statusColor: Color {
         isBlocked ? theme.status.warning.foreground : theme.status.success.foreground
@@ -284,7 +277,7 @@ struct InlineCompleteBlock: View {
                 .foregroundColor(statusColor)
                 .padding(.top, Layout.bannerIconTopOffset)
 
-            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.35.elements.layout.inlineCompleteBlock.body.verticalGap", inheriting: AgentProgressInspectionStyle.metric("gap", 4, theme))) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.35.elements.layout.inlineCompleteBlock.body.verticalGap", inheriting: AgentProgressInspectionStyle.metric("gap", theme.space.s4, theme))) {
                 Text(localized: isBlocked ? "Blocked" : "Done")
                     .agentProgressText(.heading, fallback: .caption, weight: 600, theme: theme)
                     .foregroundColor(statusColor)
@@ -306,8 +299,8 @@ struct InlineCompleteBlock: View {
         .frame(minHeight: AgentProgressInspectionStyle.metric("height", 0, theme))
         .background(
             FloatingChromeSurface(
-                tint: statusColor.opacity(0.10),
-                borderColor: theme.assignedColor(AgentProgressInspectionStyle.key + "border", fallback: statusColor.opacity(0.30)),
+                tint: theme.wash(behind: statusColor),
+                borderColor: theme.assignedColor(AgentProgressInspectionStyle.key + "border", fallback: theme.rule(around: statusColor)),
                 surfacePart: "completion"
             )
         )
@@ -334,13 +327,13 @@ private struct DismissButton: View {
     var action: () -> Void
 
     @Environment(\.theme) private var environmentTheme
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(35, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(35) }
     @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
             Image(systemName: "xmark")
-                .glyphSize(10, weight: .bold)
+                .glyphSize(.micro, weight: .bold)
                 .foregroundColor(isHovered ? theme.text.primary : theme.text.tertiary)
                 .frame(width: AgentProgressInspectionStyle.metric("height", Layout.dismissButtonSize, theme), height: AgentProgressInspectionStyle.metric("height", Layout.dismissButtonSize, theme))
                 .background(

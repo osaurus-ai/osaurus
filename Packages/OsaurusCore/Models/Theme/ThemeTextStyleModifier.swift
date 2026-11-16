@@ -29,9 +29,7 @@ struct ThemeTextStyleModifier: ViewModifier {
             .font(resolvedFont(theme: theme, style: style))
             .tracking(CGFloat(style.tracking))
             .lineSpacing(resolvedLineSpacing(theme: theme, style: style))
-            #if OSAURUS_DESIGN_SYSTEM
             .nativeCatalogTextTarget(role: role, theme: theme)
-            #endif
     }
 
     static func style(
@@ -48,21 +46,17 @@ struct ThemeTextStyleModifier: ViewModifier {
     }
 
     private func resolvedLineSpacing(theme: ThemeProtocol, style: ThemeTextStyle) -> CGFloat {
-        #if OSAURUS_DESIGN_SYSTEM
         if let scoped = theme as? CatalogResolvedTheme, let assigned = scoped.nativeAssignedFont(role) {
             return ThemeTextMetrics.extraLeading(for: assigned, lineHeight: style.lineHeight)
         }
-        #endif
         return Self.lineSpacing(style, in: theme)
     }
 
     private func resolvedFont(theme: ThemeProtocol, style: ThemeTextStyle) -> Font {
         var font = theme.font(for: style)
-        #if OSAURUS_DESIGN_SYSTEM
         if let scoped = theme as? CatalogResolvedTheme, let assigned = scoped.nativeAssignedFont(role) {
             font = Font(assigned)
         }
-        #endif
         if italic { font = font.italic() }
         if monospacedDigit { font = font.monospacedDigit() }
         return font
@@ -84,15 +78,11 @@ struct ThemeTextLineBoxModifier: ViewModifier {
     @ViewBuilder func body(content: Content) -> some View {
         let theme = theme ?? environmentTheme
         let style = ThemeTextStyleModifier.style(role, weight: weight, family: family, in: theme)
-        #if OSAURUS_DESIGN_SYSTEM
         if let scoped = theme as? CatalogResolvedTheme, let assigned = scoped.nativeAssignedFont(role) {
             content.padding(.vertical, ThemeTextMetrics.extraLeading(for: assigned, lineHeight: style.lineHeight) / 2)
         } else {
             content.padding(.vertical, ThemeTextStyleModifier.lineSpacing(style, in: theme) / 2)
         }
-        #else
-        content.padding(.vertical, ThemeTextStyleModifier.lineSpacing(style, in: theme) / 2)
-        #endif
     }
 }
 
@@ -139,11 +129,25 @@ extension Text {
     }
 }
 
+/// The icon size scale. The small steps sit beside the text roles they
+/// accompany; the large ones size empty-state and hero artwork.
+public enum ThemeGlyphSize: CGFloat, CaseIterable, Sendable {
+    case tiny = 9, micro = 10, footnote = 11, caption = 12, label = 13, body = 14
+    case medium = 16, large = 18, xlarge = 20, xxlarge = 24, display = 28, hero = 32, jumbo = 48
+
+    public var points: CGFloat { rawValue }
+}
+
 extension View {
-    /// Sizes an SF Symbol or monogram glyph to the shape that holds it
-    /// (avatar circles, badges). Glyphs are artwork, not text, so they track
-    /// their container rather than a text style.
-    func glyphSize(_ points: CGFloat, weight: Font.Weight = .regular, design: Font.Design = .default) -> some View {
+    /// Sizes an SF Symbol or monogram glyph on the icon scale. Glyphs are
+    /// artwork, not text, so they do not follow the text styles.
+    func glyphSize(_ size: ThemeGlyphSize, weight: Font.Weight = .regular, design: Font.Design = .default) -> some View {
+        font(.system(size: size.points, weight: weight, design: design))
+    }
+
+    /// Sizes a glyph to the shape that holds it (avatar circles, badges), so
+    /// it tracks its container rather than a step.
+    func glyphSize(points: CGFloat, weight: Font.Weight = .regular, design: Font.Design = .default) -> some View {
         font(.system(size: points, weight: weight, design: design))
     }
 }

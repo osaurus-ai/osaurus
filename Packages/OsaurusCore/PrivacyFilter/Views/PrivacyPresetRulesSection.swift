@@ -83,7 +83,7 @@ struct PrivacyRegionsSection: View {
                 save()
             } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .glyphSize(12)
+                    .glyphSize(.caption)
                     .foregroundColor(theme.text.tertiary)
             }
             .buttonStyle(.plain)
@@ -120,7 +120,7 @@ struct PrivacyRegionsSection: View {
         } label: {
             HStack(spacing: theme.space.s4) {
                 Image(systemName: "plus")
-                    .glyphSize(10, weight: .semibold)
+                    .glyphSize(.micro, weight: .semibold)
                 Text("Add region…", bundle: .module)
                     .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
             }
@@ -230,7 +230,7 @@ private struct PrivacyRegionPicker: View {
             SearchField(text: $query, placeholder: "Search regions", fillsAvailableWidth: true)
 
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
+                LazyVStack(alignment: .leading, spacing: theme.space.s0) {
                     if let detected = buckets.detected {
                         header(L("Detected from your Mac"))
                         row(detected)
@@ -360,16 +360,14 @@ struct PrivacyPresetRulesSection: View {
         let joined = ListFormatter.localizedString(byJoining: names)
         return HStack(alignment: .center, spacing: theme.space.s8) {
             Image(systemName: "lightbulb.fill")
-                .glyphSize(12)
+                .glyphSize(.caption)
                 .foregroundColor(theme.text.link)
-            VStack(alignment: .leading, spacing: theme.space.s2) {
+            SettingsRowText(compact: true) {
                 Text("\(presets.count) recommended presets are off", bundle: .module)
                     .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
-                    .foregroundColor(theme.text.primary)
+            } description: {
                 Text("Osaurus turns these on for \(joined) and Global on a new install.", bundle: .module)
                     .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
-                    .foregroundColor(theme.text.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
             Button {
@@ -479,7 +477,7 @@ struct PrivacyPresetRulesSection: View {
                         .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
                         .foregroundColor(theme.text.secondary)
                     Image(systemName: otherRegionsExpanded ? "chevron.up" : "chevron.down")
-                        .glyphSize(11, weight: .semibold)
+                        .glyphSize(.footnote, weight: .semibold)
                         .foregroundColor(theme.text.tertiary)
                 }
                 .contentShape(Rectangle())
@@ -519,7 +517,7 @@ struct PrivacyPresetRulesSection: View {
                         .foregroundColor(theme.text.primary)
                 } else {
                     Image(systemName: "globe")
-                        .glyphSize(12)
+                        .glyphSize(.caption)
                         .foregroundColor(theme.text.secondary)
                     Text("Global", bundle: .module)
                         .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
@@ -548,7 +546,7 @@ struct PrivacyPresetRulesSection: View {
                         }
                     } label: {
                         Image(systemName: expanded ? "chevron.up" : "chevron.down")
-                            .glyphSize(11, weight: .semibold)
+                            .glyphSize(.footnote, weight: .semibold)
                             .foregroundColor(theme.text.tertiary)
                             .frame(width: 20, height: 20)
                             .contentShape(Rectangle())
@@ -594,21 +592,19 @@ struct PrivacyPresetRulesSection: View {
     private func presetRow(_ preset: Presets.Preset) -> some View {
         HStack(alignment: .top, spacing: theme.space.s12) {
             Image(systemName: preset.kind.symbolName)
-                .glyphSize(12)
+                .glyphSize(.caption)
                 .foregroundColor(theme.text.secondary)
                 .frame(width: 18)
                 .padding(.top, theme.space.s2)
-            VStack(alignment: .leading, spacing: theme.space.s4) {
+            SettingsRowText(compact: true) {
                 HStack(spacing: theme.space.s8) {
                     Text(verbatim: preset.localizedTitle)
                         .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
-                        .foregroundColor(theme.text.primary)
                     PrivacyCategoryBadge(category: preset.category)
                 }
+            } description: {
                 Text(verbatim: preset.localizedSummary)
                     .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
-                    .foregroundColor(theme.text.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: theme.space.s8) {
                     Text(verbatim: preset.sample)
                         .catalogTypography(.code, theme: theme, fallback: SettingsFont.monoSmall)

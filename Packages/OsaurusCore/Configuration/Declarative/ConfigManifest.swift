@@ -135,7 +135,7 @@ public enum ConfigManifest {
 
         ConfigSectionSpec(
             .harnessRuntimes,
-            comment: "external agent harnesses an agent can run on (Settings → Runtimes)",
+            comment: "external agent harnesses an agent can run on (Settings → Agent Runtimes)",
             value: .entityList(
                 [
                     ConfigKeySpec(
@@ -293,6 +293,10 @@ public enum ConfigManifest {
                         "model", .scalar(.string, example: "null", nullable: true),
                         comment: "same format as default_agent.model; omitted = the Orchestrator's model"),
                     ConfigKeySpec(
+                        "model_locked", .scalar(.boolean, example: "false"),
+                        comment: "true: chats always run on model, the chat picker is fixed,",
+                        moreComments: ["and a missing model fails instead of falling back"]),
+                    ConfigKeySpec(
                         "temperature", .scalar(.number, example: "null", nullable: true),
                         comment: "0..2"),
                     ConfigKeySpec(
@@ -376,8 +380,15 @@ public enum ConfigManifest {
                             ConfigKeySpec(
                                 "enabled", .scalarList(.string, example: ["get_current_time", "web_search"]),
                                 comment: "tool names; MCP/plugin tools go under mcp_servers / plugins"),
+                            ConfigKeySpec(
+                                "policies",
+                                .freeformMap(
+                                    .string, allowedValues: ["auto", "ask", "deny", "default"],
+                                    exampleKey: "file_write", exampleValue: "ask"),
+                                comment: "this agent's own policy per tool; default clears it;",
+                                moreComments: ["a global deny still wins (auto is HIGH RISK)"]),
                         ]),
-                        comment: "per-agent tool selection"),
+                        comment: "per-agent tool selection and policies"),
                     ConfigKeySpec(
                         "mcp_servers",
                         .mapping([
@@ -468,6 +479,14 @@ public enum ConfigManifest {
                         ]),
                         comment: "a teammate / remote caller hits an ask tool on this shared agent:",
                         moreComments: ["deny fails the call; ask_owner waits for your approval"]),
+                    ConfigKeySpec(
+                        "tool_approvals",
+                        .scalar(.string, example: "use_global", allowed: AgentToolApprovalMode.allCases.map(\.rawValue)),
+                        comment: "approval cards for this agent's ask tools: use_global follows",
+                        moreComments: [
+                            "Auto-Allow All Tool Calls; ask always shows them; never_ask skips them",
+                            "(HIGH RISK; deny, send/delete, config changes, delegation still ask)",
+                        ]),
                 ],
                 requiredKey: "name")),
 

@@ -34,18 +34,18 @@ struct ComputerUseDiagnosticsPanel: View {
 
     var body: some View {
         DisclosureGroup(isExpanded: $isExpanded) {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: theme.space.s16) {
                 permissionDoctorSection
                 Divider().background(theme.border.default)
                 gateInspectorSection
             }
             .padding(.top, theme.space.s12)
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: "wrench.and.screwdriver")
-                    .glyphSize(14, weight: .medium)
+                    .glyphSize(.body, weight: .medium)
                     .foregroundColor(theme.text.link)
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text(L("Diagnostics"))
                         .font(SettingsFont.sectionTitle)
                         .foregroundColor(theme.text.primary)
@@ -71,20 +71,20 @@ struct ComputerUseDiagnosticsPanel: View {
     // MARK: - Permission Doctor
 
     private var permissionDoctorSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             sectionTitle(L("Permission Doctor"))
             helperText(
                 L("Read-only snapshot of the cached permission and consent state Computer Use already uses.")
             )
 
-            VStack(spacing: 8) {
+            VStack(spacing: theme.space.s8) {
                 ForEach(doctorSnapshot.rows) { row in
                     diagnosticRow(row)
                 }
             }
 
             if !doctorSnapshot.agentAvailability.rows.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: theme.space.s6) {
                     Text(L("Agent availability"))
                         .font(SettingsFont.smallLabel)
                         .foregroundColor(theme.text.secondary)
@@ -139,7 +139,7 @@ struct ComputerUseDiagnosticsPanel: View {
     // MARK: - Gate Inspector
 
     private var gateInspectorSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             sectionTitle(L("Autonomy Gate Inspector"))
             helperText(
                 L("Preview a proposed app action against the current policy without running it.")
@@ -156,16 +156,16 @@ struct ComputerUseDiagnosticsPanel: View {
     }
 
     private var inspectorInputs: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
+            HStack(alignment: .top, spacing: theme.space.s10) {
                 labeledTextField(L("App"), text: $previewApp, placeholder: L("Notes"))
                 verbPicker
             }
-            HStack(alignment: .top, spacing: 10) {
+            HStack(alignment: .top, spacing: theme.space.s10) {
                 labeledTextField(L("Target label"), text: $previewTargetLabel, placeholder: L("Save"))
                 labeledTextField(L("Target role"), text: $previewTargetRole, placeholder: L("AXButton"))
             }
-            HStack(alignment: .top, spacing: 10) {
+            HStack(alignment: .top, spacing: theme.space.s10) {
                 labeledTextField(L("Target value"), text: $previewTargetValue, placeholder: L("Optional"))
                 labeledTextField(
                     L("Role description"),
@@ -173,11 +173,11 @@ struct ComputerUseDiagnosticsPanel: View {
                     placeholder: L("Optional")
                 )
             }
-            HStack(alignment: .top, spacing: 10) {
+            HStack(alignment: .top, spacing: theme.space.s10) {
                 labeledTextField(L("Typed text"), text: $previewText, placeholder: L("For type/set"))
                 labeledTextField(L("Key"), text: $previewKey, placeholder: L("For press_key"))
             }
-            HStack(alignment: .top, spacing: 10) {
+            HStack(alignment: .top, spacing: theme.space.s10) {
                 labeledTextField(
                     L("Modifiers"),
                     text: $previewModifiers,
@@ -194,7 +194,7 @@ struct ComputerUseDiagnosticsPanel: View {
     }
 
     private var verbPicker: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             fieldLabel(L("Verb"))
             SettingsMenuPicker(selection: $previewVerb) {
                 ForEach(AgentVerb.allCases, id: \.self) { verb in
@@ -206,7 +206,7 @@ struct ComputerUseDiagnosticsPanel: View {
     }
 
     private var ceilingPicker: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             fieldLabel(L("Preview ceiling"))
             SettingsMenuPicker(selection: $previewCeilingPreset) {
                 Text(L("No ceiling")).tag(AutonomyPreset?.none)
@@ -220,7 +220,7 @@ struct ComputerUseDiagnosticsPanel: View {
     }
 
     private func inspectorResults(_ inspection: ComputerUseGateInspection) -> some View {
-        VStack(spacing: 8) {
+        VStack(spacing: theme.space.s8) {
             resultRow(
                 title: L("Effect class"),
                 value: inspection.effect.displayLabel,
@@ -370,7 +370,7 @@ struct ComputerUseDiagnosticsPanel: View {
         text: Binding<String>,
         placeholder: String
     ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             fieldLabel(label)
             SettingsTextField(placeholder: placeholder, text: text)
         }

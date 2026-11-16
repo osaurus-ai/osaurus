@@ -3,29 +3,34 @@
   <channel>
     <title>Osaurus</title>
         <item>
-            <title>1.0.1</title>
-            <pubDate>Wed, 11 Nov 2026 05:56:50 +0000</pubDate>
-            <sparkle:version>1.0.1</sparkle:version>
-            <sparkle:shortVersionString>1.0.1</sparkle:shortVersionString>
+            <title>1.0.5</title>
+            <pubDate>Sun, 15 Nov 2026 10:48:51 +0000</pubDate>
+            <sparkle:version>1.0.5</sparkle:version>
+            <sparkle:shortVersionString>1.0.5</sparkle:shortVersionString>
             <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
             <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/1.0.1/Osaurus-1.0.1.dmg" length="121418335" type="application/octet-stream" sparkle:edSignature="cEvFJdCOGkcY8vBQEYGzyQ/m+aQGD1DF2YILd2viTpX/z4eKmCdYDgblhBElkJ1bjaZfkZtvS25gCoPP+mRNBQ=="/>
+            <enclosure url="https://github.com/osaurus-ai/osaurus/releases/download/1.0.5/Osaurus-1.0.5.dmg" length="121848194" type="application/octet-stream" sparkle:edSignature="TpotPq6D8q/OTkT8dNG/vf/F2+Ny0dYwm/MCDLbwhX9FQoAz121R9v7FTygdmbAD09SsxD0+MCts2IyCTDB6AQ=="/>
             <description sparkle:format="markdown"><![CDATA[
 ## What's Changed
-* Document the two release lanes and refuse tags on the other product's code by @tpae in https://github.com/osaurus-ai/osaurus/pull/3371
-* Delegated agents inherit the Orchestrator's working folder by @tpae in https://github.com/osaurus-ai/osaurus/pull/3375
-* fix: queued imports wait for the local model scan before resolving agent models by @tpae in https://github.com/osaurus-ai/osaurus/pull/3376
-* Fix workflows stuck on "Changed outside Osaurus" by @tpae in https://github.com/osaurus-ai/osaurus/pull/3377
-* CI: lint on Linux and skip untouched optional macOS lanes on PRs by @tpae in https://github.com/osaurus-ai/osaurus/pull/3379
-* Rewrite the README for 1.0 and drop custom-theme leftovers from the docs by @tpae in https://github.com/osaurus-ai/osaurus/pull/3380
-* Fix subagent tool-call crash in Release builds (APPLE-MACOS-3R9) by @tpae in https://github.com/osaurus-ai/osaurus/pull/3381
-* Keep chat times stable on selection; one blank New Chat per window by @tpae in https://github.com/osaurus-ai/osaurus/pull/3382
-* Center control labels, fix onboarding contrast, and use stock teammate avatars by @tpae in https://github.com/osaurus-ai/osaurus/pull/3383
-* Analytics coverage for Osaurus 1.0 by @tpae in https://github.com/osaurus-ai/osaurus/pull/3378
-* Fix light-mode contrast on onboarding setup and the selected rail tab by @tpae in https://github.com/osaurus-ai/osaurus/pull/3384
+* Memoize tool canonical hash payloads to avoid preview recomputation app hangs by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3322
+* add /api/tags to /api/show end-to-end test for external models by @htjworld in https://github.com/osaurus-ai/osaurus/pull/3071
+* Stop the System Prompt editor jittering with legacy scroll bars by @tpae in https://github.com/osaurus-ai/osaurus/pull/3427
+* fix(chat): parse `$…$` spans according to pandoc's tex_math_dollars rules by @tomnnnn in https://github.com/osaurus-ai/osaurus/pull/3300
+* docs: fix dead Apple Containerization documentation links in README and SANDBOX by @sxh313 in https://github.com/osaurus-ai/osaurus/pull/2834
+* docs: fix six relative links that resolve to files that do not exist by @tonydzi in https://github.com/osaurus-ai/osaurus/pull/2669
+* Cut main-thread and per-call overhead in chat, sync, file history, tool preflight and workflows by @tpae in https://github.com/osaurus-ai/osaurus/pull/3431
+* Wire the usage popover to real credits and ping on wallet changes by @tpae in https://github.com/osaurus-ai/osaurus/pull/3432
+* Avoid main-thread hangs by size-capping and lazily indexing known files for edit path inference by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3430
+* Raptor 0.7 tool reliability: prompt/tool fixes, harness-owned session state, evals (PARTIAL) by @tpae in https://github.com/osaurus-ai/osaurus/pull/3433
+* Per-agent tool approvals: Never Ask, per-tool policies, and an audit marker by @tpae in https://github.com/osaurus-ai/osaurus/pull/3434
+* Cap file-read text before newline split and memoize known file contents by @sentry[bot] in https://github.com/osaurus-ai/osaurus/pull/3429
 
+## New Contributors
+* @tomnnnn made their first contribution in https://github.com/osaurus-ai/osaurus/pull/3300
+* @sxh313 made their first contribution in https://github.com/osaurus-ai/osaurus/pull/2834
+* @tonydzi made their first contribution in https://github.com/osaurus-ai/osaurus/pull/2669
 
-**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/1.0.0...1.0.1
+**Full Changelog**: https://github.com/osaurus-ai/osaurus/compare/1.0.4...1.0.5
 ]]></description>
             <sparkle:channel>beta</sparkle:channel>
             <sparkle:minimumAutoupdateVersion>1.0.0</sparkle:minimumAutoupdateVersion>

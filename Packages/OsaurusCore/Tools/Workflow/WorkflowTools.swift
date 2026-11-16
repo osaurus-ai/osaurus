@@ -328,13 +328,15 @@ enum WorkflowToolCall {
             var parked = payload
             parked["message"] =
                 waitingOn == .owner
-                ? "\(workflow) is waiting for this agent's owner to fill in a form on their Mac, and this call "
-                    + "cannot wait for it. Tell the person you are talking to that the owner has to answer it; "
-                    + "the run finishes on its own once they do."
+                ? "\(workflow) is waiting for this agent's owner to answer it on their Mac (a form, an approval, "
+                    + "or a permission request), and this call cannot wait for it. Tell the person you are talking "
+                    + "to that the owner has to answer it; the run finishes on its own once they do."
                 : resumes
-                ? "\(workflow) is waiting for the user to fill in a form. This task resumes with the result when the run ends."
-                : "\(workflow) is waiting for the user to fill in a form in Osaurus, and this call cannot wait for it. "
-                    + "The run finishes on its own once the form is answered; tell the user it is waiting for them. "
+                ? "\(workflow) is waiting for the user to answer it in Osaurus (a form, an approval, or a permission "
+                    + "request). This task resumes with the result when the run ends."
+                : "\(workflow) is waiting for the user to answer it in Osaurus (a form, an approval, or a permission "
+                    + "request), and this call cannot wait for it. The run finishes on its own once they answer; "
+                    + "tell the user it is waiting for them. "
                     + "GET /workflows/runs/\(result.runID?.uuidString ?? "{run_id}") returns the result when it ends."
             return ToolEnvelope.success(tool: tool, result: parked)
         case .needsSetup:

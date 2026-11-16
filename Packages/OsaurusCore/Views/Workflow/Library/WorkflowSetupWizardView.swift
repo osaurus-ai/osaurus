@@ -206,9 +206,9 @@ struct WorkflowSetupWizardView: View {
     private var isLast: Bool { currentIndex == steps.count - 1 }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             header
-            HStack(spacing: 0) {
+            HStack(spacing: theme.space.s0) {
                 SetupStepRail(steps: steps, current: $current, glowing: glowingStep, title: \.title) { step in
                     guard let report, step != .review, step != .answers else { return .none }
                     let remaining = step.items(in: report)
@@ -487,7 +487,7 @@ struct WorkflowSetupWizardView: View {
     @ViewBuilder
     private func stepContent(_ working: WorkflowSetupSubject, report: SetupReport) -> some View {
         let items = current.items(in: report)
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: theme.space.s16) {
             SettingsDetailHeader(icon: current.icon, title: current.title)
             switch current {
             case .models:
@@ -572,7 +572,7 @@ struct WorkflowModelsStep: View {
 
     var body: some View {
         let slots = template.requirements.models.filter { onlySlots?.contains($0.slot) ?? true }
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: theme.space.s16) {
             if onLeave != nil { Self.explainer.textStyle(.caption).foregroundColor(theme.text.secondary) }
             ForEach(slots) { slot in slotCard(slot) }
             if let onLeave { Self.actions(onLeave) }
@@ -752,7 +752,7 @@ struct WorkflowSecretsStep: View {
     @State private var sessionNames: [String: String] = [:]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             if items.isEmpty {
                 StepDoneBanner(text: L("Every secret needed here is in the Keychain."))
             }
@@ -800,7 +800,7 @@ struct WorkflowSecretsStep: View {
     private func connectionControls(_ secret: SecretRequirement, missing: Bool) -> some View {
         let candidates = connections.candidates(for: secret).filter { $0.id != boundConnection(secret.key)?.id }
         if let bound = boundConnection(secret.key) {
-            HStack(spacing: 6) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: "link")
                 Text(L("Uses the session “\(bound.name)”"))
                 if bound.needsSignIn() {
@@ -902,7 +902,7 @@ struct WorkflowSecretsStep: View {
             }
             HStack(spacing: theme.space.s8) {
                 if waiting {
-                    ProgressView().controlSize(.small)
+                    SettingsSpinner()
                     Text("Waiting for the browser…", bundle: .module)
                         .font(SettingsFont.rowDescription)
                         .foregroundColor(theme.text.secondary)
@@ -1001,7 +1001,7 @@ struct WorkflowSecretsStep: View {
         // A plain key can wait: the workflow installs, and Keys lists it as missing.
         let canWait = missing && item?.isMissingKey == true && item?.isBlocking == false
         let others = missing ? reusable(secret.key) : []
-        return VStack(alignment: .leading, spacing: 6) {
+        return VStack(alignment: .leading, spacing: theme.space.s6) {
             HStack {
                 Text(secret.label).font(SettingsFont.compactLabel).foregroundColor(theme.text.primary)
                 Text(secret.key).font(SettingsFont.monoSmall).foregroundColor(theme.text.tertiary)
@@ -1074,7 +1074,7 @@ struct WorkflowSecretsStep: View {
     /// The field that takes a pasted value, with where to keep it.
     @ViewBuilder
     private func pasteControls(_ secret: SecretRequirement, missing: Bool, account: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             HStack {
                 SettingsTextField(
                     placeholder: secret.oauth2 != nil ? L("Token") : missing ? L("Value") : L("Replace value"),
@@ -1110,7 +1110,7 @@ struct WorkflowSecretsStep: View {
                 .disabled((values[secret.key] ?? "").isEmpty)
             }
             if !(values[secret.key] ?? "").isEmpty {
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     Toggle(isOn: Binding(
                         get: { keepAsConnection.contains(secret.key) },
                         set: { on in
@@ -1169,7 +1169,7 @@ struct WorkflowAgentsStep: View {
     @ObservedObject private var rosters = WorkspaceRosterStore.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             if items.isEmpty {
                 StepDoneBanner(text: L("Every agent this workflow asks is reachable from this Mac."))
             }
@@ -1192,10 +1192,10 @@ struct WorkflowAgentsStep: View {
     private func row(_ req: AgentRequirement) -> some View {
         let bound = bindings.agents[req.id]
         let issue = items.first { $0.value == req.id }
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+        return VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: req.isShared ? "person.2" : "person.crop.circle")
-                    .glyphSize(12).foregroundColor(theme.text.tertiary)
+                    .glyphSize(.caption).foregroundColor(theme.text.tertiary)
                 Text(req.name).font(SettingsFont.compactLabel).foregroundColor(theme.text.primary)
                 if req.isShared { StatusChip(L("Shared"), tone: .neutral) }
                 Spacer()
@@ -1203,7 +1203,7 @@ struct WorkflowAgentsStep: View {
                     .font(SettingsFont.chip)
                     .foregroundColor(issue == nil ? theme.status.success.foreground : theme.status.warning.foreground)
             }
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 Text(verbatim: bound.map(label(forBinding:)) ?? L("Not chosen"))
                     .font(SettingsFont.monoSmall)
                     .foregroundColor(bound == nil ? theme.text.tertiary : theme.text.secondary)
@@ -1287,7 +1287,7 @@ struct WorkflowFoldersStep: View {
     let onChoose: (String, String) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             if items.isEmpty {
                 StepDoneBanner(text: L("Every folder this workflow uses is chosen."))
             }
@@ -1305,9 +1305,9 @@ struct WorkflowFoldersStep: View {
     private func row(_ folder: FolderRequirement) -> some View {
         let bound = bindings.folders[folder.key]
         let issue = items.first { $0.value == folder.key }
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Image(systemName: "folder").glyphSize(12).foregroundColor(theme.text.tertiary)
+        return VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(spacing: theme.space.s8) {
+                Image(systemName: "folder").glyphSize(.caption).foregroundColor(theme.text.tertiary)
                 Text(folder.label).font(SettingsFont.compactLabel).foregroundColor(theme.text.primary)
                 StatusChip(folder.access.displayName, tone: .neutral)
                 Spacer()
@@ -1319,7 +1319,7 @@ struct WorkflowFoldersStep: View {
                 Text(help).font(SettingsFont.rowDescription).foregroundColor(theme.text.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 Text(verbatim: bound ?? folder.hint.map { L("Suggested: \($0.path)") } ?? L("No folder chosen"))
                     .font(SettingsFont.monoSmall)
                     .foregroundColor(bound == nil ? theme.text.tertiary : theme.text.secondary)
@@ -1385,7 +1385,7 @@ struct WorkflowToolsStep: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             if items.isEmpty {
                 StepDoneBanner(text: L("Every server, plugin, and tool needed here is available."))
             }
@@ -1397,7 +1397,7 @@ struct WorkflowToolsStep: View {
                 }
             }
             if !otherItems.isEmpty { StepIssueList(items: otherItems) }
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 StepActionButton(title: "Open MCP Servers", icon: "server.rack", primary: template == nil && cardsAbove.isEmpty) {
                     onLeave(.tools)
                 }
@@ -1448,7 +1448,7 @@ struct WorkflowDependenciesStep: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             if items.isEmpty {
                 StepDoneBanner(text: L("Every dependency is installed in this workflow's sandbox."))
             }
@@ -1463,7 +1463,7 @@ struct WorkflowDependenciesStep: View {
             let otherItems = items.filter { item in !dependencies.contains { $0.id == item.value } }
             if !otherItems.isEmpty { StepIssueList(items: otherItems) }
             if !log.isEmpty { logView }
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 if needsInstall, unsupported.isEmpty {
                     StepActionButton(
                         title: installing ? "Installing…" : (sandboxReady ? "Install" : "Install (starts the sandbox)"),
@@ -1484,10 +1484,10 @@ struct WorkflowDependenciesStep: View {
     private func row(_ dependency: WorkflowDependency) -> some View {
         let status = WorkflowSandboxEnvironment.shared.status(of: dependency, environmentID: environmentID)
         let issue = items.first { $0.value == dependency.id }
-        return VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+        return VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: "shippingbox")
-                    .glyphSize(12)
+                    .glyphSize(.caption)
                     .foregroundColor(theme.text.tertiary)
                 Text(dependency.packages.joined(separator: ", "))
                     .font(SettingsFont.monoSmall)
@@ -1518,7 +1518,7 @@ struct WorkflowDependenciesStep: View {
     }
 
     private var logView: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
             ForEach(Array(log.suffix(12).enumerated()), id: \.offset) { _, line in
                 Text(line)
                     .font(SettingsFont.monoSmall)
@@ -1584,9 +1584,9 @@ struct WorkflowReviewStep: View {
     var body: some View {
         let reqs = subject.template.requirements
         let def = subject.template.workflow
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: theme.space.s16) {
             if subject.mode == .install || isUpdate {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: theme.space.s6) {
                     SettingsFieldLabel("Workflow Name")
                     SettingsTextField(placeholder: L("e.g., Client Intake"), text: $name, icon: "textformat")
                         .onChange(of: name) { _, newValue in onRename(newValue) }
@@ -1594,7 +1594,7 @@ struct WorkflowReviewStep: View {
                     // takes the new version's name here.
                     let pinned = subject.template.name.trimmingCharacters(in: .whitespacesAndNewlines)
                     if isUpdate, !pinned.isEmpty, pinned != name.trimmingCharacters(in: .whitespacesAndNewlines) {
-                        HStack(spacing: 6) {
+                        HStack(spacing: theme.space.s6) {
                             Text(
                                 verbatim: L(
                                     "Version \(subject.template.version) is named “\(pinned)”. Updating keeps the current name unless you change it."
@@ -1610,10 +1610,10 @@ struct WorkflowReviewStep: View {
                     }
                 }
             }
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: theme.space.s0) {
                 let rows = summaryRows(reqs, def)
                 ForEach(Array(rows.enumerated()), id: \.offset) { index, item in
-                    if index > 0 { Rectangle().fill(theme.border.subtle).frame(height: theme.stroke.default) }
+                    if index > 0 { ThemeHairlineDivider() }
                     row(item.icon, item.label, item.value)
                 }
             }
@@ -1634,7 +1634,7 @@ struct WorkflowReviewStep: View {
                 AgentSetupChecklistView(report: report)
             }
             if let examples = def?.examples, !examples.isEmpty, subject.installedID != nil || subject.mode == .install {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: theme.space.s6) {
                     SettingsFieldLabel("Run an Example")
                     SettingsMenuPicker(selection: $exampleToRun) {
                         Text("Don't run anything", bundle: .module).tag(String?.none)
@@ -1707,7 +1707,7 @@ struct WorkflowReviewStep: View {
 
     private func row(_ icon: String, _ label: String, _ value: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: theme.space.s8) {
-            Image(systemName: icon).glyphSize(11).foregroundColor(theme.text.tertiary).frame(width: theme.space.s16)
+            Image(systemName: icon).glyphSize(.footnote).foregroundColor(theme.text.tertiary).frame(width: theme.space.s16)
             Text(verbatim: label)
                 .textStyle(.bodySmall)
                 .foregroundColor(theme.text.secondary)

@@ -45,7 +45,7 @@ struct FileChangesPanel: View {
     var maxListHeight: CGFloat? = nil
 
     @Environment(\.theme) private var environmentTheme
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(38, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(38) }
 
     enum Tab: Hashable { case timeline, files }
 
@@ -82,7 +82,7 @@ struct FileChangesPanel: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             titleRow
             if isEmpty {
                 SidebarEmptyState(
@@ -96,9 +96,7 @@ struct FileChangesPanel: View {
                 Color.clear.frame(height: theme.space.s48)
             } else {
                 viewPicker
-                Rectangle()
-                    .fill(theme.border.subtle)
-                    .frame(height: theme.stroke.default)
+                ThemeHairlineDivider()
                 if hasActiveJob { activeJobBanner }
                 if let maxListHeight {
                     content.frame(height: min(max(listContentHeight, CGFloat(theme.space.s48)), maxListHeight))
@@ -136,7 +134,7 @@ struct FileChangesPanel: View {
     /// (the one action over the whole chat, so it stays out of the way).
     private var titleRow: some View {
         HStack(alignment: .center, spacing: theme.space.s8) {
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text("File Changes", bundle: .module)
                     .textStyle(.label, weight: 600)
                     .foregroundStyle(theme.text.primary)
@@ -161,7 +159,7 @@ struct FileChangesPanel: View {
                     .disabled(isBusy || hasActiveJob)
                 } label: {
                     Image(systemName: "ellipsis")
-                        .glyphSize(12, weight: .semibold)
+                        .glyphSize(.caption, weight: .semibold)
                         .foregroundStyle(theme.text.secondary)
                         .frame(width: 24, height: 24)
                         .contentShape(Rectangle())
@@ -181,11 +179,11 @@ struct FileChangesPanel: View {
 
     /// Timeline | Files on one quiet track, each with its count.
     private var viewPicker: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: theme.space.s2) {
             tabButton(.timeline, title: L("Timeline"), count: changeCount)
             tabButton(.files, title: L("Files"), count: net.count)
         }
-        .padding(2)
+        .padding(theme.space.s2)
         .background(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous).fill(theme.surface.subtle))
         .padding(.horizontal, theme.space.s12)
         .padding(.bottom, theme.space.s12)
@@ -208,7 +206,7 @@ struct FileChangesPanel: View {
             }
             .foregroundStyle(selected ? theme.text.primary : theme.text.secondary)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 5)
+            .padding(.vertical, theme.space.s4)
             .background {
                 if selected {
                     RoundedRectangle(cornerRadius: theme.radius.small, style: .continuous)
@@ -235,15 +233,15 @@ struct FileChangesPanel: View {
     }
 
     private var activeJobBanner: some View {
-        HStack(spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.fileChangesPanel.activeJobBanner.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", 8, theme))) {
-            ProgressView().controlSize(.small)
+        HStack(spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.fileChangesPanel.activeJobBanner.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s8, theme))) {
+            SettingsSpinner()
             Text("The chat is still running a command — revert is paused until it finishes.", bundle: .module)
                 .componentInspectionText(38, role: .body, fallback: .footnote, theme: theme)
                 .foregroundColor(theme.text.secondary)
             Spacer()
         }.catalogLayoutTarget("component.library.38.elements.layout.fileChangesPanel.activeJobBanner.horizontalGap")
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.fileChangesPanel.activeJobBanner.paddingX", inheriting: NativeComponentInspectionStyle.metric(38, "padding", 12, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileChangesPanel.activeJobBanner.paddingX")
-        .padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.fileChangesPanel.activeJobBanner.paddingY", inheriting: NativeComponentInspectionStyle.metric(38, "padding", 8, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileChangesPanel.activeJobBanner.paddingY")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.fileChangesPanel.activeJobBanner.paddingX", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s12, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileChangesPanel.activeJobBanner.paddingX")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.fileChangesPanel.activeJobBanner.paddingY", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileChangesPanel.activeJobBanner.paddingY")
         .background(theme.surface.hover)
     }
 
@@ -252,13 +250,13 @@ struct FileChangesPanel: View {
     private var content: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
+                LazyVStack(alignment: .leading, spacing: theme.space.s0) {
                     switch tab {
                     case .timeline: timeline
                     case .files: files
                     }
                 }
-                .padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.fileChangesPanel.content.paddingY", inheriting: NativeComponentInspectionStyle.metric(38, "padding", 6, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileChangesPanel.content.paddingY")
+                .padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.fileChangesPanel.content.paddingY", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s6, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileChangesPanel.content.paddingY")
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { listContentHeight = $0 }
             }
             .onAppear { scrollToFocus(proxy) }
@@ -293,7 +291,7 @@ struct FileChangesPanel: View {
     }
 
     private func turnHeader(_ set: FileChangeSet) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
             Text(set.createdAt.formatted(.dateTime.month(.abbreviated).day().hour().minute()))
                 .componentInspectionText(38, role: .caption, fallback: .micro, weight: 600, theme: theme)
                 .foregroundColor(theme.text.tertiary)
@@ -306,9 +304,9 @@ struct FileChangesPanel: View {
                     .help(Text(prompt))
             }
         }
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.fileChangesPanel.turnHeader.paddingX", inheriting: NativeComponentInspectionStyle.metric(38, "padding", 16, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileChangesPanel.turnHeader.paddingX")
-        .padding(.top, 12)
-        .padding(.bottom, 4)
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.fileChangesPanel.turnHeader.paddingX", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s16, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileChangesPanel.turnHeader.paddingX")
+        .padding(.top, theme.space.s12)
+        .padding(.bottom, theme.space.s4)
     }
 
     @ViewBuilder
@@ -317,7 +315,7 @@ struct FileChangesPanel: View {
             Text("Every file is back to how it was before this chat.", bundle: .module)
                 .componentInspectionText(38, role: .caption, fallback: .caption, theme: theme)
                 .foregroundColor(theme.text.secondary)
-                .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.fileChangesPanel.files.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(38, "padding", 14, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.fileChangesPanel.files.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(38, "padding", 14, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileChangesPanel.files.padding.horizontal").catalogLayoutTarget("component.library.38.elements.layout.fileChangesPanel.files.padding.vertical")
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.fileChangesPanel.files.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s14, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.fileChangesPanel.files.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s14, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileChangesPanel.files.padding.horizontal").catalogLayoutTarget("component.library.38.elements.layout.fileChangesPanel.files.padding.vertical")
         } else {
             ForEach(net) { change in
                 NetFileRow(
@@ -332,11 +330,11 @@ struct FileChangesPanel: View {
     // MARK: - Toast
 
     private func toastView(_ toast: Toast) -> some View {
-        HStack(alignment: .top, spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.fileChangesPanel.toastView.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", 8, theme))) {
+        HStack(alignment: .top, spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.fileChangesPanel.toastView.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s8, theme))) {
             Image(systemName: toast.isWarning ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
-                .glyphSize(12)
+                .glyphSize(.caption)
                 .foregroundColor(toast.isWarning ? theme.status.warning.foreground : theme.status.success.foreground)
-                .padding(.top, 1)
+                .padding(.top, theme.space.s2)
             Text(toast.message)
                 .componentInspectionText(38, role: .body, fallback: .footnote, theme: theme)
                 .foregroundColor(theme.text.primary)
@@ -345,27 +343,24 @@ struct FileChangesPanel: View {
                 .textSelection(.enabled)
             Spacer(minLength: 6)
             if let undo = toast.undoSetId {
-                Button {
+                SettingsButton(.secondary, "Undo", size: .compact) {
                     Task { await requestRevert(.set(undo)) }
-                } label: {
-                    Text("Undo", bundle: .module).componentInspectionText(38, role: .label, fallback: .footnote, weight: 600, theme: theme)
                 }
-                .buttonStyle(PanelPillButtonStyle(tint: theme.text.primary))
                 .disabled(isBusy)
                 .help(Text("Put the reverted files back the way they were", bundle: .module))
             }
             Button {
                 self.toast = nil
             } label: {
-                Image(systemName: "xmark").glyphSize(9, weight: .semibold)
+                Image(systemName: "xmark").glyphSize(.tiny, weight: .semibold)
             }
             .buttonStyle(.plain)
             .foregroundColor(theme.text.tertiary)
             .accessibilityLabel(Text("Dismiss", bundle: .module))
         }.catalogLayoutTarget("component.library.38.elements.layout.fileChangesPanel.toastView.horizontalGap")
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.fileChangesPanel.toastView.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(38, "padding", 10, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.fileChangesPanel.toastView.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(38, "padding", 10, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileChangesPanel.toastView.padding.horizontal").catalogLayoutTarget("component.library.38.elements.layout.fileChangesPanel.toastView.padding.vertical")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.fileChangesPanel.toastView.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s10, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.fileChangesPanel.toastView.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileChangesPanel.toastView.padding.horizontal").catalogLayoutTarget("component.library.38.elements.layout.fileChangesPanel.toastView.padding.vertical")
         .background(theme.surface.hover)
-        .overlay(alignment: .top) { Divider().opacity(0.5) }
+        .overlay(alignment: .top) { ThemeHairlineDivider() }
         .accessibilityElement(children: .contain)
         .task(id: toast.id) {
             // Warnings stay until dismissed so nothing is missed.
@@ -528,17 +523,17 @@ private struct RevertOutcomeList: View {
     let pending: FileChangesPanel.PendingRevert
 
     @Environment(\.theme) private var environmentTheme
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(38, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(38) }
 
     private static let maxRows = 12
 
     var body: some View {
         let items = pending.preview.items
-        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.revertOutcomeList.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", 4, theme))) {
+        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.revertOutcomeList.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s4, theme))) {
             ForEach(items.prefix(Self.maxRows)) { item in
-                HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.revertOutcomeList.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", 6, theme))) {
+                HStack(alignment: .firstTextBaseline, spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.revertOutcomeList.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s6, theme))) {
                     Image(systemName: icon(item))
-                        .glyphSize(10, weight: .semibold)
+                        .glyphSize(.micro, weight: .semibold)
                         .foregroundColor(color(item))
                         .frame(width: 12)
                     Text(item.key.shortDisplayPath)
@@ -561,7 +556,7 @@ private struct RevertOutcomeList: View {
                     .foregroundColor(theme.text.tertiary)
             }
         }.catalogLayoutTarget("component.library.38.elements.layout.revertOutcomeList.body.verticalGap")
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.revertOutcomeList.body.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(38, "padding", 10, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.revertOutcomeList.body.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(38, "padding", 10, theme))).catalogLayoutTarget("component.library.38.elements.layout.revertOutcomeList.body.padding.horizontal").catalogLayoutTarget("component.library.38.elements.layout.revertOutcomeList.body.padding.vertical")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.revertOutcomeList.body.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s10, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.revertOutcomeList.body.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.38.elements.layout.revertOutcomeList.body.padding.horizontal").catalogLayoutTarget("component.library.38.elements.layout.revertOutcomeList.body.padding.vertical")
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(RoundedRectangle(cornerRadius: theme.radius.medium).fill(theme.surface.raised))
     }
@@ -594,18 +589,6 @@ private struct RevertOutcomeList: View {
     }
 }
 
-/// Inherit deliberate legacy spacing edits while giving each row its own default rhythm.
-private func fileHistorySpacing(_ property: String, _ fallback: CGFloat, theme: any ThemeProtocol) -> CGFloat {
-    #if OSAURUS_DESIGN_SYSTEM
-    let key = NativeComponentInspectionStyle.key(38, property)
-    if let snapshot = DesignThemeOverlay.shared.current(),
-       snapshot.reassignedProperties.contains(CatalogElementAssignments.routed(key, mappings: snapshot.document.mappings)) {
-        return NativeComponentInspectionStyle.metric(38, property, fallback, theme)
-    }
-    #endif
-    return fallback
-}
-
 // MARK: - Change set row
 
 private struct ChangeSetRow: View {
@@ -620,21 +603,21 @@ private struct ChangeSetRow: View {
 
     @State private var isHovered = false
     @Environment(\.theme) private var environmentTheme
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(38, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(38) }
 
     private var isRevert: Bool { changeSet.origin == .userRevert }
     private var canAct: Bool { changeSet.isRevertible && changeSet.status != .reverted }
     private var canRollBack: Bool { !isLatest && !isRevert && changeSet.status != .untracked }
     private var headerInset: CGFloat {
-        theme.catalogLayoutMetric("component.library.38.elements.layout.changeSetRow.header.paddingX", inheriting: fileHistorySpacing("padding", theme.space.s12, theme: theme))
+        theme.catalogLayoutMetric("component.library.38.elements.layout.changeSetRow.header.paddingX", inheriting: theme.space.s12)
     }
     private var headerItemGap: CGFloat {
-        theme.catalogLayoutMetric("component.library.38.elements.layout.changeSetRow.header.horizontalGap2", inheriting: fileHistorySpacing("gap", theme.space.s8, theme: theme))
+        theme.catalogLayoutMetric("component.library.38.elements.layout.changeSetRow.header.horizontalGap2", inheriting: theme.space.s8)
     }
     private var detailsInset: CGFloat { headerInset + 26 + 2 * headerItemGap }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             header
             if isExpanded {
                 VStack(alignment: .leading, spacing: theme.space.s4) {
@@ -642,17 +625,15 @@ private struct ChangeSetRow: View {
                         Text(note)
                             .componentInspectionText(38, role: .body, fallback: .footnote, theme: theme)
                             .foregroundColor(theme.status.warning.foreground)
-                            .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.changeSetRow.body.paddingX", inheriting: 0)).catalogLayoutTarget("component.library.38.elements.layout.changeSetRow.body.paddingX")
+                            .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.changeSetRow.body.paddingX", inheriting: theme.space.s0)).catalogLayoutTarget("component.library.38.elements.layout.changeSetRow.body.paddingX")
                     }
                     ForEach(changeSet.entries.sorted { $0.ordinal < $1.ordinal }) { entry in
                         EntryRow(entry: entry)
                     }
                     if canRollBack {
-                        Button(action: onRollback) {
-                            Label(L("Roll Back to Before This"), systemImage: "clock.arrow.circlepath")
-                                .componentInspectionText(38, role: .body, fallback: .footnote, weight: 500, theme: theme)
-                        }
-                        .buttonStyle(PanelPillButtonStyle(tint: theme.text.secondary))
+                        SettingsButton(
+                            .secondary, "Roll Back to Before This", icon: "clock.arrow.circlepath", size: .compact,
+                            action: onRollback)
                         .disabled(actionsDisabled)
                         .help(Text("Undo this change and every change made after it", bundle: .module))
                         .padding(.top, theme.space.s4)
@@ -667,25 +648,30 @@ private struct ChangeSetRow: View {
             RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
                 .fill(isFocused ? theme.surface.selected : isHovered ? theme.surface.hover : .clear)
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                .strokeBorder(isFocused ? theme.selectionBorder : .clear, lineWidth: theme.selectionStroke)
+                .allowsHitTesting(false)
+        )
         .padding(.horizontal, theme.space.s6)
         .onHover { isHovered = $0 }
     }
 
     private var header: some View {
-        HStack(spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.changeSetRow.header.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", 8, theme))) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.changeSetRow.header.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s8, theme))) {
             Button(action: onToggle) {
                 HStack(spacing: headerItemGap) {
                     Image(systemName: "chevron.right")
-                        .glyphSize(9, weight: .semibold)
+                        .glyphSize(.tiny, weight: .semibold)
                         .foregroundColor(theme.text.tertiary)
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                         .frame(width: 10)
                     Image(systemName: icon)
-                        .glyphSize(11, weight: .medium)
+                        .glyphSize(.footnote, weight: .medium)
                         .foregroundColor(isRevert ? theme.text.primary : theme.text.secondary)
                         .frame(width: 16)
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.changeSetRow.header.horizontalGap3", inheriting: NativeComponentInspectionStyle.metric(38, "gap", 6, theme))) {
+                    VStack(alignment: .leading, spacing: theme.space.s2) {
+                        HStack(spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.changeSetRow.header.horizontalGap3", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s6, theme))) {
                             Text(changeSet.displayTitle)
                                 .componentInspectionText(38, role: .bodyEmphasis, fallback: .caption, weight: 600, theme: theme)
                                 .foregroundColor(
@@ -709,11 +695,7 @@ private struct ChangeSetRow: View {
             .accessibilityLabel(Text(accessibilityTitle))
             .accessibilityHint(Text(isExpanded ? L("Collapse") : L("Expand to see files and differences")))
             if canAct {
-                Button(action: onRevert) {
-                    Text(isRevert ? "Undo" : "Revert", bundle: .module)
-                        .componentInspectionText(38, role: .body, fallback: .footnote, weight: 500, theme: theme)
-                }
-                .buttonStyle(PanelPillButtonStyle(tint: theme.text.primary))
+                SettingsButton(.secondary, isRevert ? "Undo" : "Revert", size: .compact, action: onRevert)
                 .disabled(actionsDisabled)
                 .opacity(isHovered || isFocused ? 1 : 0)
                 .help(Text(isRevert ? L("Put this change back") : L("Restore these files to how they were before this change")))
@@ -721,7 +703,7 @@ private struct ChangeSetRow: View {
             }
         }.catalogLayoutTarget("component.library.38.elements.layout.changeSetRow.header.horizontalGap")
         .padding(.horizontal, headerInset).catalogLayoutTarget("component.library.38.elements.layout.changeSetRow.header.paddingX")
-        .padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.changeSetRow.header.paddingY", inheriting: fileHistorySpacing("padding", theme.space.s8, theme: theme))).catalogLayoutTarget("component.library.38.elements.layout.changeSetRow.header.paddingY")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.changeSetRow.header.paddingY", inheriting: theme.space.s8)).catalogLayoutTarget("component.library.38.elements.layout.changeSetRow.header.paddingY")
         .assignedContextMenu {
             Button(action: onRevert) {
                 Label(isRevert ? L("Undo This Revert") : L("Revert This Change"), systemImage: "arrow.uturn.backward")
@@ -766,11 +748,11 @@ private struct ChangeSetRow: View {
     private var statusPill: some View {
         switch changeSet.status {
         case .reverted where !isRevert:
-            PanelStatusPill(text: L("Reverted"), color: theme.text.secondary)
+            StatusChip(L("Reverted"))
         case .partiallyReverted:
-            PanelStatusPill(text: L("Partly reverted"), color: theme.status.warning.foreground)
+            StatusChip(L("Partly reverted"), tone: .warning)
         case .untracked:
-            PanelStatusPill(text: L("Not tracked"), color: theme.status.warning.foreground)
+            StatusChip(L("Not tracked"), tone: .warning)
         default:
             EmptyView()
         }
@@ -791,16 +773,16 @@ private struct EntryRow: View {
 
     @State private var isExpanded = false
     @Environment(\.theme) private var environmentTheme
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(38, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(38) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.entryRow.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", 4, theme))) {
+        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.entryRow.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s4, theme))) {
             Button {
                 if entry.entryType != .directory { isExpanded.toggle() }
             } label: {
-                HStack(spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.entryRow.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", 6, theme))) {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.entryRow.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s6, theme))) {
                     Image(systemName: entry.entryType == .directory ? "folder" : kindIcon)
-                        .glyphSize(10, weight: .semibold)
+                        .glyphSize(.micro, weight: .semibold)
                         .foregroundColor(kindColor(entry.kind, theme))
                         .frame(width: 14)
                     Text(entry.pathKey.shortDisplayPath)
@@ -816,9 +798,9 @@ private struct EntryRow: View {
                     }
                     Spacer(minLength: 4)
                     if entry.state == .reverted {
-                        PanelStatusPill(text: L("Reverted"), color: theme.text.secondary)
+                        StatusChip(L("Reverted"))
                     } else if entry.state == .conflicted {
-                        PanelStatusPill(text: L("Edited since"), color: theme.status.warning.foreground)
+                        StatusChip(L("Edited since"), tone: .warning)
                     }
                 }.catalogLayoutTarget("component.library.38.elements.layout.entryRow.body.horizontalGap")
                 .contentShape(Rectangle())
@@ -861,28 +843,28 @@ private struct NetFileRow: View {
     @State private var isExpanded = false
     @State private var isHovered = false
     @Environment(\.theme) private var environmentTheme
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(38, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(38) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.netFileRow.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", 6, theme))) {
-            HStack(spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.netFileRow.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", 8, theme))) {
+        VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.netFileRow.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s6, theme))) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.netFileRow.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s8, theme))) {
                 Button {
                     if change.entryType != .directory { isExpanded.toggle() }
                 } label: {
-                    HStack(spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.netFileRow.body.horizontalGap2", inheriting: NativeComponentInspectionStyle.metric(38, "gap", 8, theme))) {
+                    HStack(spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.netFileRow.body.horizontalGap2", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s8, theme))) {
                         Image(systemName: "chevron.right")
-                            .glyphSize(9, weight: .semibold)
+                            .glyphSize(.tiny, weight: .semibold)
                             .foregroundColor(theme.text.tertiary)
                             .rotationEffect(.degrees(isExpanded ? 90 : 0))
                             .frame(width: 10)
                             .opacity(change.entryType == .directory ? 0 : 1)
                         Image(systemName: kindIcon)
-                            .glyphSize(9, weight: .bold)
+                            .glyphSize(.tiny, weight: .bold)
                             .foregroundColor(kindColor(change.kind, theme))
                             .frame(width: 18, height: 18)
-                            .background(Circle().fill(kindColor(change.kind, theme).opacity(0.14)))
+                            .background(Circle().fill(kindWash(change.kind, theme)))
                             .help(Text(kindLabel))
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .leading, spacing: theme.space.s2) {
                             Text(change.key.filename)
                                 .componentInspectionText(38, role: .bodyEmphasis, fallback: .caption, weight: 600, theme: theme)
                                 .foregroundColor(theme.text.primary)
@@ -904,7 +886,7 @@ private struct NetFileRow: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel(Text("\(kindLabel): \(change.key.shortDisplayPath)"))
                 .accessibilityHint(Text(isExpanded ? L("Collapse") : L("Shows what changed in this file")))
-                HStack(spacing: 0) {
+                HStack(spacing: theme.space.s0) {
                     if change.latest != nil {
                         SidebarHeaderIconButton(icon: "folder", help: "Reveal in Finder", size: 12) {
                             NSWorkspace.shared.activateFileViewerSelecting([change.key.hostURL])
@@ -932,11 +914,11 @@ private struct NetFileRow: View {
             }
             if isExpanded {
                 FileDiffPanelView(key: change.key, before: change.original, after: change.latest)
-                    .padding(.leading, 18)
+                    .padding(.leading, theme.space.s16)
             }
         }.catalogLayoutTarget("component.library.38.elements.layout.netFileRow.body.verticalGap")
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.netFileRow.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(38, "padding", 10, theme))).catalogLayoutTarget("component.library.38.elements.layout.netFileRow.body.paddingX")
-        .padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.netFileRow.body.paddingY", inheriting: fileHistorySpacing("padding", theme.space.s8, theme: theme))).catalogLayoutTarget("component.library.38.elements.layout.netFileRow.body.paddingY")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.netFileRow.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.38.elements.layout.netFileRow.body.paddingX")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.netFileRow.body.paddingY", inheriting: theme.space.s8)).catalogLayoutTarget("component.library.38.elements.layout.netFileRow.body.paddingY")
         .background(
             RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
                 .fill(isHovered ? theme.surface.hover : .clear)
@@ -980,28 +962,28 @@ struct FileDiffPanelView: View {
 
     @State private var content: FileDiffContent?
     @Environment(\.theme) private var environmentTheme
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(38, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(38) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             if let content {
                 if let caption = content.caption {
                     Text(caption)
                         .componentInspectionText(38, role: .caption, fallback: .micro, theme: theme)
                         .foregroundColor(theme.text.tertiary)
-                        .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(38, "padding", 10, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.body.paddingX")
-                        .padding(.top, 6)
+                        .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.body.paddingX")
+                        .padding(.top, theme.space.s6)
                 }
                 bodyView(content)
                 openBar(content)
             } else {
-                HStack(spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", 8, theme))) {
-                    ProgressView().controlSize(.small)
+                HStack(spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s8, theme))) {
+                    SettingsSpinner()
                     Text("Loading diff…", bundle: .module)
                         .componentInspectionText(38, role: .body, fallback: .footnote, theme: theme)
                         .foregroundColor(theme.text.tertiary)
                 }.catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.body.horizontalGap")
-                .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.body.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(38, "padding", 10, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.body.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(38, "padding", 10, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.body.padding.horizontal").catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.body.padding.vertical")
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.body.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s10, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.body.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.body.padding.horizontal").catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.body.padding.vertical")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1019,11 +1001,11 @@ struct FileDiffPanelView: View {
         case .text(let diff):
             DiffLinesView(diff: diff)
         case .image:
-            HStack(alignment: .top, spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.bodyView.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", 8, theme))) {
+            HStack(alignment: .top, spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.bodyView.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s8, theme))) {
                 DiffImageSide(url: content.beforeURL, label: L("Before"))
                 DiffImageSide(url: content.afterURL, label: L("After"))
             }.catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.bodyView.horizontalGap")
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.bodyView.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(38, "padding", 8, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.bodyView.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(38, "padding", 8, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.bodyView.padding.horizontal").catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.bodyView.padding.vertical")
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.bodyView.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s8, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.bodyView.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.bodyView.padding.horizontal").catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.bodyView.padding.vertical")
         case .binary:
             notice(L("Binary file · \(sizeText(content.beforeSize)) → \(sizeText(content.afterSize))"))
         case .directory:
@@ -1039,13 +1021,13 @@ struct FileDiffPanelView: View {
         Text(text)
             .componentInspectionText(38, role: .body, fallback: .footnote, theme: theme)
             .foregroundColor(theme.text.tertiary)
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.notice.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(38, "padding", 10, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.notice.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(38, "padding", 10, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.notice.padding.horizontal").catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.notice.padding.vertical")
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.notice.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s10, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.notice.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.notice.padding.horizontal").catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.notice.padding.vertical")
     }
 
     @ViewBuilder
     private func openBar(_ content: FileDiffContent) -> some View {
         if content.beforeURL != nil || content.afterURL != nil {
-            HStack(spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.openBar.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", 12, theme))) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.openBar.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s12, theme))) {
                 if let url = content.beforeURL {
                     openButton(L("Open before"), url)
                 }
@@ -1054,9 +1036,9 @@ struct FileDiffPanelView: View {
                 }
                 Spacer()
             }.catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.openBar.horizontalGap")
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.openBar.paddingX", inheriting: NativeComponentInspectionStyle.metric(38, "padding", 10, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.openBar.paddingX")
-            .padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.openBar.paddingY", inheriting: NativeComponentInspectionStyle.metric(38, "padding", 6, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.openBar.paddingY")
-            .overlay(alignment: .top) { Divider().opacity(0.5) }
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.openBar.paddingX", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.openBar.paddingX")
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.fileDiffPanelView.openBar.paddingY", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s6, theme))).catalogLayoutTarget("component.library.38.elements.layout.fileDiffPanelView.openBar.paddingY")
+            .overlay(alignment: .top) { ThemeHairlineDivider() }
         }
     }
 
@@ -1086,10 +1068,10 @@ private struct DiffImageSide: View {
     @State private var image: NSImage?
     @State private var failed = false
     @Environment(\.theme) private var environmentTheme
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(38, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(38) }
 
     var body: some View {
-        VStack(spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.diffImageSide.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", 4, theme))) {
+        VStack(spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.diffImageSide.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s4, theme))) {
             Text(label)
                 .componentInspectionText(38, role: .caption, fallback: .micro, weight: 600, theme: theme)
                 .foregroundColor(theme.text.tertiary)
@@ -1102,7 +1084,7 @@ private struct DiffImageSide: View {
             } else if url == nil || failed {
                 Text("—").foregroundColor(theme.text.tertiary).frame(height: 40)
             } else {
-                ProgressView().controlSize(.small).frame(height: 40)
+                SettingsSpinner().frame(height: 40)
             }
         }.catalogLayoutTarget("component.library.38.elements.layout.diffImageSide.body.verticalGap")
         .frame(maxWidth: .infinity)
@@ -1122,15 +1104,15 @@ struct DiffLinesView: View {
     let diff: FileDiff
 
     @Environment(\.theme) private var environmentTheme
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(38, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(38) }
 
     private static let maxRows = 400
 
     var body: some View {
         let highlighted = FileDiffEngine.wordHighlights(for: Array(diff.lines.prefix(Self.maxRows)))
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             if diff.addedCount > 0 || diff.removedCount > 0 {
-                HStack(spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.diffLinesView.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", 6, theme))) {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.38.elements.layout.diffLinesView.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(38, "gap", theme.space.s6, theme))) {
                     if diff.addedCount > 0 {
                         Text(verbatim: "+\(diff.addedCount)").foregroundColor(theme.status.success.foreground)
                     }
@@ -1140,8 +1122,8 @@ struct DiffLinesView: View {
                     Spacer()
                 }.catalogLayoutTarget("component.library.38.elements.layout.diffLinesView.body.horizontalGap")
                 .componentInspectionText(38, role: .code, fallback: .micro, weight: 500, family: .code, theme: theme)
-                .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.diffLinesView.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(38, "padding", 10, theme))).catalogLayoutTarget("component.library.38.elements.layout.diffLinesView.body.paddingX")
-                .padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.diffLinesView.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(38, "padding", 5, theme))).catalogLayoutTarget("component.library.38.elements.layout.diffLinesView.body.paddingY")
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.diffLinesView.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.38.elements.layout.diffLinesView.body.paddingX")
+                .padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.diffLinesView.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s4, theme))).catalogLayoutTarget("component.library.38.elements.layout.diffLinesView.body.paddingY")
                 .accessibilityLabel(
                     Text(
                         (diff.addedCount == 1 ? L("1 line added") : L("\(diff.addedCount) lines added")) + ", "
@@ -1154,14 +1136,14 @@ struct DiffLinesView: View {
                 Text("Showing the first changes only — open the file to see everything.", bundle: .module)
                     .componentInspectionText(38, role: .caption, fallback: .micro, theme: theme)
                     .foregroundColor(theme.text.tertiary)
-                    .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.diffLinesView.body.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(38, "padding", 8, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.diffLinesView.body.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(38, "padding", 8, theme))).catalogLayoutTarget("component.library.38.elements.layout.diffLinesView.body.padding.horizontal").catalogLayoutTarget("component.library.38.elements.layout.diffLinesView.body.padding.vertical")
+                    .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.diffLinesView.body.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s8, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.diffLinesView.body.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.38.elements.layout.diffLinesView.body.padding.horizontal").catalogLayoutTarget("component.library.38.elements.layout.diffLinesView.body.padding.vertical")
             }
         }
-        .padding(.bottom, 4)
+        .padding(.bottom, theme.space.s4)
     }
 
     private func row(_ line: FileDiff.Line, ranges: [Range<String.Index>]) -> some View {
-        HStack(spacing: 0) {
+        HStack(spacing: theme.space.s0) {
             Rectangle().fill(bar(line.kind)).frame(width: 2)
             Text(verbatim: line.kind == .added ? "+" : line.kind == .removed ? "−" : "")
                 .componentInspectionText(38, role: .code, fallback: .micro, family: .code, theme: theme)
@@ -1174,8 +1156,8 @@ struct DiffLinesView: View {
                         ? theme.text.tertiary : line.kind == .context ? theme.text.secondary : theme.text.primary
                 )
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.diffLinesView.row.paddingX", inheriting: NativeComponentInspectionStyle.metric(38, "padding", 8, theme))).catalogLayoutTarget("component.library.38.elements.layout.diffLinesView.row.paddingX")
-                .padding(.vertical, 1)
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.diffLinesView.row.paddingX", inheriting: NativeComponentInspectionStyle.metric(38, "padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.38.elements.layout.diffLinesView.row.paddingX")
+                .padding(.vertical, theme.space.s2)
                 .textSelection(.enabled)
         }
         .background(fill(line.kind))
@@ -1194,12 +1176,7 @@ struct DiffLinesView: View {
                 let upper = AttributedString.Index(range.upperBound, within: out)
             else { continue }
             out[lower..<upper].backgroundColor = strong
-            #if OSAURUS_DESIGN_SYSTEM
             out[lower..<upper].font = theme.font(for: theme.scaledTextStyle(.code))
-            #else
-            out[lower..<upper].font = theme.font(
-                for: ThemeTextStyleModifier.style(.micro, weight: 600, family: .code, in: theme))
-            #endif
         }
         return out
     }
@@ -1232,53 +1209,14 @@ private func kindColor(_ kind: FileChangeEntryKind, _ theme: ThemeProtocol) -> C
     }
 }
 
-struct PanelStatusPill: View {
-    @Environment(\.theme) private var theme
-    let text: String
-    let color: Color
-
-    var body: some View {
-        Text(text)
-            .componentInspectionText(38, role: .caption, fallback: .micro, weight: 600, theme: theme)
-            .foregroundColor(color)
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.panelStatusPill.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(38, "padding", 6, theme))).catalogLayoutTarget("component.library.38.elements.layout.panelStatusPill.body.paddingX")
-            .padding(.vertical, 2)
-            .background(Capsule().fill(color.opacity(0.12)))
+private func kindWash(_ kind: FileChangeEntryKind, _ theme: ThemeProtocol) -> Color {
+    switch kind {
+    case .created: return theme.status.success.background
+    case .modified: return theme.status.info.background
+    case .deleted: return theme.status.error.background
     }
 }
 
-struct PanelPillButtonStyle: ButtonStyle {
-    let tint: Color
-    @Environment(\.theme) private var theme
-    @Environment(\.isEnabled) private var isEnabled
-
-    @ViewBuilder
-    func makeBody(configuration: Configuration) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
-        let fill = theme.assignedColor(NativeComponentInspectionStyle.key(38, isEnabled ? "background" : "disabledBackground"), fallback: theme.surface.raised)
-        let ink = isEnabled ? tint : theme.assignedColor(NativeComponentInspectionStyle.key(38, "disabledForeground"), fallback: theme.text.disabled)
-        let shape = RoundedRectangle(cornerRadius: theme.assignedMetric(NativeComponentInspectionStyle.key(38, "radius"), fallback: theme.radius.medium))
-        configuration.label
-            .foregroundColor(ink)
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.38.elements.layout.panelPillButtonStyle.makeBody.paddingX", inheriting: NativeComponentInspectionStyle.metric(38, "padding", 9, theme))).catalogLayoutTarget("component.library.38.elements.layout.panelPillButtonStyle.makeBody.paddingX")
-            .padding(.vertical, theme.catalogLayoutMetric("component.library.38.elements.layout.panelPillButtonStyle.makeBody.paddingY", inheriting: fileHistorySpacing("padding", theme.space.s4, theme: theme))).catalogLayoutTarget("component.library.38.elements.layout.panelPillButtonStyle.makeBody.paddingY")
-            .frame(minHeight: NativeComponentInspectionStyle.metric(38, "height", 0, theme))
-            .background(shape.fill(fill))
-            .overlay(shape.fill(configuration.isPressed && isEnabled ? tint.opacity(0.1) : .clear).allowsHitTesting(false))
-            .contentShape(shape)
-        #else
-        configuration.label
-            .foregroundColor(tint)
-            .padding(.horizontal, 9)
-            .padding(.vertical, 4)
-            .background(Capsule().fill(tint.opacity(configuration.isPressed ? 0.22 : 0.12)))
-            .opacity(isEnabled ? 1 : 0.45)
-            .contentShape(Capsule())
-        #endif
-    }
-}
-
-#if OSAURUS_DESIGN_SYSTEM
 /// Journal display values only: no journal write, revert or rollback is performed.
 @MainActor @ViewBuilder func inspectorFileContextRow(_ kind: Int, disabled: Bool, action: @escaping (String) -> Void) -> some View {
     let setID = UUID()
@@ -1290,12 +1228,12 @@ struct PanelPillButtonStyle: ButtonStyle {
         NetFileRow(change: FileNetChange(key: FilePathKey(rootKind: .hostFolder, rootId: "/tmp/osaurus-menu-check", path: "menu-sample.txt"), original: before, latest: after, setIds: [setID], lastChangedAt: Date(), lastTool: "file_edit"), actionsDisabled: disabled, onRevert: { action("Revert file callback only") })
     }
 }
-#endif
 
 #if OSAURUS_DESIGN_INSPECTOR
 /// Original history rows and confirmation outcomes, with local display metadata.
 /// No journal is mounted and no file/revert operation is performed.
 struct InspectorFileHistoryVerification: View {
+    @Environment(\.theme) private var theme
     @State private var mode: Variant = .files
     @State private var collapsed = true
     @State private var expanded: Set<FileChangeSetStatus> = [.applied]
@@ -1310,7 +1248,7 @@ struct InspectorFileHistoryVerification: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: theme.space.s16) {
             Picker("Used in", selection: $mode) {
                 ForEach(Variant.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
@@ -1324,12 +1262,12 @@ struct InspectorFileHistoryVerification: View {
             }
             Text("Preview only. Revert actions are simulated.")
                 .font(SettingsFont.caption)
-                .foregroundStyle(.secondary)
+                .foregroundColor(theme.text.secondary)
         }
     }
 
     private var currentFiles: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
             ForEach(0..<3) { index in
                 let state = FilePathState(type: .file, signature: "local-\(index)", size: 12)
                 NetFileRow(change: FileNetChange(key: .init(rootKind: .hostFolder, rootId: "/private/tmp/Project",
@@ -1341,7 +1279,7 @@ struct InspectorFileHistoryVerification: View {
     }
 
     private var history: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
             ForEach(states, id: \.self) { status in
                 ChangeSetRow(changeSet: FileChangeSet(sessionId: "inspector-display", toolName: "file_edit", origin: .agent,
                     status: status, note: status == .untracked ? "No earlier version was saved." : nil,

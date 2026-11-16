@@ -32,17 +32,16 @@ private struct ImportProgressContent: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        HStack(spacing: 10) {
-            ProgressView()
-                .controlSize(.small)
+        HStack(spacing: theme.space.s10) {
+            SettingsSpinner()
 
             Text(state.message)
-                .font(.system(size: 12))
+                .font(SettingsFont.caption)
                 .foregroundColor(theme.text.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
         }
-        .padding(.top, 2)
+        .padding(.top, theme.space.s2)
         .frame(width: 300)
     }
 }

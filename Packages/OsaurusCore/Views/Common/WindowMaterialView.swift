@@ -12,7 +12,7 @@
 //  Accessibility: when "Reduce transparency" is on, the blur is dropped and
 //  the view paints the theme's opaque `windowMaterial.fallback` color.
 //
-//  Only the chat and Management windows host it. The menu-bar status panel
+//  Only the chat window hosts it. The menu-bar status panel
 //  sits in an `NSPopover` (system popover material), the voice overlay is a
 //  `pickerCardSurface` inside the chat window, and onboarding paints opaque
 //  surface roles; an opaque canvas is always a valid base.

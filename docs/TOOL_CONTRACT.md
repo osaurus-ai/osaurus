@@ -25,7 +25,7 @@ The type lives at [`Tools/ToolEnvelope.swift`](../Packages/OsaurusCore/Tools/Too
 ```
 
 - `ok`: always `true`.
-- `tool`: optional — the tool name. Populated automatically by the helpers.
+- `tool`: optional — the tool name. Set only when the caller passes `tool:` to the helper.
 - `result`: the tool's payload. Object, array, string, number, bool, or null.
 - `warnings`: optional list of non-fatal notes the model should read.
 
@@ -99,8 +99,11 @@ not-found) to drive the agent loop. See `docs/AGENT_LOOP.md`.
 - `message`: human- and model-readable explanation.
 - `field`: optional — the offending argument name when `kind` is `invalid_args`.
 - `expected`: optional — what the argument should look like (example form).
-- `tool`: optional — the tool name. Populated automatically.
-- `retryable`: whether a retry might succeed. Defaulted by kind.
+- `tool`: optional — the tool name. Set only when the caller passes `tool:`.
+- `retryable`: whether a retry might succeed. Defaulted by kind when the caller passes none.
+- Extra top-level keys come from the optional `metadata:` argument. It cannot overwrite the
+  reserved keys `ok`, `kind`, `message`, `retryable`, `field`, `expected` and `tool`; those
+  entries are dropped.
 
 ### Kinds
 
@@ -114,6 +117,11 @@ not-found) to drive the agent loop. See `docs/AGENT_LOOP.md`.
 | `not_found`        | a referenced path (file or directory) does not exist           | `false`             |
 | `unavailable`      | tool exists but can't run right now (sandbox booting, etc.)    | `true`              |
 | `tool_not_found`   | model called a tool the registry doesn't have                  | `false`             |
+| `permission_denied`| a macOS privacy permission the tool needs is not granted       | `false`             |
+
+The registry's schema preflight (see Schema below) always sends `invalid_args`
+with `retryable: false`: the same arguments fail the same way every time, so
+the model must change them rather than resend.
 
 `not_found` is distinct from `execution_error` so the agent loop's task-state
 machine (`AgentTaskState`, see `docs/AGENT_LOOP.md`) can classify a missing
@@ -173,8 +181,12 @@ outside allowed roots, etc.).
 Tool bodies that throw (folder tools, for historical reasons) have the
 exception mapped to the envelope at the catch site via
 `ToolEnvelope.fromError(_:tool:)`. That helper understands
-`FolderToolError`, `ToolRegistry` permission `NSError` codes, and any
-other `Error` (falls through to `execution_error`).
+`FolderToolError`, `MCPProviderError` (an MCP timeout maps to `timeout`
+with `retryable: false`, because the server may still be running the
+call; connection states map to `unavailable`), `SandboxError` (the idle
+timeout maps to `timeout` with `retryable: true`; a sandbox that is not
+ready maps to `unavailable`), `ToolRegistry` permission `NSError` codes,
+and any other `Error` (falls through to `execution_error`).
 
 ### Schema
 
@@ -230,6 +242,9 @@ shape:
   the FS error string (disk full, perms) plus the source path.
 - **Filename rejected** (`destinationRejected`) → `kind: invalid_args`,
   `field: "filename"`, asks for a plain basename.
+
+Every `share_artifact` failure envelope sets `retryable: true` explicitly,
+including a missing file, overriding the kind's default.
 
 Empty-string filler in optional fields (`content: ""`, `filename: ""`) is
 treated as absent on entry — many models pass empty placeholders for

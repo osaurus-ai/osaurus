@@ -37,7 +37,7 @@ When an app is off for an agent, that agent cannot reach its tools by any path:
 
 ## Approval
 
-Writes follow the normal per-tool permission policy (`ask` by default; "Allow for this run" covers the rest of the turn). Two classes always show an approval card, every call, regardless of that policy:
+Writes follow the normal per-tool permission policy (`ask` by default; **Allow for This Conversation** covers the rest of the conversation). Two classes always show an approval card, every call, regardless of that policy:
 
 - **Sending**: `messages_send`, and `mail_compose` / `mail_reply` when `send: true`.
 - **Deleting**: `calendar_delete_event` and `reminders_delete`.
@@ -80,12 +80,12 @@ Enabling Mail, Messages, or Shortcuts on an agent adds a risk line to the `osaur
 
 ## The Orchestrator
 
-The Default agent has no Apple app groups in its picker and never calls these tools (`orchestratorExcludedToolNames`). It manages them on custom agents:
+The Default agent (the Orchestrator) has no Apple app groups in its picker and never calls these tools (`orchestratorExcludedToolNames`). It routes:
 
-- `osaurus_inspect list agents` includes `apple_apps` per agent, so it can pick the right agent to hand a task to.
-- `osaurus_config` writes `capabilities.apple_apps` on an agent (plan → approval card → apply) and can provision a new agent with apps in the same call.
+- Changing which apps an agent can use goes to the Configurator (`configurator_handoff`). The Configurator's `osaurus_inspect list agents` includes `apple_apps` per agent, and its `osaurus_config` writes `capabilities.apple_apps` on an agent (plan → approval card → apply) or provisions a new agent with apps in the same call.
+- The work itself goes to an agent that has the app, through `run_workflow`.
 
-Ask it "give my Mail agent access to Calendar too" or "make a Personal Organizer agent with Calendar and Reminders" and it will do exactly that, then delegate.
+Ask it "give my Mail agent access to Calendar too" or "make a Personal Organizer agent with Calendar and Reminders": it hands the change to the Configurator, then sends the task to that agent.
 
 ## Declarative configuration
 

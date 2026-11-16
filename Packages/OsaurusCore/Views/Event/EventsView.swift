@@ -42,7 +42,7 @@ struct EventsView: View {
     @State private var toast: (message: String, type: SimpleToastType)?
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             if page != .history {
                 headerView
                     .settingsHeaderEntrance(hasAppeared: hasAppeared)
@@ -164,7 +164,7 @@ struct EventsView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             SettingsEmptyState(
                 icon: "bolt.fill",
                 title: "Add Your First Automation",
@@ -248,7 +248,7 @@ struct EventsView: View {
         if channelRuleCount > 0 {
             HStack(spacing: theme.space.s8) {
                 Image(systemName: "bubble.left.and.bubble.right")
-                    .glyphSize(11)
+                    .glyphSize(.footnote)
                     .foregroundColor(theme.text.tertiary)
                 Text(
                     channelRuleCount == 1
@@ -262,7 +262,7 @@ struct EventsView: View {
                 } label: {
                     HStack(spacing: theme.space.s4) {
                         Text("Open Channels", bundle: .module)
-                        Image(systemName: "arrow.up.right").glyphSize(8, weight: .semibold)
+                        Image(systemName: "arrow.up.right").glyphSize(.tiny, weight: .semibold)
                     }
                     .componentInspectionText(50, role: .caption, fallback: .footnote, weight: 500, theme: theme)
                 }

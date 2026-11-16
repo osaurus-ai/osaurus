@@ -115,11 +115,12 @@ final class AppleScriptKind: SubagentKind, SubagentPostAdmissionResidencyPlannin
         case .assignedButNotInstalled(let assigned):
             throw SubagentError.unavailable(
                 "The assigned AppleScript model '\(assigned)' is not installed. "
-                    + "Install it, or pick an installed one in Settings → Computer Use → Models."
+                    + "Install it in Settings → Local Models → AppleScript, or pick an installed one in "
+                    + "Settings → Model Defaults → AppleScript Model."
             )
         case .noneInstalled:
             throw SubagentError.unavailable(
-                "No AppleScript model is installed. Download one in Settings → Computer Use → Models."
+                "No AppleScript model is installed. Download one in Settings → Local Models → AppleScript."
             )
         }
 

@@ -35,7 +35,7 @@ struct SidebarContainer<Content: View>: View {
     @ViewBuilder let content: () -> Content
     @Environment(\.theme) private var environmentTheme
     @Environment(\.isEnabled) private var componentEnabled
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42, enabled: componentEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42, enabled: componentEnabled) }
 
     init(
         attachedEdge: Edge? = nil,
@@ -54,7 +54,7 @@ struct SidebarContainer<Content: View>: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             content()
         }
         .padding(.top, topPadding)
@@ -107,7 +107,7 @@ struct SidebarContainer<Content: View>: View {
 struct SidebarBackground: View {
     @Environment(\.theme) private var environmentTheme
     @Environment(\.isEnabled) private var componentEnabled
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42, enabled: componentEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42, enabled: componentEnabled) }
 
     var body: some View {
         theme.surface.sidebar
@@ -120,7 +120,7 @@ struct SidebarBackground: View {
 struct SidebarBorder: View {
     @Environment(\.theme) private var environmentTheme
     @Environment(\.isEnabled) private var componentEnabled
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42, enabled: componentEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42, enabled: componentEnabled) }
 
     let attachedEdge: Edge?
 
@@ -203,7 +203,7 @@ private struct SidebarScrollEdgeFade: ViewModifier {
                 hasSampled = true
             }
             .mask {
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     edge(fading: overflow.above, toward: .top)
                     Rectangle()
                     edge(fading: overflow.below, toward: .bottom)
@@ -255,21 +255,21 @@ struct SidebarLensBar<Value: Hashable>: View {
 
     @Environment(\.theme) private var environmentTheme
     @Environment(\.isEnabled) private var componentEnabled
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42, enabled: componentEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42, enabled: componentEnabled) }
 
     var body: some View {
         ViewThatFits(in: .horizontal) {
             bar(compact: false)
             bar(compact: true)
         }
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarLensBar.body.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(42, "padding", 3, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarLensBar.body.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(42, "padding", 3, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarLensBar.body.padding.horizontal").catalogLayoutTarget("component.library.42.elements.layout.sidebarLensBar.body.padding.vertical")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarLensBar.body.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(42, "padding", theme.space.s2, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarLensBar.body.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(42, "padding", theme.space.s2, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarLensBar.body.padding.horizontal").catalogLayoutTarget("component.library.42.elements.layout.sidebarLensBar.body.padding.vertical")
         .environment(\.theme, theme)
         .settingsChrome(.inset)
     }
 
     private func bar(compact: Bool) -> some View {
         SidebarEqualWidthRow(
-            spacing: 4,
+            spacing: theme.space.s4,
             wholeIndex: compact ? segments.firstIndex { $0.value == selection } : nil
         ) {
             ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
@@ -286,10 +286,10 @@ struct SidebarLensBar<Value: Hashable>: View {
                 selection = segment.value
             }
         } label: {
-            HStack(spacing: theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarLensBar.segmentButton.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(42, "gap", 5, theme))) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarLensBar.segmentButton.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(42, "gap", theme.space.s4, theme))) {
                 if let icon = segment.icon {
                     Image(systemName: icon)
-                        .glyphSize(10, weight: .semibold)
+                        .glyphSize(.micro, weight: .semibold)
                 }
                 if showsLabel {
                     Text(segment.label, bundle: .module)
@@ -300,8 +300,8 @@ struct SidebarLensBar<Value: Hashable>: View {
                     Text(badge > 99 ? "99+" : "\(badge)")
                         .catalogTypography(.caption, theme: theme, fallback: SettingsFont.chip)
                         .foregroundColor(isSelected ? theme.text.primary : theme.text.secondary)
-                        .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarLensBar.segmentButton.paddingX", inheriting: NativeComponentInspectionStyle.metric(42, "padding", 5, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarLensBar.segmentButton.paddingX")
-                        .padding(.vertical, 1)
+                        .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarLensBar.segmentButton.paddingX", inheriting: NativeComponentInspectionStyle.metric(42, "padding", theme.space.s4, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarLensBar.segmentButton.paddingX")
+                        .padding(.vertical, theme.space.s2)
                         .background(Capsule().fill(isSelected ? theme.surface.pressed : theme.surface.subtle))
                         .accessibilityHidden(true)
                 }
@@ -309,12 +309,16 @@ struct SidebarLensBar<Value: Hashable>: View {
             .foregroundColor(isSelected ? theme.text.primary : theme.text.secondary)
             // Breathing room the full labels must also fit, so the bar
             // goes compact before labels touch their neighbours.
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarLensBar.segmentButton.paddingX2", inheriting: NativeComponentInspectionStyle.metric(42, "padding", compact ? 4 : 8, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarLensBar.segmentButton.paddingX2")
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarLensBar.segmentButton.paddingX2", inheriting: NativeComponentInspectionStyle.metric(42, "padding", compact ? theme.space.s4 : theme.space.s8, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarLensBar.segmentButton.paddingX2")
             .frame(maxWidth: .infinity)
-            .padding(.vertical, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarLensBar.segmentButton.paddingY", inheriting: NativeComponentInspectionStyle.metric(42, "padding", 5, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarLensBar.segmentButton.paddingY")
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarLensBar.segmentButton.paddingY", inheriting: NativeComponentInspectionStyle.metric(42, "padding", theme.space.s4, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarLensBar.segmentButton.paddingY")
             .background(
                 RoundedRectangle(cornerRadius: theme.radius.small, style: .continuous)
                     .fill(isSelected ? theme.surface.selected : .clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: theme.radius.small, style: .continuous)
+                    .strokeBorder(isSelected ? theme.selectionBorder : .clear, lineWidth: theme.selectionStroke)
             )
             .contentShape(RoundedRectangle(cornerRadius: theme.radius.small, style: .continuous))
         }
@@ -383,14 +387,14 @@ struct SidebarHeaderIconButton: View {
 
     @Environment(\.theme) private var environmentTheme
     @Environment(\.isEnabled) private var componentEnabled
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42, enabled: componentEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42, enabled: componentEnabled) }
     @Environment(\.isEnabled) private var isEnabled
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarHeaderIconButton.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(42, "gap", 4, theme))) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarHeaderIconButton.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(42, "gap", theme.space.s4, theme))) {
                 Image(systemName: icon)
-                    .glyphSize(size, weight: .medium)
+                    .glyphSize(points: size, weight: .medium)
                 if let label {
                     Text(label, bundle: .module)
                         .font(SettingsFont.smallLabel)
@@ -399,8 +403,8 @@ struct SidebarHeaderIconButton: View {
             .foregroundColor(tint ?? theme.text.secondary)
             .opacity(isEnabled ? 1 : 0.45)
             // Pad the hit target beyond the glyph without adding chrome.
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarHeaderIconButton.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(42, "padding", 4, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarHeaderIconButton.body.paddingX")
-            .padding(.vertical, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarHeaderIconButton.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(42, "padding", 4, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarHeaderIconButton.body.paddingY")
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarHeaderIconButton.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(42, "padding", theme.space.s4, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarHeaderIconButton.body.paddingX")
+            .padding(.vertical, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarHeaderIconButton.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(42, "padding", theme.space.s4, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarHeaderIconButton.body.paddingY")
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -422,13 +426,13 @@ struct SidebarEmptyState: View {
 
     @Environment(\.theme) private var environmentTheme
     @Environment(\.isEnabled) private var componentEnabled
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42, enabled: componentEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42, enabled: componentEnabled) }
 
     var body: some View {
-        VStack(spacing: theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarEmptyState.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(42, "gap", 8, theme))) {
+        VStack(spacing: theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarEmptyState.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(42, "gap", theme.space.s8, theme))) {
             Spacer()
             Image(systemName: icon)
-                .glyphSize(28, weight: .light)
+                .glyphSize(.display, weight: .light)
                 .foregroundColor(theme.text.tertiary)
             Text(title, bundle: .module)
                 .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
@@ -443,7 +447,7 @@ struct SidebarEmptyState: View {
             Spacer()
         }.catalogLayoutTarget("component.library.42.elements.layout.sidebarEmptyState.body.verticalGap")
         .frame(maxWidth: .infinity)
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarEmptyState.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(42, "padding", 24, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarEmptyState.body.paddingX")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarEmptyState.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(42, "padding", theme.space.s24, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarEmptyState.body.paddingX")
     }
 }
 
@@ -460,10 +464,10 @@ struct SidebarHeaderRow<Actions: View>: View {
 
     @Environment(\.theme) private var environmentTheme
     @Environment(\.isEnabled) private var componentEnabled
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42, enabled: componentEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42, enabled: componentEnabled) }
 
     var body: some View {
-        HStack(spacing: theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarHeaderRow.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(42, "gap", 4, theme))) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarHeaderRow.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(42, "gap", theme.space.s4, theme))) {
             if let summary, !summary.isEmpty {
                 Text(summary)
                     .catalogTypography(compact ? .caption : .body, theme: theme, fallback: SettingsFont.rowDescription)
@@ -471,14 +475,14 @@ struct SidebarHeaderRow<Actions: View>: View {
                     .lineLimit(1)
                     .truncationMode(.tail)
                     // Compact agent headers align with the agent row text inset.
-                    .padding(.leading, compact ? 0 : 4)
+                    .padding(.leading, compact ? theme.space.s0 : theme.space.s4)
             }
             Spacer(minLength: 8)
             actions()
         }.catalogLayoutTarget("component.library.42.elements.layout.sidebarHeaderRow.body.horizontalGap")
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarHeaderRow.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(42, "padding", 12, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarHeaderRow.body.paddingX")
-        .padding(.top, compact ? 0 : 2)
-        .padding(.bottom, compact ? 0 : 8)
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarHeaderRow.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(42, "padding", theme.space.s12, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarHeaderRow.body.paddingX")
+        .padding(.top, compact ? theme.space.s0 : theme.space.s2)
+        .padding(.bottom, compact ? theme.space.s0 : theme.space.s8)
         // Constant height whether or not a pane has actions, so the list
         // below starts at the same y on every pane.
         .frame(minHeight: NativeComponentInspectionStyle.metric(42, "height", 32, theme))
@@ -497,7 +501,7 @@ struct SidebarTitleRow<Actions: View>: View {
 
     @Environment(\.theme) private var environmentTheme
     @Environment(\.isEnabled) private var componentEnabled
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42, enabled: componentEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42, enabled: componentEnabled) }
 
     init(_ title: LocalizedStringKey, @ViewBuilder actions: @escaping () -> Actions = { EmptyView() }) {
         self.title = title
@@ -505,19 +509,19 @@ struct SidebarTitleRow<Actions: View>: View {
     }
 
     var body: some View {
-        HStack(spacing: theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarTitleRow.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(42, "gap", 4, theme))) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarTitleRow.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(42, "gap", theme.space.s4, theme))) {
             Text(title, bundle: .module)
                 .catalogTypography(.heading, theme: theme, fallback: SettingsFont.sectionTitle)
                 .foregroundColor(theme.text.primary)
                 .lineLimit(1)
-                .padding(.leading, 4)
+                .padding(.leading, theme.space.s4)
             Spacer(minLength: 8)
             actions()
         }.catalogLayoutTarget("component.library.42.elements.layout.sidebarTitleRow.body.horizontalGap")
         .frame(minHeight: NativeComponentInspectionStyle.metric(42, "height", 30, theme))
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarTitleRow.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(42, "padding", 12, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarTitleRow.body.paddingX")
-        .padding(.top, 16)
-        .padding(.bottom, 12)
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarTitleRow.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(42, "padding", theme.space.s12, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarTitleRow.body.paddingX")
+        .padding(.top, theme.space.s16)
+        .padding(.bottom, theme.space.s12)
     }
 }
 
@@ -681,43 +685,49 @@ struct SidebarSearchField: View {
     /// Shows a small trailing spinner while an asynchronous search pass
     /// (e.g. the chat sidebar's full-text conversation lookup) is in flight.
     var isSearching: Bool = false
-    /// Draw a subtle border while unfocused too (the project page uses this
-    /// to match its dropdown chrome); the sidebar keeps the borderless look.
-    var showsRestingBorder: Bool = false
+    var chrome: Chrome = .sidebar
+
+    enum Chrome {
+        /// Borderless on the chat sidebar's own surface until focused.
+        case sidebar
+        /// A raised, outlined field on the page's surface (Settings navigation).
+        case field
+    }
 
     @Environment(\.theme) private var environmentTheme
     @Environment(\.isEnabled) private var componentEnabled
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42, enabled: componentEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol {
+        chrome == .sidebar ? environmentTheme.catalogFamily(42, enabled: componentEnabled) : environmentTheme
+    }
 
-    #if OSAURUS_DESIGN_SYSTEM
     @State private var inspectorComposing = false
-    #endif
+    /// The text view reports focus here; a caller's `FocusState` only holds a
+    /// value while some view is bound to it with `.focused`.
+    @State private var editing = false
+    private var focused: Bool { editing || isFocused.wrappedValue }
     var body: some View {
-        HStack(spacing: theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarSearchField.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(42, "gap", 8, theme))) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarSearchField.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(42, "gap", theme.space.s8, theme))) {
             searchIcon
             searchTextField
             if isSearching {
-                ProgressView()
-                    .assignedProgressIndicator()
-                    .controlSize(.mini)
-                    .frame(width: 12, height: 12)
+                SettingsSpinner(size: .mini)
                     .transition(.opacity)
             }
             clearButton
         }.catalogLayoutTarget("component.library.42.elements.layout.sidebarSearchField.body.horizontalGap")
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarSearchField.body.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(42, "padding", 8, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarSearchField.body.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(42, "padding", 8, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarSearchField.body.padding.horizontal").catalogLayoutTarget("component.library.42.elements.layout.sidebarSearchField.body.padding.vertical")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarSearchField.body.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(42, "padding", theme.space.s8, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarSearchField.body.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(42, "padding", theme.space.s8, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarSearchField.body.padding.horizontal").catalogLayoutTarget("component.library.42.elements.layout.sidebarSearchField.body.padding.vertical")
         .frame(minHeight: NativeComponentInspectionStyle.metric(42, "height", 30, theme))
         .background(fieldBackground)
         .overlay(focusBorder)
-        .animation(theme.motion.quick, value: isFocused.wrappedValue)
+        .animation(theme.motion.quick, value: focused)
         .animation(theme.motion.quick, value: text.isEmpty)
         .animation(theme.motion.quick, value: isSearching)
     }
 
     private var searchIcon: some View {
         Image(systemName: "magnifyingglass")
-            .glyphSize(12, weight: .medium)
-            .foregroundColor(isFocused.wrappedValue ? theme.text.primary : theme.text.secondary)
+            .glyphSize(.caption, weight: .medium)
+            .foregroundColor(focused ? theme.text.primary : theme.text.secondary)
     }
 
     private var searchTextField: some View {
@@ -727,11 +737,10 @@ struct SidebarSearchField: View {
                     .componentInspectionText(42, role: .label, fallback: .label, theme: theme)
                     .foregroundColor(theme.text.placeholder)
             }
-            #if OSAURUS_DESIGN_SYSTEM
             InspectorAssignedTextField(text: $text, isComposing: $inspectorComposing,
                 font: theme.assignedNativeFont(NativeComponentInspectionStyle.key(42, "label"), fallback: theme.nsFont(.label)),
                 textColor: NSColor(theme.text.primary), onSubmit: nil,
-                onFocusChange: { isFocused.wrappedValue = $0 },
+                onFocusChange: { editing = $0; isFocused.wrappedValue = $0 },
                 tracking: theme.assignedTracking(NativeComponentInspectionStyle.key(42, "label")),
                 editable: componentEnabled, requestedFocus: isFocused.wrappedValue,
                 onCommand: { selector in
@@ -739,14 +748,6 @@ struct SidebarSearchField: View {
                     clearAndResign()
                     return true
                 })
-            #else
-            TextField("", text: $text)
-                .textFieldStyle(.plain)
-                .componentInspectionText(42, role: .caption, fallback: .caption, theme: theme)
-                .foregroundColor(theme.text.primary)
-                .focused(isFocused)
-                .onExitCommand(perform: clearAndResign)
-            #endif
         }
     }
 
@@ -765,7 +766,7 @@ struct SidebarSearchField: View {
                 }
             } label: {
                 Image(systemName: "xmark.circle.fill")
-                    .glyphSize(12)
+                    .glyphSize(.caption)
                     .foregroundColor(theme.text.secondary)
             }
             .buttonStyle(.plain)
@@ -781,10 +782,8 @@ struct SidebarSearchField: View {
     private var focusBorder: some View {
         RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
             .stroke(
-                isFocused.wrappedValue
-                    ? theme.border.focus
-                    : (showsRestingBorder ? theme.border.subtle : .clear),
-                lineWidth: isFocused.wrappedValue ? theme.stroke.focus : theme.stroke.default)
+                focused ? theme.border.focus : (chrome == .field ? theme.border.strong : .clear),
+                lineWidth: focused ? theme.stroke.focus : theme.stroke.default)
     }
 }
 
@@ -797,17 +796,17 @@ struct SidebarNoResultsView: View {
 
     @Environment(\.theme) private var environmentTheme
     @Environment(\.isEnabled) private var componentEnabled
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42, enabled: componentEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(42, enabled: componentEnabled) }
 
     var body: some View {
-        VStack(spacing: theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarNoResultsView.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(42, "gap", 12, theme))) {
+        VStack(spacing: theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarNoResultsView.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(42, "gap", theme.space.s12, theme))) {
             Spacer()
 
             Image(systemName: "magnifyingglass")
-                .glyphSize(24, weight: .light)
-                .foregroundColor(theme.text.disabled)
+                .glyphSize(.xxlarge, weight: .light)
+                .foregroundColor(theme.text.tertiary)
 
-            VStack(spacing: theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarNoResultsView.body.verticalGap2", inheriting: NativeComponentInspectionStyle.metric(42, "gap", 4, theme))) {
+            VStack(spacing: theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarNoResultsView.body.verticalGap2", inheriting: NativeComponentInspectionStyle.metric(42, "gap", theme.space.s4, theme))) {
                 Text("No matches found", bundle: .module)
                     .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                     .foregroundColor(theme.text.secondary)
@@ -827,7 +826,7 @@ struct SidebarNoResultsView: View {
             Spacer()
         }.catalogLayoutTarget("component.library.42.elements.layout.sidebarNoResultsView.body.verticalGap")
         .frame(maxWidth: .infinity)
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarNoResultsView.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(42, "padding", 16, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarNoResultsView.body.paddingX")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.42.elements.layout.sidebarNoResultsView.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(42, "padding", theme.space.s16, theme))).catalogLayoutTarget("component.library.42.elements.layout.sidebarNoResultsView.body.paddingX")
     }
 }
 
@@ -841,13 +840,13 @@ struct SidebarRowActionButton: View {
 
     @Environment(\.theme) private var environmentTheme
     @Environment(\.isEnabled) private var componentEnabled
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(41, enabled: componentEnabled) }
     @State private var isHovered = false
 
     var body: some View {
         Button(action: action) {
             Image(systemName: icon)
-                .glyphSize(12, weight: .semibold)
+                .glyphSize(.caption, weight: .semibold)
                 .foregroundColor(
                     isHovered ? theme.text.primary : theme.text.secondary
                 )
@@ -866,8 +865,8 @@ struct SidebarRowActionButton: View {
 // MARK: - Sidebar Row Background
 
 /// Flat row background (`component.sidebar.row`): `surface.selected` +
-/// `border.default` when selected, `surface.hover` while hovered, nothing at
-/// rest. `radius.medium`.
+/// a selected outline, `surface.hover` while hovered, nothing at rest.
+/// `radius.medium`.
 struct SidebarRowBackground: View {
     let isSelected: Bool
     let isHovered: Bool
@@ -876,13 +875,19 @@ struct SidebarRowBackground: View {
 
     @Environment(\.theme) private var environmentTheme
     @Environment(\.isEnabled) private var componentEnabled
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(family, enabled: componentEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(family, enabled: componentEnabled) }
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
         shape
             .fill(fill)
-            .overlay(shape.strokeBorder(isSelected && !compactChatStyle ? theme.border.default : .clear, lineWidth: theme.stroke.default))
+            .overlay(shape.strokeBorder(stroke, lineWidth: theme.selectionStroke))
+    }
+
+    private var stroke: Color {
+        guard isSelected else { return .clear }
+        if theme.isDark { return compactChatStyle ? .clear : theme.border.default }
+        return theme.selectionBorder
     }
 
     private var fill: Color {
@@ -900,7 +905,7 @@ struct SidebarRowBackground: View {
 private struct SidebarRowChromeModifier: ViewModifier {
     @Environment(\.theme) private var environmentTheme
     @Environment(\.isEnabled) private var componentEnabled
-    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(family, enabled: componentEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { environmentTheme.catalogFamily(family, enabled: componentEnabled) }
     let isSelected: Bool
     let isHovered: Bool
     var family = 41

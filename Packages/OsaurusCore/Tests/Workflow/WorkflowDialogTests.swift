@@ -346,6 +346,8 @@ struct WorkflowRunStoreTests {
 
         #expect(store.runs(workflowID: wf).map(\.id) == [newer.id, older.id])
 
+        // A relaunch: quit drains pending writes before the next launch reads.
+        store.flushPendingWrites()
         let fresh = WorkflowRunStore(database: db)
         #expect(fresh.run(id: newer.id)?.output == .object(["ok": .bool(true)]))
         #expect(fresh.runs(workflowID: wf).count == 2)

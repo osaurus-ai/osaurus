@@ -17,13 +17,11 @@ struct RuntimePolicySourceTests {
         return try String(contentsOf: url, encoding: .utf8)
     }
 
-    /// The chat loop's tool_choice comes only from `ChatToolChoicePolicy`:
-    /// its forced `state` step when one is due, otherwise `resolve`.
+    /// The chat loop's tool_choice comes only from `ChatToolChoicePolicy.resolve`.
     private static func chatToolChoiceComesFromPolicy(_ chatView: String) -> Bool {
         chatView.range(
-            of: #"let requestedToolChoice =\s*forcedStateStep\?\.choice\s*\?\? ChatToolChoicePolicy\.resolve\("#,
+            of: #"let requestedToolChoice =\s*ChatToolChoicePolicy\.resolve\("#,
             options: .regularExpression) != nil
-            && chatView.contains("forcedStateStep = ChatToolChoicePolicy.forceStateIfMissing(")
     }
 
     private static func functionBody(_ signature: String, in source: String) throws -> String {
@@ -334,7 +332,7 @@ struct RuntimePolicySourceTests {
 
         // The fail-closed guard and its error must exist.
         #expect(source.contains("case keyUnavailableForExistingData"))
-        #expect(source.contains("encryptedStorageExists()"))
+        #expect(source.contains("encryptedArtifactsExist()"))
 
         // The guard must sit *between* a missed key read and the
         // generate-and-persist fallback so a populated install can never re-key
@@ -347,9 +345,12 @@ struct RuntimePolicySourceTests {
         #expect(readBranch.lowerBound < failClosed.lowerBound)
         #expect(failClosed.lowerBound < generate.lowerBound)
 
-        // Existence is judged from real encrypted artifacts, not a single DB.
-        #expect(source.contains("OsaurusPaths.chatHistoryDatabaseFile()"))
-        #expect(source.contains("OsaurusPaths.memoryDatabaseFile()"))
+        // Existence is judged from files that are actually encrypted across
+        // the whole catalog, not from file size (a plaintext store isn't
+        // evidence of a key; see StorageEncryptionToggleTests).
+        #expect(source.contains("StorageDatabaseCatalog.databaseTargets()"))
+        #expect(source.contains("StorageFileFormat.detect(path: path) == .encrypted"))
+        #expect(!source.contains("attributesOfItem"))
     }
 
     @Test("startup avoids storage-key reads and background Keychain queries skip authentication UI")
@@ -844,7 +845,7 @@ struct RuntimePolicySourceTests {
         // and both xcworkspace Package.resolved files. Miss one and a release
         // surface resolves a revision nobody proved. OsaurusEvals resolves
         // this manifest transitively and its local Package.resolved is ignored.
-        let expectedRuntimeHardenedRevision = "1bcd74ad182103a3b83941f61e57ee0bac23b330"
+        let expectedRuntimeHardenedRevision = "2073a764e61e6efad2322684720c8716ac92f4ff"
         let manifestRevision = try Self.vmlxPinRevision(in: manifest)
         let coreResolvedRevision = try Self.vmlxPinRevision(in: coreResolved)
         let workspaceRevision = try Self.vmlxPinRevision(in: workspaceResolved)
@@ -3342,49 +3343,6 @@ struct RuntimePolicySourceTests {
         )
         #expect(!removalBody.contains("scheduleWarmup("))
         #expect(removalBody.contains("acceptResidencySnapshot(snapshot, selectedModel: selectedModel)"))
-    }
-
-    /// Management-window deeplink reuse swaps the hosting controller of a
-    /// live NSWindow. A SwiftUI `.sheet`'s presentation window stays attached
-    /// through that swap and keeps observing parent frame changes; when the
-    /// new hosting view resizes the window, the orphaned sheet re-enters its
-    /// torn-down graph and traps inside SwiftUI (Sentry APPLE-MACOS-EF).
-    /// Pin the two mitigations: end attached sheets before the swap, and
-    /// build the replacement through `WindowManager.makeHostingController`,
-    /// the AppKit-owned controller with no `sizingOptions`, so it can't push
-    /// content-size extrema frame changes onto the reused window
-    /// (APPLE-MACOS-EF, APPLE-MACOS-1ZM).
-    @Test("Management window deeplink reuse detaches sheets before swapping the hosting controller")
-    func managementDeeplinkReuseDetachesSheetsBeforeControllerSwap() throws {
-        let appDelegate = try Self.source("AppDelegate.swift")
-
-        let reuseStart = try #require(
-            appDelegate.range(of: "if let existingWindow = windowManager.window(for: .management)")
-        )
-        let reuseWindow = String(
-            appDelegate[
-                reuseStart.lowerBound
-                    ..< appDelegate.index(
-                        reuseStart.lowerBound,
-                        offsetBy: 2400,
-                        limitedBy: appDelegate.endIndex
-                    )!
-            ]
-        )
-
-        let endSheets = try #require(
-            reuseWindow.range(of: "while let sheet = existingWindow.attachedSheet")
-        )
-        let swap = try #require(
-            reuseWindow.range(of: "existingWindow.contentViewController = replacement")
-        )
-        #expect(
-            endSheets.lowerBound < swap.lowerBound,
-            "attached sheets must be ended before the hosting controller swap"
-        )
-        #expect(reuseWindow.contains("existingWindow.endSheet(sheet)"))
-        #expect(reuseWindow.contains("windowManager.makeHostingController("))
-        #expect(!reuseWindow.contains("NSHostingController(rootView: root)"))
     }
 
     @Test("Settings sidebar keeps bounded navigation rows accessibility-stable")

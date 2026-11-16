@@ -1,4 +1,3 @@
-#if OSAURUS_DESIGN_SYSTEM
 import SwiftUI
 
 /// Uses the existing tab drawing for the app's segmented picker options, with
@@ -40,8 +39,7 @@ struct AssignedBaseSegmentedPicker<Value: Hashable>: View {
                     HStack(spacing: layout("activityGap", theme.space.s8)) {
                         text(option)
                         if busyValue == option.value {
-                            ProgressView().controlSize(.mini)
-                                .frame(width: theme.space.s16, height: theme.space.s16)
+                            SettingsSpinner(size: .mini)
                                 .accessibilityLabel(Text("In progress", bundle: .module))
                         }
                         if let badge = badges[option.value], badge > 0 {
@@ -113,4 +111,3 @@ private struct BaseSegmentedSurface: ViewModifier {
         }
     }
 }
-#endif

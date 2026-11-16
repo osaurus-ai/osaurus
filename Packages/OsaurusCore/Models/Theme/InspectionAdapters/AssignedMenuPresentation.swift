@@ -1,4 +1,3 @@
-#if OSAURUS_DESIGN_SYSTEM
 import AppKit
 import SwiftUI
 
@@ -574,7 +573,7 @@ struct AssignedNativeMenuItems: View {
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("Menu actions")
         } else {
-            VStack(alignment: .leading, spacing: 0) { menuRows }
+            VStack(alignment: .leading, spacing: theme.space.s0) { menuRows }
         }
     }
     @ViewBuilder private var menuRows: some View {
@@ -727,7 +726,6 @@ struct AssignedNativeMenuItems: View {
         return glyphs + item.keyEquivalent.uppercased()
     }
 }
-#endif
 
 import SwiftUI
 
@@ -736,13 +734,9 @@ private struct ExistingContextMenuInspection<MenuContent: View>: ViewModifier {
     var chatMenu = true
     @State private var presented = false
     @ViewBuilder func body(content: Content) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         content.overlay {
             ExistingContextMenuInspectionAnchor(presented: $presented, menuContent: menuContent, appearance: chatMenu ? .chatContext : nil)
         }.accessibilityAction(named: Text(localized: "Show menu")) { presented = true }
-        #else
-        content.contextMenu { menuContent }
-        #endif
     }
 }
 
@@ -753,7 +747,6 @@ extension View {
     }
 }
 
-#if OSAURUS_DESIGN_SYSTEM
 private struct ExistingContextMenuInspectionAnchor<MenuContent: View>: NSViewRepresentable {
     @Binding var presented: Bool
     let menuContent: MenuContent
@@ -832,4 +825,3 @@ private struct ExistingContextMenuInspectionAnchor<MenuContent: View>: NSViewRep
         }
     }
 }
-#endif

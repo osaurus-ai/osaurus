@@ -4,7 +4,7 @@ Osaurus has a persistent, on-device memory system that learns from your conversa
 
 The mental model is simple: a smart secretary that knows what you've discussed and surfaces only what matters right now — not a tape recorder.
 
-> **Not the same as per-agent DB.** Memory is **global across all your chats** — it's identity, pinned facts, and episodic recall derived from natural conversation. For an agent that maintains its own private structured store (custom tables, soft-deletes, saved views), see [Agent DB & Self-Scheduling](AGENT_DB.md). The two are orthogonal: an agent can use neither, either, or both.
+> **Not the same as per-agent DB.** Memory is derived from natural conversation: your identity (profile) is shared across chats, while pinned facts and episodic recall are kept per agent and per project (Memory → Agents & Projects). For an agent that maintains its own private structured store (custom tables, soft-deletes, saved views), see [Agent DB & Self-Scheduling](AGENT_DB.md). The two are orthogonal: an agent can use neither, either, or both.
 
 ---
 
@@ -150,7 +150,7 @@ The cache layer holds the assembled block for 10s per (agent, query) pair so ret
 
 ## Consolidation: Background Maintenance
 
-`MemoryConsolidator` runs on a low-priority background task every `consolidationIntervalHours` (default 24h) and on the explicit **Run Consolidation Now** button in the Memory UI. Each pass:
+`MemoryConsolidator` runs on a low-priority background task every `consolidationIntervalHours` (default 24h) and on the explicit **Run Now** button in Memory → Settings (next to Consolidation Interval). Each pass:
 
 1. **Decay** — `salience *= exp(-Δdays / 30)` for both pinned facts and episodes.
 2. **Merge** — collapse near-duplicate episodes (Jaccard ≥ 0.9 over summary+topics) within the same agent. Keeps the older episode, deletes the newer near-dup.
@@ -293,7 +293,7 @@ Agents can search their own memory via the built-in `search_memory(scope, query)
 
 The v1 scopes `working`, `summaries`, `all`, and `graph` are gone — `working` was subsumed by `pinned`, `summaries` was renamed to `episodes`, and `all` / `graph` are no longer exposed. The relevance gate already picks the right slice for context injection; the tool exists for explicit recall the agent decides it needs.
 
-**Opt-in per agent.** The `search_memory` tool is gated by `Agent.settings.searchMemoryEnabled` (default **off**), surfaced as **Memory Recall** under Configure → Features. It is decoupled from the **Memory** toggle (`disableMemory`): Memory controls passive context injection and transcript recording, while Memory Recall controls only mid-session active lookups. An agent can read injected memory without exposing the recall tool, or vice versa.
+**Opt-in per agent.** The `search_memory` tool is gated by `Agent.settings.searchMemoryEnabled` (default **off**), surfaced as **Memory Recall** under Abilities → Overview → Memory & Recall. It is decoupled from the **Memory** toggle (`disableMemory`): Memory controls passive context injection and transcript recording, while Memory Recall controls only mid-session active lookups. An agent can read injected memory without exposing the recall tool, or vice versa.
 
 ---
 
@@ -301,44 +301,41 @@ The v1 scopes `working`, `summaries`, `all`, and `graph` are gone — `working` 
 
 ### Memory View
 
-Open Settings… (`⌘,`) → **Memory** to see:
+Open Settings… (`⌘,`) → **Memory**. The page shows processing statistics and drills into five pages:
 
-- Your **identity** (auto-derived content + manual overrides)
-- **Pinned facts** with salience bars and use counts
-- **Episodes** for the default agent
-- **Memory Console** search, inspection, disable/forget actions, diagnostics, and bounded context previews
-- **Per-agent counts**
-- **Processing statistics** (total calls, success rate, average duration)
-- **Database size**
-- **Run Consolidation Now** button
+- **Profile** — your auto-derived identity (**About You**, with **Distill pending**, **Sync**, and **Edit**) and **Your Overrides**
+- **Memories** — the Memory Console over pinned facts and episodes (search, inspect, disable/forget, bounded context previews)
+- **Agents & Projects** — memory counts and context previews per agent and per project, with per-project clearing
+- **Settings** — Enable Memory, Core Model, budget and retention, Consolidation Interval with **Run Now**, and the danger zone (**Clear All Memory**)
+- **Diagnostics** — the pipeline status, processing queue, per-agent memory switches, recent activity, backfill, storage health, and recovery (**Retry open** / **Reset store…**)
 
 ### Adding User Overrides
 
 Identity overrides are explicit facts that always appear in context.
 
-1. Go to **Memory** → **Your Overrides**
+1. Go to **Memory** → **Profile** → **Your Overrides**
 2. Click **Add**
 3. Enter a fact (e.g. "I prefer tabs over spaces" or "My company uses a monorepo")
 
 ### Clearing Memory
 
-The Memory view includes a danger zone for clearing all memory data. This removes identity, pinned facts, episodes, and transcript. The action is irreversible.
+**Memory** → **Settings** → **Clear All Memory** (**Clear all…**) removes identity, pinned facts, episodes, and transcript. The action is irreversible.
 
 ### Memory Console
 
-The Memory Console is an administrative view over the memory database:
+The Memory Console (Memory → Memories) is an administrative view over the memory database:
 
 - **Inspect** shows a privacy-safe preview and metadata for pinned facts, episodes, and transcript turns. Emails, phone numbers, account-like values, URLs, and credential-shaped tokens are redacted before display.
 - **Search** can be scoped to all memory, pinned facts, episodes, transcript, or one agent. Disabled rows are hidden by default and can be included explicitly.
 - **Disable** removes pinned facts and episodes from future recall without deleting the row. Transcript turns do not have a disabled state in the current schema, so the console explains that limitation and keeps **Forget** available.
 - **Forget** permanently deletes the selected row and removes its vector document when a matching vector id exists.
-- **Diagnose** reports storage health: schema version, row counts, pending signals, processing logs, FTS mirror availability, vector index state, and recent storage errors.
+- **Storage health** reports schema version, row counts, pending signals, processing logs, FTS mirror availability, vector index state, and recent storage errors.
 - **Bounded context preview** assembles the memory block for a selected agent/query under an explicit token cap, then redacts the preview before showing it.
 
 ### Sync / Run Consolidation
 
-- **Sync Now** drains pending signals immediately, distilling any sessions that haven't yet flushed.
-- **Run Consolidation Now** kicks off a one-shot pass of the consolidator (decay, merge, promote, evict, prune).
+- **Sync** (Memory → Profile → About You) drains pending signals immediately, distilling any sessions that haven't yet flushed. **Distill pending** does the same for a large local core model that isn't resident yet.
+- **Run Now** (Memory → Settings) kicks off a one-shot pass of the consolidator (decay, merge, promote, evict, prune).
 
 ---
 
@@ -356,4 +353,4 @@ The v5 schema migration is automatic on first launch after an upgrade. It runs a
 
 `pinned_facts` starts empty and accrues organically as new sessions are distilled. The Vectura vector index is wiped and rebuilt lazily on first read.
 
-Alongside the schema migration, [storage convergence](STORAGE.md#migration-and-convergence) runs once on first launch. As of 0.21.0 it converges `memory.sqlite` (and every other Osaurus database) to the desired posture — **decrypting an existing SQLCipher install to plaintext when macOS FileVault is enabled, or keeping it encrypted when FileVault is off** (and re-encrypting if you opted in). The migration is invisible: no prompt or notice. If the Keychain key is already gone, the store is marked degraded (never deleted) and **Memory → Diagnostics** surfaces the real cause with Retry / Reset recovery. Details, key-rotation, opt-in encryption, and plaintext-export instructions live in [STORAGE.md](STORAGE.md).
+Alongside the schema migration, [storage convergence](STORAGE.md#migration-and-convergence) runs once on first launch. As of 0.21.0 it converges `memory.sqlite` (and every other Osaurus database) to the desired posture — **decrypting an existing SQLCipher install to plaintext when macOS FileVault is enabled, or keeping it encrypted when FileVault is off** (and re-encrypting if you opted in). The migration is invisible: no prompt or notice. If the Keychain key is already gone, the store is marked degraded (never deleted) and **Memory → Diagnostics** surfaces the real cause with **Retry open** / **Reset store…** recovery. Details, key-rotation, opt-in encryption, and plaintext-export instructions live in [STORAGE.md](STORAGE.md).

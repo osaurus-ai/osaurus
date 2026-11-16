@@ -11,24 +11,24 @@ Osaurus can use cloud or peer inference providers alongside local models. Your c
 ## Adding a provider
 
 - Settings… (⌘,) → Providers → Add Provider → pick a preset or Custom → Save.
-- Presets include Anthropic, OpenAI, xAI, and OpenRouter; Gemini, Venice AI, and Osaurus Router are also supported. Custom works with any OpenAI-, Anthropic-, or Open Responses-format API.
+- Presets: Anthropic, Azure OpenAI Foundry, AtlasCloud, OpenAI, Google (Gemini), xAI, DeepSeek, Fireworks AI, Mistral, MiniMax, Venice AI, OpenRouter, and Ollama. Osaurus Router is also supported. Custom works with any OpenAI-, Anthropic-, or Open Responses-format API.
 - Or ask the default Osaurus assistant in chat to add a provider — API keys are entered through a secure native sheet that stores them straight to the macOS Keychain (never through chat text).
 
 ## Provider settings
 
-- Name, Host, Protocol, Port, Base Path, Auth Type (None / API Key), Enabled, Auto-connect, Timeout, and custom headers (secret headers go to Keychain).
+- Name, Host, Protocol, Port, Base Path, Auth Type (**No Auth** / **API Key**), Enabled, Timeout, and custom headers (secret headers go to Keychain). Providers added in the sheet connect automatically; there is no Auto-connect control.
 - Connection states on each card: Connected (green), Connecting, Disconnected, Disabled, Error (red). Non-secret config is stored in `~/.osaurus/providers/remote.json`.
 
 ## Using remote models
 
 - The chat model picker groups each provider's discovered models under the provider name.
-- Anthropic models list the thinking efforts, context window, and lifecycle that Anthropic's Models API reports for each model. Deprecated models are labelled "Deprecated". When thinking is available, Osaurus requests summarized thinking, so the reasoning panel shows a summary. Picking an effort sends that level; picking Off turns thinking off on models that allow it. Thinking can't be turned off on Opus 5.5, Fable 5.2, Mythos 5.2, Fable 5.1, or Mythos 5.1, so those models have no Off option.
+- Anthropic models list the thinking efforts, context window, and lifecycle that Anthropic's Models API reports for each model. Deprecated models are labelled "Deprecated". When thinking is available, Osaurus requests summarized thinking, so the reasoning panel shows a summary. Picking an effort sends that level; picking Off turns thinking off on models that allow it. Whether a model offers Off comes from what Anthropic's Models API reports for it, so a model that can't turn thinking off has no Off option.
 - OpenAI reasoning models (API key and ChatGPT sign-in) always request reasoning summaries, so the reasoning panel fills even at the model's default effort.
 - Local apps pointed at Osaurus's API (`http://127.0.0.1:1337/v1/chat/completions`) can use remote models through the same endpoint — Osaurus routes by model id (e.g. `anthropic/claude-...`).
 
 ## Local servers as providers
 
-- Ollama: add a Custom provider at `localhost:11434`, base path `/v1`.
+- Ollama: pick the **Ollama** preset (`localhost:11434`, base path `/v1`, No Auth).
 - LM Studio: `localhost:1234`, base path `/v1` (enable its server first).
 
 ## Osaurus Router and peers

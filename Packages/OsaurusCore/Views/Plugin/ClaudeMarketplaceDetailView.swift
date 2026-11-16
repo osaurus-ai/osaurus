@@ -40,7 +40,7 @@ struct ClaudeMarketplaceDetailView: View {
     /// Calm app accent for the icon + primary action.
     private var accent: Color { theme.action.primary.default.background }
     /// Muted per-category tint, used only for the small category badge.
-    private var categoryColor: Color { ClaudeMarketplacePalette.color(for: categoryKey) }
+    private var categoryColor: Color { ClaudeMarketplacePalette.color(for: categoryKey, theme: theme) }
 
     private var displayName: String {
         entry.name
@@ -135,8 +135,8 @@ struct ClaudeMarketplaceDetailView: View {
     }
 
     private func heroStatBadge(icon: String, text: String, color: Color) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon).glyphSize(10)
+        HStack(spacing: theme.space.s4) {
+            Image(systemName: icon).glyphSize(.micro)
             Text(text)
                 .font(SettingsFont.smallLabel)
                 .lineLimit(1)
@@ -170,14 +170,14 @@ struct ClaudeMarketplaceDetailView: View {
     }
 
     private var trustSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             sectionHeader(title: "Trust preview")
-            HStack(alignment: .top, spacing: 10) {
+            HStack(alignment: .top, spacing: theme.space.s10) {
                 Image(systemName: trustStatusIcon)
-                    .glyphSize(13, weight: .semibold)
+                    .glyphSize(.label, weight: .semibold)
                     .foregroundColor(trustStatusColor)
                     .frame(width: 18)
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: theme.space.s4) {
                     Text(trustPreview.statusTitle)
                         .font(SettingsFont.compactLabel)
                         .foregroundColor(theme.text.primary)
@@ -189,11 +189,9 @@ struct ClaudeMarketplaceDetailView: View {
                 Spacer(minLength: 0)
             }
             .padding(theme.space.s8)
-            .background(
-                RoundedRectangle(cornerRadius: theme.radius.medium).fill(trustStatusColor.opacity(0.10))
-            )
+            .settingsChrome(.tinted(trustStatusColor))
 
-            VStack(spacing: 8) {
+            VStack(spacing: theme.space.s8) {
                 trustRow(
                     icon: "checkmark.seal",
                     title: "Listing",
@@ -218,7 +216,7 @@ struct ClaudeMarketplaceDetailView: View {
 
             let indicators = trustPreview.capabilityIndicators
             if !indicators.isEmpty {
-                FlowLayout(spacing: 6) {
+                FlowLayout(spacing: theme.space.s6) {
                     ForEach(indicators) { indicator in
                         trustCapabilityBadge(indicator)
                     }
@@ -231,9 +229,9 @@ struct ClaudeMarketplaceDetailView: View {
     }
 
     private func trustRow(icon: String, title: LocalizedStringKey, value: String) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: icon)
-                .glyphSize(11, weight: .medium)
+                .glyphSize(.footnote, weight: .medium)
                 .foregroundColor(theme.text.tertiary)
                 .frame(width: 16)
             Text(title, bundle: .module)
@@ -274,7 +272,7 @@ struct ClaudeMarketplaceDetailView: View {
 
     @ViewBuilder
     private var componentsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             sectionHeader(title: "Components")
             if let summary = componentSummary {
                 if summary.isEmpty {
@@ -294,7 +292,7 @@ struct ClaudeMarketplaceDetailView: View {
     private func componentChips(
         for summary: ClaudeMarketplaceImportabilityCatalog.ComponentSummary
     ) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             if !summary.skills.isEmpty {
                 componentGroup(
                     kind: .skill,
@@ -344,12 +342,12 @@ struct ClaudeMarketplaceDetailView: View {
     }
 
     private func infoPanel(title: LocalizedStringKey, message: LocalizedStringKey) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
+            HStack(alignment: .top, spacing: theme.space.s8) {
                 Image(systemName: "info.circle")
-                    .glyphSize(13, weight: .medium)
+                    .glyphSize(.label, weight: .medium)
                     .foregroundColor(theme.text.tertiary)
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: theme.space.s4) {
                     Text(title, bundle: .module)
                         .font(SettingsFont.compactLabel)
                         .foregroundColor(theme.text.primary)
@@ -368,10 +366,10 @@ struct ClaudeMarketplaceDetailView: View {
         count: Int,
         names: [String]
     ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: kind.icon)
-                    .glyphSize(12, weight: .medium)
+                    .glyphSize(.caption, weight: .medium)
                     .foregroundColor(kind.tint(theme))
                 Text(kind.titlePlural)
                     .font(SettingsFont.compactLabel)
@@ -381,7 +379,7 @@ struct ClaudeMarketplaceDetailView: View {
                     .foregroundColor(theme.text.secondary)
                 Spacer()
             }
-            FlowLayout(spacing: 6) {
+            FlowLayout(spacing: theme.space.s6) {
                 ForEach(names, id: \.self) { name in
                     StatusChip(name, tint: kind.tint(theme))
                 }
@@ -396,9 +394,9 @@ struct ClaudeMarketplaceDetailView: View {
         let homepageURL = entry.homepage.flatMap { URL(string: $0) }
         let repoURL = entry.repository.flatMap { URL(string: $0) }
         if homepageURL != nil || repoURL != nil {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: theme.space.s10) {
                 sectionHeader(title: "External links")
-                VStack(spacing: 6) {
+                VStack(spacing: theme.space.s6) {
                     if let repoURL {
                         linkRow(
                             icon: "chevron.left.forwardslash.chevron.right",
@@ -420,16 +418,16 @@ struct ClaudeMarketplaceDetailView: View {
         Button(
             action: { NSWorkspace.shared.open(url) },
             label: {
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     Image(systemName: icon)
-                        .glyphSize(12)
+                        .glyphSize(.caption)
                         .foregroundColor(theme.text.link)
                     Text(title, bundle: .module)
                         .font(SettingsFont.caption)
                         .foregroundColor(theme.text.primary)
                     Spacer()
                     Image(systemName: "arrow.up.right.square")
-                        .glyphSize(11)
+                        .glyphSize(.footnote)
                         .foregroundColor(theme.text.tertiary)
                 }
                 .padding(.horizontal, theme.space.s8)

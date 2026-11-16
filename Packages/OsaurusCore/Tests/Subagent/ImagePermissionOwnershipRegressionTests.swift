@@ -22,7 +22,7 @@ private final class ImagePermissionPresenter {
 }
 
 @MainActor
-@Suite("Image permission uses its owning policy", .serialized, .timeLimit(.minutes(1)))
+@Suite("Image permission uses its owning policy", .serialized, .timeLimit(.minutes(1)), .toolPermissionPromptQueue)
 struct ImagePermissionOwnershipRegressionTests {
     private func kind(edit: Bool) -> ImageSubagentKind {
         var args: [String: Any] = ["prompt": "recolor"]

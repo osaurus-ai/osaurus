@@ -40,7 +40,7 @@ struct InspectorSubTabBar<Value: Hashable>: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        HStack(spacing: 16) {
+        HStack(spacing: theme.space.s16) {
             ForEach(tabs) { tab in
                 button(tab)
             }
@@ -48,7 +48,7 @@ struct InspectorSubTabBar<Value: Hashable>: View {
         }
         .padding(.horizontal, horizontalPadding)
         .overlay(alignment: .bottom) {
-            Rectangle().fill(theme.border.default).frame(height: 1)
+            ThemeHairlineDivider()
         }
     }
 
@@ -57,7 +57,7 @@ struct InspectorSubTabBar<Value: Hashable>: View {
         return Button {
             selection = tab.value
         } label: {
-            HStack(spacing: 5) {
+            HStack(spacing: theme.space.s4) {
                 Text(verbatim: tab.title)
                     .font(
                         theme.font(
@@ -76,12 +76,12 @@ struct InspectorSubTabBar<Value: Hashable>: View {
                 case .attention:
                     Circle().fill(theme.status.warning.foreground).frame(width: 6, height: 6)
                 case .activity:
-                    ProgressView().controlSize(.mini).scaleEffect(0.7).frame(width: 10, height: 10)
+                    SettingsSpinner(size: .mini)
                 case nil:
                     EmptyView()
                 }
             }
-            .padding(.vertical, 7)
+            .padding(.vertical, theme.space.s6)
             .overlay(alignment: .bottom) {
                 Capsule()
                     .fill(selected ? theme.action.primary.default.background : .clear)

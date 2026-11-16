@@ -81,7 +81,7 @@ struct AgentChannelAddChannelSheet: View {
     // MARK: - Picker
 
     private var picker: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             SettingsSheetHeader(
                 icon: "plus.bubble.fill",
                 title: "Add Channel",
@@ -90,7 +90,7 @@ struct AgentChannelAddChannelSheet: View {
             )
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: theme.space.s10) {
                     ForEach(AgentChannelAddCatalog.choices, id: \.self) { kind in
                         if AgentChannelAddCatalog.isAdvanced(kind) {
                             advancedDivider
@@ -120,17 +120,13 @@ struct AgentChannelAddChannelSheet: View {
     }
 
     private var advancedDivider: some View {
-        HStack(spacing: 8) {
-            Rectangle()
-                .fill(theme.border.default)
-                .frame(height: 1)
+        HStack(spacing: theme.space.s8) {
+            ThemeHairlineDivider()
             Text("Advanced", bundle: .module)
                 .font(SettingsFont.compactLabel)
                 .foregroundColor(theme.text.tertiary)
                 .fixedSize()
-            Rectangle()
-                .fill(theme.border.default)
-                .frame(height: 1)
+            ThemeHairlineDivider()
         }
         .padding(.top, theme.space.s8)
     }

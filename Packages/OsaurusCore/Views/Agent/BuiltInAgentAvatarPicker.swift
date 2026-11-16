@@ -127,7 +127,7 @@ struct BuiltInAgentAvatarPicker: View {
             AgentAvatarView(
                 mascotId: nil,
                 name: previewName,
-                tint: agentColorFor(previewName),
+                tint: theme.dataInk(seed: previewName),
                 diameter: 36,
                 customImageURL: agent.customAvatarURL,
                 monogramFontSize: 14,
@@ -136,7 +136,7 @@ struct BuiltInAgentAvatarPicker: View {
             .overlay(Circle().strokeBorder(theme.action.primary.default.background, lineWidth: theme.stroke.focus).padding(-3))
             .overlay(alignment: .topTrailing) {
                 Image(systemName: "xmark.circle.fill")
-                    .glyphSize(13, weight: .semibold)
+                    .glyphSize(.label, weight: .semibold)
                     .foregroundColor(theme.text.secondary)
                     .background(Circle().fill(theme.surface.canvas))
                     .offset(x: 4, y: -4)
@@ -157,7 +157,7 @@ struct BuiltInAgentAvatarPicker: View {
                 Circle().fill(theme.surface.subtle)
                 Circle().strokeBorder(theme.border.strong, style: StrokeStyle(lineWidth: theme.stroke.default, dash: [3, 3]))
                 Image(systemName: "photo.badge.plus")
-                    .glyphSize(13, weight: .semibold)
+                    .glyphSize(.label, weight: .semibold)
                     .foregroundColor(theme.text.secondary)
             }
             .frame(width: 36, height: 36)

@@ -140,6 +140,30 @@ struct FolderToolsResilienceTests {
         )
     }
 
+    /// A read-only folder (Keeper on Downloads) has no `shell_run`, so a
+    /// binary or image read must not point at it.
+    @Test func binaryEnvelope_namesShellRunOnlyWhenTheTurnHasIt() {
+        let image = FolderToolError.binaryContent(path: "photo.png", ext: "png", detail: .image)
+        let pdf = FolderToolError.binaryContent(path: "scan.pdf", ext: "pdf", detail: .imageOnlyPdf)
+        let blob = FolderToolError.binaryContent(path: "blob.bin", ext: "bin", detail: .nulByte)
+
+        let readOnly = ToolExecutionScope(exposed: [])
+        readOnly.activate(["file_read", "file_search"])
+        ChatExecutionContext.$toolExecutionScope.withValue(readOnly) {
+            for error in [image, pdf, blob] {
+                let message = EnvelopeAssertions.failureMessage(ToolEnvelope.fromError(error, tool: "file_read")) ?? ""
+                #expect(!message.contains("shell_run"), "\(message)")
+            }
+        }
+
+        let withShell = ToolExecutionScope(exposed: [])
+        withShell.activate(["file_read", "shell_run"])
+        ChatExecutionContext.$toolExecutionScope.withValue(withShell) {
+            let message = EnvelopeAssertions.failureMessage(ToolEnvelope.fromError(blob, tool: "file_read")) ?? ""
+            #expect(message.contains("shell_run"), "\(message)")
+        }
+    }
+
     /// Regression for the old `(empty file)` lie at the bottom of
     /// `FileReadTool.execute`. A single oversized line now returns the
     /// leading slice inside the success envelope plus a truncation note,

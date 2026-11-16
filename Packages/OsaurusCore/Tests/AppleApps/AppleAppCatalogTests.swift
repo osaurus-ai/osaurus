@@ -227,15 +227,49 @@ struct AppleAppRegistryGatingTests {
             try envelope(await ToolRegistry.shared.execute(name: "mail_list", argumentsJSON: "{}"))
         }
         #expect(asDefault["ok"] as? Bool == false)
-        #expect((asDefault["message"] as? String)?.contains("Default agent") == true)
+        #expect(asDefault["kind"] as? String == "tool_not_found")
+        let defaultMessage = asDefault["message"] as? String ?? ""
+        #expect(defaultMessage.contains("Orchestrator never uses itself"))
+        #expect(defaultMessage.contains(RunWorkflowTool.toolName))
+        #expect(defaultMessage.contains(ConfiguratorHandoffTool.toolName))
+        #expect(!defaultMessage.contains("osaurus_config"))
 
         // Unknown custom agent (no enabled apps) → refused naming the switch.
         let asCustom = try await ChatExecutionContext.$currentAgentId.withValue(UUID()) {
             try envelope(await ToolRegistry.shared.execute(name: "shortcuts_list", argumentsJSON: "{}"))
         }
         #expect(asCustom["ok"] as? Bool == false)
+        #expect(asCustom["kind"] as? String == "rejected")
         #expect((asCustom["message"] as? String)?.contains("Abilities") == true)
         #expect(asCustom["apple_app"] as? String == "shortcuts")
+
+        // Architect → steered to a draft step, never to a switch it lacks.
+        let asArchitect = try await ChatExecutionContext.$currentAgentId.withValue(Agent.architectId) {
+            try envelope(await ToolRegistry.shared.execute(name: "mail_mailboxes", argumentsJSON: "{}"))
+        }
+        #expect(asArchitect["ok"] as? Bool == false)
+        #expect(asArchitect["kind"] as? String == "tool_not_found")
+        let architectMessage = asArchitect["message"] as? String ?? ""
+        #expect(architectMessage.contains(WorkflowDraftTool.toolName))
+        #expect(architectMessage.contains(WorkflowTestTool.toolName))
+        #expect(!architectMessage.contains("Abilities"))
+    }
+
+    @Test("built-in agents get a correctable refusal; custom agents and no agent stay terminal")
+    func offRefusalKindPerAgent() {
+        let kind = { (agentId: UUID?) in
+            ToolRegistry.appleAppOffRefusal(tool: "calendar_events", app: .calendar, agentId: agentId).kind
+        }
+        #expect(kind(Agent.defaultId) == .toolNotFound)
+        #expect(kind(Agent.architectId) == .toolNotFound)
+        #expect(kind(Agent.configuratorId) == .toolNotFound)
+        #expect(kind(nil) == .rejected)
+        #expect(kind(UUID()) == .rejected)
+        for builtIn in [Agent.defaultId, Agent.architectId, Agent.configuratorId] {
+            let message = ToolRegistry.appleAppOffRefusal(tool: "calendar_events", app: .calendar, agentId: builtIn)
+                .message
+            #expect(!message.contains("Abilities"), "\(builtIn): \(message)")
+        }
     }
 
     @Test("an MCP or plugin tool named like a built-in is refused, not swapped in under the built-in's gate")
@@ -264,11 +298,36 @@ struct AppleAppRegistryGatingTests {
         #expect(registry.listTools().first { $0.name == "messages_read" }?.description != "plugin impostor")
     }
 
+    @Test("permission messages name the System Settings pane, not the permission label")
+    func permissionMessageNamesThePane() {
+        let cases: [(SystemPermission, String)] = [
+            (.notes, "Privacy & Security → Automation → Osaurus → Notes"),
+            (.automationMail, "Privacy & Security → Automation → Osaurus → Mail"),
+            (.automationMessages, "Privacy & Security → Automation → Osaurus → Messages"),
+            (.automationMusic, "Privacy & Security → Automation → Osaurus → Music"),
+            (.location, "Privacy & Security → Location Services"),
+            (.calendar, "Privacy & Security → Calendars"),
+        ]
+        for (permission, path) in cases {
+            let message = AppleToolError.permissionDenied(permission, detail: nil).message
+            #expect(message.contains(path), "\(permission): \(message)")
+        }
+    }
+
     @Test("appleAppOffEnvelope is non-retryable and never suggests capabilities_load as a fix")
     func offEnvelopeCopy() throws {
         let raw = ToolRegistry.appleAppOffEnvelope(tool: "mail_list", app: .mail, agentId: UUID())
         let env = try #require(JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any])
         #expect(env["retryable"] as? Bool == false)
+        #expect(env["kind"] as? String == "rejected")
         #expect((env["message"] as? String)?.contains("cannot be loaded with capabilities_load") == true)
+    }
+
+    @Test("the workflow_draft tools result says the listed tools are step tools")
+    func draftToolsNoteNamesStepTools() {
+        let note = WorkflowDraftTool.stepToolsNote
+        #expect(note.contains("`tool` node"))
+        #expect(note.contains(WorkflowTestTool.toolName))
+        #expect(note.contains("Do not call them yourself"))
     }
 }

@@ -43,10 +43,10 @@ public struct StorageSettingsView: View {
     public init() {}
 
     private var sectionsContent: some View {
-        VStack(alignment: .leading, spacing: 24) {
+        VStack(alignment: .leading, spacing: theme.space.s24) {
             postureCard
                 .settingsLandingAnchor("storage.encryption")
-            if !storeIssues.isEmpty {
+            if !recoverableStoreIssues.isEmpty {
                 recoveryCard
             }
             tradeoffsCard
@@ -106,10 +106,32 @@ public struct StorageSettingsView: View {
                 title: postureTitle, description: postureSubtitle, verbatimTitle: true, verbatimDescription: true
             ) {
                 Image(systemName: postureIcon)
-                    .glyphSize(16, weight: .medium)
+                    .glyphSize(.medium, weight: .medium)
                     .foregroundColor(postureColor)
             } trailing: {
                 EmptyView()
+            }
+
+            SettingsRow(
+                title: "Conversations",
+                description:
+                    "Synced conversations are always encrypted with their own key in your Keychain, whether or not this setting is on. The pre-sync chat history kept for import follows this setting."
+            ) {
+                Image(systemName: "lock.fill")
+                    .glyphSize(.medium, weight: .medium)
+                    .foregroundColor(theme.status.success.foreground)
+            } trailing: {
+                EmptyView()
+            }
+
+            if storageKeyIssue != nil {
+                statusLine(
+                    text: L(
+                        "The storage key can't be read from your Keychain, so encrypted stores and the search, memory, and tool indexes built on them are unavailable. Unlock or restore the Keychain item and relaunch Osaurus."
+                    ),
+                    color: theme.status.warning.foreground,
+                    icon: "key.slash"
+                )
             }
 
             if isWorking {
@@ -117,8 +139,8 @@ public struct StorageSettingsView: View {
                     title: "Encrypt Local Data at Rest (SQLCipher)",
                     description: "Turning this on or off migrates every database and attachment to the new format."
                 ) {
-                    HStack(spacing: 6) {
-                        ProgressView().scaleEffect(0.6)
+                    HStack(spacing: theme.space.s6) {
+                        SettingsSpinner()
                         Text(LocalizedStringKey(workingLabel), bundle: .module)
                             .font(SettingsFont.rowDescription)
                             .foregroundColor(theme.text.secondary)
@@ -145,7 +167,7 @@ public struct StorageSettingsView: View {
 
     private var tradeoffsCard: some View {
         SettingsSection(title: "Why Encryption Is Opt-In") {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
                 fileVaultRow
                 aboutRow(
                     icon: "externaldrive.fill.badge.checkmark",
@@ -176,9 +198,9 @@ public struct StorageSettingsView: View {
     /// caution when off (since plaintext then has no disk encryption behind it,
     /// and it's also why an existing encrypted install was kept encrypted).
     private var fileVaultRow: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: theme.space.s10) {
             Image(systemName: fileVaultOn ? "checkmark.shield.fill" : "exclamationmark.shield.fill")
-                .glyphSize(11, weight: .semibold)
+                .glyphSize(.footnote, weight: .semibold)
                 .foregroundColor(fileVaultOn ? theme.status.success.foreground : theme.status.warning.foreground)
                 .frame(width: 16, alignment: .center)
                 .padding(.top, theme.space.s2)
@@ -204,7 +226,7 @@ public struct StorageSettingsView: View {
     /// subsystem and no way forward.
     private var recoveryCard: some View {
         SettingsSection(title: "Stores Needing Attention") {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 ForEach(sortedStoreIssues, id: \.store) { issue in
                     storeIssueRow(issue)
                     if issue.store != sortedStoreIssues.last?.store {
@@ -215,25 +237,35 @@ public struct StorageSettingsView: View {
         }
     }
 
+    /// The storage key isn't a store the user can Retry or Reset on its own;
+    /// it is reported on the posture card instead.
+    private var storageKeyIssue: StorageStoreIssue? {
+        storeIssues.first { $0.store == StorageMigrationCoordinator.storageKeyIssueStore }
+    }
+
+    private var recoverableStoreIssues: [StorageStoreIssue] {
+        storeIssues.filter { $0.store != StorageMigrationCoordinator.storageKeyIssueStore }
+    }
+
     private var sortedStoreIssues: [StorageStoreIssue] {
-        storeIssues.sorted { $0.store < $1.store }
+        recoverableStoreIssues.sorted { $0.store < $1.store }
     }
 
     @ViewBuilder
     private func storeIssueRow(_ issue: StorageStoreIssue) -> some View {
         let store = StorageRecoveryService.Store(rawValue: issue.store)
         let label = store?.displayName ?? issue.store
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(spacing: theme.space.s8) {
                 Text(LocalizedStringKey(label), bundle: .module)
                     .font(SettingsFont.compactLabel)
                     .foregroundColor(theme.text.primary)
                 StatusChip(LCached(issueKindBadge(issue.kind)), tint: issueKindColor(issue.kind))
                 Spacer(minLength: 8)
                 if recoveringStore == issue.store {
-                    ProgressView().scaleEffect(0.55)
+                    SettingsSpinner()
                 } else if store != nil {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         actionButton(
                             icon: "arrow.clockwise",
                             label: "Retry",
@@ -312,9 +344,9 @@ public struct StorageSettingsView: View {
     }
 
     private func aboutRow(icon: String, text: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: theme.space.s10) {
             Image(systemName: icon)
-                .glyphSize(11, weight: .medium)
+                .glyphSize(.footnote, weight: .medium)
                 .foregroundColor(theme.text.secondary)
                 .frame(width: 16, alignment: .center)
                 .padding(.top, theme.space.s2)
@@ -364,7 +396,7 @@ public struct StorageSettingsView: View {
 
     private var technicalDetails: some View {
         SettingsAdvancedDisclosure(title: "Technical Details") {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
                 Text("Service: com.osaurus.storage", bundle: .module)
                 Text("Account: data-encryption-key", bundle: .module)
                 Text("Cipher: AES-256-CBC + HMAC-SHA512, page size 4096, kdf_iter 256000", bundle: .module)
@@ -412,9 +444,9 @@ public struct StorageSettingsView: View {
     }
 
     private func statusLine(text: String, color: Color, icon: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: theme.space.s8) {
             Image(systemName: icon)
-                .glyphSize(11, weight: .semibold)
+                .glyphSize(.footnote, weight: .semibold)
                 .foregroundColor(color)
                 .padding(.top, theme.space.s2)
             Text(text)
@@ -571,35 +603,61 @@ public struct StorageSettingsView: View {
                 let report = try await StorageMigrationCoordinator.shared.setEncryptionEnabled(enabled)
                 await MainActor.run {
                     self.isWorking = false
-                    self.desiredEncrypted = enabled
                     if !report.locked.isEmpty {
                         let count = report.locked.count
                         self.errorMessage = count == 1
                             ? L("1 store couldn't be converted because the encryption key is unavailable.")
                             : L("\(count) stores couldn't be converted because the encryption key is unavailable.")
+                    } else if report.keyFailure != nil {
+                        self.errorMessage = L("Files couldn't be converted because the encryption key is unavailable.")
                     } else if !report.failed.isEmpty {
                         let count = report.failed.count
                         self.errorMessage = count == 1
                             ? L("1 store failed to convert.")
                             : L("\(count) stores failed to convert.")
-                    } else if enabled {
-                        self.lastSummary = report.converted == 1
-                            ? L("Encrypted 1 store at rest.")
-                            : L("Encrypted \(report.converted) stores at rest.")
+                    } else if report.filesFailed > 0 {
+                        let count = report.filesFailed
+                        self.errorMessage = count == 1
+                            ? L("1 file failed to convert.")
+                            : L("\(count) files failed to convert.")
                     } else {
-                        self.lastSummary = report.converted == 1
-                            ? L("Decrypted 1 store; now plaintext at rest.")
-                            : L("Decrypted \(report.converted) stores; now plaintext at rest.")
+                        self.lastSummary = Self.convergenceSummary(report, enabled: enabled)
                     }
                 }
-                await refresh()
             } catch {
                 await MainActor.run {
                     self.isWorking = false
                     self.errorMessage = error.localizedDescription
                 }
             }
+            // The coordinator may keep or restore the previous posture, so the
+            // toggle reflects the policy rather than the requested value.
+            await refresh()
         }
+    }
+
+    private static func convergenceSummary(_ report: StorageMigrationCoordinator.Report, enabled: Bool) -> String {
+        let stores = report.converted
+        let files = report.filesConverted
+        if stores == 0 && files == 0 {
+            return enabled
+                ? L("Encryption is on. Nothing on disk needed converting.")
+                : L("Encryption is off. Nothing on disk needed converting.")
+        }
+        if enabled {
+            if stores == 0 {
+                return files == 1 ? L("Encrypted 1 file at rest.") : L("Encrypted \(files) files at rest.")
+            }
+            return stores == 1 ? L("Encrypted 1 store at rest.") : L("Encrypted \(stores) stores at rest.")
+        }
+        if stores == 0 {
+            return files == 1
+                ? L("Decrypted 1 file; now plaintext at rest.")
+                : L("Decrypted \(files) files; now plaintext at rest.")
+        }
+        return stores == 1
+            ? L("Decrypted 1 store; now plaintext at rest.")
+            : L("Decrypted \(stores) stores; now plaintext at rest.")
     }
 
     /// Why an export is being run — drives the open-panel copy, the success

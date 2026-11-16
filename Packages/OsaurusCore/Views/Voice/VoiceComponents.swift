@@ -39,7 +39,7 @@ public struct WaveformView: View {
 
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
 
     public init(
         level: Float,
@@ -112,7 +112,7 @@ public struct WaveformView: View {
 private struct WaveformBars: View {
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
 
     let level: Float
     let barCount: Int
@@ -189,7 +189,7 @@ private struct WaveformBars: View {
 private struct WaveformWave: View {
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
 
     let level: Float
     let color: Color
@@ -215,7 +215,7 @@ private struct WaveformWave: View {
 private struct WaveformWaveCanvas: View {
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
     let level: Float
     let color: Color
     let isActive: Bool
@@ -271,7 +271,7 @@ private struct WaveformWaveCanvas: View {
 private struct WaveformCircular: View {
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
     let level: Float
     let color: Color
     let isActive: Bool
@@ -320,7 +320,7 @@ private struct WaveformCircular: View {
 private struct WaveformMinimal: View {
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
     let level: Float
     let color: Color
     let isActive: Bool
@@ -382,7 +382,7 @@ public struct TranscriptionPreviewView: View {
 
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var cursorVisible = true
 
@@ -399,7 +399,7 @@ public struct TranscriptionPreviewView: View {
     public var body: some View {
         Group {
 
-        HStack(spacing: 0) {
+        HStack(spacing: theme.space.s0) {
             if text.isEmpty {
                 Text(placeholder)
                     .catalogTypography(.body, theme: theme, fallback: SettingsFont.body)
@@ -431,8 +431,8 @@ public struct TranscriptionPreviewView: View {
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.45.elements.layout.transcriptionPreviewView.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(45, "padding", 16, theme))).catalogLayoutTarget("component.library.45.elements.layout.transcriptionPreviewView.body.paddingX")
-        .padding(.vertical, theme.catalogLayoutMetric("component.library.45.elements.layout.transcriptionPreviewView.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(45, "padding", 14, theme))).catalogLayoutTarget("component.library.45.elements.layout.transcriptionPreviewView.body.paddingY")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.45.elements.layout.transcriptionPreviewView.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(45, "padding", theme.space.s16, theme))).catalogLayoutTarget("component.library.45.elements.layout.transcriptionPreviewView.body.paddingX")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.45.elements.layout.transcriptionPreviewView.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(45, "padding", theme.space.s14, theme))).catalogLayoutTarget("component.library.45.elements.layout.transcriptionPreviewView.body.paddingY")
         .background(
             ZStack {
                 RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous)
@@ -505,7 +505,7 @@ public struct VoiceStatusIndicator: View {
 
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
 
     public init(state: VoiceState, showLabel: Bool = true, compact: Bool = false) {
         self.state = state
@@ -516,19 +516,19 @@ public struct VoiceStatusIndicator: View {
     public var body: some View {
         Group {
 
-        HStack(spacing: compact ? 0 : 6) {
+        HStack(spacing: compact ? theme.space.s0 : theme.space.s6) {
             // Animated icon
             ZStack {
                 if state == .listening {
                     // Pulsing background for listening state
                     Circle()
-                        .fill(stateColor.opacity(0.3))
+                        .fill(theme.wash(behind: stateColor))
                         .frame(width: 20, height: 20)
                         .modifier(PulseModifier())
                 }
 
                 Image(systemName: state.iconName)
-                    .glyphSize(compact ? 14 : 12, weight: .medium)
+                    .glyphSize(compact ? .body : .caption, weight: .medium)
                     .foregroundColor(stateColor)
                     .symbolEffect(.pulse, isActive: state == .processing)
             }
@@ -541,12 +541,12 @@ public struct VoiceStatusIndicator: View {
                     .lineLimit(1)
             }
         }
-        .padding(.horizontal, compact ? 8 : 12)
-        .padding(.vertical, compact ? 6 : 7)
+        .padding(.horizontal, compact ? theme.space.s8 : theme.space.s12)
+        .padding(.vertical, compact ? theme.space.s6 : theme.space.s6)
         .background(
             ZStack {
                 Capsule()
-                    .fill(stateColor.opacity(0.1))
+                    .fill(theme.wash(behind: stateColor))
 
                 // Subtle gradient for active states
                 if state == .listening || state == .processing {
@@ -596,7 +596,7 @@ public struct VoiceStatusIndicator: View {
 private struct PulseModifier: ViewModifier {
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isPulsing = false
 
@@ -633,7 +633,7 @@ public struct CountdownRingButton: View {
 
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
 
     public init(
         duration: Double,
@@ -661,7 +661,7 @@ public struct CountdownRingButton: View {
         Group {
 
         Button(action: { onTap?() }) {
-            HStack(spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.countdownRingButton.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(45, "gap", 14, theme))) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.countdownRingButton.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(45, "gap", theme.space.s14, theme))) {
                 // Circular progress
                 ZStack {
                     // Track
@@ -688,7 +688,7 @@ public struct CountdownRingButton: View {
                 }
 
                 // Label
-                VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.countdownRingButton.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(45, "gap", 2, theme))) {
+                VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.countdownRingButton.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(45, "gap", theme.space.s2, theme))) {
                     Text("Sending...", bundle: .module)
                         .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowTitle)
                         .foregroundColor(theme.text.primary)
@@ -699,21 +699,9 @@ public struct CountdownRingButton: View {
 
                 Spacer()
 
-                // Cancel icon
-                Image(systemName: "xmark")
-                    .glyphSize(12, weight: .medium)
-                    .foregroundColor(theme.text.tertiary)
-                    .padding(.horizontal, theme.catalogLayoutMetric("component.library.45.elements.layout.countdownRingButton.body.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(45, "padding", 8, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.45.elements.layout.countdownRingButton.body.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(45, "padding", 8, theme))).catalogLayoutTarget("component.library.45.elements.layout.countdownRingButton.body.padding.horizontal").catalogLayoutTarget("component.library.45.elements.layout.countdownRingButton.body.padding.vertical")
-                    .background(
-                        ZStack {
-                            Circle()
-                                .fill(theme.surface.hover)
-                            Circle()
-                                .strokeBorder(theme.border.subtle, lineWidth: theme.stroke.default)
-                        }
-                    )
+                SettingsIconButton("xmark", help: "Cancel", size: .compact) { onTap?() }
             }.catalogLayoutTarget("component.library.45.elements.layout.countdownRingButton.body.horizontalGap")
-            .padding(.horizontal, theme.catalogLayoutMetric("component.library.45.elements.layout.countdownRingButton.body.padding2.horizontal", inheriting: NativeComponentInspectionStyle.metric(45, "padding", 14, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.45.elements.layout.countdownRingButton.body.padding2.vertical", inheriting: NativeComponentInspectionStyle.metric(45, "padding", 14, theme))).catalogLayoutTarget("component.library.45.elements.layout.countdownRingButton.body.padding2.horizontal").catalogLayoutTarget("component.library.45.elements.layout.countdownRingButton.body.padding2.vertical")
+            .padding(.horizontal, theme.catalogLayoutMetric("component.library.45.elements.layout.countdownRingButton.body.padding2.horizontal", inheriting: NativeComponentInspectionStyle.metric(45, "padding", theme.space.s14, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.45.elements.layout.countdownRingButton.body.padding2.vertical", inheriting: NativeComponentInspectionStyle.metric(45, "padding", theme.space.s14, theme))).catalogLayoutTarget("component.library.45.elements.layout.countdownRingButton.body.padding2.horizontal").catalogLayoutTarget("component.library.45.elements.layout.countdownRingButton.body.padding2.vertical")
             .background(
                 ZStack {
                     RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous)
@@ -766,7 +754,7 @@ public struct PauseDetectionRing: View {
 
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
 
     public init(
         silenceDuration: Double,
@@ -794,14 +782,14 @@ public struct PauseDetectionRing: View {
     public var body: some View {
         Group {
 
-        HStack(spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.pauseDetectionRing.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(45, "gap", 8, theme))) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.pauseDetectionRing.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(45, "gap", theme.space.s8, theme))) {
             // Progress bar (only show when there's silence building)
             if progress > 0.1 && !isSpeaking {
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
                         // Track
                         RoundedRectangle(cornerRadius: theme.radius.small)
-                            .fill(theme.surface.hover)
+                            .fill(theme.emptyTrack(theme.surface.hover))
                             .frame(height: 3)
 
                         // Progress
@@ -820,8 +808,8 @@ public struct PauseDetectionRing: View {
                     .foregroundColor(theme.text.tertiary)
             }
         }.catalogLayoutTarget("component.library.45.elements.layout.pauseDetectionRing.body.horizontalGap")
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.45.elements.layout.pauseDetectionRing.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(45, "padding", 12, theme))).catalogLayoutTarget("component.library.45.elements.layout.pauseDetectionRing.body.paddingX")
-        .padding(.vertical, theme.catalogLayoutMetric("component.library.45.elements.layout.pauseDetectionRing.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(45, "padding", 7, theme))).catalogLayoutTarget("component.library.45.elements.layout.pauseDetectionRing.body.paddingY")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.45.elements.layout.pauseDetectionRing.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(45, "padding", theme.space.s12, theme))).catalogLayoutTarget("component.library.45.elements.layout.pauseDetectionRing.body.paddingX")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.45.elements.layout.pauseDetectionRing.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(45, "padding", theme.space.s6, theme))).catalogLayoutTarget("component.library.45.elements.layout.pauseDetectionRing.body.paddingY")
         .background(
             ZStack {
                 Capsule()
@@ -929,7 +917,7 @@ public struct CountdownTimerView: View {
 
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
 
     public init(
         duration: Double,
@@ -953,7 +941,7 @@ public struct CountdownTimerView: View {
     public var body: some View {
         Group {
 
-        HStack(spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.countdownTimerView.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(45, "gap", 12, theme))) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.countdownTimerView.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(45, "gap", theme.space.s12, theme))) {
             // Circular progress
             ZStack {
                 Circle()
@@ -973,7 +961,7 @@ public struct CountdownTimerView: View {
                     .contentTransition(.numericText())
             }
 
-            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.countdownTimerView.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(45, "gap", 2, theme))) {
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.countdownTimerView.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(45, "gap", theme.space.s2, theme))) {
                 Text(label)
                     .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowTitle)
                     .foregroundColor(theme.text.primary)
@@ -985,15 +973,9 @@ public struct CountdownTimerView: View {
 
             Spacer()
 
-            // Cancel button
-            Button(action: { onCancel?() }) {
-                Image(systemName: "xmark.circle.fill")
-                    .glyphSize(24)
-                    .foregroundColor(theme.text.tertiary)
-            }
-            .buttonStyle(.plain)
+            SettingsIconButton("xmark", help: "Cancel", size: .compact) { onCancel?() }
         }.catalogLayoutTarget("component.library.45.elements.layout.countdownTimerView.body.horizontalGap")
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.45.elements.layout.countdownTimerView.body.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(45, "padding", 16, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.45.elements.layout.countdownTimerView.body.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(45, "padding", 16, theme))).catalogLayoutTarget("component.library.45.elements.layout.countdownTimerView.body.padding.horizontal").catalogLayoutTarget("component.library.45.elements.layout.countdownTimerView.body.padding.vertical")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.45.elements.layout.countdownTimerView.body.padding.horizontal", inheriting: NativeComponentInspectionStyle.metric(45, "padding", theme.space.s16, theme))).padding(.vertical, theme.catalogLayoutMetric("component.library.45.elements.layout.countdownTimerView.body.padding.vertical", inheriting: NativeComponentInspectionStyle.metric(45, "padding", theme.space.s16, theme))).catalogLayoutTarget("component.library.45.elements.layout.countdownTimerView.body.padding.horizontal").catalogLayoutTarget("component.library.45.elements.layout.countdownTimerView.body.padding.vertical")
         .background(
             ZStack {
                 RoundedRectangle(cornerRadius: theme.radius.xlarge, style: .continuous)
@@ -1030,10 +1012,12 @@ public struct CountdownTimerView: View {
 
 #if DEBUG
     struct VoiceComponents_Previews: PreviewProvider {
+        @MainActor private static var theme: any ThemeProtocol { ThemeManager.shared.currentTheme }
+
         static var previews: some View {
-            VStack(spacing: 20) {
+            VStack(spacing: theme.space.s20) {
                 // Waveform styles
-                HStack(spacing: 20) {
+                HStack(spacing: theme.space.s20) {
                     WaveformView(level: 0.6, style: .bars)
                     WaveformView(level: 0.6, style: .wave)
                     WaveformView(level: 0.6, style: .circular)
@@ -1048,7 +1032,7 @@ public struct CountdownTimerView: View {
                 )
 
                 // Status indicators
-                HStack(spacing: 12) {
+                HStack(spacing: theme.space.s12) {
                     VoiceStatusIndicator(state: .idle)
                     VoiceStatusIndicator(state: .listening)
                     VoiceStatusIndicator(state: .processing)
@@ -1058,12 +1042,12 @@ public struct CountdownTimerView: View {
                 Divider()
 
                 // Pause detection indicator
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
                     Text("Pause Detection", bundle: .module)
                         .font(SettingsFont.smallLabel)
                         .foregroundColor(CustomizableTheme.dark().text.tertiary)
 
-                    HStack(spacing: 16) {
+                    HStack(spacing: theme.space.s16) {
                         PauseDetectionRing(
                             silenceDuration: 0.3,
                             pauseThreshold: 1.5,
@@ -1079,7 +1063,7 @@ public struct CountdownTimerView: View {
                 }
 
                 // Countdown button
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
                     Text("Countdown", bundle: .module)
                         .font(SettingsFont.smallLabel)
                         .foregroundColor(CustomizableTheme.dark().text.tertiary)
@@ -1091,7 +1075,7 @@ public struct CountdownTimerView: View {
                 }
 
                 // Silence timeout
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
                     Text("Silence Timeout", bundle: .module)
                         .font(SettingsFont.smallLabel)
                         .foregroundColor(CustomizableTheme.dark().text.tertiary)
@@ -1102,7 +1086,7 @@ public struct CountdownTimerView: View {
                     )
                 }
             }
-            .padding(24)
+            .padding(theme.space.s24)
             .frame(width: 400)
             .background(CustomizableTheme.dark().surface.canvas)
         }

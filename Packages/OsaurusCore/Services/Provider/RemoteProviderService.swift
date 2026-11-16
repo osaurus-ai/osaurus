@@ -568,6 +568,11 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
     ) async throws -> String {
         var result = ""
         for try await chunk in stream {
+            if let stats = StreamingStatsHint.decode(chunk) {
+                WireTransportProbe.current?.recordCompletion(
+                    finishReason: stats.stopReason, outputTokens: stats.tokenCount)
+                continue
+            }
             if StreamingToolHint.isSentinel(chunk) { continue }
             result += chunk
         }
@@ -657,6 +662,8 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
                 ?? String(data: data, encoding: .utf8) ?? "Unknown error"
             throw RemoteProviderServiceError.requestFailed("HTTP \(httpResponse.statusCode): \(errorMessage)")
         }
+        WireTransportProbe.current?.recordCompletion(
+            finishReason: Self.oneShotFinishReason(data), outputTokens: Self.oneShotOutputTokens(data))
 
         let responseProviderType = Self.effectiveRequestProviderType(
             configuredProviderType: provider.providerType,
@@ -689,6 +696,23 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
         }
         // Responses can contain visible text while still being explicitly incomplete.
         if root["status"] as? String == "incomplete" { return "incomplete" }
+        return nil
+    }
+
+    /// Provider-reported completion tokens of a non-streamed reply, reasoning
+    /// included: OpenAI `usage.completion_tokens`, Anthropic / Responses
+    /// `usage.output_tokens`, Gemini candidates plus thoughts.
+    static func oneShotOutputTokens(_ data: Data) -> Int? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        if let usage = root["usage"] as? [String: Any] {
+            if let tokens = usage["completion_tokens"] as? Int { return tokens }
+            if let tokens = usage["output_tokens"] as? Int { return tokens }
+        }
+        if let metadata = root["usageMetadata"] as? [String: Any],
+            let candidates = metadata["candidatesTokenCount"] as? Int
+        {
+            return candidates + (metadata["thoughtsTokenCount"] as? Int ?? 0)
+        }
         return nil
     }
 
@@ -3474,9 +3498,10 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
         let reasoningPolicy = RemoteReasoningPolicy.resolve(
             providerType: provider.providerType,
             host: provider.host,
-            model: model
+            model: model,
+            port: provider.port
         )
-        let (effortValue, effortThinking) = reasoningPolicy.controls(
+        let (requestedEffort, effortThinking) = reasoningPolicy.controls(
             effort: parameters.modelOptions["reasoningEffort"]?.stringValue
         )
         // "Reasoning off" (disableThinking, or a none/off effort) must reach the
@@ -3484,6 +3509,7 @@ public actor RemoteProviderService: ToolCapableService, ResponsesGenerationServi
         // whole budget thinking and answers with empty content (#3036).
         let reasoningOff = reasoningPolicy.reasoningOffControls(
             disableThinking: RemoteReasoningPolicy.requestsReasoningOff(parameters.modelOptions))
+        let effortValue = reasoningOff.effort ?? requestedEffort
         let thinking = effortThinking ?? reasoningOff.thinking
         let isAgentRun = parameters.runAsRemoteAgent
         var maxTokens = Self.remoteChatMaxTokens(providerType: provider.providerType, parameters: parameters)

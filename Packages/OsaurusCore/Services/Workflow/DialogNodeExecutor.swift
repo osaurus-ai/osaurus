@@ -52,18 +52,22 @@ enum DialogNodeExecutor {
     ) async throws -> WorkflowNodeOutcome {
         let workflowID = context.workflowID
         let nodeID = context.node.id
-        let saved: [String: JSONValue] = await MainActor.run {
+        let (saved, draft): ([String: JSONValue], [String: JSONValue]) = await MainActor.run {
             var out: [String: JSONValue] = [:]
             for field in spec.fields {
                 if let v = SavedAnswersStore.shared.value(workflowID: workflowID, nodeID: nodeID, fieldKey: field.key) {
                     out[field.key] = v
                 }
             }
-            return out
+            return (out, DialogCoordinator.shared.draft(workflowID: workflowID, nodeID: nodeID))
         }
-        let plan = plan(spec: spec, callInput: context.bindings.input, saved: saved)
+        var plan = plan(spec: spec, callInput: context.bindings.input, saved: saved)
         guard !plan.ask.isEmpty else {
             return WorkflowNodeOutcome(output: .object(plan.known), logs: [L("All answers were remembered.")])
+        }
+        // What was typed the last time this form closed unanswered.
+        for field in plan.ask where field.type != .secret {
+            if let value = draft[field.key] { plan.prefill[field.key] = value }
         }
 
         let dialog = PendingDialog(
@@ -74,10 +78,17 @@ enum DialogNodeExecutor {
             message: BindingRenderer.renderReadableText(spec.message, in: context.bindings),
             fields: plan.ask, prefill: plan.prefill, caller: context.caller, createdAt: Date())
 
+        // A caller that parks on the run reads the form as soon as the run
+        // says it is waiting, so the form must be queued first.
+        let (queued, queuedSignal) = AsyncStream<Void>.makeStream()
+        async let answered = present(dialog, expiresAfter: spec.expiresAfter, context: context) {
+            queuedSignal.finish()
+        }
+        for await _ in queued {}
         await awaitingUser(true)
         let answers: [String: JSONValue]
         do {
-            answers = try await DialogCoordinator.shared.present(dialog)
+            answers = try await answered
         } catch {
             await awaitingUser(false)
             throw error
@@ -97,5 +108,32 @@ enum DialogNodeExecutor {
             }
         }
         return WorkflowNodeOutcome(output: .object(plan.known.merging(answers) { _, new in new }))
+    }
+
+    /// Waits for the answer. A form with `expires_after` waits only what is
+    /// left of it (a form picked up after a relaunch already spent some).
+    /// `onQueued` runs once the form can be answered, or when it never will be.
+    private static func present(
+        _ dialog: PendingDialog, expiresAfter: TimeInterval?, context: WorkflowNodeContext,
+        onQueued: @escaping @Sendable () -> Void
+    ) async throws -> [String: JSONValue] {
+        do {
+            guard let expiresAfter else {
+                return try await DialogCoordinator.shared.present(dialog, onQueued: onQueued)
+            }
+            let seconds = expiresAfter.clampedInt(.toNearestOrAwayFromZero)
+            let remaining = expiresAfter - context.elapsedBeforeResume
+            guard remaining > 0 else { throw WorkflowNodeError.formExpired(seconds: seconds) }
+            do {
+                return try await valueWithDeadline(seconds: remaining, operationName: dialog.title) {
+                    try await DialogCoordinator.shared.present(dialog, onQueued: onQueued)
+                }
+            } catch is DeadlineExceededError {
+                throw WorkflowNodeError.formExpired(seconds: seconds)
+            }
+        } catch {
+            onQueued()
+            throw error
+        }
     }
 }

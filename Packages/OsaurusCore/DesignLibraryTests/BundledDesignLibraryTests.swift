@@ -28,7 +28,7 @@ struct BundledDesignLibraryTests {
         #expect(snapshot.dark.colors.text.primary == snapshot.document.tokens["color.text.primary"]?.dark.designString)
         #expect(snapshot.light.colors.text.primary == snapshot.document.tokens["color.text.primary"]?.light.designString)
         #expect(snapshot.dark.colors.surface.canvas != snapshot.light.colors.surface.canvas)
-        #expect(!snapshot.reassignedProperties.isEmpty)
+        #expect(!(snapshot.document.editedAssignments ?? []).isEmpty)
     }
 
     @Test func primitiveEditsStayIndependentAndResolveSharedAliases() throws {

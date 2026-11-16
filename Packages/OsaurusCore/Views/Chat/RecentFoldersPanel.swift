@@ -28,13 +28,13 @@ struct RecentFoldersList: View {
     let onPick: (RecentFoldersStore.Entry) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
             Text("Recent Folders", bundle: .module)
                 .textStyle(.micro, weight: 600)
                 .foregroundColor(theme.text.tertiary)
                 .textCase(.uppercase)
                 .padding(.horizontal, horizontalInset)
-                .padding(.bottom, 2)
+                .padding(.bottom, theme.space.s2)
             ForEach(store.entries) { entry in
                 RecentFolderRow(
                     entry: entry,
@@ -61,9 +61,9 @@ struct RecentFoldersList: View {
 
         var body: some View {
             Button(action: onPick) {
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     Image(systemName: isActive ? "checkmark" : "folder")
-                        .glyphSize(11, weight: .medium)
+                        .glyphSize(.footnote, weight: .medium)
                         .frame(width: 16)
                         .foregroundColor(isActive ? theme.text.primary : theme.text.secondary)
                     Text(verbatim: entry.name)
@@ -84,12 +84,12 @@ struct RecentFoldersList: View {
                 // Constant trailing room for the overlaid remove button, so
                 // its appearance on hover never re-truncates or reflows.
                 .padding(.trailing, horizontalInset + 20)
-                .padding(.vertical, 6)
+                .padding(.vertical, theme.space.s6)
                 .background(
                     RoundedRectangle(cornerRadius: theme.radius.medium)
                         .fill(isHovering ? theme.surface.subtle : Color.clear)
                 )
-                .padding(.horizontal, 6)
+                .padding(.horizontal, theme.space.s6)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -100,18 +100,8 @@ struct RecentFoldersList: View {
                 withAnimation(theme.motion.quick) { isHovering = hovering }
             }
             .overlay(alignment: .trailing) {
-                Button(action: onRemove) {
-                    Image(systemName: "xmark")
-                        .glyphSize(9, weight: .bold)
-                        .foregroundColor(theme.text.tertiary)
-                        .frame(width: 16, height: 16)
-                        .background(Circle().fill(theme.surface.subtle))
-                        .contentShape(Circle())
-                }
-                .buttonStyle(.plain)
-                .padding(.trailing, horizontalInset + 2)
-                .localizedHelp("Remove from recent folders")
-                .accessibilityLabel(Text("Remove from recent folders", bundle: .module))
+                SettingsIconButton("xmark", help: "Remove from recent folders", size: .extraExtraSmall, action: onRemove)
+                    .padding(.trailing, horizontalInset + 2)
                 // Always laid out, only shown on hover: an `if` here would
                 // insert and remove the view, which is the reflow we avoid.
                 .opacity(isHovering ? 1 : 0)

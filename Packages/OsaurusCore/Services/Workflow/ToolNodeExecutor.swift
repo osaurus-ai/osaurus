@@ -288,7 +288,15 @@ enum ToolNodeExecutor {
     static func parseFailure(_ envelope: String) -> (kind: String, message: String, retryable: Bool) {
         let object = JSONValue.parse(envelope)?.objectValue ?? [:]
         let kind = object["kind"]?.stringValue ?? ToolEnvelope.Kind.executionError.rawValue
-        let message = object["message"]?.stringValue ?? object["error"]?.stringValue ?? ToolEnvelope.failureMessage(envelope)
+        var message =
+            object["message"]?.stringValue ?? object["error"]?.stringValue ?? ToolEnvelope.failureMessage(envelope)
+        // A tool's advice for this failure (search's "Try a broader query…")
+        // is the only fix a later step or the person can act on.
+        if let hint = object["hint"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines), !hint.isEmpty,
+            !message.contains(hint)
+        {
+            message += " " + hint
+        }
         let retryable: Bool
         if case .bool(let flag)? = object["retryable"] { retryable = flag } else { retryable = false }
         return (kind, message, retryable)

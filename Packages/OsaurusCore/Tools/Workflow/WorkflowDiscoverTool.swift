@@ -431,7 +431,7 @@ final class WorkflowDiscoverTool: OsaurusTool, @unchecked Sendable {
                 tool: tool,
                 result: [
                     "query": query, "count": results.count, "workflows": results.map(ArchitectToolGate.foundation),
-                    "hint": "`adopt` with a `template_url` copies one into this draft to adapt.",
+                    "hint": "`adopt` with `url` set to a result's `template_url` copies it into this draft to adapt.",
                 ])
         } catch {
             return ToolEnvelope.failure(
@@ -526,7 +526,7 @@ final class WorkflowDiscoverTool: OsaurusTool, @unchecked Sendable {
             guard WorkflowsRegistryAPIClient.isRegistryTemplateURL(url) else {
                 return ToolEnvelope.failure(
                     kind: .invalidArgs,
-                    message: "`adopt` takes a `template_url` from a `registry` result, not an arbitrary URL.",
+                    message: "`adopt` takes `url` set to a `template_url` from a `registry` result, not an arbitrary URL.",
                     field: "url", tool: tool)
             }
             do {

@@ -63,7 +63,7 @@ public struct NextRunPanelView: View {
     private var agent: Agent? { agentManager.agent(for: agentId) }
 
     public var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             if let pause, pause.pausedUntil > Date() {
                 pausedBanner(pause)
             } else if let entry = nextRun {
@@ -97,12 +97,12 @@ public struct NextRunPanelView: View {
     /// natural width on the narrow settings window.
     @ViewBuilder
     private func scheduledRow(_ entry: NextRunEntry) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(alignment: .top, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(alignment: .top, spacing: theme.space.s12) {
                 bannerIcon("alarm.fill", color: theme.status.warning.foreground)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: theme.space.s4) {
+                    HStack(spacing: theme.space.s6) {
                         Text(Self.relative(entry.scheduledAt, now: nowTick))
                             .font(SettingsFont.sectionTitle)
                             .foregroundColor(theme.text.primary)
@@ -143,7 +143,7 @@ public struct NextRunPanelView: View {
                 }
                 Spacer(minLength: 8)
 
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     pauseMenu
                     modeChip
                 }
@@ -244,14 +244,12 @@ public struct NextRunPanelView: View {
         subtitle: LocalizedStringKey,
         @ViewBuilder toggle: () -> Toggle
     ) -> some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: theme.space.s12) {
             bannerIcon(icon, color: iconColor)
-            VStack(alignment: .leading, spacing: 2) {
+            SettingsRowText(compact: true) {
                 Text(title, bundle: .module)
-                    .font(SettingsFont.compactLabel)
-                    .foregroundColor(theme.text.primary)
+            } description: {
                 Text(subtitle, bundle: .module)
-                    .font(SettingsFont.rowDescription)
                     .foregroundColor(theme.text.secondary)
                     .lineLimit(2)
             }
@@ -264,7 +262,7 @@ public struct NextRunPanelView: View {
     @ViewBuilder
     private func bannerIcon(_ systemName: String, color: Color) -> some View {
         Image(systemName: systemName)
-            .glyphSize(14, weight: .medium)
+            .glyphSize(.body, weight: .medium)
             .foregroundColor(color)
             .frame(width: Self.iconWidth, height: Self.iconWidth)
     }
@@ -274,7 +272,7 @@ public struct NextRunPanelView: View {
     /// they don't stretch.
     @ViewBuilder
     private func actionsRow<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: theme.space.s6) {
             content()
             Spacer(minLength: 0)
         }
@@ -337,7 +335,7 @@ public struct NextRunPanelView: View {
             editedInstructions
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .isEmpty
-        return VStack(spacing: 0) {
+        return VStack(spacing: theme.space.s0) {
             SettingsSheetHeader(
                 icon: "pencil.and.list.clipboard",
                 title: "Edit next-run instructions",
@@ -345,7 +343,7 @@ public struct NextRunPanelView: View {
                     "Editing the wake-up brief flags the row as user-scheduled so the agent knows you intervened.",
                 onClose: { showEditInstructions = false }
             )
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
                 SettingsFieldLabel("Wake-up brief")
                 SettingsTextField(
                     placeholder: "What should the agent do when it wakes up?",
@@ -468,7 +466,7 @@ public struct NextRunPanelView: View {
 
     @ViewBuilder
     private var customPauseSheet: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             SettingsSheetHeader(
                 icon: "pause.circle",
                 title: "Pause agent",

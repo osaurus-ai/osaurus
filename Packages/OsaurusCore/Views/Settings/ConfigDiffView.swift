@@ -17,7 +17,7 @@ struct ConfigDiffText: View {
 
     var body: some View {
         ScrollView([.vertical, .horizontal]) {
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: theme.space.s0) {
                 ForEach(Array(text.split(separator: "\n", omittingEmptySubsequences: false).enumerated()), id: \.offset) {
                     _, line in
                     Text(line.isEmpty ? " " : String(line))
@@ -65,13 +65,13 @@ struct ConfigDiffDisclosure: View {
     static func startsCollapsed(_ text: String) -> Bool { lineCount(text) > collapseThreshold }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             Button {
                 expanded.toggle()
             } label: {
-                HStack(spacing: 4) {
+                HStack(spacing: theme.space.s4) {
                     Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                        .glyphSize(9)
+                        .glyphSize(.tiny)
                     Text(
                         expanded
                             ? L("Hide exact changes")

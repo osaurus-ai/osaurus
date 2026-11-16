@@ -83,4 +83,22 @@ struct RunEnvironmentTests {
         #expect(env.commit == nil)
         #expect(env.kvRegime == nil)
     }
+
+    @Test func embeddingModelIsRecordedAndSurvivesExperimentStamping() throws {
+        let env = RunEnvironment.current(
+            caseIDs: ["x"],
+            runModel: "foundation",
+            embeddingModel: "BAAI/bge-small-en-v1.5",
+            environment: [:]
+        )
+        #expect(env.embeddingModel == "BAAI/bge-small-en-v1.5")
+        #expect(env.summary.contains("embedder=BAAI/bge-small-en-v1.5"))
+        #expect(env.withExperiment(ExperimentProfile(name: "p")).embeddingModel == env.embeddingModel)
+
+        let report = EvalReport(modelId: "foundation", startedAt: "t", cases: [], environment: env)
+        #expect(report.formatHumanReadable().contains("embedder:  BAAI/bge-small-en-v1.5"))
+
+        let legacy = try JSONDecoder().decode(RunEnvironment.self, from: Data(#"{"runModel":"m"}"#.utf8))
+        #expect(legacy.embeddingModel == nil)
+    }
 }

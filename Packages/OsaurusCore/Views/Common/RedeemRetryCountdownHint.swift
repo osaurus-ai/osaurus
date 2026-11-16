@@ -12,9 +12,9 @@ struct RedeemRetryCountdownHint: View {
         TimelineView(.periodic(from: .now, by: 1)) { timeline in
             let remaining = Int(deadline.timeIntervalSince(timeline.date).rounded(.up))
             if remaining > 0 {
-                HStack(spacing: 5) {
+                HStack(spacing: theme.space.s4) {
                     Image(systemName: "clock")
-                        .glyphSize(9, weight: .semibold)
+                        .glyphSize(.tiny, weight: .semibold)
                     Text("You can try again in \(remaining)s.", bundle: .module)
                         .textStyle(.footnote)
                         .monospacedDigit()

@@ -525,11 +525,15 @@ public enum OsaurusPaths {
         knowledge().appendingPathComponent("write_log.sqlite")
     }
 
-    /// Per-collection VecturaKit vector index directory. Like the memory
-    /// vectors, always a derivable artifact of the indexed corpus.
-    public static func knowledgeVecturaDirectory(for id: UUID) -> URL {
+    /// Per-collection VecturaKit vector index directory for the active
+    /// embedding profile. Like the memory vectors, always a derivable
+    /// artifact of the indexed corpus.
+    public static func knowledgeVecturaDirectory(
+        for id: UUID,
+        indexDirectoryName: String = EmbeddingService.indexDirectoryName
+    ) -> URL {
         knowledge()
-            .appendingPathComponent("vectura", isDirectory: true)
+            .appendingPathComponent(indexDirectoryName, isDirectory: true)
             .appendingPathComponent(id.uuidString, isDirectory: true)
     }
 

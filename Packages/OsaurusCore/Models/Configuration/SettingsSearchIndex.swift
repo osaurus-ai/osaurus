@@ -62,7 +62,12 @@ public struct SettingsSearchEntry: Identifiable, Sendable, Hashable {
     /// A section that just repeats the tab label (e.g. the "General" card inside
     /// the General tab) is collapsed so results don't read "General › General".
     public var breadcrumb: [String] {
-        let destination = tab == .workflows ? "Main window › Workflows" : tab.label
+        let destination =
+            switch tab {
+            case .workflows: "Main window › Workflows"
+            case .insights: "Main window › Insights"
+            default: tab.label
+            }
         return section.isEmpty || section == tab.label
             ? [destination, title]
             : [destination, section, title]
@@ -1000,7 +1005,9 @@ public enum SettingsSearchIndex {
                 "tool permission", "tool permissions", "approve tools",
                 "approval", "always allow", "never ask", "tool prompt",
             ],
-            subTab: "All"
+            subTab: "All",
+            disambiguation:
+                "Global switch for every agent: tools set to Ask run without an approval card. Tools set to Deny, sends and deletes, configuration changes, delegation, image and video costs, AppleScript confirmation, Computer or Browser Use, and teammates on a shared agent still ask. To turn approvals off or keep them on for one custom agent instead, use Tool Approvals on that agent's Tools tab, which can override this switch either way."
         ),
         .init(
             id: "settings.chat.spellCheck",
@@ -2867,8 +2874,13 @@ public enum SettingsSearchIndex {
             tab: .privacy,
             section: "Data & Storage",
             title: "Encrypt Local Data at Rest",
-            keywords: ["sqlcipher", "encryption", "filevault", "at rest", "storage key", "backup", "data & storage", "storage"],
-            subTab: "storage"
+            keywords: [
+                "sqlcipher", "encryption", "filevault", "at rest", "storage key", "backup", "data & storage", "storage",
+                "conversations encrypted", "rotate storage key",
+            ],
+            subTab: "storage",
+            disambiguation:
+                "Covers local stores such as memory, knowledge, tasks and attachments. Synced conversations are always encrypted with their own key, whether or not this is on."
         ),
         .init(
             id: "storage.fileHistory.retention",
@@ -3023,7 +3035,7 @@ public enum SettingsSearchIndex {
                 "agent", "assistant", "persona", "custom agent", "create agent", "new agent",
                 "system prompt", "agent settings", "make an agent", "agent draft",
             ],
-            disambiguation: "New agent in the Agents header opens the New Agent page right here: it asks what the agent should do, then the Configurator drafts it in a card beside its chat that fills in part by part. Every part has Edit, and only Create Agent saves it. An unfinished draft waits on the Agents list with Continue.",
+            disambiguation: "New agent in the Agents header opens the New Agent page in the main window (the title bar's back button returns to where it was opened from): it asks what the agent should do, then the Configurator drafts it in a card beside its chat that fills in part by part. Every part has Edit, and only Create Agent saves it. An unfinished draft waits on the Agents list with Continue.",
             declarativeSection: "agents"
         ),
         .init(
@@ -3233,6 +3245,18 @@ public enum SettingsSearchIndex {
             title: "Show Response Metrics",
             keywords: ["tokenizer", "token count", "tokens per second", "tok/s", "response statistics", "agent display"],
             disambiguation: "Custom agent → General → Configure → Advanced Settings. Shows existing measured response statistics in that agent's chats.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.model.locked",
+            tab: .agents,
+            section: "Model",
+            title: "Lock Model",
+            keywords: [
+                "lock model", "required model", "pin model", "hide model picker", "fixed model",
+                "model_locked", "strictness always",
+            ],
+            disambiguation: "Custom agent → General → Configure → Model. On: chats with this agent always use its model, the chat model picker becomes a fixed lock chip, and a missing model or provider fails the turn instead of falling back. Templates and bundles whose main model is `strictness: always` turn it on at install. Declarative key: `model_locked` on agents[].",
             declarativeSection: "agents"
         ),
         .init(
@@ -3623,6 +3647,36 @@ public enum SettingsSearchIndex {
                 "Per-custom-agent switch in Abilities → Tools. Off: the agent sees every installed skill. On: only the ticked skills appear in its prompt, capabilities_load and slash commands. Installing skill content is Skills in the sidebar, not this card. Declarative: agents[].skills (omit = unchanged, null = all skills, list = only these).",
             declarativeSection: "agents"
         ),
+        .init(
+            id: "agents.toolApprovals",
+            tab: .agents,
+            section: "Abilities → Tools",
+            title: "Tool Approvals",
+            keywords: [
+                "tool approvals", "approval", "approvals", "never ask", "don't ask", "stop asking",
+                "disable approvals", "turn off approvals", "skip approval", "approval card",
+                "permission prompt", "auto approve", "auto-approve", "per agent approvals",
+                "tool_approvals", "use global setting",
+            ],
+            subTab: "capabilities",
+            disambiguation:
+                "At the top of a custom agent's Tools tab: Use Global Setting (follows Auto-Allow All Tool Calls under Tools & MCP → All Tools), Ask (always show approval cards for this agent, even with that switch on), or Never Ask (skip approval cards for this agent, after a confirmation). Never Ask skips only the standard card: tools set to Deny, sends and deletes, configuration changes, delegation, image and video costs, AppleScript confirmation, Computer or Browser Use, and teammates on a shared agent still ask. Does not apply inside workflow runs or to built-in agents. Turning on Never Ask through a configuration change is marked high risk on its review card.",
+            declarativeSection: "agents"
+        ),
+        .init(
+            id: "agents.toolPolicies",
+            tab: .agents,
+            section: "Abilities → Tools",
+            title: "Per-Tool Policies",
+            keywords: [
+                "tool policy", "tool policies", "per tool policy", "auto ask deny", "block tool",
+                "deny tool", "always allow for agent", "agent tool permission", "tools.policies",
+            ],
+            subTab: "capabilities",
+            disambiguation:
+                "Auto, Ask or Deny for one tool in one custom agent, from the policy menu on an enabled tool's row in that agent's Tools tab (Default follows the policy under Tools & MCP → All Tools). Reset All clears them. A Deny under Tools & MCP → All Tools always wins, and send and delete tools ask every time whatever is set. Does not apply inside workflow runs. Setting a tool to Auto through a configuration change is marked high risk on its review card.",
+            declarativeSection: "agents"
+        ),
 
         // Agents → (custom agent) → Abilities → Overview: optional built-in
         // tool cards. Also writable via `capabilities.*_enabled`.
@@ -3801,10 +3855,21 @@ public enum SettingsSearchIndex {
             tab: .models,
             title: "Model kind",
             keywords: [
-                "language models", "image models", "speech models", "privacy detection models",
+                "language models", "image models", "speech models", "embedding models", "privacy detection models",
                 "applescript models", "on device", "catalog", "whisper", "parakeet", "ideogram",
             ],
-            disambiguation: "Switches Local Models between Language, Image, Speech, Privacy Detection and AppleScript models."
+            disambiguation: "Switches Local Models between Language, Image, Speech, Embedding, Privacy Detection and AppleScript models."
+        ),
+        .init(
+            id: "models.embedding",
+            tab: .models,
+            title: "Embedding",
+            keywords: [
+                "embedding models", "download embedding model", "embedder", "vector model", "qwen3 embedding",
+                "bge", "mxbai", "modernbert", "e5", "minilm", "potion", "model2vec", "sentence transformers",
+            ],
+            subTab: "embedding",
+            disambiguation: "Downloads embedding models. The one in use is chosen in Model Defaults → Embedding Model."
         ),
 
         // MARK: Model Defaults (which model Osaurus uses for each kind of job)
@@ -3852,6 +3917,17 @@ public enum SettingsSearchIndex {
             section: "Speech",
             title: "Speech-to-Text Model",
             keywords: ["transcription model", "dictation model", "whisper", "parakeet", "default speech model"]
+        ),
+        .init(
+            id: "modelDefaults.embedding",
+            tab: .modelDefaults,
+            section: "Embedding",
+            title: "Embedding Model",
+            keywords: [
+                "embedding model", "embeddings", "embedder", "vector search", "semantic search", "memory search",
+                "knowledge search", "rag", "qwen3 embedding", "potion", "model2vec", "/v1/embeddings",
+            ],
+            disambiguation: "Chooses the model behind memory, knowledge, skill, method and tool search and the embeddings API. Applies after Osaurus restarts; indexes rebuild in the background. Download more in Local Models → Embedding."
         ),
         .init(
             id: "modelDefaults.detection",
@@ -5094,7 +5170,7 @@ public enum SettingsSearchIndex {
                 "request history", "review activity",
             ],
             disambiguation:
-                "The Insights tab is the activity log / audit dashboard: every model request (local or cloud), web search, URL fetch, MCP tool call, channel delivery, Router call and inbound API request, with Local/Cloud badges, filters, Verify and Export. Retention and content policy live under Privacy & Security → Activity Log."
+                "Main window ▸ Insights (the chart button in the window's left rail, just above Settings) is the activity log / audit dashboard; it is not in Settings. It shows every model request (local or cloud), web search, URL fetch, MCP tool call, channel delivery, Router call and inbound API request, with Local/Cloud badges, filters, Verify and Export. Retention and content policy live under Privacy & Security → Activity Log."
         ),
     ] + appleAppEntries
 

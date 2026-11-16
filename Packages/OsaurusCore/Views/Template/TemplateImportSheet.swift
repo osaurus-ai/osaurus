@@ -45,7 +45,7 @@ struct TemplateImportSheet: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             SettingsSheetHeader(
                 icon: "square.and.arrow.down",
                 title: "Import Template",
@@ -53,7 +53,7 @@ struct TemplateImportSheet: View {
                 onClose: onCancel
             )
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: theme.space.s16) {
                     if let sourceHost, !sourceHost.isEmpty {
                         note(
                             "link",
@@ -92,9 +92,9 @@ struct TemplateImportSheet: View {
     }
 
     private var dropZone: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: theme.space.s12) {
             Image(systemName: "doc.badge.plus")
-                .glyphSize(28, weight: .light)
+                .glyphSize(.display, weight: .light)
                 .foregroundColor(isDropTargeted ? theme.text.link : theme.text.tertiary)
             Text("Drop a .osaurustemplate file here", bundle: .module)
                 .font(SettingsFont.rowTitle)
@@ -144,7 +144,7 @@ struct TemplateImportSheet: View {
                 tint: theme.text.secondary
             )
         case .signerMismatch(let address)?:
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
                 note(
                     "exclamationmark.triangle.fill",
                     L(
@@ -155,7 +155,7 @@ struct TemplateImportSheet: View {
                 SettingsTextField(placeholder: L("Name for the copy"), text: $copyName, icon: "textformat")
             }
         case .conflict?:
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
                 note(
                     "exclamationmark.triangle.fill",
                     L("Version \(template.version) of this template is already here with different content."),
@@ -270,7 +270,7 @@ struct TemplateImportSheet: View {
     }
 
     private func note(_ icon: String, _ text: String, tint: Color) -> some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: theme.space.s8) {
             Image(systemName: icon).foregroundColor(tint)
             Text(text)
                 .font(SettingsFont.caption)

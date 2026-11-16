@@ -1,4 +1,3 @@
-#if OSAURUS_DESIGN_SYSTEM
 import SwiftUI
 
 /// The existing action bar's assignments are independent of its shared Buttons.
@@ -8,10 +7,10 @@ struct InspectorComposerActionSurface: ViewModifier {
     @Environment(\.isEnabled) private var enabled
     @State private var hovered = false
     func body(content: Content) -> some View {
-        let theme = base.catalogFamily(22, enabled: enabled, authoritative: true)
+        let theme = base.catalogFamily(22, enabled: enabled)
         let shape = RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
         content
-            .padding(theme.catalogMetric("padding", fallback: 0))
+            .padding(theme.catalogMetric("padding", fallback: theme.space.s0))
             .frame(minHeight: theme.catalogMetric("height", fallback: 32))
             .background(shape.fill(!enabled ? theme.surface.disabled : hovered ? theme.surface.hover : theme.surface.raised))
             .clipShape(shape)
@@ -19,4 +18,3 @@ struct InspectorComposerActionSurface: ViewModifier {
             .onHover { hovered = $0 }
     }
 }
-#endif

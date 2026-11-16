@@ -150,15 +150,12 @@ final class NativeFileDiffView: NSView {
     private func metric(_ property: String, _ fallback: CGFloat) -> CGFloat {
         NativeComponentInspectionStyle.metric(38, property, fallback, lastTheme ?? CustomizableTheme.light())
     }
+    private var space: ThemeSpaceScale { (lastTheme ?? CustomizableTheme.light()).space }
     static func inspectionHeaderHeight(_ theme: any ThemeProtocol) -> CGFloat {
-        #if OSAURUS_DESIGN_SYSTEM
         let name = theme.assignedNativeFont(NativeComponentInspectionStyle.key(38, "heading"), fallback: theme.nsFont(.caption))
         let caption = theme.assignedNativeFont(NativeComponentInspectionStyle.key(38, "caption"), fallback: theme.nsFont(.caption))
         let textHeight = max(ceil(name.ascender - name.descender + name.leading), ceil(caption.ascender - caption.descender + caption.leading), theme.assignedLineHeight(NativeComponentInspectionStyle.key(38, "heading"), fallback: 18), theme.assignedLineHeight(NativeComponentInspectionStyle.key(38, "caption"), fallback: 16))
         return max(NativeComponentInspectionStyle.metric(38, "height", headerHeight, theme), textHeight + 2 * theme.space.s8)
-        #else
-        return headerHeight
-        #endif
     }
     private var assignedHeaderHeight: CGFloat { Self.inspectionHeaderHeight(lastTheme ?? CustomizableTheme.light()) }
     private var historySetId: UUID?
@@ -184,7 +181,7 @@ final class NativeFileDiffView: NSView {
     // MARK: Configure
 
     func configure(diff: FileDiff, collapsed: Bool, width: CGFloat, theme: any ThemeProtocol) {
-        let theme = theme.catalogFamily(38, authoritative: true)
+        let theme = theme.catalogFamily(38)
         let themeId = theme.renderFingerprint
         // Only the expensive syntax-highlight pass is gated; header styling and
         // layout always run so every reconfigure reports an accurate height —
@@ -244,15 +241,14 @@ final class NativeFileDiffView: NSView {
     }
 
     private func applyInspectionStyle(_ theme: any ThemeProtocol) {
-        #if OSAURUS_DESIGN_SYSTEM
         headerView.constraints.first { $0.firstAttribute == .height }?.constant = assignedHeaderHeight
-        let gap = metric("gap", 8)
+        let gap = metric("gap", space.s8)
         historyStack.spacing = gap
         for c in headerView.constraints {
             let view = c.firstItem as? NSView
-            if view === iconLabel, c.firstAttribute == .leading { c.constant = metric("padding", 10) }
+            if view === iconLabel, c.firstAttribute == .leading { c.constant = metric("padding", space.s10) }
             if c.firstAttribute == .leading, view === fileLabel || view === metadataStack { c.constant = gap }
-            if c.firstAttribute == .trailing, view === collapseButton { c.constant = -metric("padding", 8) }
+            if c.firstAttribute == .trailing, view === collapseButton { c.constant = -metric("padding", space.s8) }
         }
         for c in constraints where c.firstItem as? NSView === diffTextView {
             if c.firstAttribute == .leading { c.constant = (metric("padding", Self.textInsetLeft) + DiffBackgroundView.markerWidth) }
@@ -264,7 +260,6 @@ final class NativeFileDiffView: NSView {
         for field in [addedLabel, removedLabel, previewBadge, historyBadge] { NativeComponentInspectionStyle.label(field, family: 38, property: "caption", theme: theme) }
         diffTextView?.selectedTextAttributes = [.backgroundColor: NSColor(theme.selection.background)]
         diffTextView?.insertionPointColor = NSColor(theme.cursor)
-        #endif
     }
 
     // MARK: - Private: Build
@@ -497,13 +492,9 @@ final class NativeFileDiffView: NSView {
         // theme's background so syntax colors land on the surface they were
         // tuned for. Diff tints are semi-transparent and blend over it.
         ensureHighlightrTheme(for: theme)
-        #if OSAURUS_DESIGN_SYSTEM
         layer?.backgroundColor = NSColor(theme.surface.code).cgColor
         headerView.layer?.backgroundColor = inspectorHovered ? NSColor(theme.surface.hover).cgColor : nil
         catalogAssignmentTarget(["background", "hover", "border"].map { "component.library.38." + $0 }, name: "File-change preview", theme: theme)
-        #else
-        layer?.backgroundColor = NSColor(theme.surface.code).cgColor
-        #endif
         layer?.borderColor = NSColor(theme.border.default).cgColor
         layer?.borderWidth = theme.stroke.default
         layer?.cornerRadius = theme.radius.medium
@@ -569,17 +560,15 @@ final class NativeFileDiffView: NSView {
         let para = theme.paragraphStyle(.code, lineBreakMode: .byCharWrapping)
 
         let body = NSMutableAttributedString(attributedString: highlightedBody(diff: diff, theme: theme, font: font, paragraphStyle: para))
-        #if OSAURUS_DESIGN_SYSTEM
         body.addAttribute(.kern, value: theme.assignedTracking(NativeComponentInspectionStyle.key(38, "code")) ?? 0, range: NSRange(location: 0, length: body.length))
-        #endif
         tv.textStorage?.setAttributedString(body)
 
         diffBackground?.lineKinds = diff.lines.map(\.kind)
         diffBackground?.markerFont = font
-        diffBackground?.addedBackground = NSColor(theme.status.success.foreground).withAlphaComponent(0.14)
-        diffBackground?.removedBackground = NSColor(theme.status.error.foreground).withAlphaComponent(0.14)
-        diffBackground?.addedBar = NSColor(theme.status.success.foreground).withAlphaComponent(0.6)
-        diffBackground?.removedBar = NSColor(theme.status.error.foreground).withAlphaComponent(0.6)
+        diffBackground?.addedBackground = NSColor(theme.status.success.background)
+        diffBackground?.removedBackground = NSColor(theme.status.error.background)
+        diffBackground?.addedBar = NSColor(theme.status.success.border)
+        diffBackground?.removedBar = NSColor(theme.status.error.border)
     }
 
     /// Builds the body text. When a language is known, the hunk is syntax-
@@ -685,9 +674,7 @@ final class NativeFileDiffView: NSView {
 
     override func mouseEntered(with event: NSEvent) {
         inspectorHovered = true
-        #if OSAURUS_DESIGN_SYSTEM
         if let theme = lastTheme { headerView.layer?.backgroundColor = NSColor(theme.surface.hover).cgColor }
-        #endif
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = ThemeManager.shared.currentTheme.motion.quickInterval
             copyButton.animator().alphaValue = 1
@@ -699,9 +686,7 @@ final class NativeFileDiffView: NSView {
 
     override func mouseExited(with event: NSEvent) {
         inspectorHovered = false
-        #if OSAURUS_DESIGN_SYSTEM
         headerView.layer?.backgroundColor = nil
-        #endif
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = ThemeManager.shared.currentTheme.motion.quickInterval
             copyButton.animator().alphaValue = 0.55
@@ -726,20 +711,12 @@ final class NativeFileDiffView: NSView {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(diff.rawDiff, forType: .string)
         copyButton.image = SymbolImageCache.image("checkmark", accessibilityDescription: nil)
-        #if OSAURUS_DESIGN_SYSTEM
         copyButton.contentTintColor = lastTheme.map { NSColor($0.status.success.foreground) } ?? .systemGreen
-        #else
-        copyButton.contentTintColor = .systemGreen
-        #endif
         copyResetTask?.cancel()
         copyResetTask = Task { @MainActor in
             try? await Task.sleep(nanoseconds: 2_000_000_000)
             self.copyButton.image = SymbolImageCache.image("doc.on.doc", accessibilityDescription: nil)
-            #if OSAURUS_DESIGN_SYSTEM
             self.copyButton.contentTintColor = self.lastTheme.map { NSColor($0.text.tertiary) }
-            #else
-            self.copyButton.contentTintColor = nil
-            #endif
         }
     }
 
@@ -806,11 +783,9 @@ final class NativeFileDiffView: NSView {
         }
         viewButton.contentTintColor = NSColor(theme.text.tertiary)
         NativeComponentInspectionStyle.label(historyBadge, family: 38, property: "caption", theme: theme)
-        #if OSAURUS_DESIGN_SYSTEM
-        let actionTheme = theme.catalogFamily(38, enabled: revertButton.isEnabled, authoritative: true)
+        let actionTheme = theme.catalogFamily(38, enabled: revertButton.isEnabled)
         revertButton.contentTintColor = NSColor(actionTheme.text.secondary)
-        #endif
-        NativeComponentInspectionStyle.button(revertButton, family: 38, property: "label", theme: theme.catalogFamily(38, enabled: revertButton.isEnabled, authoritative: true))
+        NativeComponentInspectionStyle.button(revertButton, family: 38, property: "label", theme: theme.catalogFamily(38, enabled: revertButton.isEnabled))
     }
 
     @objc private func openInPanel() {

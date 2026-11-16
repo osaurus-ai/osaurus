@@ -100,7 +100,7 @@ struct OsaurusConnectView: View {
                     } label: {
                         HStack(spacing: theme.space.s6) {
                             if pairing.isGeneratingCode {
-                                ProgressView().controlSize(.small)
+                                SettingsSpinner()
                             }
                             Text("Generate 6-Digit Code", bundle: .module)
                         }
@@ -211,7 +211,7 @@ struct OsaurusConnectView: View {
         let summary = relaySummary
         return HStack(spacing: theme.space.s8) {
             Image(systemName: summary.icon)
-                .glyphSize(11, weight: .semibold)
+                .glyphSize(.footnote, weight: .semibold)
                 .foregroundColor(summary.color)
             Text(summary.text)
                 .font(SettingsFont.caption)

@@ -40,7 +40,7 @@ struct WorkspaceSheetShell<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             SettingsSheetHeader(
                 icon: icon,
                 title: title,
@@ -98,7 +98,7 @@ struct SheetHintRow: View {
                 .fixedSize(horizontal: false, vertical: true)
         } icon: {
             Image(systemName: iconName)
-                .glyphSize(11, weight: .semibold)
+                .glyphSize(.footnote, weight: .semibold)
                 .foregroundColor(iconColor)
         }
     }
@@ -142,7 +142,7 @@ private struct SheetReadOnlyValue: View {
     var body: some View {
         HStack(spacing: theme.space.s8) {
             Image(systemName: icon)
-                .glyphSize(11)
+                .glyphSize(.footnote)
                 .foregroundColor(theme.text.tertiary)
             Text(value)
                 .catalogTypography(.body, theme: theme, fallback: SettingsFont.monoSmall)
@@ -299,19 +299,7 @@ struct CreateWorkspaceSheet: View {
 
         if needsCheckout, livePrices.count > 1 {
             SettingsFieldLabel("Billing")
-            #if OSAURUS_DESIGN_SYSTEM
             AssignedBaseSegmentedPicker(selection: $selectedPriceId, options: livePrices.map { .init(Optional($0.id), $0.displayLabel ?? $0.billingInterval ?? $0.id, verbatim: true) })
-            #else
-            Picker(selection: $selectedPriceId) {
-                ForEach(livePrices) { price in
-                    Text(price.displayLabel ?? price.billingInterval ?? price.id).tag(Optional(price.id))
-                }
-            } label: {
-                EmptyView()
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            #endif
         }
 
         planSummary
@@ -373,7 +361,7 @@ struct CreateWorkspaceSheet: View {
     private func planLine(icon: String, text: String) -> some View {
         HStack(spacing: theme.space.s8) {
             Image(systemName: icon)
-                .glyphSize(10.5, weight: .semibold)
+                .glyphSize(.footnote, weight: .semibold)
                 .foregroundColor(theme.text.link)
                 .frame(width: 14)
             Text(text)
@@ -413,8 +401,7 @@ struct CreateWorkspaceSheet: View {
     @ViewBuilder
     private var checkoutOpenedBody: some View {
         HStack(alignment: .top, spacing: theme.space.s8) {
-            ProgressView()
-                .controlSize(.small)
+            SettingsSpinner()
             VStack(alignment: .leading, spacing: theme.space.s4) {
                 Text(String(format: L("Waiting for Stripe to confirm “%@”"), trimmedName))
                     .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
@@ -516,7 +503,7 @@ struct ActivateWorkspaceSheet: View {
             if let plan = pending?.planLabel, !plan.isEmpty {
                 HStack(spacing: theme.space.s8) {
                     Image(systemName: "sparkles")
-                        .glyphSize(11, weight: .semibold)
+                        .glyphSize(.footnote, weight: .semibold)
                         .foregroundColor(theme.text.link)
                     Text(String(format: L("Plan: %@"), plan))
                         .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
@@ -764,22 +751,8 @@ struct CreateInviteLinkSheet: View {
             height: 360
         ) {
             SettingsFieldLabel("Role")
-            #if OSAURUS_DESIGN_SYSTEM
             let roles: [OsaurusRouterWorkspaceRole] = isOwner ? [.viewer, .member, .admin] : [.viewer, .member]
             AssignedBaseSegmentedPicker(selection: $role, options: roles.map { .init($0, $0.displayName, verbatim: true) })
-            #else
-            Picker(selection: $role) {
-                Text("Viewer", bundle: .module).tag(OsaurusRouterWorkspaceRole.viewer)
-                Text("Member", bundle: .module).tag(OsaurusRouterWorkspaceRole.member)
-                if isOwner {
-                    Text("Admin", bundle: .module).tag(OsaurusRouterWorkspaceRole.admin)
-                }
-            } label: {
-                EmptyView()
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            #endif
             Text(roleExplainer)
                 .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
                 .foregroundColor(theme.text.tertiary)
@@ -1180,12 +1153,12 @@ struct WorkspaceShareAgentSheet: View {
         return Button(action: { select(agent) }) {
             HStack(spacing: theme.space.s8) {
                 Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
-                    .glyphSize(13)
+                    .glyphSize(.label)
                     .foregroundColor(isSelected ? theme.text.link : theme.text.tertiary)
                 AgentAvatarView(
                     mascotId: agent.avatar,
                     name: agent.name,
-                    tint: agentColorFor(agent.name),
+                    tint: theme.dataInk(seed: agent.name),
                     diameter: 26,
                     customImageURL: agent.customAvatarURL,
                     monogramFontSize: 11,

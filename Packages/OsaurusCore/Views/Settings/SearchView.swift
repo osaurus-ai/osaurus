@@ -253,14 +253,14 @@ struct SearchView: View {
 
     @ViewBuilder
     private func tryResults(_ outcome: SearchEngineOutcome) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             if outcome.hits.isEmpty {
                 Text("No results. Try a different query.", bundle: .module)
                     .font(SettingsFont.caption)
                     .foregroundColor(theme.text.secondary)
             } else {
                 ForEach(Array(outcome.hits.prefix(5).enumerated()), id: \.offset) { _, hit in
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: theme.space.s2) {
                         Button {
                             if let url = URL(string: hit.url) {
                                 NSWorkspace.shared.open(url, configuration: NSWorkspace.OpenConfiguration())
@@ -289,7 +289,7 @@ struct SearchView: View {
                 }
             }
 
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 if let provider = outcome.provider, !provider.isEmpty {
                     Text(
                         "via \(providerDisplayName(provider)) · \(String(format: "%.1f", outcome.elapsed))s"
@@ -316,11 +316,11 @@ struct SearchView: View {
     }
 
     private func attemptsTrace(_ attempts: [SearchAttempt]) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
             ForEach(Array(attempts.enumerated()), id: \.offset) { index, attempt in
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     Image(systemName: attempt.ok ? "checkmark.circle" : "xmark.circle")
-                        .glyphSize(9)
+                        .glyphSize(.tiny)
                         .foregroundColor(attempt.ok ? theme.status.success.foreground : theme.status.error.foreground)
                     Text(
                         "\(index + 1). \(providerDisplayName(attempt.provider)) — "
@@ -548,10 +548,10 @@ struct SearchView: View {
         let order = eligibleOrder(for: category)
         let hasOverride = manager.configuration.routing[category]?.isEmpty == false
 
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
+        return VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: categoryIcon(category))
-                    .glyphSize(11, weight: .medium)
+                    .glyphSize(.footnote, weight: .medium)
                     .foregroundColor(theme.text.link)
                     .frame(width: 16)
                 Text(category.capitalized)
@@ -577,12 +577,12 @@ struct SearchView: View {
             } else {
                 // Read-only trace of the effective try order; the menu above
                 // is the only control, so nothing here needs decoding.
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     ForEach(Array(order.enumerated()), id: \.element) { index, id in
                         if index > 0 {
                             Image(systemName: "arrow.right")
-                                .glyphSize(7, weight: .semibold)
-                                .foregroundColor(theme.text.disabled)
+                                .glyphSize(.tiny, weight: .semibold)
+                                .foregroundColor(theme.text.tertiary)
                         }
                         orderChip(rank: index + 1, definitionId: id, isFirst: index == 0)
                     }
@@ -840,7 +840,7 @@ private struct SearchProviderConnectSheet: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             sheetHeader
 
             ScrollView {
@@ -896,7 +896,7 @@ private struct SearchProviderConnectSheet: View {
     // MARK: Picker phase
 
     private var pickerBody: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: theme.space.s10) {
             if manager.addableDefinitions.isEmpty {
                 Text("All bundled providers are already connected.", bundle: .module)
                     .font(SettingsFont.caption)
@@ -920,11 +920,11 @@ private struct SearchProviderConnectSheet: View {
 
     @ViewBuilder
     private func configureBody(_ definition: SearchProviderDefinition) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: theme.space.s16) {
             if let steps = definition.instructions, !steps.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: theme.space.s6) {
                     ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
-                        HStack(alignment: .top, spacing: 8) {
+                        HStack(alignment: .top, spacing: theme.space.s8) {
                             Text("\(index + 1)")
                                 .font(SettingsFont.monoSmall)
                                 .foregroundColor(theme.text.link)
@@ -947,9 +947,9 @@ private struct SearchProviderConnectSheet: View {
                     // returns immediately.
                     NSWorkspace.shared.open(url, configuration: NSWorkspace.OpenConfiguration())
                 } label: {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         Image(systemName: "safari")
-                            .glyphSize(11, weight: .medium)
+                            .glyphSize(.footnote, weight: .medium)
                         Text("Open signup page", bundle: .module)
                             .font(SettingsFont.compactLabel)
                     }
@@ -965,9 +965,9 @@ private struct SearchProviderConnectSheet: View {
                 secretField(field)
             }
 
-            HStack(spacing: 4) {
+            HStack(spacing: theme.space.s4) {
                 Image(systemName: "lock.fill")
-                    .glyphSize(9)
+                    .glyphSize(.tiny)
                 Text("Stored securely in Keychain. Never sent anywhere except this provider.", bundle: .module)
                     .font(SettingsFont.rowDescription)
             }
@@ -976,7 +976,7 @@ private struct SearchProviderConnectSheet: View {
     }
 
     private func secretField(_ field: SearchSecretField) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             Text(field.label)
                 .font(SettingsFont.compactLabel)
                 .foregroundColor(theme.text.primary)
@@ -999,10 +999,10 @@ private struct SearchProviderConnectSheet: View {
     // MARK: Footer
 
     private var sheetFooter: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             if definition != nil {
                 if verifying {
-                    ProgressView().controlSize(.small)
+                    SettingsSpinner()
                     Text("Checking your key with a real search…", bundle: .module)
                         .font(SettingsFont.caption)
                         .foregroundColor(theme.text.secondary)
@@ -1147,10 +1147,10 @@ private struct SearchCustomProviderSheet: View {
         """
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             sheetHeader
 
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 Text(
                     "Placeholders: {{query}}, {{max_results}}, {{offset}}, {{page}}, {{start}}, {{time_range}}, {{after_date}}, {{region}}, {{secret.<id>}}.",
                     bundle: .module
@@ -1161,9 +1161,9 @@ private struct SearchCustomProviderSheet: View {
                 SettingsTextEditor(text: $jsonText, minHeight: 280, maxHeight: 300, monospaced: true)
 
                 if let errorMessage {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .glyphSize(11)
+                            .glyphSize(.footnote)
                         Text(errorMessage)
                             .font(SettingsFont.rowDescription)
                             .lineLimit(3)

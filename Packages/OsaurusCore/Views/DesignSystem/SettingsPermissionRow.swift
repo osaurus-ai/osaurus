@@ -12,7 +12,7 @@ import SwiftUI
 struct SettingsPermissionRow: View {
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(52, enabled: inspectionEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(52, enabled: inspectionEnabled) }
     @ObservedObject private var permissionService = SystemPermissionService.shared
 
     let permission: SystemPermission
@@ -91,7 +91,7 @@ struct SettingsPermissionRow: View {
             Image(systemName: result.isGranted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                 .catalogTypography(.caption, theme: theme, fallback: SettingsFont.glyphSmall)
                 .foregroundColor(tint)
-                .padding(.top, 1)
+                .padding(.top, theme.space.s2)
             VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.52.elements.layout.settingsPermissionRow.testResultView.verticalGap", inheriting: theme.space.s2)) {
                 Text(result.message)
                     .catalogTypography(.code, theme: theme, fallback: SettingsFont.monoSmall)

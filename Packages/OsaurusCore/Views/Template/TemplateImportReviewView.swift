@@ -17,7 +17,7 @@ struct TemplateImportReviewView: View {
     let template: Template
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             header(template)
             if let summary = template.summary, !summary.isEmpty {
                 Text(summary)
@@ -35,11 +35,11 @@ struct TemplateImportReviewView: View {
             }
             serverHints(template.serverHints)
             ForEach(template.bundled, id: \.id) { bundled in
-                VStack(alignment: .leading, spacing: 10) {
-                    Divider().opacity(0.5)
-                    HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: theme.space.s10) {
+                    ThemeHairlineDivider()
+                    HStack(spacing: theme.space.s6) {
                         Image(systemName: "shippingbox")
-                            .glyphSize(11, weight: .semibold)
+                            .glyphSize(.footnote, weight: .semibold)
                             .foregroundColor(theme.text.tertiary)
                         Text("Bundled workflow", bundle: .module)
                             .font(SettingsFont.smallLabel)
@@ -59,15 +59,15 @@ struct TemplateImportReviewView: View {
     }
 
     private func header(_ t: Template) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+        HStack(alignment: .top, spacing: theme.space.s12) {
             ZStack {
-                Circle().fill(agentColorFor(t.name).opacity(0.15)).frame(width: 36, height: 36)
+                Circle().fill(theme.dataWash(seed: t.name)).frame(width: 36, height: 36)
                 Image(systemName: t.kind == .workflow ? "flowchart" : "square.on.square.dashed")
-                    .glyphSize(14, weight: .semibold)
-                    .foregroundColor(agentColorFor(t.name))
+                    .glyphSize(.body, weight: .semibold)
+                    .foregroundColor(theme.dataInk(seed: t.name))
             }
-            VStack(alignment: .leading, spacing: 4) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
+                HStack(spacing: theme.space.s6) {
                     Text(t.name)
                         .font(SettingsFont.cardTitle)
                         .foregroundColor(theme.text.primary)
@@ -98,8 +98,8 @@ struct TemplateImportReviewView: View {
             case .invalid: return ("exclamationmark.triangle.fill", theme.status.warning.foreground)
             }
         }()
-        return HStack(spacing: 4) {
-            Image(systemName: icon).glyphSize(10, weight: .semibold)
+        return HStack(spacing: theme.space.s4) {
+            Image(systemName: icon).glyphSize(.micro, weight: .semibold)
             Text(status.label).font(SettingsFont.smallLabel)
             if case .signed(let address, _) = status {
                 Text(address)
@@ -116,7 +116,7 @@ struct TemplateImportReviewView: View {
     }
 
     private func agentDetail(_ t: Template) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             detail("cube", t.agent.model.valueOrNil ?? L("Default Model"))
             if let mode = t.agent.tools?.mode {
                 detail("wrench.and.screwdriver", mode == "manual" ? L("Custom Tools") : L("Auto tools"))
@@ -193,7 +193,7 @@ struct TemplateImportReviewView: View {
                             .frame(maxHeight: 220)
                             .settingsChrome(.inset)
                         } label: {
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: theme.space.s2) {
                                 Text(node.name).font(SettingsFont.compactLabel).foregroundColor(theme.text.primary)
                                 Text(
                                     spec.network.isEmpty
@@ -304,9 +304,9 @@ struct TemplateImportReviewView: View {
             if !items.isEmpty {
                 box(icon: "checklist", title: L("Needs on this Mac"), tint: theme.text.secondary) {
                     ForEach(items) { requirement in
-                        HStack(spacing: 8) {
+                        HStack(spacing: theme.space.s8) {
                             Image(systemName: requirement.kind.icon)
-                                .glyphSize(10, weight: .medium)
+                                .glyphSize(.micro, weight: .medium)
                                 .foregroundColor(theme.text.tertiary)
                                 .frame(width: 14)
                             Text(requirement.kind.title)
@@ -347,9 +347,9 @@ struct TemplateImportReviewView: View {
     private func box<Content: View>(
         icon: String, title: String, tint: Color, @ViewBuilder content: () -> Content
     ) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: icon).glyphSize(10, weight: .semibold)
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(spacing: theme.space.s6) {
+                Image(systemName: icon).glyphSize(.micro, weight: .semibold)
                 Text(title).font(SettingsFont.smallLabel)
             }
             .foregroundColor(tint)
@@ -361,7 +361,7 @@ struct TemplateImportReviewView: View {
     }
 
     private func line(_ title: String, _ value: String) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Text(title).font(SettingsFont.smallLabel).foregroundColor(theme.text.secondary)
             Text(value)
                 .font(SettingsFont.rowDescription)
@@ -372,8 +372,8 @@ struct TemplateImportReviewView: View {
     }
 
     private func detail(_ icon: String, _ text: String) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon).glyphSize(9, weight: .medium)
+        HStack(spacing: theme.space.s4) {
+            Image(systemName: icon).glyphSize(.tiny, weight: .medium)
             Text(text).font(SettingsFont.chip).lineLimit(1)
         }
         .foregroundColor(theme.text.tertiary)

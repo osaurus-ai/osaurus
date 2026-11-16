@@ -74,6 +74,7 @@ struct WorkspaceDetailView: View {
     /// Observed for own-agent rows: their presence is the relay tunnel state.
     @ObservedObject private var relayManager = RelayTunnelManager.shared
     @ObservedObject private var agentManager = AgentManager.shared
+    @Environment(\.themedAlertScope) private var alertScope
     private var theme: any ThemeProtocol { themeManager.currentTheme }
 
     let workspace: OsaurusRouterWorkspaceSummary
@@ -135,7 +136,7 @@ struct WorkspaceDetailView: View {
     /// viewer owns this workspace).
     private var ownerTrialing: Bool { isOwner && service.isTrialing }
     private var workspaceName: String { detail?.name ?? workspace.name }
-    private var workspaceColor: Color { agentColorFor(workspaceName) }
+    private var workspaceColor: Color { theme.dataInk(seed: workspaceName) }
 
     var body: some View {
         SettingsPage {
@@ -417,8 +418,7 @@ struct WorkspaceDetailView: View {
                         .foregroundColor(theme.text.secondary)
                 }
                 if service.isLoadingDetail && detail == nil {
-                    ProgressView()
-                        .scaleEffect(0.7)
+                    SettingsSpinner()
                 }
                 Spacer(minLength: 8)
                 // Owner-only money: buy credits that never expire, or arm
@@ -430,7 +430,7 @@ struct WorkspaceDetailView: View {
                     } label: {
                         HStack(spacing: theme.space.s6) {
                             Image(systemName: "plus.circle.fill")
-                                .glyphSize(10.5, weight: .semibold)
+                                .glyphSize(.footnote, weight: .semibold)
                             Text("Add credits…", bundle: .module)
                         }
                     }
@@ -442,7 +442,7 @@ struct WorkspaceDetailView: View {
                     } label: {
                         HStack(spacing: theme.space.s6) {
                             Image(systemName: "arrow.triangle.2.circlepath")
-                                .glyphSize(10.5, weight: .semibold)
+                                .glyphSize(.footnote, weight: .semibold)
                             Text("Auto-reload…", bundle: .module)
                         }
                     }
@@ -470,9 +470,7 @@ struct WorkspaceDetailView: View {
 
             if let syncingCopy {
                 HStack(spacing: theme.space.s8) {
-                    ProgressView()
-                        .scaleEffect(0.55)
-                        .frame(width: 12, height: 12)
+                    SettingsSpinner(size: .mini)
                     Text(syncingCopy)
                         .catalogTypography(.caption, theme: theme, fallback: SettingsFont.caption)
                         .foregroundColor(theme.text.secondary)
@@ -484,7 +482,7 @@ struct WorkspaceDetailView: View {
                     // number of polls.
                     Button(action: { service.dismissSubscriptionWait() }) {
                         Image(systemName: "xmark")
-                            .glyphSize(9, weight: .semibold)
+                            .glyphSize(.tiny, weight: .semibold)
                             .foregroundColor(theme.text.tertiary)
                             .padding(.horizontal, theme.space.s4).padding(.vertical, theme.space.s4)
                             .contentShape(Rectangle())
@@ -504,7 +502,7 @@ struct WorkspaceDetailView: View {
                 } label: {
                     HStack(spacing: theme.space.s6) {
                         Image(systemName: "clock.arrow.circlepath")
-                            .glyphSize(10.5, weight: .semibold)
+                            .glyphSize(.footnote, weight: .semibold)
                         Text("Credit Activity", bundle: .module)
                     }
                 }
@@ -516,7 +514,7 @@ struct WorkspaceDetailView: View {
                     } label: {
                         HStack(spacing: theme.space.s6) {
                             Image(systemName: "arrow.clockwise.circle.fill")
-                                .glyphSize(10.5, weight: .semibold)
+                                .glyphSize(.footnote, weight: .semibold)
                             Text("Reactivate…", bundle: .module)
                         }
                     }
@@ -535,7 +533,7 @@ struct WorkspaceDetailView: View {
                     } label: {
                         HStack(spacing: theme.space.s6) {
                             Image(systemName: "arrow.up.right.square")
-                                .glyphSize(10.5, weight: .semibold)
+                                .glyphSize(.footnote, weight: .semibold)
                             Text("Manage billing", bundle: .module)
                         }
                     }
@@ -943,7 +941,7 @@ struct WorkspaceDetailView: View {
                     } label: {
                         HStack(spacing: theme.space.s6) {
                             Image(systemName: "link.badge.plus")
-                                .glyphSize(10.5, weight: .semibold)
+                                .glyphSize(.footnote, weight: .semibold)
                             Text("Invite", bundle: .module)
                         }
                     }
@@ -1054,7 +1052,7 @@ struct WorkspaceDetailView: View {
             if canRemove(member, isSelf: isSelf) {
                 Button(action: { pendingDestruction = .removeMember(member) }) {
                     Image(systemName: "xmark.circle.fill")
-                        .glyphSize(13)
+                        .glyphSize(.label)
                         .foregroundColor(theme.text.tertiary)
                         .contentShape(Rectangle())
                 }
@@ -1129,7 +1127,7 @@ struct WorkspaceDetailView: View {
     private func inviteRow(_ invite: OsaurusRouterWorkspaceInvite) -> some View {
         HStack(spacing: theme.space.s8) {
             Image(systemName: "link")
-                .glyphSize(11, weight: .medium)
+                .glyphSize(.footnote, weight: .medium)
                 .foregroundColor(theme.text.tertiary)
                 .frame(width: 28)
 
@@ -1150,7 +1148,7 @@ struct WorkspaceDetailView: View {
                 } label: {
                     HStack(spacing: theme.space.s6) {
                         Image(systemName: copiedInviteId == invite.id ? "checkmark" : "doc.on.doc")
-                            .glyphSize(10.5, weight: .semibold)
+                            .glyphSize(.footnote, weight: .semibold)
                         Text(copiedInviteId == invite.id ? L("Copied") : L("Copy link"))
                     }
                 }
@@ -1244,7 +1242,7 @@ struct WorkspaceDetailView: View {
                     } label: {
                         HStack(spacing: theme.space.s6) {
                             Image(systemName: "plus")
-                                .glyphSize(10.5, weight: .semibold)
+                                .glyphSize(.footnote, weight: .semibold)
                             Text("Share agent", bundle: .module)
                         }
                     }
@@ -1297,7 +1295,7 @@ struct WorkspaceDetailView: View {
                             onChat: { chat(with: agent) },
                             onTurnOnRelay: {
                                 if let local = AgentManager.shared.agent(byAddress: agent.agentAddress) {
-                                    RemoteAccessConsent.request(for: local, scope: .management)
+                                    RemoteAccessConsent.request(for: local, scope: alertScope)
                                 }
                             },
                             onUnshare: { pendingDestruction = .unshareAgent(identity(for: agent)) },
@@ -1484,7 +1482,7 @@ private struct WorkspaceSharedAgentRow: View {
             }
 
             if isMine {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
                     billingToggle
                     ownerApprovalToggle
                 }
@@ -1500,7 +1498,7 @@ private struct WorkspaceSharedAgentRow: View {
         AgentAvatarView(
             mascotId: identity.avatar,
             name: identity.name,
-            tint: agentColorFor(identity.name),
+            tint: theme.dataInk(seed: identity.name),
             diameter: 30,
             customImageURL: identity.customAvatarURL,
             monogramFontSize: 12,
@@ -1565,13 +1563,10 @@ private struct WorkspaceSharedAgentRow: View {
     private var statusLine: some View {
         HStack(alignment: .firstTextBaseline, spacing: theme.space.s6) {
             if isConnecting {
-                ProgressView()
-                    .controlSize(.mini)
-                    .scaleEffect(0.7)
-                    .frame(width: 10, height: 10)
+                SettingsSpinner(size: .mini)
             } else {
                 Image(systemName: status.symbolName)
-                    .glyphSize(10, weight: .semibold)
+                    .glyphSize(.micro, weight: .semibold)
                     .foregroundColor(statusColor)
             }
             Text(statusText)
@@ -1636,7 +1631,7 @@ private struct WorkspaceSharedAgentRow: View {
                     Button(action: onTurnOnRelay) {
                         HStack(spacing: theme.space.s6) {
                             Image(systemName: "antenna.radiowaves.left.and.right")
-                                .glyphSize(10.5, weight: .semibold)
+                                .glyphSize(.footnote, weight: .semibold)
                             Text("Turn on remote access", bundle: .module)
                         }
                     }
@@ -1751,15 +1746,14 @@ private struct WorkspaceSharedAgentRow: View {
     }
 }
 
-#if OSAURUS_DESIGN_SYSTEM
 extension WorkspaceDetailView {
     @MainActor static func inspectionSharedRows(action: @escaping () -> Void) -> some View {
+        let theme = ThemeManager.shared.currentTheme
         let states: [SharedAgentStatus] = [.ready, .connecting, .checking, .offline(lastSeen: Date()), .notConnected(reason: "Local connection failure", hasAttempted: true), .unavailable(reason: "Local unavailable display", fix: .none)]
-        return VStack(alignment: .leading, spacing: 12) {
+        return VStack(alignment: .leading, spacing: theme.space.s12) {
             ForEach(Array(states.enumerated()), id: \.offset) { index, status in
                 WorkspaceSharedAgentRow(identity: SharedAgentIdentity(address: "local-display-\(index)", name: "Local shared agent \(index + 1)", avatar: "green", customAvatarURL: nil, model: "Local model", ownerName: "Local teammate", workspaceId: "local-display", workspaceName: "Local workspace", description: "Local display only; no pairing or sharing action.", isOwnedByMe: index == 0, isHostedHere: index == 0, localAgent: index == 0 ? .default : nil, paired: nil, rosterAgent: nil), status: status, workspaceId: "local-display", canManage: true, billsThisWorkspace: true, isUnsharing: false, onConnect: action, onChat: action, onTurnOnRelay: action, onUnshare: action, onSetBilling: { _ in action() })
             }
         }
     }
 }
-#endif

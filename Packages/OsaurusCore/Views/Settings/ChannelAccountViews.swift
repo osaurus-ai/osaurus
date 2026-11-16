@@ -242,26 +242,20 @@ struct ChannelAccountRemoveSection: View {
 
     var body: some View {
         if !ChannelAccounts.isPrimary(connectionId), ChannelAccounts.account(connectionId: connectionId) != nil {
-            HStack(alignment: .center, spacing: theme.space.s12) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(verbatim: ChannelAccounts.removeTitle(kind))
-                        .font(SettingsFont.compactLabel)
-                        .foregroundColor(theme.text.primary)
-                    Text(
-                        "Its settings, token and listener go away. Messages it already received stay in history.",
-                        bundle: .module
-                    )
-                    .font(SettingsFont.rowDescription)
-                    .foregroundColor(theme.text.tertiary)
-                    .fixedSize(horizontal: false, vertical: true)
+            SettingsRow(
+                title: ChannelAccounts.removeTitle(kind),
+                anchorId: "agentChannels.removeAccount",
+                verbatimTitle: true,
+                description: {
+                    Text("Its settings, token and listener go away. Messages it already received stay in history.", bundle: .module)
                 }
-                Spacer(minLength: theme.space.s8)
+            ) {
                 SettingsButton(.secondary, "Remove…", size: .compact) { confirming = true }
-                    .settingsLandingAnchor("agentChannels.removeAccount")
             }
+            .environment(\.settingsInGroup, true)
             .padding(.top, theme.space.s12)
             .overlay(alignment: .top) {
-                Rectangle().fill(theme.border.subtle).frame(height: 1)
+                ThemeHairlineDivider()
             }
             .themedAlert(
                 L("Remove \(ChannelAccounts.displayName(connectionId: connectionId) ?? connectionId)?"),

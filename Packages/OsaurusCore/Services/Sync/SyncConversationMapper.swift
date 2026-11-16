@@ -76,7 +76,7 @@ enum SyncConversationMapper {
     /// Turn app data fields this version writes.
     static let turnOwnedKeys: Set<String> = [
         "v", "id", "role", "thinking", "thinkingDuration", "toolCalls", "toolResults", "toolCallDurations",
-        "attachments", "sharedArtifacts", "createdAt", "completedAt", "lastOutputAt", "requestedAt",
+        "toolCallApprovalSkips", "attachments", "sharedArtifacts", "createdAt", "completedAt", "lastOutputAt", "requestedAt",
         "generationTokenCount", "inputTokenCount", "cachedInputTokenCount", "timeToFirstToken",
         "generationTokensPerSecond", "modelLoadSeconds", "terminalStopReason", "reasoningItemId",
         "reasoningEncrypted", "responsesOutputItems", "modelContextExcluded", "routerBilling",
@@ -332,15 +332,16 @@ enum SyncConversationMapper {
         }
     }
 
-    /// The tool name for a tool turn, from the assistant call it answers.
-    static func toolName(for turn: ChatTurnData, in turns: [ChatTurnData]) -> String? {
-        guard turn.role == .tool, let callId = turn.toolCallId else { return nil }
-        for candidate in turns where candidate.role == .assistant {
-            if let call = candidate.toolCalls?.first(where: { $0.id == callId }) {
-                return call.function.name
+    /// Tool names by call id, from the assistant calls a tool turn answers.
+    /// The first assistant turn naming a call id wins.
+    static func toolNamesByCallId(in turns: [ChatTurnData]) -> [String: String] {
+        var names: [String: String] = [:]
+        for turn in turns where turn.role == .assistant {
+            for call in turn.toolCalls ?? [] where names[call.id] == nil {
+                names[call.id] = call.function.name
             }
         }
-        return nil
+        return names
     }
 
     static func encode(turn: ChatTurnData, toolName: String?, existing: JSONObject? = nil) throws -> EncodedTurn {
@@ -580,8 +581,16 @@ enum SyncConversationMapper {
     }
 
     static func sha256Hex(_ data: Data) -> String {
-        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+        var hex: [UInt8] = []
+        hex.reserveCapacity(SHA256.byteCount * 2)
+        for byte in SHA256.hash(data: data) {
+            hex.append(hexDigits[Int(byte >> 4)])
+            hex.append(hexDigits[Int(byte & 0x0f)])
+        }
+        return String(decoding: hex, as: UTF8.self)
     }
+
+    private static let hexDigits = Array("0123456789abcdef".utf8)
 
     static func isBlobReference(_ value: Any) -> Bool {
         guard let object = value as? JSONObject, object.count == 2 else { return false }

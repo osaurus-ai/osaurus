@@ -22,7 +22,7 @@ struct CreditsRedeemCodeCard: View {
     }
 
     private var entryView: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             HStack(spacing: theme.space.s6) {
                 SettingsTextField(
                     placeholder: "Enter your code",

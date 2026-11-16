@@ -7,43 +7,95 @@
 
 import SwiftUI
 
-/// A thin determinate progress track. `value` is clamped to 0…1.
+/// The one indeterminate loading glyph, on the progress recipe.
+struct SettingsSpinner: View {
+    enum Size {
+        /// 12pt, inside text-height chrome (chips, fields, compact buttons).
+        case mini
+        /// 16pt, beside a row or a status line.
+        case small
+        /// 32pt, centred in an empty or loading page.
+        case large
+
+        var controlSize: ControlSize {
+            switch self {
+            case .mini: .mini
+            case .small: .small
+            case .large: .large
+            }
+        }
+    }
+
+    var size: Size = .small
+    /// Data-driven ink (a status or button foreground); defaults to the recipe accent.
+    var tint: Color?
+
+    var body: some View {
+        ProgressView()
+            .controlSize(size.controlSize)
+            .assignedProgressIndicator(tintOverride: tint)
+    }
+}
+
+/// A thin progress track. `value` is clamped to 0…1; `nil` is indeterminate
+/// (a sliding segment, static under Reduce Motion).
 struct SettingsProgressBar: View {
     @Environment(\.theme) private var baseTheme
     @Environment(\.isEnabled) private var baseComponentEnabled
     private var theme: any ThemeProtocol { baseTheme.catalogFamily(12, enabled: baseComponentEnabled) }
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    #if OSAURUS_DESIGN_SYSTEM
     @Environment(\.inspectorForceReducedMotion) private var forceReducedMotion
-    #endif
+    @State private var sweeping = false
 
-    let value: Double
+    let value: Double?
     /// Fill color; defaults to the accent.
     var tint: Color?
     var height: CGFloat = 4
 
-    private var clampedValue: Double { value.isNaN ? 0 : min(max(value, 0), 1) }
+    private static let indeterminateFraction = 0.3
+    private var clampedValue: Double {
+        guard let value, !value.isNaN else { return 0 }
+        return min(max(value, 0), 1)
+    }
+    private var fillColor: Color {
+        baseComponentEnabled && tint != nil ? tint! : theme.assignedColor(baseComponentEnabled ? "component.library.12.accent" : "component.library.12.disabledForeground", fallback: tint ?? theme.action.primary.default.background)
+    }
+    private var trackColor: Color {
+        guard baseComponentEnabled else {
+            return theme.assignedColor("component.library.12.disabledBackground", fallback: theme.surface.subtle)
+        }
+        return theme.emptyTrack(theme.assignedColor("component.library.12.selected", fallback: theme.surface.subtle))
+    }
     private var reducesMotion: Bool {
-        #if OSAURUS_DESIGN_SYSTEM
         reduceMotion || forceReducedMotion
-        #else
-        reduceMotion
-        #endif
     }
 
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: theme.radius.medium).fill(theme.assignedColor(baseComponentEnabled ? "component.library.12.selected" : "component.library.12.disabledBackground", fallback: theme.surface.subtle))
-                RoundedRectangle(cornerRadius: theme.radius.medium)
-                    .fill(theme.assignedColor(baseComponentEnabled ? "component.library.12.accent" : "component.library.12.disabledForeground", fallback: tint ?? theme.action.primary.default.background))
-                    .frame(width: max(0, geometry.size.width * clampedValue))
+                RoundedRectangle(cornerRadius: theme.radius.medium).fill(trackColor)
+                if value == nil {
+                    let segment = geometry.size.width * Self.indeterminateFraction
+                    RoundedRectangle(cornerRadius: theme.radius.medium)
+                        .fill(fillColor)
+                        .frame(width: segment)
+                        .offset(x: sweeping && !reducesMotion ? geometry.size.width - segment : 0)
+                } else {
+                    RoundedRectangle(cornerRadius: theme.radius.medium)
+                        .fill(fillColor)
+                        .frame(width: max(0, geometry.size.width * clampedValue))
+                }
             }
+            .clipped()
         }
         .frame(height: theme.catalogMetric("trackHeight", fallback: height))
         .animation(reducesMotion ? nil : theme.motion.standard, value: clampedValue)
+        .onAppear {
+            guard value == nil, !reducesMotion else { return }
+            withAnimation(theme.motion.loop(.easeInOut, duration: 1.1, autoreverses: true)) { sweeping = true }
+        }
         .accessibilityElement()
-        .accessibilityValue(Text(verbatim: "\(Int(clampedValue * 100))%"))
+        .accessibilityValue(value == nil ? Text(L("In progress")) : Text(verbatim: "\(Int(clampedValue * 100))%"))
     }
 }
 
@@ -68,17 +120,11 @@ struct SettingsSkeletonBar: View {
 /// Pulses a skeleton while it loads. Static under Reduce Motion.
 private struct SettingsShimmerModifier: ViewModifier {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    #if OSAURUS_DESIGN_SYSTEM
     @Environment(\.inspectorForceReducedMotion) private var forceReducedMotion
-    #endif
 
     let delay: Double
     private var reducesMotion: Bool {
-        #if OSAURUS_DESIGN_SYSTEM
         reduceMotion || forceReducedMotion
-        #else
-        reduceMotion
-        #endif
     }
     @ViewBuilder func body(content: Content) -> some View {
         if reducesMotion { content }

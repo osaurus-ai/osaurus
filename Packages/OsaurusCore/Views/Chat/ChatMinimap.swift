@@ -35,7 +35,7 @@ struct ChatMinimap: View {
 
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var enabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(44, enabled: enabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(44, enabled: enabled) }
     @State private var isExpanded: Bool = false
 
     private var expandAnimation: Animation { theme.motion.springAnimation }
@@ -97,11 +97,7 @@ struct ChatMinimap: View {
     private var expandedInset: CGFloat { NativeComponentInspectionStyle.metric(44, "padding", Metrics.expandedPadding, theme) }
     private var expandedGap: CGFloat { NativeComponentInspectionStyle.metric(44, "gap", Metrics.expandedSpacing, theme) }
     private var expandedRowHeight: CGFloat {
-        #if OSAURUS_DESIGN_SYSTEM
-        return max(theme.assignedMetric("component.library.44.height", fallback: Metrics.expandedRowHeight), theme.lineHeight(.caption) + 2 * theme.assignedMetric("component.library.44.padding", fallback: 4))
-        #else
-        return Metrics.expandedRowHeight
-        #endif
+        return max(theme.assignedMetric("component.library.44.height", fallback: Metrics.expandedRowHeight), theme.lineHeight(.caption) + 2 * theme.assignedMetric("component.library.44.padding", fallback: theme.space.s4))
     }
 
     private var heightBudget: CGFloat {
@@ -132,7 +128,7 @@ struct ChatMinimap: View {
 
     var body: some View {
         content
-            .padding(.horizontal, isExpanded ? 6 : 2)
+            .padding(.horizontal, isExpanded ? theme.space.s6 : theme.space.s2)
             .frame(width: isExpanded ? 240 : Self.collapsedWidth, alignment: .trailing)
             .background(containerBackground.opacity(isExpanded ? 1 : 0))
             .animation(expandAnimation, value: isExpanded)
@@ -262,7 +258,7 @@ struct ChatMinimap: View {
             guard isExpanded else { return }
             onSelect(marker.id)
         } label: {
-            HStack(spacing: theme.catalogLayoutMetric("component.library.44.elements.layout.chatMinimap.row.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(44, "gap", 10, theme))) {
+            HStack(spacing: theme.catalogLayoutMetric("component.library.44.elements.layout.chatMinimap.row.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(44, "gap", theme.space.s10, theme))) {
                 handle(isActive: isActive, collapsedHeight: collapsedTickHeight)
 
                 if isExpanded {
@@ -274,8 +270,8 @@ struct ChatMinimap: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }.catalogLayoutTarget("component.library.44.elements.layout.chatMinimap.row.horizontalGap")
-            .padding(.vertical, isExpanded ? theme.catalogLayoutMetric("component.library.44.elements.layout.chatMinimap.expandedRow.paddingY", inheriting: NativeComponentInspectionStyle.metric(44, "padding", 4, theme)) : 0).catalogLayoutTarget("component.library.44.elements.layout.chatMinimap.expandedRow.paddingY")
-            .padding(.horizontal, isExpanded ? theme.catalogLayoutMetric("component.library.44.elements.layout.chatMinimap.expandedRow.paddingX", inheriting: NativeComponentInspectionStyle.metric(44, "padding", 6, theme)) : 0).catalogLayoutTarget("component.library.44.elements.layout.chatMinimap.expandedRow.paddingX")
+            .padding(.vertical, isExpanded ? theme.catalogLayoutMetric("component.library.44.elements.layout.chatMinimap.expandedRow.paddingY", inheriting: NativeComponentInspectionStyle.metric(44, "padding", theme.space.s4, theme)) : 0).catalogLayoutTarget("component.library.44.elements.layout.chatMinimap.expandedRow.paddingY")
+            .padding(.horizontal, isExpanded ? theme.catalogLayoutMetric("component.library.44.elements.layout.chatMinimap.expandedRow.paddingX", inheriting: NativeComponentInspectionStyle.metric(44, "padding", theme.space.s6, theme)) : 0).catalogLayoutTarget("component.library.44.elements.layout.chatMinimap.expandedRow.paddingX")
             .frame(maxWidth: .infinity, alignment: isExpanded ? .leading : .trailing)
             .frame(minHeight: isExpanded ? expandedRowHeight : 0)
             .background {

@@ -24,10 +24,11 @@ import Foundation
         result["messagesAttachmentsOnlyExists"] = example("Attachments without text", assistant: false).blocks.contains { if case .userMessage(let text, let items, _, _, _, _) = $0.kind { return text.isEmpty && !items.isEmpty }; return false }
         result["messagesDispatchUsesActualEnvelope"] = example("Channel message and warning", assistant: false).blocks.contains { if case .userMessage(_, _, _, _, let envelope, _) = $0.kind { return envelope != nil }; return false }
         for family in [28, 29] {
-            let width = "component.library.\(family).elements.container.borderWidth"
-            let color = "component.library.\(family).elements.container.border"
+            let width = MessageBubbleInspectionStyle.key(family, "borderWidth")
+            let color = MessageBubbleInspectionStyle.key(family, "border")
             result["messagesNoInventedDefaultBorder_\(family)"] = !MessageBubbleInspectionStyle.hasBorderOverride(family, snapshot: try store.makeSnapshot(baseline))
             var explicit = baseline
+            explicit.mappings[width] = "stroke.default"
             explicit.explicitAssignments = (explicit.explicitAssignments ?? []).union([width])
             result["messagesExplicitBorderPreserved_\(family)"] = MessageBubbleInspectionStyle.hasBorderOverride(family, snapshot: try store.makeSnapshot(explicit))
             var previousEdit = baseline

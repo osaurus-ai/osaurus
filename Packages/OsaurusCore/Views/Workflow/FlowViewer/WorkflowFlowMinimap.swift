@@ -69,9 +69,9 @@ struct WorkflowFlowMinimap: View {
 
     private func color(_ status: NodeRunStatus?) -> Color {
         switch status {
-        case .running?, .awaitingUser?: return theme.statusInk.info
-        case .done?, .pinned?: return theme.statusInk.success
-        case .failed?: return theme.statusInk.error
+        case .running?, .awaitingUser?: return theme.statusInk(.info)
+        case .done?, .pinned?: return theme.statusInk(.success)
+        case .failed?: return theme.statusInk(.error)
         default: return theme.border.strong
         }
     }

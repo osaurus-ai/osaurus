@@ -207,6 +207,29 @@ enum SystemPermission: String, CaseIterable, Codable, Sendable {
         }
     }
 
+    /// Where the switch sits under System Settings → Privacy & Security, as
+    /// the pane names macOS shows. Apple-event permissions are per target app
+    /// under Automation → Osaurus.
+    var systemSettingsPath: String {
+        switch self {
+        case .automation: return "Automation → Osaurus"
+        case .automationCalendar: return "Automation → Osaurus → Calendar"
+        case .automationMail: return "Automation → Osaurus → Mail"
+        case .automationMessages: return "Automation → Osaurus → Messages"
+        case .automationMusic: return "Automation → Osaurus → Music"
+        case .notes: return "Automation → Osaurus → Notes"
+        case .maps: return "Automation → Osaurus → Maps"
+        case .calendar: return "Calendars"
+        case .reminders: return "Reminders"
+        case .location: return "Location Services"
+        case .accessibility: return "Accessibility"
+        case .contacts: return "Contacts"
+        case .disk: return "Full Disk Access"
+        case .microphone: return "Microphone"
+        case .screenRecording: return "Screen & System Audio Recording"
+        }
+    }
+
     /// URL scheme to open the relevant System Settings pane
     var systemSettingsURL: URL? {
         switch self {

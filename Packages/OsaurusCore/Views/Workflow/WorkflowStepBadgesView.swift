@@ -16,7 +16,7 @@ struct WorkflowStepBadgesView: View {
 
     var body: some View {
         if !badges.isEmpty {
-            FlowLayout(spacing: 4) {
+            FlowLayout(spacing: theme.space.s4) {
                 ForEach(badges) { badge in
                     StatusChip(badge.label, tint: color(badge.tone), icon: badge.systemImage)
                     .help(badge.detail ?? badge.label)

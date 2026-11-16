@@ -9,7 +9,7 @@ struct InspectorSettingsGeometryVerification: View {
     @State private var enabled = true
     @State private var checked = false
     @State private var topP = ""
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(family, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(family) }
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Original settings controls · local bindings only")

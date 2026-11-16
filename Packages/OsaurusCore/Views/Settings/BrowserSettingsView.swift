@@ -116,12 +116,12 @@ struct BrowserSettingsView: View {
 
     private var aboutCard: some View {
         SettingsSection(title: "What It Is") {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 bodyText(
                     "When you turn it on for an agent, Browser Use lets that agent browse the web for you — navigating pages, reading content, filling forms, and working through a goal step by step, with every action shown in a live feed."
                 )
 
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
                     aboutRow(
                         icon: "person.crop.rectangle",
                         text:
@@ -143,9 +143,9 @@ struct BrowserSettingsView: View {
     }
 
     private func aboutRow(icon: String, text: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: theme.space.s10) {
             Image(systemName: icon)
-                .glyphSize(12, weight: .medium)
+                .glyphSize(.caption, weight: .medium)
                 .foregroundColor(theme.text.link)
                 .frame(width: 18, alignment: .center)
                 .padding(.top, theme.space.s2)
@@ -160,12 +160,12 @@ struct BrowserSettingsView: View {
 
     private var enableCard: some View {
         SettingsSection(title: "Turn It On") {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: theme.space.s14) {
                 bodyText(
                     "Browser Use is off by default and can only be enabled per custom agent — the built-in Default agent never gets browser access."
                 )
 
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: theme.space.s10) {
                     stepRow(number: 1, text: "Open the Agents tab and select a custom agent.")
                     stepRow(number: 2, text: "Open Abilities → Subagents and turn on Browser Use.")
                     stepRow(
@@ -179,7 +179,7 @@ struct BrowserSettingsView: View {
     }
 
     private func stepRow(number: Int, text: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: theme.space.s10) {
             Text("\(number)")
                 .font(SettingsFont.smallLabel)
                 .foregroundColor(theme.text.link)
@@ -196,7 +196,7 @@ struct BrowserSettingsView: View {
 
     private var consentCard: some View {
         SettingsSection(title: "Staying in Control") {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: theme.space.s10) {
                 consentRow(
                     icon: "checkmark.circle.fill",
                     color: theme.status.success.foreground,
@@ -222,9 +222,9 @@ struct BrowserSettingsView: View {
     }
 
     private func consentRow(icon: String, color: Color, text: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: theme.space.s8) {
             Image(systemName: icon)
-                .glyphSize(12)
+                .glyphSize(.caption)
                 .foregroundColor(color)
                 .padding(.top, theme.space.s2)
             Text(text)
@@ -238,7 +238,7 @@ struct BrowserSettingsView: View {
 
     private var sessionsCard: some View {
         SettingsSection(title: "Sessions") {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 bodyText(
                     "One browser profile per agent. Open a session to see it live (or restore it at its last page). Sign-in badges reflect what Osaurus has actually observed — never guessed from cookies."
                 )
@@ -250,7 +250,7 @@ struct BrowserSettingsView: View {
                         hint: "A session appears here the first time an agent uses the browser."
                     )
                 } else {
-                    VStack(spacing: 10) {
+                    VStack(spacing: theme.space.s10) {
                         ForEach(records) { record in
                             sessionRow(record)
                         }
@@ -272,16 +272,16 @@ struct BrowserSettingsView: View {
     }
 
     private func sessionRow(_ record: BrowserSessionRecord) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(spacing: theme.space.s10) {
                 Image(systemName: "person.crop.circle")
-                    .glyphSize(16, weight: .medium)
+                    .glyphSize(.medium, weight: .medium)
                     .foregroundColor(record.isActive ? theme.status.success.foreground : theme.text.secondary)
                     .frame(width: 32, height: 32)
                     .settingsChrome(record.isActive ? .status(.success) : .subtle)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
+                    HStack(spacing: theme.space.s6) {
                         Text(agentDisplayName(for: record.agentId))
                             .font(SettingsFont.sectionTitle)
                             .foregroundColor(theme.text.primary)
@@ -322,7 +322,7 @@ struct BrowserSettingsView: View {
                     agentPendingReset = record
                 } label: {
                     Image(systemName: "trash")
-                        .glyphSize(12)
+                        .glyphSize(.caption)
                         .foregroundColor(theme.status.error.foreground)
                         .padding(theme.space.s6)
                 }
@@ -348,13 +348,13 @@ struct BrowserSettingsView: View {
         return LazyVGrid(
             columns: [GridItem(.adaptive(minimum: 150), alignment: .leading)],
             alignment: .leading,
-            spacing: 6
+            spacing: theme.space.s6
         ) {
             ForEach(hosts, id: \.self) { host in
                 let status = record.services[host] ?? .unknown
-                HStack(spacing: 5) {
+                HStack(spacing: theme.space.s4) {
                     Image(systemName: authIcon(status))
-                        .glyphSize(9)
+                        .glyphSize(.tiny)
                         .foregroundColor(authColor(status))
                     Text(host)
                         .font(SettingsFont.chip)

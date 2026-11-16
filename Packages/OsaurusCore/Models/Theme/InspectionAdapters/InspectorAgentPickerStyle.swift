@@ -12,50 +12,25 @@ enum AgentPickerInspectionStyle {
 
 extension View {
     @ViewBuilder func agentPickerInk(_ property: String, fallback: Color) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         modifier(InspectorAgentPickerInk(property: property, fallback: fallback))
-        #else
-        foregroundColor(fallback)
-        #endif
     }
     @ViewBuilder func agentPickerTextStyle(_ role: ThemeTextStyleRole, property: String, weight: Int? = nil) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         assignedTypography(AgentPickerInspectionStyle.key + property, fallback: SettingsFont(role: role, weightOverride: weight))
-        #else
-        textStyle(role, weight: weight)
-        #endif
     }
     @ViewBuilder func agentPickerFont(_ font: SettingsFont, property: String) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         assignedTypography(AgentPickerInspectionStyle.key + property, fallback: font)
-        #else
-        self.font(font)
-        #endif
     }
     @ViewBuilder func agentPickerRowLayout(horizontal: CGFloat, vertical: CGFloat, selected: Bool = false, highlighted: Bool = false) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         modifier(InspectorAgentPickerRow(selected: selected, highlighted: highlighted))
-        #else
-        padding(.horizontal, horizontal).padding(.vertical, vertical)
-        #endif
     }
     @ViewBuilder func agentPickerSurface() -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         modifier(InspectorAgentPickerSurface())
-        #else
-        self
-        #endif
     }
     @ViewBuilder func agentPickerButtonStyle() -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         buttonStyle(AssignedBasePlainButtonStyle())
-        #else
-        buttonStyle(.plain)
-        #endif
     }
 }
 
-#if OSAURUS_DESIGN_SYSTEM
 private struct InspectorAgentPickerInk: ViewModifier {
     @Environment(\.theme) private var theme
     @Environment(\.isEnabled) private var enabled
@@ -74,7 +49,7 @@ private struct InspectorAgentPickerRow: ViewModifier {
     func body(content: Content) -> some View {
         let k = AgentPickerInspectionStyle.key + "elements.row."
         let radius = theme.assignedMetric(k + "radius", fallback: theme.radius.medium)
-        content.padding(theme.assignedMetric(k + "padding", fallback: 8))
+        content.padding(theme.assignedMetric(k + "padding", fallback: theme.space.s8))
             .frame(minHeight: theme.assignedMetric(k + "height", fallback: 32))
             .assignedInteractionBackground(k, state: !enabled ? "disabledBackground" : highlighted || hovered ? "hover" : selected ? "selected" : "background", fallback: theme.surface.raised, in: RoundedRectangle(cornerRadius: radius))
             .overlay(RoundedRectangle(cornerRadius: radius).strokeBorder(
@@ -94,4 +69,3 @@ private struct InspectorAgentPickerSurface: ViewModifier {
                 lineWidth: theme.assignedMetric(k + "borderWidth", fallback: theme.stroke.default)).allowsHitTesting(false))
     }
 }
-#endif

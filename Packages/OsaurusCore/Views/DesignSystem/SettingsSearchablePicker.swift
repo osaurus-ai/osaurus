@@ -169,7 +169,7 @@ struct SettingsSearchablePickerList: View {
     var body: some View {
         let sections = sections
         let rowIDs = sections.flatMap { $0.rows.map(\.id) }
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             SearchField(
                 text: $query, placeholder: searchPlaceholder, fillsAvailableWidth: true,
                 onSubmit: { pick(highlighted ?? rowIDs.first) },
@@ -191,7 +191,7 @@ struct SettingsSearchablePickerList: View {
             }
             if !actions.isEmpty {
                 Divider()
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     ForEach(actions) { action in actionRow(action) }
                 }
                 .padding(theme.space.s6)
@@ -212,7 +212,7 @@ struct SettingsSearchablePickerList: View {
     private func list(_ sections: [Section]) -> some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
+                LazyVStack(alignment: .leading, spacing: theme.space.s0) {
                     ForEach(sections) { section in
                         if let title = section.title {
                             Text(verbatim: title)

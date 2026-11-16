@@ -661,15 +661,15 @@ enum ConfigApplier {
                     if case .resolved(let runtime)? = AgentManager.shared.effectiveHarness(for: agent.id) {
                         message =
                             "Created on harness runtime `\(runtime.displayName)`. Chat with `\(agent.name)` "
-                            + "directly; `spawn_agent` only runs agents on the built-in runtime."
+                            + "directly; the Orchestrator hands work only to agents on the built-in runtime."
                     } else if !joinsPool {
                         message =
                             "Created. `\(agent.name)` is not in the Orchestrator's delegation list "
                             + "(`orchestrator_spawnable: false`); add it in Settings → Agents → Delegation to delegate to it."
                     } else {
                         message =
-                            "Created. `\(agent.name)` is spawnable now — "
-                            + "call `spawn_agent` to run a task with it."
+                            "Created. The Orchestrator can hand `\(agent.name)` work now when the user "
+                            + "asks for it in chat."
                     }
                     if !outcome.notes.isEmpty {
                         message += " " + outcome.notes.joined(separator: " ")
@@ -793,7 +793,18 @@ enum ConfigApplier {
         }
         let name = entry.name.trimmingCharacters(in: .whitespacesAndNewlines)
         if !name.isEmpty { agent.name = name }
-        return patch(&agent, from: entry)
+        // Loosening approvals is high risk and a draft skips the plan
+        // review that flags it, so it is set on the saved agent instead.
+        let approvalsRequested = entry.toolApprovals != nil || entry.tools?.policies?.isEmpty == false
+        entry.toolApprovals = nil
+        entry.tools?.policies = nil
+        var outcome = patch(&agent, from: entry)
+        if approvalsRequested {
+            outcome.notes.append(
+                "tool_approvals / tools.policies: not set on a draft. After creating the agent, "
+                    + "set them on its Tools tab or with osaurus_config.")
+        }
+        return outcome
     }
 
     @MainActor
@@ -810,6 +821,7 @@ enum ConfigApplier {
             agent.avatar = AgentMascot(storedID: avatar)?.rawValue
         }
         if entry.model.isSpecified { agent.defaultModel = entry.model.valueOrNil }
+        if let locked = entry.modelLocked { agent.modelLocked = locked }
         if entry.temperature.isSpecified {
             agent.temperature = entry.temperature.valueOrNil.map(Float.init)
         }
@@ -848,6 +860,11 @@ enum ConfigApplier {
         if let policy = entry.sharedToolApproval {
             agent.sharedToolApproval = policy == .deny ? nil : policy
         }
+        if let mode = entry.toolApprovals { agent.settings.toolApprovalMode = mode }
+        for (tool, raw) in entry.tools?.policies ?? [:] {
+            guard let value = AgentToolPolicyValue(raw) else { continue }
+            agent.settings.toolPolicies[tool] = value.policy
+        }
         guard let caps = entry.capabilities else { return outcome }
         patchCapabilities(&agent, from: caps)
         return outcome
@@ -870,7 +887,7 @@ enum ConfigApplier {
             } else {
                 outcome.notes.append(
                     "runtime: `\(raw)` is not registered on this Mac, so the agent runs on Osaurus's "
-                        + "own loop. Add it under Settings → Runtimes, then pick it in the chat model picker.")
+                        + "own loop. Add it under Settings → Agent Runtimes, then pick it in the chat model picker.")
             }
         }
         if var entry = entry.claudeCode {
@@ -2566,7 +2583,7 @@ enum ConfigApplier {
                         section: "search_providers", target: entry.id,
                         status: needsKey ? .needsUserAction : .done,
                         message: needsKey
-                            ? "Added. Paste the API key in Settings → Search." : nil))
+                            ? "Added. Paste the API key in Settings → Web Search." : nil))
             } else {
                 if let enabled = entry.enabled {
                     manager.setEnabled(enabled, for: entry.id)

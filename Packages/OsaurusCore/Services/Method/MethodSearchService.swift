@@ -51,8 +51,15 @@ public actor MethodSearchService {
 
     public func initialize() async {
         guard !isInitialized else { return }
+        guard EmbeddingService.vectorIndexesAvailable else {
+            MethodLogger.search.error(
+                "Method vector index closed: \(EmbeddingService.launchError?.localizedDescription ?? "embedding model unavailable")"
+            )
+            return
+        }
 
-        let storageDir = OsaurusPaths.methods().appendingPathComponent("vectura", isDirectory: true)
+        let storageDir = OsaurusPaths.methods().appendingPathComponent(
+            EmbeddingService.indexDirectoryName, isDirectory: true)
 
         for attempt in 1 ... 2 {
             do {
@@ -111,7 +118,7 @@ public actor MethodSearchService {
             let toolDescs = Self.loadToolDescriptions()
             let id = deterministicUUID(for: method.id)
             let text = buildIndexText(for: method, toolDescriptions: toolDescs)
-            _ = try await MediaActivityLogger.$embeddingPurpose.withValue("method_index") {
+            _ = try await MediaActivityLogger.withEmbedding(purpose: "method_index", role: .document) {
                 try await db.addDocument(text: text, id: id)
             }
         } catch {
@@ -141,7 +148,7 @@ public actor MethodSearchService {
         guard let db = vectorDB else { return [] }
         do {
             let fetchCount = topK * 3
-            let results = try await MediaActivityLogger.$embeddingPurpose.withValue("method_search") {
+            let results = try await MediaActivityLogger.withEmbedding(purpose: "method_search", role: .query) {
                 try await db.search(
                     query: .text(query),
                     numResults: fetchCount,
@@ -199,8 +206,10 @@ public actor MethodSearchService {
 
     // MARK: - Rebuild
 
-    public func rebuildIndex() async {
-        guard let db = vectorDB else { return }
+    /// Returns whether every method was embedded into the index.
+    @discardableResult
+    public func rebuildIndex() async -> Bool {
+        guard let db = vectorDB else { return false }
         do {
             try await db.reset()
             reverseIdMap.removeAll()
@@ -218,13 +227,15 @@ public actor MethodSearchService {
                 ids.append(id)
             }
             if !texts.isEmpty {
-                _ = try await MediaActivityLogger.$embeddingPurpose.withValue("method_index") {
+                _ = try await MediaActivityLogger.withEmbedding(purpose: "method_index", role: .document) {
                     try await db.addDocuments(texts: texts, ids: ids)
                 }
             }
             MethodLogger.search.info("Method index rebuilt with \(methods.count) methods")
+            return true
         } catch {
             MethodLogger.search.error("Failed to rebuild method index: \(error)")
+            return false
         }
     }
 

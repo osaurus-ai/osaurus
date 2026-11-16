@@ -212,7 +212,7 @@ struct DevicesView: View {
 
     private var statusDot: Color {
         if !model.isOpen { return theme.status.error.foreground }
-        if !model.configuration.networkEnabled || model.otherDeviceCount == 0 { return theme.text.disabled }
+        if !model.configuration.networkEnabled || model.otherDeviceCount == 0 { return theme.text.tertiary }
         return model.connectedDeviceCount > 0 ? theme.status.success.foreground : theme.status.warning.foreground
     }
 
@@ -283,7 +283,7 @@ struct DevicesView: View {
                 anchorId: "settings.sync.join"
             ) {
                 if model.pairing == .joining {
-                    ProgressView().controlSize(.small)
+                    SettingsSpinner()
                 } else {
                     SettingsButton(.secondary, isJoining ? "Cancel" : "Join…") {
                         isJoining.toggle()
@@ -431,7 +431,7 @@ struct DevicesView: View {
                 tone: .info
             ) {
                 if confirmation.confirmed {
-                    ProgressView().controlSize(.small)
+                    SettingsSpinner(size: .small)
                     SettingsButton(.tertiary, "Cancel") { model.rejectPairing() }
                 } else {
                     SettingsButton(.primary, "Numbers Match") { model.confirmPairing() }

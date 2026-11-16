@@ -34,6 +34,9 @@ enum RunProgressLoadingPhase: Equatable, Sendable {
     /// longest running step's timeout, not the chat's, bounds how long the
     /// run may go quiet before it is a hang.
     case workflowRun(stepTimeout: TimeInterval)
+    /// That workflow run is waiting on a person (a form, folder card, or
+    /// approval). However long they take, the run is not stuck.
+    case workflowAwaitingPerson
 
     var hidesSlowChip: Bool { self != .none }
 
@@ -41,12 +44,14 @@ enum RunProgressLoadingPhase: Equatable, Sendable {
         switch self {
         case .modelLoad: return RunProgressEvaluator.opaqueModelLoadStalledThreshold
         case .workflowRun(let stepTimeout): return stepTimeout + RunProgressEvaluator.stalledThreshold
+        case .workflowAwaitingPerson: return .infinity
         case .none, .sandbox, .prefill: return RunProgressEvaluator.stalledThreshold
         }
     }
 
     /// Same priority as `NativeTypingIndicatorView`: sandbox, then prefill,
-    /// then opaque MLX / warmup load, then a workflow run `sessionId` started.
+    /// then opaque MLX / warmup load, then a workflow run `sessionId` started
+    /// (waiting on a person before working).
     @MainActor
     static func current(agentId: UUID?, sessionId: String? = nil) -> RunProgressLoadingPhase {
         let progress = InferenceProgressManager.shared
@@ -63,6 +68,9 @@ enum RunProgressLoadingPhase: Equatable, Sendable {
         if warmup.contains(.loadingModel) { return .modelLoad }
         if warmup.contains(where: { if case .prefilling = $0 { return true }; return false }) {
             return .prefill
+        }
+        if let sessionId, WorkflowRunService.shared.isAwaitingPerson(sessionID: sessionId) {
+            return .workflowAwaitingPerson
         }
         if let sessionId, let stepTimeout = WorkflowRunService.shared.runningStepTimeout(sessionID: sessionId) {
             return .workflowRun(stepTimeout: stepTimeout)

@@ -124,8 +124,8 @@ struct WorkflowsPaneView: View {
 
     private var agentBody: some View {
         let model = model
-        return VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 4) {
+        return VStack(alignment: .leading, spacing: theme.space.s0) {
+            HStack(spacing: theme.space.s4) {
                 scopeLabel(count: model.mine.count)
                 Spacer(minLength: 8)
                 addMenu(model)
@@ -174,8 +174,8 @@ struct WorkflowsPaneView: View {
         let shown = ChatSessionSidebar.filterByName(
             all, query: query.trimmingCharacters(in: .whitespacesAndNewlines), name: \.searchText)
         let editing = editingTemplateID
-        return VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 4) {
+        return VStack(alignment: .leading, spacing: theme.space.s0) {
+            HStack(spacing: theme.space.s4) {
                 Text(verbatim: L("On This Mac"))
                     .font(SettingsFont.smallLabel)
                     .foregroundColor(theme.text.primary)
@@ -199,7 +199,7 @@ struct WorkflowsPaneView: View {
                     hint: "Describe one in the chat and the Architect builds it. Saved workflows show up here to edit.")
             } else {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: theme.space.s2) {
                         if all.count > WorkflowListModel.searchThreshold || !query.isEmpty {
                             SearchField(text: $query, placeholder: "Search workflows…", fillsAvailableWidth: true)
                                 .padding(.horizontal, theme.space.s4)
@@ -242,11 +242,11 @@ struct WorkflowsPaneView: View {
 
     /// Avatar + agent name + "· N workflows": whose workflows these are.
     private func scopeLabel(count: Int) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: theme.space.s6) {
             AgentAvatarView(
                 mascotId: agent?.avatar,
                 name: agent?.displayName ?? "",
-                tint: agentColorFor(agent?.name ?? ""),
+                tint: theme.dataInk(seed: agent?.name ?? ""),
                 diameter: 16,
                 customImageURL: agent?.customAvatarURL,
                 monogramFontSize: 7,
@@ -299,7 +299,7 @@ struct WorkflowsPaneView: View {
             }
         } label: {
             Image(systemName: "plus")
-                .glyphSize(13, weight: .medium)
+                .glyphSize(.label, weight: .medium)
                 .foregroundColor(theme.text.secondary)
                 .padding(theme.space.s4)
                 .contentShape(Rectangle())
@@ -316,7 +316,7 @@ struct WorkflowsPaneView: View {
 
     private func list(_ model: WorkflowListModel) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 if model.mine.count + model.starters.count > WorkflowListModel.searchThreshold || !query.isEmpty {
                     SearchField(text: $query, placeholder: "Search workflows…", fillsAvailableWidth: true)
                         .padding(.horizontal, theme.space.s4)
@@ -397,9 +397,9 @@ private struct WorkflowPaneRow<RowMenu: View>: View {
     private var hasMenu: Bool { RowMenu.self != EmptyView.self }
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: theme.space.s6) {
             Button(action: action) {
-                HStack(spacing: 10) {
+                HStack(spacing: theme.space.s10) {
                     ZStack {
                         Circle()
                             .fill(
@@ -407,10 +407,10 @@ private struct WorkflowPaneRow<RowMenu: View>: View {
                             )
                             .frame(width: 26, height: 26)
                         Image(systemName: icon)
-                            .glyphSize(11, weight: .medium)
+                            .glyphSize(.footnote, weight: .medium)
                             .foregroundColor(isWarning ? theme.status.warning.foreground : theme.text.link)
                     }
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: theme.space.s2) {
                         Text(verbatim: title)
                             .font(SettingsFont.compactLabel)
                             .foregroundColor(theme.text.primary)
@@ -430,7 +430,7 @@ private struct WorkflowPaneRow<RowMenu: View>: View {
             if hasMenu {
                 SettingsActionMenu(accessibilityLabel: L("More"), content: menu) {
                     Image(systemName: "ellipsis")
-                        .glyphSize(11, weight: .semibold)
+                        .glyphSize(.footnote, weight: .semibold)
                         .foregroundColor(theme.text.secondary)
                         .frame(width: SidebarStyle.actionButtonSize, height: SidebarStyle.actionButtonSize)
                         .contentShape(Rectangle())

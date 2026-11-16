@@ -146,9 +146,9 @@ struct AgentSetupWizardView: View {
     private var isLast: Bool { currentIndex == steps.count - 1 }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             header
-            HStack(spacing: 0) {
+            HStack(spacing: theme.space.s0) {
                 stepRail
                     .frame(width: 200)
                     .layoutPriority(1)
@@ -158,7 +158,7 @@ struct AgentSetupWizardView: View {
                         if let report, let agent {
                             stepContent(agent: agent, report: report)
                         } else {
-                            ProgressView()
+                            SettingsSpinner(size: .large)
                         }
                     }
                     .padding(theme.space.s24)
@@ -427,7 +427,7 @@ struct AgentSetupWizardView: View {
     @ViewBuilder
     private func stepContent(agent: Agent, report: SetupReport) -> some View {
         let items = current.items(in: report)
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: theme.space.s16) {
             SettingsDetailHeader(icon: current.icon, title: current.title)
             switch current {
             case .model:
@@ -479,7 +479,7 @@ private struct ModelStep: View {
     let onBrowseModels: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             if items.isEmpty {
                 StepDoneBanner(text: L("This agent has a model it can run."))
             } else {
@@ -499,7 +499,7 @@ private struct ModelStep: View {
 
     /// Same dropdown as the Create Agent sheet's Default Model field.
     private var modelField: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             SettingsFieldLabel("Default Model")
             ModelSearchablePicker(
                 items: pickerCache.items,
@@ -525,7 +525,7 @@ private struct FolderStep: View {
     let mutate: ((inout Agent) -> Void) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             if items.isEmpty {
                 StepDoneBanner(text: L("Osaurus can read and write \(agent.workingFolderPath ?? "")."))
             } else {
@@ -538,7 +538,7 @@ private struct FolderStep: View {
                         .truncationMode(.middle)
                 }
             }
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 StepActionButton(title: "Choose Folder…", icon: "folder.badge.plus") { chooseFolder() }
                 OrSeparator()
                 StepActionButton(title: "Remove Working Folder", icon: "folder.badge.minus", primary: false) {
@@ -596,7 +596,7 @@ private struct KnowledgeStep: View {
     @State private var isCreating = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             if items.isEmpty {
                 StepDoneBanner(text: L("The agent has knowledge to search."))
             } else {
@@ -607,13 +607,13 @@ private struct KnowledgeStep: View {
                     .font(SettingsFont.caption)
                     .foregroundColor(theme.text.tertiary)
             } else {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: theme.space.s6) {
                     SettingsFieldLabel("Grant Collections")
                         .frame(maxWidth: .infinity, alignment: .leading)
                     ForEach(collections) { collection in
                         let granted = agent.settings.knowledgeCollectionIds.contains(collection.id)
-                        HStack(spacing: 12) {
-                            VStack(alignment: .leading, spacing: 1) {
+                        HStack(spacing: theme.space.s12) {
+                            VStack(alignment: .leading, spacing: theme.space.s2) {
                                 Text(collection.name).font(SettingsFont.compactLabel).foregroundColor(
                                     theme.text.primary
                                 )
@@ -631,7 +631,7 @@ private struct KnowledgeStep: View {
                     }
                 }
             }
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 if !collections.isEmpty { OrSeparator() }
                 StepActionButton(title: "Create From Folder…", icon: "folder.badge.plus") { createFromFolder() }
                     .disabled(isCreating)
@@ -688,13 +688,13 @@ private struct ToolsStep: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             if items.isEmpty {
                 StepDoneBanner(text: L("Every tool this agent lists is available here."))
             } else {
                 StepIssueList(items: items)
                 if !missingNames.isEmpty {
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         ForEach(missingNames, id: \.self) { name in
                             StatusChip(name, tone: .neutral)
                                 .foregroundColor(theme.text.secondary)
@@ -702,7 +702,7 @@ private struct ToolsStep: View {
                     }
                 }
             }
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 StepActionButton(title: "Open MCP Servers", icon: "server.rack") {
                     onLeave(.tools)
                 }
@@ -733,9 +733,9 @@ private struct ReviewStep: View {
     @State private var name: String = ""
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: theme.space.s16) {
             if isDraft {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: theme.space.s6) {
                     SettingsFieldLabel("Agent Name")
                     SettingsTextField(placeholder: L("e.g., Invoice Bot"), text: $name, icon: "textformat")
                         .onChange(of: name) { _, newValue in onRename(newValue) }
@@ -773,9 +773,9 @@ private struct ReviewStep: View {
     }
 
     private var summary: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             SettingsFieldLabel("What Will Be Created")
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
                 row("cube", agent.defaultModel.map { $0.split(separator: "/").last.map(String.init) ?? $0 } ?? L("Default Model"))
                 if agent.toolSelectionMode == .manual {
                     let toolCount = agent.manualToolNames?.count ?? 0
@@ -795,8 +795,8 @@ private struct ReviewStep: View {
     }
 
     private func row(_ icon: String, _ text: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: icon).glyphSize(11).foregroundColor(theme.text.tertiary).frame(width: 14)
+        HStack(spacing: theme.space.s8) {
+            Image(systemName: icon).glyphSize(.footnote).foregroundColor(theme.text.tertiary).frame(width: 14)
             Text(text).font(SettingsFont.caption).foregroundColor(theme.text.secondary).lineLimit(1).truncationMode(
                 .middle
             )
@@ -831,7 +831,7 @@ private struct BundledWorkflowsStep: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             if plan.pending.isEmpty {
                 StepDoneBanner(text: L("Every workflow this agent calls is installed."))
             } else {
@@ -840,16 +840,13 @@ private struct BundledWorkflowsStep: View {
                     .foregroundColor(theme.text.secondary)
             }
             ForEach(plan.rows) { row in
-                HStack(spacing: 10) {
+                HStack(spacing: theme.space.s10) {
                     Image(systemName: icon(row.state))
                         .foregroundColor(color(row.state))
-                    VStack(alignment: .leading, spacing: 2) {
+                    SettingsRowText {
                         Text(row.name)
-                            .font(SettingsFont.rowTitle)
-                            .foregroundColor(theme.text.primary)
+                    } description: {
                         Text(status(row))
-                            .font(SettingsFont.rowDescription)
-                            .foregroundColor(theme.text.tertiary)
                     }
                     Spacer()
                 }
@@ -884,7 +881,7 @@ private struct BundledWorkflowsStep: View {
             (L("Permissions"), shared.permissions),
         ].filter { !$0.1.isEmpty }
         if !lines.isEmpty {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
                 Text("Needed across these workflows", bundle: .module)
                     .font(SettingsFont.smallLabel)
                     .foregroundColor(theme.text.secondary)

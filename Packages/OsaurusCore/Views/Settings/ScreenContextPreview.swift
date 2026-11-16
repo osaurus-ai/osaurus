@@ -43,7 +43,7 @@ struct ScreenContextPreview: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             header
             content
         }
@@ -64,9 +64,9 @@ struct ScreenContextPreview: View {
 
     private var refreshButton: some View {
         Button(action: refresh) {
-            HStack(spacing: 4) {
+            HStack(spacing: theme.space.s4) {
                 Image(systemName: "arrow.clockwise")
-                    .glyphSize(11)
+                    .glyphSize(.footnote)
                 Text(L("Refresh"))
                     .font(SettingsFont.compactLabel)
             }
@@ -84,8 +84,8 @@ struct ScreenContextPreview: View {
         if !isAccessibilityGranted {
             hint(accessibilityHint)
         } else if isLoading {
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
+            HStack(spacing: theme.space.s8) {
+                SettingsSpinner()
                 hint("Reading the screen…")
             }
         } else if let snapshot {
@@ -123,12 +123,12 @@ struct ScreenContextPreview: View {
     @ViewBuilder
     private var privacyNote: some View {
         if PrivacyFilterStore.snapshot().enabled {
-            HStack(alignment: .top, spacing: 8) {
+            HStack(alignment: .top, spacing: theme.space.s8) {
                 Image(systemName: "lock.shield")
-                    .glyphSize(11)
+                    .glyphSize(.footnote)
                     .foregroundColor(theme.status.success.foreground)
                     .padding(.top, theme.space.s2)
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text(L("The Privacy Filter scrubs this before it reaches a cloud model."))
                         .font(SettingsFont.rowDescription)
                         .foregroundColor(theme.text.secondary)

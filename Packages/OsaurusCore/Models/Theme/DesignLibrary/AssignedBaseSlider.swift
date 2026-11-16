@@ -1,4 +1,3 @@
-#if OSAURUS_DESIGN_SYSTEM
 import SwiftUI
 
 /// The existing catalog slider drawing, connected to the app's original range,
@@ -29,7 +28,7 @@ struct AssignedBaseSlider: View {
             let thumb = number("thumbSize", 16)
             let height = number("trackHeight", 6)
             ZStack(alignment: .leading) {
-                RoundedRectangle(cornerRadius: number("radius", 4)).fill(color("selected", theme.surface.selected)).frame(height: height)
+                RoundedRectangle(cornerRadius: number("radius", 4)).fill(enabled ? theme.emptyTrack(color("selected", theme.surface.selected)) : color("selected", theme.surface.selected)).frame(height: height)
                 RoundedRectangle(cornerRadius: number("radius", 4)).fill(color("accent", theme.border.focus)).frame(width: geometry.size.width * fraction, height: height)
                 Circle().fill(color("foreground", theme.text.primary))
                     .frame(width: thumb, height: thumb)
@@ -56,4 +55,3 @@ struct AssignedBaseSlider: View {
             }
     }
 }
-#endif

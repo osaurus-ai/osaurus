@@ -31,8 +31,8 @@ struct ShareQRCardView: View {
                     .padding(theme.space.s8)
             } else {
                 Image(systemName: "qrcode")
-                    .glyphSize(36)
-                    .foregroundColor(theme.text.disabled)
+                    .glyphSize(.hero)
+                    .foregroundColor(theme.text.tertiary)
             }
         }
         .onAppear { qrImage = Self.render(text) }
@@ -59,11 +59,11 @@ struct ShareCopyRow: View {
     @State private var copied = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             Text(verbatim: label)
                 .font(SettingsFont.compactLabel)
                 .foregroundColor(theme.text.tertiary)
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 Text(verbatim: value)
                     .font(SettingsFont.monoSmall)
                     .foregroundColor(theme.text.primary)
@@ -76,7 +76,7 @@ struct ShareCopyRow: View {
                     .settingsChrome(.control)
                 Button(action: copy) {
                     Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                        .glyphSize(12, weight: .medium)
+                        .glyphSize(.caption, weight: .medium)
                         .foregroundColor(copied ? theme.status.success.foreground : theme.text.primary)
                         .frame(width: 32, height: 32)
                         .settingsChrome(.subtle)

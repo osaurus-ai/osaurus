@@ -1471,11 +1471,15 @@ public struct DialogSpec: Codable, Equatable, Sendable {
     /// Rendered with bindings.
     public var message: String
     public var fields: [DialogField]
+    /// Seconds the form waits for an answer before the step fails. Nil
+    /// waits until it is answered, dismissed, or the run is stopped.
+    public var expiresAfter: TimeInterval?
 
-    public init(title: String, message: String = "", fields: [DialogField]) {
+    public init(title: String, message: String = "", fields: [DialogField], expiresAfter: TimeInterval? = nil) {
         self.title = title
         self.message = message
         self.fields = fields
+        self.expiresAfter = expiresAfter
     }
 
     public init(from decoder: Decoder) throws {
@@ -1483,9 +1487,13 @@ public struct DialogSpec: Codable, Equatable, Sendable {
         title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
         message = try c.decodeIfPresent(String.self, forKey: .message) ?? ""
         fields = try c.decodeIfPresent([DialogField].self, forKey: .fields) ?? []
+        expiresAfter = try c.decodeIfPresent(TimeInterval.self, forKey: .expiresAfter)
     }
 
-    enum CodingKeys: String, CodingKey { case title, message, fields }
+    enum CodingKeys: String, CodingKey {
+        case title, message, fields
+        case expiresAfter = "expires_after"
+    }
 
     public var derivedOutputSchema: JSONValue {
         var props: [String: JSONValue] = [:]

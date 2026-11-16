@@ -124,7 +124,7 @@ Osaurus runs a local server with drop-in endpoints for existing tools:
 | --------- | --------------------------------------------- |
 | OpenAI    | `http://127.0.0.1:1337/v1/chat/completions`   |
 | Responses | `http://127.0.0.1:1337/v1/responses`          |
-| Anthropic | `http://127.0.0.1:1337/anthropic/v1/messages` |
+| Anthropic | `http://127.0.0.1:1337/v1/messages`           |
 | Ollama    | `http://127.0.0.1:1337/api/chat`              |
 
 `/chat/completions` keeps strict OpenAI semantics: it returns `tool_calls` and your client runs them. `/v1/responses` speaks the item-based [Open Responses](https://www.openresponses.org) format, so Responses-only clients such as Codex work too. For server-side autonomous runs, use `POST /agents/{id}/run`. See the [OpenAI API Guide](docs/OpenAI_API_GUIDE.md).
@@ -145,7 +145,7 @@ More for developers:
 
 - [Shared Configuration](docs/SHARED_CONFIGURATION_GUIDE.md): connecting your own macOS app to Osaurus.
 - [Osaurus Bundles](docs/OSAURUS_BUNDLES.md): shipping Osaurus with your agents, skills, and MCP servers pre-installed (`osaurus import`).
-- [Developer Tools](docs/DEVELOPER_TOOLS.md): Server Explorer and Insights.
+- [Developer Tools](docs/DEVELOPER_TOOLS.md): Server and API Reference, and Insights.
 - [Inference Runtime](docs/INFERENCE_RUNTIME.md): the scheduler, batching, and caches.
 
 ## Privacy and telemetry
@@ -176,7 +176,7 @@ Build and run the `osaurus` scheme. Requires Xcode 26+ and [Git LFS](https://git
 We welcome bug fixes, plugins, documentation, UI/UX improvements, and testing. Start with [Good First Issues](https://github.com/osaurus-ai/osaurus/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22), read the [Contributing Guide](docs/CONTRIBUTING.md), or join us on [Discord](https://discord.gg/osaurus).
 
 > [!NOTE]
-> **Help translate Osaurus.** We're looking for contributors to localize the app into **Spanish** and **Japanese**. These locales are already set up in Xcode, so you can start translating right away. See [docs/TRANSLATORS.md](docs/TRANSLATORS.md).
+> **Help translate Osaurus.** Native speakers of **German, Chinese, Korean, and Russian**: about a quarter of the app is still in English, and thousands of machine-assisted strings need a review. We're also looking for people to start **Spanish** and **Japanese**. No Swift needed, and small PRs are welcome. See [docs/TRANSLATORS.md](docs/TRANSLATORS.md).
 
 ## Community
 

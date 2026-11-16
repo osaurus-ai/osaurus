@@ -24,7 +24,7 @@ struct MCPProviderDirectoryView: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             searchField
 
             MCPProviderCategoryChips(selection: $category)
@@ -32,8 +32,8 @@ struct MCPProviderDirectoryView: View {
             LazyVGrid(
                 // Two columns in the 560pt Add Service sheet; at three, a
                 // card's one-line title truncates to a few letters.
-                columns: [GridItem(.adaptive(minimum: 210), spacing: 12)],
-                spacing: 12
+                columns: [GridItem(.adaptive(minimum: 210), spacing: theme.space.s12)],
+                spacing: theme.space.s12
             ) {
                 MCPProviderDirectoryCard(
                     icon: "slider.horizontal.3",
@@ -189,9 +189,9 @@ struct MCPProviderSubscriptionNote: View {
     private var theme: any ThemeProtocol { inheritedTheme }
 
     var body: some View {
-        HStack(spacing: 3) {
+        HStack(spacing: theme.space.s2) {
             Image(systemName: "lock.fill")
-                .glyphSize(8, weight: .semibold)
+                .glyphSize(.tiny, weight: .semibold)
             Text("Requires subscription", bundle: .module)
                 .catalogTypography(.caption, theme: theme, fallback: SettingsFont.chip)
         }

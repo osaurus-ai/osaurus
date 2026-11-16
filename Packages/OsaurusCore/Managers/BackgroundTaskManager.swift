@@ -2515,8 +2515,11 @@ public final class BackgroundTaskManager: ObservableObject {
         // events. The run's liveness monitor already allows for those phases
         // (it only calls a run stalled after their own thresholds), so the
         // lease follows it rather than going Stale a minute into a load.
+        // The hop matters: a waiting AppleScript fires main-run-loop timers on
+        // its worker thread (see `onMainRunLoopTick`).
         Timer.publish(every: TaskLease.heartbeatInterval, on: .main, in: .common)
             .autoconnect()
+            .receive(on: DispatchQueue.main)
             .sink { [weak self, weak session] _ in
                 guard let session, session.isStreaming, session.runProgress.state != .stalled else { return }
                 self?.renewLease(taskId)

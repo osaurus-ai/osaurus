@@ -77,7 +77,7 @@ struct LiveBadge: View {
             } else {
                 StatusChip(
                     record.isLive ? L("Live") : L("Taken down"),
-                    tint: record.isLive ? theme.statusInk.success : theme.text.tertiary
+                    tint: record.isLive ? theme.statusInk(.success) : theme.text.tertiary
                 )
             }
         }
@@ -170,7 +170,7 @@ struct WorkflowDigestLines: View {
     let definition: WorkflowDefinition
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
             let inputs = WorkflowSummary.inputs(definition)
             line(L("Asks for"), inputs.isEmpty ? L("Nothing, it runs as is") : WorkflowSummary.list(inputs))
             let outputs = WorkflowSummary.outputs(definition)
@@ -179,7 +179,7 @@ struct WorkflowDigestLines: View {
     }
 
     private func line(_ label: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: theme.space.s8) {
             Text(verbatim: label)
                 .font(SettingsFont.chip)
                 .foregroundColor(theme.text.tertiary)
@@ -352,7 +352,7 @@ struct InstalledWorkflowCard: View {
             hasAppeared: hasAppeared,
             action: onOpen
         ) {
-            LibraryIcon(symbol: "flowchart", tint: theme.statusInk.info)
+            LibraryIcon(symbol: "flowchart", tint: theme.statusInk(.info))
         } badges: {
             StatusChip("v\(workflow.templateVersion)", tint: theme.text.tertiary)
             if workflow.needsSetup {
@@ -514,19 +514,19 @@ struct WorkflowTemplateCard: View {
             hasAppeared: hasAppeared,
             action: onOpen
         ) {
-            LibraryIcon(symbol: "flowchart", tint: theme.statusInk.info)
+            LibraryIcon(symbol: "flowchart", tint: theme.statusInk(.info))
         } badges: {
             StatusChip("v\(template.version)", tint: theme.text.tertiary)
-            if isBuiltIn { StatusChip(L("Built-in"), tint: theme.statusInk.info) }
+            if isBuiltIn { StatusChip(L("Built-in"), tint: theme.statusInk(.info)) }
             if let published { LiveBadge(record: published, action: onManage) }
             // The seal reflects a verified signature, never the
             // author block alone (anyone can write one).
             switch TemplateSigner.status(of: template) {
             case .signed(let address, let known):
-                HStack(spacing: 3) {
+                HStack(spacing: theme.space.s2) {
                     Image(systemName: "checkmark.seal.fill")
                         .font(SettingsFont.glyphSmall)
-                        .foregroundColor(known == nil ? theme.statusInk.info : theme.statusInk.success)
+                        .foregroundColor(known == nil ? theme.statusInk(.info) : theme.statusInk(.success))
                     Text(SharedAgentIdentity.shortAddress(address))
                         .font(SettingsFont.monoSmall)
                         .foregroundColor(theme.text.tertiary)
@@ -535,7 +535,7 @@ struct WorkflowTemplateCard: View {
             case .invalid:
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(SettingsFont.glyphSmall)
-                    .foregroundColor(theme.statusInk.warning)
+                    .foregroundColor(theme.statusInk(.warning))
                     .help(L("Signature does not match"))
             case .unsigned:
                 EmptyView()

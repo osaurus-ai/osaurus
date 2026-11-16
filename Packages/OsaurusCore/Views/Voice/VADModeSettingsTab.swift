@@ -141,7 +141,7 @@ struct VADModeSettingsTab: View {
 
             // Status indicator
             if vadEnabled {
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     VoiceStatusIndicator(
                         state: vadServiceState,
                         showLabel: true,
@@ -214,15 +214,15 @@ struct VADModeSettingsTab: View {
 
     private var agentSelectionCard: some View {
         SettingsSection(title: "Activated Agents") {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 Text("Select which agents can be activated by voice", bundle: .module)
                     .font(SettingsFont.caption)
                     .foregroundColor(theme.text.secondary)
 
                 if enabledAgentIds.isEmpty {
-                    HStack(spacing: 8) {
+                    HStack(spacing: theme.space.s8) {
                         Image(systemName: "info.circle")
-                            .glyphSize(12)
+                            .glyphSize(.caption)
                             .foregroundColor(theme.status.warning.foreground)
                         Text("Select at least one agent to enable Wake Word", bundle: .module)
                             .font(SettingsFont.caption)
@@ -233,7 +233,7 @@ struct VADModeSettingsTab: View {
                 }
 
                 // Agent list
-                VStack(spacing: 8) {
+                VStack(spacing: theme.space.s8) {
                     ForEach(agentManager.agents) { agent in
                         AgentToggleRow(
                             agent: agent,
@@ -300,7 +300,7 @@ struct VADModeSettingsTab: View {
 
     private var testAreaCard: some View {
         SettingsSection(title: "Test Wake Word Detection") {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: theme.space.s16) {
                 HStack {
                     Text("Speak an agent name to test detection", bundle: .module)
                         .font(SettingsFont.caption)
@@ -320,7 +320,7 @@ struct VADModeSettingsTab: View {
                 }
 
                 // Transcription
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
                     Text(testTranscription.isEmpty ? "Waiting for speech..." : testTranscription)
                         .font(SettingsFont.body)
                         .foregroundColor(testTranscription.isEmpty ? theme.text.tertiary : theme.text.primary)
@@ -332,12 +332,12 @@ struct VADModeSettingsTab: View {
 
                 // Detection result
                 if let detection = testDetection {
-                    HStack(spacing: 12) {
+                    HStack(spacing: theme.space.s12) {
                         Image(systemName: "checkmark.circle.fill")
-                            .glyphSize(24)
+                            .glyphSize(.xxlarge)
                             .foregroundColor(theme.status.success.foreground)
 
-                        VStack(alignment: .leading, spacing: 2) {
+                        VStack(alignment: .leading, spacing: theme.space.s2) {
                             Text("Detected: \(detection.agentName)", bundle: .module)
                                 .font(SettingsFont.cardTitle)
                                 .foregroundColor(theme.status.success.foreground)
@@ -355,7 +355,7 @@ struct VADModeSettingsTab: View {
 
                 // Error
                 if let error = testError {
-                    HStack(spacing: 8) {
+                    HStack(spacing: theme.space.s8) {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .foregroundColor(theme.status.error.foreground)
                         Text(error)
@@ -365,7 +365,7 @@ struct VADModeSettingsTab: View {
                 }
 
                 // Controls
-                HStack(spacing: 16) {
+                HStack(spacing: theme.space.s16) {
                     TestButton(
                         isActive: isTestingVAD,
                         action: toggleTest
@@ -475,7 +475,7 @@ private struct AgentToggleRow: View {
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             // Agent icon
             ZStack {
                 Circle()
@@ -505,15 +505,11 @@ private struct AgentToggleRow: View {
                     )
             )
 
-            VStack(alignment: .leading, spacing: 2) {
+            SettingsRowText {
                 Text(agent.name)
-                    .font(SettingsFont.rowTitle)
-                    .foregroundColor(theme.text.primary)
-
+            } description: {
                 if !agent.routingDescription.isEmpty {
                     Text(agent.routingDescription)
-                        .font(SettingsFont.rowDescription)
-                        .foregroundColor(theme.text.tertiary)
                         .lineLimit(1)
                 }
             }
@@ -568,12 +564,13 @@ private struct AgentToggleRow: View {
 // MARK: - Test Button
 
 private struct TestButton: View {
+    @Environment(\.theme) private var theme
     let isActive: Bool
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: isActive ? "stop.fill" : "mic.fill")
                 Text(isActive ? L("Stop Test") : L("Start Test"))
             }

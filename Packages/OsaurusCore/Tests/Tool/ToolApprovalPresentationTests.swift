@@ -301,6 +301,117 @@ struct ToolApprovalPresentationTests {
         #expect(script.guarantees.map(\.title) == ["Runs on your Mac"])
     }
 
+    // MARK: - Workflow paths
+
+    private static let osaurusRoot = URL(fileURLWithPath: "/Users/me/.osaurus")
+    private static let runWorkspace = URL(
+        fileURLWithPath: "/Users/me/.osaurus/workflows/wf-1/runs/484436d8-5405-44d0-917e-edd96b738134")
+
+    private static func runFacts(
+        granted: [URL], writable: [URL]? = nil, folderRoot: URL? = runWorkspace, sandboxPathsRouteToVM: Bool = false
+    ) -> ToolApprovalPresentation.WorkflowFacts {
+        .make(
+            granted: granted, writable: writable, workspace: runWorkspace, folderRoot: folderRoot,
+            asksBeforeReplacing: true, sandboxPathsRouteToVM: sandboxPathsRouteToVM, osaurusRoot: osaurusRoot)
+    }
+
+    private static func fileCall(
+        _ tool: String, _ arguments: String, _ facts: ToolApprovalPresentation.WorkflowFacts,
+        surface: ToolExecutionSurface = .nativeHost
+    ) -> ToolApprovalPresentation {
+        ToolApprovalPresentation.make(
+            toolName: tool, description: "", descriptionIsForModel: true, argumentsJSON: arguments,
+            surface: surface, stepReason: "Write the .drawio file into the run's folder.", sandbox: nil,
+            workflow: facts)
+    }
+
+    @Test
+    func runWorkspace_isNamedAsTheRunsOwn_notByItsRunID() {
+        let facts = Self.runFacts(granted: [Self.runWorkspace], writable: [Self.runWorkspace])
+        #expect(facts.accessList == "")
+        #expect(facts.places.map(\.origin) == [.runWorkspace])
+
+        let write = Self.fileCall("file_write", #"{"path":"p-architecture.drawio","content":"x"}"#, facts)
+        let folder = write.guarantees.first
+        #expect(folder?.title == "Only this run's workspace")
+        #expect(folder?.paths.map(\.url) == [Self.runWorkspace])
+        #expect(folder?.paths.first?.origin == .runWorkspace)
+        #expect(!write.guarantees.map(\.title).joined().contains("484436d8"))
+    }
+
+    @Test
+    func places_sayWhetherOsaurusKeepsThem() {
+        let sandboxShare = Self.osaurusRoot.appendingPathComponent("container/workspace/agents/wf-1")
+        let agentFolder = URL(fileURLWithPath: "/Users/me/Projects/site")
+        let facts = Self.runFacts(
+            granted: [Self.runWorkspace, Self.dinos, sandboxShare],
+            writable: [Self.runWorkspace, Self.dinos.appendingPathComponent("png")], folderRoot: agentFolder)
+        #expect(
+            facts.places.map(\.origin) == [.runWorkspace, .chosen, .osaurusData, .workingFolder, .chosen])
+        #expect(facts.places.map(\.url?.path) == [
+            Self.runWorkspace.path, Self.dinos.path, sandboxShare.path, agentFolder.path,
+            Self.dinos.appendingPathComponent("png").path,
+        ])
+        #expect(facts.accessList == "dinos (read), wf-1 (read), site (write), dinos/png (write)")
+        #expect(facts.places.filter { $0.origin.isOsaurusManaged }.count == 2)
+    }
+
+    @Test
+    func targets_resolveLikeTheFileTools_andSayWhereTheyLand() {
+        let facts = Self.runFacts(granted: [Self.runWorkspace, Self.dinos], writable: [Self.runWorkspace])
+
+        let relative = Self.fileCall("file_write", #"{"path":"out/../p-architecture.drawio"}"#, facts)
+        #expect(relative.targets.map(\.url) == [Self.runWorkspace.appendingPathComponent("p-architecture.drawio")])
+        #expect(relative.targets.map(\.origin) == [.runWorkspace])
+        #expect(relative.targets.first?.role == nil)
+        #expect(relative.rawPath == "out/../p-architecture.drawio")
+
+        let chosen = Self.fileCall("file_read", #"{"path":"/Users/me/Downloads/dinos/rex.png"}"#, facts)
+        #expect(chosen.targets.map(\.origin) == [.chosen])
+
+        let outside = Self.fileCall("file_write", #"{"path":"/Users/me/Desktop/notes.txt"}"#, facts)
+        #expect(outside.targets.map(\.origin) == [.outside])
+
+        let osaurusConfig = Self.fileCall("file_read", #"{"path":"/Users/me/.osaurus/config/chat.json"}"#, facts)
+        #expect(osaurusConfig.targets.map(\.origin) == [.outside])
+
+        let home = FileManager.default.homeDirectoryForCurrentUser.standardized
+        let tilde = Self.fileCall("file_read", #"{"path":"~/notes.txt"}"#, facts)
+        #expect(tilde.targets.map(\.url) == [home.appendingPathComponent("notes.txt")])
+        #expect(tilde.targets.first?.displayPath == "~/notes.txt")
+
+        let copy = Self.fileCall(
+            "file_copy", #"{"source":"out/a.png","destination":"/Users/me/Downloads/dinos/png/a.png"}"#, facts)
+        #expect(copy.targets.map(\.role) == ["From", "To"])
+        #expect(copy.targets.map(\.origin) == [.runWorkspace, .chosen])
+        #expect(copy.rawPath == nil)
+    }
+
+    @Test
+    func targets_onlyForPathsOnThisMac() {
+        let facts = Self.runFacts(granted: [Self.runWorkspace], sandboxPathsRouteToVM: true)
+        #expect(Self.fileCall("file_write", #"{"path":"/workspace/out.txt"}"#, facts).targets.isEmpty)
+        #expect(Self.fileCall("file_write", #"{"path":"out.txt"}"#, facts).targets.count == 1)
+        #expect(Self.fileCall("file_write", #"{"path":"out.txt"}"#, facts, surface: .sandboxVM).targets.isEmpty)
+
+        let noRoot = Self.runFacts(granted: [Self.runWorkspace], folderRoot: nil)
+        #expect(Self.fileCall("file_write", #"{"path":"/Users/me/out.txt"}"#, noRoot).targets.isEmpty)
+
+        #expect(Self.fileCall("shell_run", #"{"command":"ls"}"#, facts).targets.isEmpty)
+        #expect(make("file_write", #"{"path":"a.txt"}"#).targets.isEmpty)
+        #expect(make("file_write", #"{"path":"a.txt"}"#).rawPath == "a.txt")
+    }
+
+    @Test
+    func facts_carryTheFolderPaths() {
+        let facts = Self.runFacts(granted: [Self.runWorkspace, Self.dinos], writable: [Self.runWorkspace])
+        let rows = PermissionFact.facts(
+            for: Self.fileCall("file_write", #"{"path":"p-architecture.drawio"}"#, facts))
+        #expect(rows.first?.title == "Access to dinos (read)")
+        #expect(rows.first?.paths.map(\.origin) == [.runWorkspace, .chosen])
+        #expect(rows.dropFirst().flatMap(\.paths).isEmpty)
+    }
+
     @Test
     func workflowSandboxCall_saysItCannotSeeTheChosenFolders() {
         let shell = ToolApprovalPresentation.make(

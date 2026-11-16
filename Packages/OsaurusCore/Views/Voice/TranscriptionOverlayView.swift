@@ -31,7 +31,7 @@ public struct TranscriptionOverlayView: View {
 
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
 
     // MARK: - State
 
@@ -64,29 +64,27 @@ public struct TranscriptionOverlayView: View {
         self.onCancel = onCancel
     }
 
-    private var badgeHeight: CGFloat { max(NativeComponentInspectionStyle.metric(45, "height", 28, theme), theme.lineHeight(.caption) + 2 * NativeComponentInspectionStyle.metric(45, "padding", 4, theme)) }
+    private var badgeHeight: CGFloat { max(NativeComponentInspectionStyle.metric(45, "height", 28, theme), theme.lineHeight(.caption) + 2 * NativeComponentInspectionStyle.metric(45, "padding", theme.space.s4, theme)) }
 
     public var body: some View {
         Group {
 
         ZStack {
             if isProcessing {
-                ProgressView()
-                    .controlSize(.small)
-                    .tint(theme.text.primary)
+                SettingsSpinner(tint: theme.text.primary)
                     .accessibilityHidden(true)
             } else {
                 WaveformView(
                     level: audioLevel,
                     style: .bars,
                     barCount: 22,
-                    primaryColor: theme.assignedColor("component.library.45.accent", fallback: .white),
+                    primaryColor: theme.assignedColor("component.library.45.accent", fallback: FixedPalette.onMedia),
                     isActive: isActive
                 )
                 .frame(width: 240, height: 26)
             }
 
-            HStack(spacing: 0) {
+            HStack(spacing: theme.space.s0) {
                 VoiceOverlayIconButton(icon: "xmark", label: "Cancel (Esc)") { onCancel?() }
                 Spacer(minLength: 0)
                 if showsStopButton && !isProcessing {
@@ -95,10 +93,10 @@ public struct TranscriptionOverlayView: View {
             }
         }
         .frame(height: 30)
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.45.elements.layout.transcriptionOverlayView.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(45, "padding", 16, theme))).catalogLayoutTarget("component.library.45.elements.layout.transcriptionOverlayView.body.paddingX")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.45.elements.layout.transcriptionOverlayView.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(45, "padding", theme.space.s16, theme))).catalogLayoutTarget("component.library.45.elements.layout.transcriptionOverlayView.body.paddingX")
         // Push the row below the badge that straddles the top border.
         .padding(.top, badgeHeight / 2 + 14)
-        .padding(.bottom, 16)
+        .padding(.bottom, theme.space.s16)
         .frame(width: 320)
         .modifier(OverlayBackground(cornerRadius: cornerRadius))
         // The status badge straddles the top border like a notch.
@@ -126,7 +124,7 @@ public struct TranscriptionOverlayView: View {
     /// Pulsing dot + status label, rendered as an opaque pill so it reads
     /// cleanly where it cuts through the card's top border.
     private var statusBadge: some View {
-        HStack(spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.transcriptionOverlayView.statusBadge.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(45, "gap", 7, theme))) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.45.elements.layout.transcriptionOverlayView.statusBadge.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(45, "gap", theme.space.s6, theme))) {
             Circle()
                 .fill(statusColor)
                 .frame(width: 7, height: 7)
@@ -138,7 +136,7 @@ public struct TranscriptionOverlayView: View {
                 .catalogTypography(.body, theme: theme, fallback: SettingsFont.smallLabel)
                 .foregroundColor(theme.assignedColor("component.library.45.foreground", fallback: FixedPalette.onMedia))
         }.catalogLayoutTarget("component.library.45.elements.layout.transcriptionOverlayView.statusBadge.horizontalGap")
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.45.elements.layout.transcriptionOverlayView.statusBadge.paddingX", inheriting: NativeComponentInspectionStyle.metric(45, "padding", 14, theme))).catalogLayoutTarget("component.library.45.elements.layout.transcriptionOverlayView.statusBadge.paddingX")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.45.elements.layout.transcriptionOverlayView.statusBadge.paddingX", inheriting: NativeComponentInspectionStyle.metric(45, "padding", theme.space.s14, theme))).catalogLayoutTarget("component.library.45.elements.layout.transcriptionOverlayView.statusBadge.paddingX")
         .frame(height: badgeHeight)
         .modifier(BadgeBackground(tint: statusColor))
     }
@@ -151,15 +149,15 @@ public struct TranscriptionOverlayView: View {
 private struct BadgeBackground: ViewModifier {
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
     let tint: Color
 
     func body(content: Content) -> some View {
         content
             .background(RoundedRectangle(cornerRadius: NativeComponentInspectionStyle.metric(45, "radius", 14, theme)).fill(theme.assignedColor("component.library.45.background", fallback: FixedPalette.mediaScrim(0.85))))
-            .background(Capsule().fill(theme.assignedColor("component.library.45.background", fallback: tint.opacity(0.22))))
+            .background(Capsule().fill(theme.assignedColor("component.library.45.background", fallback: theme.wash(behind: tint))))
             .clipShape(RoundedRectangle(cornerRadius: NativeComponentInspectionStyle.metric(45, "radius", 14, theme)))
-            .overlay(RoundedRectangle(cornerRadius: NativeComponentInspectionStyle.metric(45, "radius", 14, theme)).strokeBorder(theme.assignedColor("component.library.45.border", fallback: tint.opacity(0.5)), lineWidth: theme.stroke.default))
+            .overlay(RoundedRectangle(cornerRadius: NativeComponentInspectionStyle.metric(45, "radius", 14, theme)).strokeBorder(theme.assignedColor("component.library.45.border", fallback: theme.rule(around: tint)), lineWidth: theme.stroke.default))
     }
 }
 
@@ -170,7 +168,7 @@ private struct BadgeBackground: ViewModifier {
 private struct OverlayBackground: ViewModifier {
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(45, enabled: inspectionEnabled) }
     let cornerRadius: CGFloat
 
     func body(content: Content) -> some View {
@@ -189,12 +187,14 @@ private struct OverlayBackground: ViewModifier {
 
 #if DEBUG
     struct TranscriptionOverlayView_Previews: PreviewProvider {
+        @MainActor private static var theme: any ThemeProtocol { ThemeManager.shared.currentTheme }
+
         static var previews: some View {
             ZStack {
                 CustomizableTheme.dark().surface.canvas
                     .ignoresSafeArea()
 
-                VStack(spacing: 30) {
+                VStack(spacing: theme.space.s32) {
                     // Active with audio
                     TranscriptionOverlayView(
                         audioLevel: 0.6,
@@ -211,7 +211,7 @@ private struct OverlayBackground: ViewModifier {
                         onCancel: { print("Cancel") }
                     )
                 }
-                .padding(40)
+                .padding(theme.space.s40)
             }
             .frame(width: 450, height: 250)
         }

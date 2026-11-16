@@ -189,7 +189,7 @@ struct CodeBlockView: View {
     var body: some View {
         let _ = ensureHighlightrTheme(for: theme)
 
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             headerBar
             CodeContentView(
                 code: code,
@@ -207,7 +207,7 @@ struct CodeBlockView: View {
     // MARK: - Header Bar
 
     private var headerBar: some View {
-        HStack(spacing: CodeBlockInspectionStyle.metric("gap", 8, theme)) {
+        HStack(spacing: CodeBlockInspectionStyle.metric("gap", theme.space.s8, theme)) {
             Text(language?.lowercased() ?? "code")
                 .codeBlockCaption()
                 .foregroundColor(theme.text.tertiary)
@@ -224,7 +224,7 @@ struct CodeBlockView: View {
                 }
             } label: {
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                    .glyphSize(10, weight: .medium)
+                    .glyphSize(.micro, weight: .medium)
                     .foregroundColor(!isEnabled ? theme.text.disabled : (copied ? theme.assignedColor(CodeBlockInspectionStyle.key + "accent", fallback: theme.status.success.foreground) : theme.text.tertiary))
             }
             .codeCopyStyle(theme)
@@ -280,7 +280,7 @@ struct CodeContentView: NSViewRepresentable {
             .backgroundColor: NSColor(theme.selection.background)
         ]
         textView.insertionPointColor = NSColor(theme.cursor)
-        textView.lineNumberColor = NSColor(theme.assignedColor(CodeBlockInspectionStyle.key + "secondary", fallback: theme.text.disabled))
+        textView.lineNumberColor = NSColor(theme.assignedColor(CodeBlockInspectionStyle.key + "secondary", fallback: theme.text.tertiary))
 
         return textView
     }
@@ -301,7 +301,7 @@ struct CodeContentView: NSViewRepresentable {
         if themeChanged {
             textView.selectedTextAttributes = [.backgroundColor: NSColor(theme.selection.background)]
             textView.insertionPointColor = NSColor(theme.cursor)
-            textView.lineNumberColor = NSColor(theme.assignedColor(CodeBlockInspectionStyle.key + "secondary", fallback: theme.text.disabled))
+            textView.lineNumberColor = NSColor(theme.assignedColor(CodeBlockInspectionStyle.key + "secondary", fallback: theme.text.tertiary))
         }
 
         if codeChanged || langChanged || widthChanged || themeChanged {

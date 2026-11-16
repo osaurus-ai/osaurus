@@ -996,6 +996,17 @@ public struct SystemPromptComposer: Sendable {
         } else {
             channelDestinationsSection = nil
         }
+        // The Orchestrator's routes say "`run_workflow` with that agent's
+        // name", and its schema says nothing about who is on the team, so a
+        // calendar ask needs the model to guess a teammate exists. Listing
+        // the captured catalog (like the knowledge grants below) names them.
+        // Static: the team is session-constant; an edit re-renders it.
+        if snapshot.agentId == Agent.defaultId, !effectiveToolsOff,
+            resolvedNames.contains(RunWorkflowTool.toolName),
+            let team = SystemPromptTemplates.orchestratorTeam(snapshot.orchestratorTeam)
+        {
+            composer.append(.static(id: "orchestratorTeam", label: L("Team"), content: team))
+        }
         // Production's default harness contract is intentionally small.
         // Tool schemas are the operational source of truth; security is
         // enforced by path validation, Seatbelt, and the VM boundary rather
@@ -1008,6 +1019,11 @@ public struct SystemPromptComposer: Sendable {
             let capabilityNames = Self.capabilityToolNames(inSchema: resolvedNames)
             var sandboxStateSection: String?
             var agentDBSchemaSection: String?
+            // The working-directory framing tells the model to use the
+            // workspace tools, so it renders only when the schema has one.
+            // The Orchestrator with a folder attached has none: its addendum
+            // says the folder exists and that a worker does the file work.
+            let hasWorkspaceTools = !resolvedNames.isDisjoint(with: ToolRegistry.coreWorkspaceToolNames)
 
             if executionMode.usesSandboxTools, let soulSection {
                 composer.append(
@@ -1021,7 +1037,7 @@ public struct SystemPromptComposer: Sendable {
                     )
                 )
             }
-            if !effectiveToolsOff, executionMode.usesSandboxTools {
+            if !effectiveToolsOff, hasWorkspaceTools, executionMode.usesSandboxTools {
                 let home = OsaurusPaths.inContainerAgentHome(
                     SandboxAgentProvisioner.linuxName(for: agentId.uuidString)
                 )
@@ -1054,7 +1070,7 @@ public struct SystemPromptComposer: Sendable {
                 if !state.isEmpty {
                     sandboxStateSection = state
                 }
-            } else if !effectiveToolsOff, let folder = executionMode.folderContext {
+            } else if !effectiveToolsOff, hasWorkspaceTools, let folder = executionMode.folderContext {
                 composer.append(
                     .static(
                         id: "folderContext",
@@ -1254,7 +1270,8 @@ public struct SystemPromptComposer: Sendable {
             let familyGuidance = ModelFamilyGuidance.guidance(
                 forModelId: snapshot.model,
                 modelType: snapshot.modelType,
-                compact: toolset.prefersCompactPrompt
+                compact: toolset.prefersCompactPrompt,
+                workspaceTools: !resolvedNames.isDisjoint(with: ToolRegistry.coreWorkspaceToolNames)
             )
         {
             composer.append(
@@ -1493,13 +1510,9 @@ public struct SystemPromptComposer: Sendable {
                 .static(
                     id: "agentLoopGuidance",
                     label: L("Agent Loop"),
-                    // The `share_artifact` bullet rides only when the tool
-                    // actually resolved — the orchestrator surface excludes
-                    // it (workers deliver artifacts), and naming an
-                    // uncallable tool is the recitation-loop trap.
                     content: SystemPromptTemplates.agentLoopGuidance(
                         compact: toolset.prefersCompactPrompt,
-                        includeShareArtifact: resolvedNames.contains("share_artifact")
+                        toolNames: resolvedNames
                     )
                 )
             )

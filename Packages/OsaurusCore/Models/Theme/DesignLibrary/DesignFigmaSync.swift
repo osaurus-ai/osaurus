@@ -1,4 +1,3 @@
-#if OSAURUS_DESIGN_SYSTEM
 import Foundation
 
 struct DesignScalarPrimitive: Codable, Equatable, Sendable {
@@ -19,7 +18,7 @@ struct DesignFigmaSeed: Codable {
 }
 enum DesignFigmaSync {
     static func baseline(_ original: DesignWorkingDocument) throws -> DesignWorkingDocument {
-        guard let url = Bundle.module.url(forResource: "figma-sync", withExtension: "json", subdirectory: "LibraryResources") else { return original }
+        guard let url = Bundle.module.url(forResource: "figma-sync", withExtension: "json", subdirectory: "DesignInspectorResources") else { return original }
         let seed = try JSONDecoder().decode(DesignFigmaSeed.self, from: Data(contentsOf: url))
         var doc = original
         doc.tokens.merge(seed.tokens) { _, new in new }
@@ -106,4 +105,3 @@ extension JSONValue {
         } else { throw DesignWorkingError.invalid(path.joined(separator: ".")) }
     }
 }
-#endif

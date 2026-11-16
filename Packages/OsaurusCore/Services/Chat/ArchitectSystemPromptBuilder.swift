@@ -232,7 +232,9 @@ enum ArchitectSystemPromptBuilder {
 
         ## Workflow format
         Node ids are short slugs (`classify`, `fetch_matter`). Every node has `id`, `name`, `kind`, \
-        `input`, `output_schema`, and optional `timeout` (seconds), `retry` ({max_attempts, \
+        `input`, `output_schema`, and optional `timeout` (seconds of the step's own work; time spent \
+        waiting on a person, on a form, folder card, or approval, never counts, so leave it off dialogs), \
+        `retry` ({max_attempts, \
         backoff_seconds}), `on_error` ("fail" stops the run, the default; "continue" marks the step \
         failed and goes on, binding its output as {error: {message, kind, retryable, fix_in, attempts}}; "skip" treats it \
         as a branch not taken), and `join` ("any", the default: the node runs when one incoming edge \
@@ -300,8 +302,12 @@ enum ArchitectSystemPromptBuilder {
         `fields`. Each field: `key`, `label`, `type` (text, long_text, number, bool, choice, date, file, \
         folder, secret), `required`, optional `options` (choice), `default`, `help`, and `persistence`: \
         "remember" (asked once, saved for every run) or "always_ask" (with `prefill_last: true` to start \
-        from the last answer). The output is the answered fields. Use dialogs for facts only a person \
-        has; never for things a node can compute. Secrets typed into dialogs go to the Keychain.
+        from the last answer). The output is the answered fields. A dialog waits until it is answered; \
+        optional `expires_after` (seconds) fails the step when nobody answers in time. Set it only when \
+        nobody may be watching the run (an event, channel, or schedule started it), usually with \
+        `on_error: "continue"` so the run goes on; leave it off forms a person fills in as they start \
+        the run. Use dialogs for facts only a person has; never for things a node can compute. Secrets \
+        typed into dialogs go to the Keychain.
         - `code`: JavaScript run in a sandbox with no file system or network of its own. Spec under \
         `code`: `source` defining `async function run(input, ctx)` that returns the output, `network` \
         (allowed hosts, e.g. ["api.clio.com"]), `secrets` (keys it reads), optional `timeout` and \
@@ -420,7 +426,7 @@ enum ArchitectSystemPromptBuilder {
         `shift`, whether a negative prompt or edit strength applies, video durations and the local \
         frame rule); stay inside them. Local steps, local video included, run unattended once the \
         workflow is approved and cost nothing; remote steps are billable and ask for approval each run, \
-        with the price. A job over a Strict Memory Safety budget fails naming the setting: make fewer or \
+        with the price. A job over the Memory Safety budget (level Strict) fails naming the setting: make fewer or \
         smaller images rather than retrying. Chain generate → edit → upscale for a pipeline, use \
         `count` for several takes of one prompt, put a generate inside a `map` over prompts or seeds for \
         a sweep, and set `seed_mode: "fixed"` while the person compares prompt changes. A media step's \
@@ -514,6 +520,6 @@ enum ArchitectSystemPromptBuilder {
         setup item that Set Up… walks the person through. When `workflow_test` fails with `rejected`, \
         `permission_denied`, `user_denied`, or `unavailable`, follow its `hint`: setup items open the \
         wizard, `user_denied` means the person declined the approval card, and a tool set to Deny in \
-        Tools needs the person to change its policy.
+        Tools & MCP needs the person to change its policy.
         """
 }

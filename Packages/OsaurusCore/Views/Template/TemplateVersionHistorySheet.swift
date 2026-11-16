@@ -26,13 +26,13 @@ struct TemplateVersionHistorySheet: View {
     var body: some View {
         let all = versions
         let current = all.first { $0.version == selected } ?? all.first
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             SettingsSheetHeader(
                 icon: "clock.arrow.circlepath", title: "Version History", subtitleText: all.first?.name,
                 onClose: onDone)
-            HStack(spacing: 0) {
+            HStack(spacing: theme.space.s0) {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: theme.space.s4) {
                         ForEach(all, id: \.version) { version in
                             versionRow(version, isSelected: version.version == current?.version, isLatest: version.version == all.first?.version)
                         }
@@ -68,8 +68,8 @@ struct TemplateVersionHistorySheet: View {
             selected = template.version
             expanded = []
         } label: {
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                HStack(spacing: theme.space.s6) {
                     Text("v\(template.version)")
                         .font(SettingsFont.compactLabel)
                         .foregroundColor(isSelected ? theme.text.primary : theme.text.secondary)
@@ -96,7 +96,7 @@ struct TemplateVersionHistorySheet: View {
 
     @ViewBuilder
     private func detail(_ template: Template, previous: Template?, isLatest: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             HStack {
                 Text("Version \(template.version)", bundle: .module)
                     .font(SettingsFont.detailTitle)
@@ -147,13 +147,13 @@ struct TemplateVersionHistorySheet: View {
             }
         }()
         let hasDetail = change.before != nil || change.after != nil
-        return VStack(alignment: .leading, spacing: 6) {
+        return VStack(alignment: .leading, spacing: theme.space.s6) {
             Button {
                 if isOpen { expanded.remove(change.id) } else { expanded.insert(change.id) }
             } label: {
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     Image(systemName: change.kind == .added ? "plus" : change.kind == .removed ? "minus" : "pencil")
-                        .glyphSize(10, weight: .bold)
+                        .glyphSize(.micro, weight: .bold)
                         .foregroundColor(color)
                         .frame(width: 14)
                     Text(change.line)
@@ -163,7 +163,7 @@ struct TemplateVersionHistorySheet: View {
                     Spacer()
                     if hasDetail {
                         Image(systemName: isOpen ? "chevron.up" : "chevron.down")
-                            .glyphSize(9, weight: .semibold)
+                            .glyphSize(.tiny, weight: .semibold)
                             .foregroundColor(theme.text.tertiary)
                     }
                 }
@@ -172,7 +172,7 @@ struct TemplateVersionHistorySheet: View {
             .buttonStyle(.plain)
             .disabled(!hasDetail)
             if isOpen {
-                HStack(alignment: .top, spacing: 10) {
+                HStack(alignment: .top, spacing: theme.space.s10) {
                     if let before = change.before { codeBlock(L("Before"), before) }
                     if let after = change.after { codeBlock(L("After"), after) }
                 }
@@ -183,7 +183,7 @@ struct TemplateVersionHistorySheet: View {
     }
 
     private func codeBlock(_ title: String, _ text: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
             Text(title)
                 .font(SettingsFont.chip)
                 .foregroundColor(theme.text.tertiary)

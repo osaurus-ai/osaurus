@@ -501,6 +501,18 @@ struct OsaurusRouterAnnouncement: Decodable, Identifiable, Equatable, Sendable {
     /// Whether this build can render the announcement at all.
     var isRenderable: Bool { bodyFormat == "markdown" && !title.isEmpty && !body.isEmpty }
 
+    /// Past its `ends_at` by this Mac's clock. Only ever hides an
+    /// announcement the last fetch returned; nothing is shown by local time.
+    func hasEnded(at instant: Date) -> Bool {
+        guard let endsAt else { return false }
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        guard let end = fractional.date(from: endsAt) ?? ISO8601DateFormatter().date(from: endsAt) else {
+            return false
+        }
+        return instant >= end
+    }
+
     /// The CTAs this build can act on (`https` external / `osaurus` deep
     /// link), capped at three per the contract. Order is preserved.
     var actionableCTAs: [CTA] {

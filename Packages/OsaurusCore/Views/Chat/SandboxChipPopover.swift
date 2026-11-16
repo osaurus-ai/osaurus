@@ -75,7 +75,7 @@ struct SandboxChipPopover: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: theme.space.s8) {
-            HStack(spacing: 6) {
+            HStack(spacing: theme.space.s6) {
                 Circle()
                     .fill(dotColor)
                     .frame(width: 7, height: 7)
@@ -93,9 +93,7 @@ struct SandboxChipPopover: View {
             }
 
             if isLoading, let progress = sandboxState.provisioningProgress {
-                ProgressView(value: progress)
-                    .progressViewStyle(.linear)
-                    .tint(theme.status.warning.foreground)
+                SettingsProgressBar(value: progress, tint: theme.status.warning.foreground)
             }
 
             Text(verbatim: networkLine)

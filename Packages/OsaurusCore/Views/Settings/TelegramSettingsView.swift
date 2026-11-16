@@ -129,7 +129,7 @@ struct TelegramSettingsView: View {
                     connect: connectNewAccount)
                 : nil
         ) { sectionId in
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: theme.space.s20) {
                 switch AgentChannelProviderSetupSection(rawValue: sectionId) {
                 case .connect:
                     connectSectionContent
@@ -251,7 +251,7 @@ struct TelegramSettingsView: View {
     // MARK: - Section content
 
     private var connectSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             if !isPendingAccount {
                 ChannelAccountNameField(connectionId: connectionId, kind: .telegram)
             }
@@ -297,7 +297,7 @@ struct TelegramSettingsView: View {
     }
 
     private var accessSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             stepAccessSection
             advancedSection
         }
@@ -308,7 +308,7 @@ struct TelegramSettingsView: View {
     }
 
     private var sendingSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             sendingSection
             ChannelPostingSection(kind: .telegram, connectionId: connectionId)
         }
@@ -317,7 +317,7 @@ struct TelegramSettingsView: View {
     // MARK: - Guided setup steps
 
     private var stepCreateBotSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             AgentChannelSectionHeading(L("Create the bot with @BotFather"))
 
             AgentChannelSetupLink(
@@ -339,7 +339,7 @@ struct TelegramSettingsView: View {
     }
 
     private var stepTokenSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             AgentChannelSectionHeading(L("Paste the bot token"))
 
             AgentChannelSecretField(
@@ -361,11 +361,11 @@ struct TelegramSettingsView: View {
     }
 
     private var stepAccessSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(L("Choose chats and people"))
 
             HStack {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text(discovery == nil ? L("Load recent Telegram choices") : L("Telegram choices loaded"))
                         .font(SettingsFont.compactLabel)
                         .foregroundColor(theme.text.primary)
@@ -432,7 +432,7 @@ struct TelegramSettingsView: View {
             },
             isSelected: { $0.isSelected }
         )
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: theme.space.s8) {
             HStack {
                 Text("Recent Chats", bundle: .module)
                     .font(SettingsFont.compactLabel)
@@ -462,14 +462,14 @@ struct TelegramSettingsView: View {
         access: AgentChannelReadWriteSelection
     ) -> some View {
         let kind = AgentChannelRoomKind.from(providerKind: chat.type)
-        return HStack(spacing: 9) {
+        return HStack(spacing: theme.space.s8) {
             Image(systemName: kind.icon)
-                .glyphSize(11, weight: .semibold)
+                .glyphSize(.footnote, weight: .semibold)
                 .foregroundColor(theme.text.secondary)
                 .frame(width: 20)
 
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 5) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                HStack(spacing: theme.space.s4) {
                     Text(chat.displayName)
                         .font(SettingsFont.smallLabel)
                         .foregroundColor(theme.text.primary)
@@ -506,7 +506,7 @@ struct TelegramSettingsView: View {
             state: { allowedIds.contains($0.id) },
             isSelected: { $0 }
         )
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: theme.space.s8) {
             HStack {
                 Text("Authorized Senders", bundle: .module)
                     .font(SettingsFont.compactLabel)
@@ -533,13 +533,13 @@ struct TelegramSettingsView: View {
     }
 
     private func telegramSenderSelectionRow(_ user: TelegramUser, selected: Bool) -> some View {
-        HStack(spacing: 9) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: "person.crop.circle.fill")
-                .glyphSize(15)
+                .glyphSize(.medium)
                 .foregroundColor(theme.text.secondary)
                 .frame(width: 20)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(user.displayName)
                     .font(SettingsFont.smallLabel)
                     .foregroundColor(theme.text.primary)
@@ -561,7 +561,7 @@ struct TelegramSettingsView: View {
 
     private var sendingSection: some View {
         SettingsFieldRow(label: "Sending") {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 SettingsToggle(
                     title: "Allow Sending on Telegram",
                     description: "Let agents post to write-allowlisted Telegram chats. The global Sending switch in Channels must also be on.",
@@ -582,7 +582,7 @@ struct TelegramSettingsView: View {
     }
 
     private var stepReceiveSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(L("Turn on receiving"))
 
             SettingsToggle(
@@ -614,7 +614,7 @@ struct TelegramSettingsView: View {
 
 
     private var stepVerifySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(L("Verify an incoming message"))
 
             Text(
@@ -655,8 +655,8 @@ struct TelegramSettingsView: View {
 
 
     private var webhookTools: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(spacing: theme.space.s10) {
                 AgentChannelSheetActionButton(
                     title: L("Check Webhook"),
                     busyTitle: L("Checking..."),
@@ -691,7 +691,7 @@ struct TelegramSettingsView: View {
 
     private var advancedSection: some View {
         AgentChannelAdvancedSection {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 Text(
                     "Manual IDs are a fallback for chats or senders not returned by discovery.",
                     bundle: .module
@@ -711,7 +711,7 @@ struct TelegramSettingsView: View {
                     placeholder: L("123456789 — one per line"),
                     help: L("Only these Telegram users can trigger inbound handling; required for receive.")
                 )
-                HStack(alignment: .top, spacing: 12) {
+                HStack(alignment: .top, spacing: theme.space.s12) {
                     SettingsTextFieldRow(
                         label: "Long Poll Limit",
                         text: $longPollingLimit,

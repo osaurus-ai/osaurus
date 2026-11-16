@@ -20,7 +20,8 @@ struct LanguageModelCatalogTests {
         id: String,
         sizeGB: Int64? = nil,
         isTopSuggestion: Bool = false,
-        releasedAt: Date? = nil
+        releasedAt: Date? = nil,
+        isDecision: Bool = false
     ) -> MLXModel {
         MLXModel(
             id: id,
@@ -33,7 +34,8 @@ struct LanguageModelCatalogTests {
             // Pin to a directory that never exists so `isDownloaded` is
             // deterministically false — otherwise a dev machine that
             // actually has one of these repos on disk skews the ranking.
-            rootDirectory: URL(fileURLWithPath: "/nonexistent/osaurus-grouping-tests")
+            rootDirectory: URL(fileURLWithPath: "/nonexistent/osaurus-grouping-tests"),
+            isDecision: isDecision
         )
     }
 
@@ -130,6 +132,28 @@ struct LanguageModelCatalogTests {
         #expect(!lists.catalog.contains { $0.id == qat.id })
         // The variant map still carries both builds for the detail sheet.
         #expect(lists.variantsByFamily["osaurusai/gemma-4-12b-it"]?.count == 2)
+    }
+
+    @Test func makeLists_resolvesDecisionVerdictsOffMainActor() {
+        let chat = model(id: "OsaurusAI/gemma-4-12B-it-MXFP8", sizeGB: 13)
+        let decision = model(id: "OsaurusAI/decision-ranker-1B-MXFP8", sizeGB: 1, isDecision: true)
+
+        let input = LanguageModelCatalog.Input(
+            availableModels: [],
+            suggestedModels: [chat, decision],
+            deduplicatedModels: [],
+            downloadStates: [:],
+            searchText: "",
+            filterState: ModelManager.ModelFilterState(),
+            totalMemoryGB: 48
+        )
+        let lists = LanguageModelCatalog.makeLists(input)
+
+        // Rows read the precomputed verdict, never the disk-probing getter.
+        #expect(lists.decisionIds.contains(decision.id.lowercased()))
+        #expect(!lists.decisionIds.contains(chat.id.lowercased()))
+        #expect(lists.isDecision(decision))
+        #expect(!lists.isDecision(chat))
     }
 
     @Test func defaultVariant_prefersCuratedOverAutoFetched() {

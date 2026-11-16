@@ -23,7 +23,8 @@
 //  **rebuild-from-encrypted-SQL** invariant:
 //
 //    - The authoritative copy of every fact / episode / transcript
-//      turn lives in `memory.sqlite`, which is SQLCipher-encrypted.
+//      turn lives in `memory.sqlite`, which is SQLCipher-encrypted when
+//      at-rest encryption is on (plaintext by default).
 //    - The vector files under `~/.osaurus/memory/vectura/<agent>/`
 //      are derivable artifacts: an attacker who exfiltrates the
 //      vector dir without the SQLCipher key gets shape-of-content

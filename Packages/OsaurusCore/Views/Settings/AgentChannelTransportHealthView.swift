@@ -28,8 +28,8 @@ struct AgentChannelTransportHealthView: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(spacing: theme.space.s8) {
                 Circle()
                     .fill(statusColor)
                     .frame(width: 8, height: 8)
@@ -42,13 +42,10 @@ struct AgentChannelTransportHealthView: View {
                     Task { await refresh() }
                 } label: {
                     if isRefreshing {
-                        ProgressView()
-                            .controlSize(.small)
-                            .scaleEffect(0.55)
-                            .frame(width: 12, height: 12)
+                        SettingsSpinner(size: .mini)
                     } else {
                         Image(systemName: "arrow.clockwise")
-                            .glyphSize(11, weight: .medium)
+                            .glyphSize(.footnote, weight: .medium)
                     }
                 }
                 .buttonStyle(.plain)
@@ -171,7 +168,7 @@ struct AgentChannelInboundActivityListView: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             Text("Recent incoming events", bundle: .module)
                 .font(SettingsFont.smallLabel)
                 .foregroundColor(theme.text.secondary)
@@ -192,7 +189,7 @@ struct AgentChannelInboundActivityListView: View {
                     .font(SettingsFont.smallLabel)
                     .foregroundColor(theme.text.secondary)
                     .padding(.top, theme.space.s6)
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     ForEach(messages) { message in
                         AgentChannelInboxMessageRow(message: message)
                         if message.id != messages.last?.id { Divider() }
@@ -215,10 +212,10 @@ struct AgentChannelInboundActivityListView: View {
     }
 
     private func eventRow(_ event: AgentChannelInboundActivityEvent) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
+            HStack(spacing: theme.space.s6) {
                 Image(systemName: Self.icon(for: event.stage))
-                    .glyphSize(9, weight: .semibold)
+                    .glyphSize(.tiny, weight: .semibold)
                     .foregroundColor(Self.tone(for: event.stage).color(theme))
                     .frame(width: 14)
                 Text(AgentChannelInboundActivityPresentation.label(for: event.stage))

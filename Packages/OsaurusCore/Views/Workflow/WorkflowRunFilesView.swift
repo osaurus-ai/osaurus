@@ -18,12 +18,12 @@ struct WorkflowRunFiles: View {
     var body: some View {
         let media = WorkflowMediaGalleryModel.items(files)
         let others = files.filter { file in !media.contains { $0.id == file.id } }
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             if !media.isEmpty {
                 WorkflowMediaGallery(files: media)
             }
             if !others.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: theme.space.s6) {
                     Text("Files", bundle: .module)
                         .textStyle(.caption, weight: 600)
                         .foregroundColor(theme.text.secondary)
@@ -45,11 +45,11 @@ private struct WorkflowRunFileRow: View {
     private var url: URL { URL(fileURLWithPath: file.path) }
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             preview
                 .frame(width: 36, height: 36)
                 .clipShape(RoundedRectangle(cornerRadius: theme.radius.medium))
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(verbatim: file.filename)
                     .textStyle(.body, weight: 500)
                     .foregroundColor(theme.text.primary)
@@ -97,7 +97,7 @@ private struct WorkflowRunFileRow: View {
             Image(nsImage: NSWorkspace.shared.icon(forFile: file.path)).resizable().aspectRatio(contentMode: .fit)
         } else {
             Image(systemName: "exclamationmark.triangle")
-                .glyphSize(16)
+                .glyphSize(.medium)
                 .foregroundColor(theme.status.warning.foreground)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(theme.surface.subtle)

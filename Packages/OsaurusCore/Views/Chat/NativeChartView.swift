@@ -12,7 +12,6 @@ import UniformTypeIdentifiers
 import WebKit
 import SwiftUI
 
-#if OSAURUS_DESIGN_SYSTEM
 /// AX activation must present the same assigned menu as pointer activation.
 private final class InspectorChartTypePopup: NSPopUpButton {
     weak var assignedTrigger: AssignedNativePicker<EmptyView>.AssignedPickerMenuTrigger?
@@ -20,17 +19,12 @@ private final class InspectorChartTypePopup: NSPopUpButton {
         assignedTrigger?.accessibilityPerformPress() ?? super.accessibilityPerformPress()
     }
 }
-#endif
 
 final class NativeChartView: NSView {
 
     private let card = NSView()
     private let titleLabel = NSTextField(labelWithString: "")
-    #if OSAURUS_DESIGN_SYSTEM
     private let typePicker = InspectorChartTypePopup()
-    #else
-    private let typePicker = NSPopUpButton()
-    #endif
     private let downloadButton = NSButton()
     private let noteLabel = NSTextField(labelWithString: "")
     private let chartView = AAChartView()
@@ -41,9 +35,7 @@ final class NativeChartView: NSView {
     private var lastSpec: ChartSpec?
     private var lastStyleFingerprint: Int?
     private var pickerHeightConstraint: NSLayoutConstraint?
-    #if OSAURUS_DESIGN_SYSTEM
     private let inspectorPicker = AssignedNativePicker<EmptyView>.AssignedPickerMenuTrigger()
-    #endif
     /// Chart type chosen by the user via the picker; overrides spec.chartType until a new spec arrives.
     private var chartTypeOverride: String?
     /// Cached theme so the picker action can trigger a redraw with the same theme.
@@ -204,16 +196,14 @@ final class NativeChartView: NSView {
     /// re-attach to suppress the entry animation. Picker-driven redraws
     /// always animate (see `chartTypeChanged`).
     func configure(spec: ChartSpec, theme: any ThemeProtocol, animateInitialDraw: Bool = true) {
-        let theme = theme.catalogFamily(39, authoritative: true)
+        let theme = theme.catalogFamily(39)
         let styleChanged = lastStyleFingerprint != theme.renderFingerprint
         let bgColor = NSColor(theme.surface.raised)
         let bgHex = bgColor.hexString
         let textColor = NSColor(theme.text.primary)
 
         card.layer?.backgroundColor = bgColor.cgColor
-        #if OSAURUS_DESIGN_SYSTEM
         card.catalogAssignmentTarget(["background", "border"].map { "component.library.39." + $0 }, name: "Chart container", theme: theme)
-        #endif
         card.layer?.borderColor = NSColor(theme.border.subtle).cgColor
         card.layer?.borderWidth = theme.stroke.default
         card.layer?.cornerRadius = theme.radius.large
@@ -261,21 +251,20 @@ final class NativeChartView: NSView {
     func measuredCardHeight() -> CGFloat {
         let theme = lastTheme ?? CustomizableTheme.light()
         let p = NativeComponentInspectionStyle.metric(39, "padding", Self.cardPadding, theme)
-        let headerH = max(24, pickerHeightConstraint?.constant ?? 20) + NativeComponentInspectionStyle.metric(39, "gap", 4, theme)
+        let headerH = max(24, pickerHeightConstraint?.constant ?? 20) + NativeComponentInspectionStyle.metric(39, "gap", theme.space.s4, theme)
         var h = p + headerH
         h += Self.chartHeight
         if noteLabel.isHidden {
             h += p
         } else {
-            h += NativeComponentInspectionStyle.metric(39, "gap", 6, theme) + max(16, noteLabel.intrinsicContentSize.height) + p
+            h += NativeComponentInspectionStyle.metric(39, "gap", theme.space.s6, theme) + max(16, noteLabel.intrinsicContentSize.height) + p
         }
         return h
     }
 
     private func applyInspectionStyle(_ theme: any ThemeProtocol) {
-        #if OSAURUS_DESIGN_SYSTEM
         let p = NativeComponentInspectionStyle.metric(39, "padding", Self.cardPadding, theme)
-        let gap = NativeComponentInspectionStyle.metric(39, "gap", 6, theme)
+        let gap = NativeComponentInspectionStyle.metric(39, "gap", theme.space.s6, theme)
         NativeComponentInspectionStyle.label(titleLabel, family: 39, property: "heading", theme: theme)
         NativeComponentInspectionStyle.label(noteLabel, family: 39, property: "text", theme: theme)
         NativeComponentInspectionStyle.button(typePicker, family: 39, property: "caption", theme: theme)
@@ -317,15 +306,12 @@ final class NativeChartView: NSView {
         inspectorPicker.setAccessibilityLabel(L("Chart type")); inspectorPicker.setAccessibilityValue(typePicker.title)
         typePicker.refusesFirstResponder = true; typePicker.setAccessibilityElement(false)
         if inspectorPicker.superview !== typePicker { typePicker.addSubview(inspectorPicker) }
-        #endif
     }
-    #if OSAURUS_DESIGN_SYSTEM
     @objc private func inspectorChartTypeSelected(_ item: NSMenuItem) {
         typePicker.selectItem(at: item.tag)
         inspectorPicker.setAccessibilityValue(typePicker.title)
         chartTypeChanged()
     }
-    #endif
 
     // MARK: - Picker action
 
@@ -440,7 +426,7 @@ final class NativeChartView: NSView {
         theme: any ThemeProtocol,
         animate: Bool = true
     ) -> (AAOptions, [AASeriesElement]) {
-        let gridHex = NSColor(theme.border.subtle).withAlphaComponent(0.2).hexString
+        let gridHex = NSColor(theme.border.subtle).hexString
 
         // Pie charts read each slice's label from a `name` field on the data
         // point itself — they ignore the model's `categories` array. Bar/line/etc.
@@ -491,7 +477,6 @@ final class NativeChartView: NSView {
             .lineColor(gridHex)
         options.legend?.itemStyle(AAStyle().color(textHex).fontSize(12).fontWeight(.regular))
 
-        #if OSAURUS_DESIGN_SYSTEM
         let font = theme.assignedNativeFont(NativeComponentInspectionStyle.key(39, "caption"), fallback: theme.nsFont(.caption))
         let recipe = theme.scaledTextStyle(.caption)
         let family = font.fontName.hasPrefix(".") ? "-apple-system, BlinkMacSystemFont, sans-serif" : (font.familyName ?? "sans-serif")
@@ -505,7 +490,6 @@ final class NativeChartView: NSView {
             palette[0] = NSColor(theme.border.focus).hexString
             options.colors = palette
         }
-        #endif
         return (options, seriesElements)
     }
 }

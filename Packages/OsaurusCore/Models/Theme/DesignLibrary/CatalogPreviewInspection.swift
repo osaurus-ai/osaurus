@@ -1,5 +1,4 @@
 import SwiftUI
-#if OSAURUS_DESIGN_SYSTEM
 
 /// Ephemeral preview selection. Never stored in the design document.
 @MainActor final class CatalogPreviewInspection: ObservableObject {
@@ -147,9 +146,7 @@ enum CatalogAssignmentMenu {
         return token.hasPrefix("color.text.") || token.hasPrefix("color.danger.") || token.hasSuffix(".foreground")
     }
 }
-#endif
 
-#if OSAURUS_DESIGN_SYSTEM
 /// Use exactly the same assignment routing as the renderer.
 enum NativeCatalogAssignment {
     static func key(_ original: String, theme: any ThemeProtocol) -> String {
@@ -186,18 +183,12 @@ private struct NativeCatalogTarget: ViewModifier {
         if active { content.catalogPreviewTarget(keys, name) } else { content }
     }
 }
-#endif
 extension View {
     @ViewBuilder func nativeCatalogTarget(_ keys: [String], _ name: String) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         modifier(NativeCatalogTarget(keys: keys, name: name))
-        #else
-        self
-        #endif
     }
 }
 
-#if OSAURUS_DESIGN_SYSTEM
 extension View {
     @ViewBuilder func nativeCatalogTextTarget(role: ThemeTextStyleRole, theme: any ThemeProtocol) -> some View {
         if let scoped = theme as? CatalogResolvedTheme {
@@ -213,4 +204,3 @@ extension View {
         } else { self }
     }
 }
-#endif

@@ -41,17 +41,17 @@ struct ShareOptionRow<Trailing: View>: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(alignment: .center, spacing: 12) {
+            HStack(alignment: .center, spacing: theme.space.s12) {
                 ZStack {
                     RoundedRectangle(cornerRadius: theme.radius.medium)
                         .fill(selected ? theme.surface.selected : theme.surface.hover)
                     Image(systemName: icon)
-                        .glyphSize(14, weight: .medium)
+                        .glyphSize(.body, weight: .medium)
                         .foregroundColor(selected ? theme.text.link : theme.text.secondary)
                 }
                 .frame(width: 34, height: 34)
 
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text(verbatim: title)
                         .font(SettingsFont.sectionTitle)
                         .foregroundColor(theme.text.primary)
@@ -67,11 +67,11 @@ struct ShareOptionRow<Trailing: View>: View {
 
                 if let isSelected {
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
-                        .glyphSize(15, weight: .medium)
-                        .foregroundColor(isSelected ? theme.text.link : theme.text.disabled)
+                        .glyphSize(.medium, weight: .medium)
+                        .foregroundColor(isSelected ? theme.text.link : theme.border.strong)
                 } else {
                     Image(systemName: "chevron.right")
-                        .glyphSize(11, weight: .semibold)
+                        .glyphSize(.footnote, weight: .semibold)
                         .foregroundColor(theme.text.tertiary)
                 }
             }

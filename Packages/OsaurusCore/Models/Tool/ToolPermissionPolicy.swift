@@ -7,7 +7,7 @@
 
 import Foundation
 
-enum ToolPermissionPolicy: String, Codable, Sendable {
+public enum ToolPermissionPolicy: String, Codable, Sendable, CaseIterable {
     case auto
     case ask
     case deny
@@ -31,6 +31,173 @@ enum ToolApprovalSettings {
 
     static var autoAllowAll: Bool {
         UserDefaults.standard.bool(forKey: autoAllowAllDefaultsKey)
+    }
+}
+
+/// A custom agent's approval-card behaviour for `.ask` tools. Raw values are
+/// the persisted and declarative (`agents[].tool_approvals`) spelling.
+public enum AgentToolApprovalMode: String, Codable, Sendable, CaseIterable {
+    /// Follow the global Auto-Allow All Tool Calls switch.
+    case useGlobal = "use_global"
+    /// Show the card for `.ask` tools even when the global switch is on.
+    case ask
+    /// Run `.ask` tools without the card, within the same limits as the
+    /// global switch.
+    case neverAsk = "never_ask"
+
+    var displayName: String {
+        switch self {
+        case .useGlobal: return L("Use Global Setting")
+        case .ask: return L("Ask")
+        case .neverAsk: return L("Never Ask")
+        }
+    }
+}
+
+/// Why an `.ask`-policy tool ran without showing its approval card.
+public enum ToolApprovalSkipReason: String, Codable, Sendable {
+    /// The agent's Tool Approvals is Never Ask.
+    case agentNeverAsk = "agent_never_ask"
+    /// The agent's own policy for this tool is Auto where the global one asks.
+    case agentToolPolicy = "agent_tool_policy"
+    /// The global Auto-Allow All Tool Calls switch.
+    case globalAutoAllow = "global_auto_allow"
+
+    var displayDetail: String {
+        switch self {
+        case .agentNeverAsk: return L("This agent's Tool Approvals is set to Never Ask.")
+        case .agentToolPolicy: return L("This agent's policy for this tool is Auto.")
+        case .globalAutoAllow: return L("Auto-Allow All Tool Calls is on.")
+        }
+    }
+}
+
+/// The approval settings of the custom agent a tool call runs as.
+struct AgentToolApprovalScope: Sendable, Equatable {
+    let agentId: UUID
+    let agentName: String
+    let mode: AgentToolApprovalMode
+    let policies: [String: ToolPermissionPolicy]
+
+    var approvalChoice: ToolPermissionPromptService.AgentApprovalChoice {
+        .init(agentId: agentId, agentName: agentName)
+    }
+}
+
+/// Resolves how one tool call's approval composes the global settings with
+/// the calling custom agent's Tool Approvals and per-tool policies.
+///
+/// A workflow run, a built-in agent, or a call with no agent has no agent
+/// scope: the global settings apply exactly as before. With a scope:
+///   * the agent's policy for a tool replaces the global one, except that a
+///     global Deny always wins;
+///   * Ask keeps the card even when the global switch is on;
+///   * Never Ask skips the card the way the global switch does. The gate
+///     consults it only where a card would have been shown, so per-call
+///     tools, Deny, and headless / external / teammate outcomes still win.
+@MainActor
+enum ToolApprovalResolver {
+    static func scope(agentId: UUID?, inWorkflowRun: Bool) -> AgentToolApprovalScope? {
+        guard !inWorkflowRun, let agentId, let agent = AgentManager.shared.agent(for: agentId),
+            !agent.isBuiltIn
+        else { return nil }
+        return AgentToolApprovalScope(
+            agentId: agentId,
+            agentName: agent.displayName,
+            mode: agent.settings.toolApprovalMode,
+            policies: agent.settings.toolPolicies
+        )
+    }
+
+    static var currentScope: AgentToolApprovalScope? {
+        scope(
+            agentId: ChatExecutionContext.currentAgentId,
+            inWorkflowRun: ChatExecutionContext.currentWorkflowRunId != nil
+        )
+    }
+
+    /// The policy before argument-aware narrowing and per-call forcing.
+    static func policy(
+        tool: String,
+        global: ToolPermissionPolicy,
+        scope: AgentToolApprovalScope?
+    ) -> ToolPermissionPolicy {
+        guard global != .deny, let override = scope?.policies[tool] else { return global }
+        return override
+    }
+
+    /// Why an `.auto` result ran without asking when the global policy alone
+    /// would have shown the card. Nil when nothing was loosened.
+    static func policySkipReason(
+        tool: String,
+        global: ToolPermissionPolicy,
+        effective: ToolPermissionPolicy,
+        scope: AgentToolApprovalScope?
+    ) -> ToolApprovalSkipReason? {
+        guard effective == .auto, global == .ask, scope?.policies[tool] == .auto else { return nil }
+        return .agentToolPolicy
+    }
+
+    /// Whether an `.ask` card that would otherwise be shown is skipped.
+    /// Per-call tools never are.
+    static func cardSkipReason(
+        scope: AgentToolApprovalScope?,
+        perCallApproval: Bool,
+        globalAutoAllow: Bool = ToolApprovalSettings.autoAllowAll
+    ) -> ToolApprovalSkipReason? {
+        guard !perCallApproval else { return nil }
+        switch scope?.mode ?? .useGlobal {
+        case .neverAsk: return .agentNeverAsk
+        case .ask: return nil
+        case .useGlobal: return globalAutoAllow ? .globalAutoAllow : nil
+        }
+    }
+
+    /// Whether `.ask` cards are being skipped for this agent's chats right
+    /// now, and why: what the composer indicator shows.
+    static func chatSkipReason(
+        agentId: UUID?,
+        globalAutoAllow: Bool = ToolApprovalSettings.autoAllowAll
+    ) -> ToolApprovalSkipReason? {
+        cardSkipReason(
+            scope: scope(agentId: agentId, inWorkflowRun: false),
+            perCallApproval: false,
+            globalAutoAllow: globalAutoAllow
+        )
+    }
+}
+
+/// Carries a gate's skip reason from `ToolRegistry` to the chat turn that
+/// owns the call, keyed by tool call id. Callers that never collect (HTTP,
+/// evals) leave entries behind, so the store keeps only the newest ones.
+/// Collected by `ChatTurn.setToolResult`, which is not main-actor bound.
+enum ToolApprovalAudit {
+    static let capacity = 256
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var entries: [(callId: String, reason: ToolApprovalSkipReason)] = []
+
+    static func record(_ reason: ToolApprovalSkipReason?, callId: String?) {
+        guard let reason, let callId else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        entries.removeAll { $0.callId == callId }
+        entries.append((callId, reason))
+        if entries.count > capacity { entries.removeFirst(entries.count - capacity) }
+    }
+
+    static func take(callId: String) -> ToolApprovalSkipReason? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let index = entries.firstIndex(where: { $0.callId == callId }) else { return nil }
+        return entries.remove(at: index).reason
+    }
+
+    /// Reads without collecting, for activity rows written while the call
+    /// runs; the chat turn still takes it when the result lands.
+    static func peek(callId: String) -> ToolApprovalSkipReason? {
+        lock.lock()
+        defer { lock.unlock() }
+        return entries.last(where: { $0.callId == callId })?.reason
     }
 }
 

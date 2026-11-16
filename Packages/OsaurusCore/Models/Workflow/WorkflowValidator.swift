@@ -632,6 +632,9 @@ public enum WorkflowValidator {
                 if !keys.insert(field.key).inserted { add("duplicate dialog field `\(field.key)`") }
                 if field.type == .choice, (field.options ?? []).isEmpty { add("choice field `\(field.key)` needs options") }
             }
+            if let expiresAfter = spec.expiresAfter, !(expiresAfter > 0 && expiresAfter.isFinite) {
+                add("dialog `expires_after` must be a positive number of seconds; leave it out to wait for an answer")
+            }
             refs += BindingRenderer.references(in: spec.message)
             refs += BindingRenderer.references(in: spec.title)
         case .reply(let spec):

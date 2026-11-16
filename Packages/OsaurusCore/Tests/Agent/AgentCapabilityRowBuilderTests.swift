@@ -88,7 +88,7 @@ struct AgentCapabilityRowBuilderTests {
             switch row {
             case .groupHeader(let id, _, _, _, _, _, _):
                 #expect(id != "src:builtin", "Informational built-in group leaked into rows")
-            case .tool(let id, _, _, _, _, _, _, _):
+            case .tool(let id, _, _, _, _, _, _, _, _):
                 #expect(
                     !id.hasPrefix("src:builtin::"),
                     "Tool \(id) under the hidden built-in group leaked into rows"
@@ -164,7 +164,7 @@ struct AgentCapabilityRowBuilderTests {
         #expect(headers[1].status == nil)
 
         let toolRows = rows.compactMap { row -> (name: String, enabled: Bool, label: String?)? in
-            guard case .tool(_, let name, _, let enabled, _, let label, _, _) = row else { return nil }
+            guard case .tool(_, let name, _, let enabled, _, let label, _, _, _) = row else { return nil }
             return (name, enabled, label)
         }
         #expect(toolRows.map(\.name) == ["calendar_events", "calendar_list"])
@@ -224,7 +224,7 @@ struct AgentCapabilityRowBuilderTests {
 
             // Only the matching tool row is emitted, though.
             let toolRowIds = rows.compactMap { row -> String? in
-                guard case .tool(let id, _, _, _, _, _, _, _) = row else { return nil }
+                guard case .tool(let id, _, _, _, _, _, _, _, _) = row else { return nil }
                 return id
             }
             #expect(toolRowIds.count == 1)

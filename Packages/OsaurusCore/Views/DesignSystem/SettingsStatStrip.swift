@@ -45,10 +45,10 @@ struct SettingsStatStrip: View {
     }
 
     private var divided: some View {
-        HStack(spacing: theme.catalogLayoutMetric("component.library.12.elements.layout.settingsStatStrip.divided.horizontalGap", inheriting: 0)) {
+        HStack(spacing: theme.catalogLayoutMetric("component.library.12.elements.layout.settingsStatStrip.divided.horizontalGap", inheriting: theme.space.s0)) {
             ForEach(Array(stats.enumerated()), id: \.element.id) { index, stat in
                 if index > 0 {
-                    Divider().frame(height: 36).opacity(0.5)
+                    ThemeHairlineDivider(axis: .vertical).frame(height: 36)
                 }
                 VStack(spacing: theme.catalogLayoutMetric("component.library.12.elements.layout.settingsStatStrip.divided.verticalGap", inheriting: theme.space.s2)) {
                     Text(verbatim: stat.value)
@@ -62,11 +62,9 @@ struct SettingsStatStrip: View {
                 .accessibilityElement(children: .combine)
             }
         }.catalogLayoutTarget("component.library.12.elements.layout.settingsStatStrip.divided.horizontalGap")
-        #if OSAURUS_DESIGN_SYSTEM
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.12.elements.layout.settingsStatStrip.divided.padding.horizontal", inheriting: 0)).padding(.vertical, theme.catalogLayoutMetric("component.library.12.elements.layout.settingsStatStrip.divided.padding.vertical", inheriting: 0)).catalogLayoutTarget("component.library.12.elements.layout.settingsStatStrip.divided.padding.horizontal").catalogLayoutTarget("component.library.12.elements.layout.settingsStatStrip.divided.padding.vertical")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.12.elements.layout.settingsStatStrip.divided.padding.horizontal", inheriting: theme.space.s0)).padding(.vertical, theme.catalogLayoutMetric("component.library.12.elements.layout.settingsStatStrip.divided.padding.vertical", inheriting: theme.space.s0)).catalogLayoutTarget("component.library.12.elements.layout.settingsStatStrip.divided.padding.horizontal").catalogLayoutTarget("component.library.12.elements.layout.settingsStatStrip.divided.padding.vertical")
         .frame(minHeight: theme.catalogMetric("height", fallback: 0))
         .assignedBaseChrome(12, fallback: nil)
-        #endif
     }
 
     private func tiles(columns: Int) -> some View {

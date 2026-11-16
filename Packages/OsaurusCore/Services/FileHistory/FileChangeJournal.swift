@@ -88,6 +88,9 @@ public actor FileChangeJournal {
         /// Shadow: live manifest at capture start.
         var preManifest: Manifest?
         var untrackedReason: String?
+        /// Shadow: the shadow's stored manifest is `preManifest` and stays so
+        /// until this capture ends, so the pending record leaves it out.
+        var preManifestInShadow: Bool? = nil
     }
 
     struct CaptureRecord: Codable, Sendable {
@@ -157,6 +160,7 @@ public actor FileChangeJournal {
     private var active: [UUID: CaptureRecord] = [:]
     private var jobCaptures: [String: UUID] = [:]
     private var shadowManifests: [String: Manifest] = [:]
+    private var shadowKeys: [String: String] = [:]
     /// Shadow key → captures currently relying on that shadow's bytes. The
     /// tree is only re-synced to the live root when this drops to zero, so
     /// an overlapping capture (background job, parallel tool call, second
@@ -327,9 +331,10 @@ public actor FileChangeJournal {
             capture.pre = pre
             return capture
         }
-        if let manifest = prepareShadow(kind: target.kind, rootId: target.rootId) {
+        if let (manifest, stored) = prepareShadow(kind: target.kind, rootId: target.rootId) {
             capture.mode = .shadow
             capture.preManifest = manifest
+            capture.preManifestInShadow = stored
             let key = shadowKey(target.kind, target.rootId)
             shadowUsers[key, default: 0] += 1
             return capture
@@ -544,10 +549,12 @@ public actor FileChangeJournal {
         guard remaining == 0 else { return }
         settledWhileShared[key] = nil
         guard let live = post ?? scanManifest(root: hostRoot(kind, rootId)) else { return }
-        let stored = shadowManifests[key] ?? loadShadowManifest(kind: kind, rootId: rootId) ?? [:]
-        let drift = Self.touchedPaths(pre: stored, post: live)
+        let stored = shadowManifests[key] ?? loadShadowManifest(kind: kind, rootId: rootId)
+        let drift = Self.touchedPaths(pre: stored ?? [:], post: live)
         if !drift.isEmpty { syncShadow(kind: kind, rootId: rootId, paths: drift) }
-        storeShadowManifest(live, kind: kind, rootId: rootId)
+        if stored == nil || !drift.isEmpty || !touchShadowManifest(kind: kind, rootId: rootId) {
+            storeShadowManifest(live, kind: kind, rootId: rootId)
+        }
     }
 
     private func makeEntry(
@@ -713,9 +720,13 @@ public actor FileChangeJournal {
     }
 
     func shadowKey(_ kind: SandboxWorkspaceRootKind, _ rootId: String) -> String {
+        let cacheKey = kind.rawValue + "\0" + rootId
+        if let key = shadowKeys[cacheKey] { return key }
         let digest = SHA256.hash(data: Data(rootId.utf8))
         let hex = digest.map { String(format: "%02x", $0) }.joined().prefix(16)
-        return "\(kind.rawValue)-\(hex)"
+        let key = "\(kind.rawValue)-\(hex)"
+        shadowKeys[cacheKey] = key
+        return key
     }
 
     private func shadowBase(_ kind: SandboxWorkspaceRootKind, _ rootId: String) -> URL {
@@ -732,8 +743,11 @@ public actor FileChangeJournal {
     }
 
     /// Bring the shadow in line with the live root and return the live
-    /// manifest (the capture's pre-state). Nil when over budget.
-    private func prepareShadow(kind: SandboxWorkspaceRootKind, rootId: String) -> Manifest? {
+    /// manifest (the capture's pre-state), and whether the shadow's stored
+    /// manifest now holds it. Nil when over budget.
+    private func prepareShadow(
+        kind: SandboxWorkspaceRootKind, rootId: String
+    ) -> (manifest: Manifest, stored: Bool)? {
         let live = hostRoot(kind, rootId)
         guard let manifest = scanManifest(root: live) else { return nil }
         let bytes = manifest.values.reduce(Int64(0)) { $0 + $1.size }
@@ -754,9 +768,12 @@ public actor FileChangeJournal {
                 // tree (and its manifest) alone. Files this capture touches
                 // that nobody else changed still have exact pre-images; the
                 // tree catches up when the last capture ends.
-                return manifest
+                return (manifest, false)
             }
             let drift = Self.touchedPaths(pre: last, post: manifest)
+            if drift.isEmpty, touchShadowManifest(kind: kind, rootId: rootId) {
+                return (manifest, true)
+            }
             if !drift.isEmpty { syncShadow(kind: kind, rootId: rootId, paths: drift) }
         } else {
             do {
@@ -771,8 +788,7 @@ public actor FileChangeJournal {
                 return nil
             }
         }
-        storeShadowManifest(manifest, kind: kind, rootId: rootId)
-        return manifest
+        return (manifest, storeShadowManifest(manifest, kind: kind, rootId: rootId))
     }
 
     /// Make the shadow match the live root for `paths`. Parents first for
@@ -802,14 +818,27 @@ public actor FileChangeJournal {
         }
     }
 
-    private func storeShadowManifest(_ manifest: Manifest, kind: SandboxWorkspaceRootKind, rootId: String) {
+    @discardableResult
+    private func storeShadowManifest(_ manifest: Manifest, kind: SandboxWorkspaceRootKind, rootId: String) -> Bool {
         shadowManifests[shadowKey(kind, rootId)] = manifest
         let url = shadowManifestURL(kind, rootId)
-        if let data = try? JSONEncoder().encode(manifest) {
-            try? FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            try? data.write(to: url, options: .atomic)
+        try? FileManager.default.createDirectory(
+            at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        guard let data = try? JSONEncoder().encode(manifest), (try? data.write(to: url, options: .atomic)) != nil
+        else {
+            // A stale file must not pass for this manifest later.
+            try? FileManager.default.removeItem(at: url)
+            return false
         }
+        return true
+    }
+
+    /// The stored manifest already matches: mark it used now instead of
+    /// rewriting it (`pruneShadows` reads its date as last use). False when
+    /// the stored file is gone.
+    private func touchShadowManifest(kind: SandboxWorkspaceRootKind, rootId: String) -> Bool {
+        (try? FileManager.default.setAttributes(
+            [.modificationDate: Date()], ofItemAtPath: shadowManifestURL(kind, rootId).path)) != nil
     }
 
     private func loadShadowManifest(kind: SandboxWorkspaceRootKind, rootId: String) -> Manifest? {
@@ -843,38 +872,73 @@ public actor FileChangeJournal {
     }
 
     /// Cheap full-tree manifest. Nil when the tree exceeds the entry cap.
+    ///
+    /// Walks with `fts` and reads `stat` directly: every opaque tool call
+    /// scans its roots twice, and a `FileManager` enumerator builds an
+    /// attribute dictionary per entry. Entries must stay identical to the
+    /// `FileManager` attributes earlier launches stored in shadow manifests,
+    /// or every file would look changed once.
     func scanManifest(root: URL) -> Manifest? {
         let fm = FileManager.default
         var isDir: ObjCBool = false
-        guard fm.fileExists(atPath: root.path, isDirectory: &isDir), isDir.boolValue,
-            let enumerator = fm.enumerator(atPath: root.path)
-        else { return [:] }
+        guard fm.fileExists(atPath: root.path, isDirectory: &isDir), isDir.boolValue else { return [:] }
+        let rootPath = root.path
+        let stream: UnsafeMutablePointer<FTS>? = rootPath.withCString { path in
+            guard let copy = strdup(path) else { return nil }
+            defer { free(copy) }
+            var argv: [UnsafeMutablePointer<CChar>?] = [copy, nil]
+            return fts_open(&argv, FTS_PHYSICAL | FTS_COMFOLLOW | FTS_NOCHDIR, nil)
+        }
+        guard let stream else { return [:] }
+        defer { fts_close(stream) }
+        let rootLength = rootPath.utf8.count
         var manifest: Manifest = [:]
-        while let rel = enumerator.nextObject() as? String {
-            let attrs = enumerator.fileAttributes
-            let type = attrs?[.type] as? FileAttributeType
-            if Self.isExcluded(relativePath: rel) {
-                if type == .typeDirectory { enumerator.skipDescendants() }
+        while let entry = fts_read(stream) {
+            let info = Int32(entry.pointee.fts_info)
+            let level = Int(entry.pointee.fts_level)
+            guard level > 0, info != FTS_DP else { continue }
+            guard let full = entry.pointee.fts_path, Int(entry.pointee.fts_pathlen) > rootLength + 1
+            else { continue }
+            let rel = String(cString: full + rootLength + 1)
+            let isDirectory = info == FTS_D || info == FTS_DC || info == FTS_DNR
+            // Descendants of an excluded directory are never visited, so
+            // only the entry's own name can exclude it.
+            let name = rel.lastIndex(of: "/").map { rel[rel.index(after: $0)...] } ?? rel[...]
+            if Self.isExcludedEntry(name: name, level: level) {
+                if isDirectory { fts_set(stream, entry, FTS_SKIP) }
                 continue
             }
-            switch type {
-            case .typeSymbolicLink:
-                let target = (try? fm.destinationOfSymbolicLink(atPath: root.path + "/" + rel)) ?? ""
+            if info == FTS_SL || info == FTS_SLNONE {
+                let target = (try? fm.destinationOfSymbolicLink(atPath: rootPath + "/" + rel)) ?? ""
                 manifest[rel] = ManifestEntry(type: .symlink, size: 0, mtimeNs: 0, linkTarget: target)
-            case .typeDirectory:
+            } else if isDirectory {
                 manifest[rel] = ManifestEntry(type: .directory, size: 0, mtimeNs: 0, linkTarget: nil)
-            default:
-                let size = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
-                let mtime = (attrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
-                let mode = (attrs?[.posixPermissions] as? NSNumber)?.int64Value ?? 0
+            } else if info == FTS_NS || info == FTS_ERR || entry.pointee.fts_statp == nil {
+                manifest[rel] = ManifestEntry(type: .file, size: 0, mtimeNs: 0, linkTarget: nil)
+            } else {
+                let st = entry.pointee.fts_statp.pointee
+                // Same rounding as `FileAttributeKey.modificationDate`.
+                let mtime = Date(
+                    timeIntervalSinceReferenceDate: TimeInterval(
+                        st.st_mtimespec.tv_sec - Int(Date.timeIntervalBetween1970AndReferenceDate))
+                        + TimeInterval(st.st_mtimespec.tv_nsec) / 1_000_000_000
+                ).timeIntervalSince1970
+                let mode = Int64(st.st_mode & 0o7777)
                 // Mode is folded into the mtime field so a chmod registers.
                 manifest[rel] = ManifestEntry(
-                    type: .file, size: size, mtimeNs: Int64(mtime * 1_000_000_000) &+ mode,
+                    type: .file, size: Int64(st.st_size), mtimeNs: Int64(mtime * 1_000_000_000) &+ mode,
                     linkTarget: nil)
             }
             if manifest.count > shadowEntryLimit { return nil }
         }
         return manifest
+    }
+
+    /// `isExcluded` for an entry whose ancestors were already checked.
+    static func isExcludedEntry(name: Substring, level: Int) -> Bool {
+        if excludedDirectoryNames.contains(String(name)) { return true }
+        // Top-level background-job logs are runtime-owned, not user content.
+        return level == 1 && name.hasPrefix("bg-") && name.hasSuffix(".log")
     }
 
     static func touchedPaths(pre: Manifest, post: Manifest) -> Set<String> {
@@ -911,7 +975,11 @@ public actor FileChangeJournal {
             try FileManager.default.createDirectory(
                 at: pendingDir, withIntermediateDirectories: true,
                 attributes: [.posixPermissions: 0o700])
-            let data = try JSONEncoder().encode(record)
+            var persisted = record
+            for index in persisted.roots.indices where persisted.roots[index].preManifestInShadow == true {
+                persisted.roots[index].preManifest = nil
+            }
+            let data = try JSONEncoder().encode(persisted)
             try data.write(to: pendingDir.appendingPathComponent("\(record.id.uuidString).json"), options: .atomic)
         } catch {
             Self.log.error("pending persist failed: \(error.localizedDescription, privacy: .public)")
@@ -937,9 +1005,23 @@ public actor FileChangeJournal {
         let fm = FileManager.default
         guard let files = try? fm.contentsOfDirectory(at: pendingDir, includingPropertiesForKeys: nil)
         else { return }
+        var records: [UUID: CaptureRecord] = [:]
         for file in files where file.pathExtension == "json" {
-            if let data = try? Data(contentsOf: file),
-                let record = try? JSONDecoder().decode(CaptureRecord.self, from: data),
+            guard let data = try? Data(contentsOf: file),
+                var record = try? JSONDecoder().decode(CaptureRecord.self, from: data)
+            else { continue }
+            // Read every stored pre-manifest before finalizing any record:
+            // finalizing re-syncs the shadow and replaces its manifest.
+            for index in record.roots.indices
+            where record.roots[index].preManifestInShadow == true && record.roots[index].preManifest == nil {
+                let root = record.roots[index]
+                record.roots[index].preManifest = loadShadowManifest(kind: root.kind, rootId: root.rootId)
+            }
+            records[record.id] = record
+        }
+        for file in files where file.pathExtension == "json" {
+            if let id = UUID(uuidString: file.deletingPathExtension().lastPathComponent),
+                let record = records[id],
                 active[record.id] == nil
             {
                 // Already durable (crash between persist and unlink): the

@@ -231,7 +231,7 @@ final class RedactionHoverController {
 struct RedactionTooltipView: View {
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var inspectionEnabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(52, enabled: inspectionEnabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(52, enabled: inspectionEnabled) }
     let model: RedactionTooltipModel
 
     private var titleKey: String {
@@ -262,12 +262,12 @@ struct RedactionTooltipView: View {
     var body: some View {
         Group {
 
-        HStack(alignment: .top, spacing: theme.catalogLayoutMetric("component.library.52.elements.layout.redactionTooltipView.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(52, "gap", 10, theme))) {
+        HStack(alignment: .top, spacing: theme.catalogLayoutMetric("component.library.52.elements.layout.redactionTooltipView.body.horizontalGap", inheriting: NativeComponentInspectionStyle.metric(52, "gap", theme.space.s10, theme))) {
             Image(systemName: "shield.lefthalf.filled")
-                .glyphSize(13, weight: .semibold)
+                .glyphSize(.label, weight: .semibold)
                 .foregroundColor(theme.status.info.foreground)
-                .padding(.top, 1)
-            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.52.elements.layout.redactionTooltipView.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(52, "gap", 4, theme))) {
+                .padding(.top, theme.space.s2)
+            VStack(alignment: .leading, spacing: theme.catalogLayoutMetric("component.library.52.elements.layout.redactionTooltipView.body.verticalGap", inheriting: NativeComponentInspectionStyle.metric(52, "gap", theme.space.s4, theme))) {
                 Text(String(localized: String.LocalizationValue(titleKey), bundle: .module))
                     .componentInspectionText(52, role: .caption, fallback: .footnote, weight: 600, theme: theme)
                     .foregroundColor(theme.text.primary)
@@ -277,8 +277,8 @@ struct RedactionTooltipView: View {
                     .foregroundColor(theme.text.secondary)
             }.catalogLayoutTarget("component.library.52.elements.layout.redactionTooltipView.body.verticalGap")
         }.catalogLayoutTarget("component.library.52.elements.layout.redactionTooltipView.body.horizontalGap")
-        .padding(.horizontal, theme.catalogLayoutMetric("component.library.52.elements.layout.redactionTooltipView.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(52, "padding", 12, theme))).catalogLayoutTarget("component.library.52.elements.layout.redactionTooltipView.body.paddingX")
-        .padding(.vertical, theme.catalogLayoutMetric("component.library.52.elements.layout.redactionTooltipView.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(52, "padding", 10, theme))).catalogLayoutTarget("component.library.52.elements.layout.redactionTooltipView.body.paddingY")
+        .padding(.horizontal, theme.catalogLayoutMetric("component.library.52.elements.layout.redactionTooltipView.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(52, "padding", theme.space.s12, theme))).catalogLayoutTarget("component.library.52.elements.layout.redactionTooltipView.body.paddingX")
+        .padding(.vertical, theme.catalogLayoutMetric("component.library.52.elements.layout.redactionTooltipView.body.paddingY", inheriting: NativeComponentInspectionStyle.metric(52, "padding", theme.space.s10, theme))).catalogLayoutTarget("component.library.52.elements.layout.redactionTooltipView.body.paddingY")
         .frame(maxWidth: 320, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
         .background(
@@ -301,8 +301,8 @@ struct RedactionTooltipView: View {
             base
                 .componentInspectionText(52, role: .code, fallback: .footnote, weight: 500, family: .code, theme: theme)
                 .textSelection(.enabled)
-                .padding(.horizontal, theme.catalogLayoutMetric("component.library.52.elements.layout.redactionTooltipView.valueText.paddingX", inheriting: NativeComponentInspectionStyle.metric(52, "padding", 6, theme))).catalogLayoutTarget("component.library.52.elements.layout.redactionTooltipView.valueText.paddingX")
-                .padding(.vertical, 2)
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.52.elements.layout.redactionTooltipView.valueText.paddingX", inheriting: NativeComponentInspectionStyle.metric(52, "padding", theme.space.s6, theme))).catalogLayoutTarget("component.library.52.elements.layout.redactionTooltipView.valueText.paddingX")
+                .padding(.vertical, theme.space.s2)
                 .background(
                     Capsule().fill(theme.status.info.background)
                 )

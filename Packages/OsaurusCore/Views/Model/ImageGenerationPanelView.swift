@@ -90,9 +90,7 @@ final class ImageGenerationPanelModel: ObservableObject {
         start { await ImageGenerationService.shared.upscale(params, jobID: self.jobID) }
     }
 
-    #if OSAURUS_DESIGN_SYSTEM
     func setInspectionResults(_ values: [GeneratedImage]) { results = values }
-    #endif
 
     func cancel() {
         guard isBusy, !isCancelling else { return }
@@ -234,7 +232,6 @@ struct ImageGenerationPanelView: View {
     private var theme: any ThemeProtocol { inheritedTheme }
     @Environment(\.dismiss) private var dismiss
     @StateObject private var model = ImageGenerationPanelModel()
-    #if OSAURUS_DESIGN_SYSTEM
     struct InspectionDisplay {
         let phase: ImageGenerationPanelModel.Phase
         var resultURL: URL? = nil
@@ -245,7 +242,6 @@ struct ImageGenerationPanelView: View {
         var sourceURLs: [URL] = []
         var prompt = ""
     }
-    #endif
 
     /// Bundle id to drive (e.g. "FLUX.1-schnell"). Locked for this panel.
     let modelId: String
@@ -253,9 +249,7 @@ struct ImageGenerationPanelView: View {
     /// `true` ⇒ image-edit bundle (needs a source image); `false` ⇒ text→image.
     let isEdit: Bool
     let modelInfo: ImageModelInfo
-    #if OSAURUS_DESIGN_SYSTEM
     var inspectionDisplay: InspectionDisplay? = nil
-    #endif
     private var isUpscale: Bool { modelInfo.capabilities.upscale }
     private var sheetWidth: CGFloat {
         #if OSAURUS_DESIGN_INSPECTOR
@@ -307,9 +301,7 @@ struct ImageGenerationPanelView: View {
     }
 
     private var canRun: Bool {
-        #if OSAURUS_DESIGN_SYSTEM
         if inspectionDisplay != nil { return false }
-        #endif
         return (isUpscale || !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             && (!(isEdit || isUpscale) || (!sourceURLs.isEmpty && sourceURLs.count <= sourceLimit))
             && parsedInput != nil
@@ -318,7 +310,7 @@ struct ImageGenerationPanelView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             header
             Divider()
             ScrollViewReader { proxy in
@@ -342,7 +334,6 @@ struct ImageGenerationPanelView: View {
             footer
         }
         .task(id: modelId) {
-            #if OSAURUS_DESIGN_SYSTEM
             if let inspectionDisplay {
                 model.phase = inspectionDisplay.phase
                 model.resultURL = inspectionDisplay.resultURL
@@ -355,7 +346,6 @@ struct ImageGenerationPanelView: View {
                 model.setInspectionResults(inspectionDisplay.results)
                 return
             }
-            #endif
             do {
                 samplingCapabilities = try await ImageGenerationService.shared.samplingCapabilities(for: modelId)
             } catch {
@@ -564,18 +554,8 @@ struct ImageGenerationPanelView: View {
 
     private func segmentedControl<Value: Hashable>(selection: Binding<Value>,
         options: [SettingsPickerRow<Value>.Option], label: LocalizedStringKey) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         AssignedBaseSegmentedPicker(selection: selection, options: options)
             .accessibilityLabel(Text(label, bundle: .module))
-        #else
-        Picker(selection: selection) {
-            SettingsPickerOptions(options: options)
-        } label: {
-            Text(label, bundle: .module)
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        #endif
     }
 
     private func fieldGrid<Fields: View>(@ViewBuilder fields: () -> Fields) -> some View {
@@ -735,13 +715,11 @@ struct ImageGenerationPanelView: View {
     }
 
     private func cancel() {
-        #if OSAURUS_DESIGN_SYSTEM
         if inspectionDisplay != nil {
             model.isCancelling = false
             model.phase = .cancelled
             return
         }
-        #endif
         model.cancel()
     }
 
@@ -846,7 +824,7 @@ struct ImageGenerationPanelView: View {
         tint: Color? = nil) -> some View {
         HStack(spacing: theme.space.s8) {
             if spinner {
-                ProgressView().controlSize(.small)
+                SettingsSpinner()
             } else if let icon {
                 Image(systemName: icon)
                     .foregroundColor(tint ?? theme.text.secondary)

@@ -246,7 +246,7 @@ Good documentation is just as important as good code. Here's how to contribute t
 | [FEATURES.md](FEATURES.md)                                     | **Source of truth** — feature inventory and architecture          |
 | [REMOTE_PROVIDERS.md](REMOTE_PROVIDERS.md)                     | Remote provider setup and configuration                           |
 | [REMOTE_MCP_PROVIDERS.md](REMOTE_MCP_PROVIDERS.md)             | Remote MCP provider setup                                         |
-| [DEVELOPER_TOOLS.md](DEVELOPER_TOOLS.md)                       | Insights and Server Explorer guide                                |
+| [DEVELOPER_TOOLS.md](DEVELOPER_TOOLS.md)                       | Insights and Server / API Reference guide                         |
 | [plugins/README.md](plugins/README.md)                         | Plugin authoring: tools, routes, storage, config UI, and web apps |
 | [OpenAI_API_GUIDE.md](OpenAI_API_GUIDE.md)                     | API usage, tool calling, streaming                                |
 | [SHARED_CONFIGURATION_GUIDE.md](SHARED_CONFIGURATION_GUIDE.md) | Shared configuration for teams                                    |
@@ -313,7 +313,7 @@ Use the "Feature request" issue template and describe:
 
 ## Localization
 
-Osaurus ships English (source), German, Simplified Chinese, Korean, Russian, and community-maintained Traditional Chinese, and we're actively seeking help with **Spanish and Japanese** (already enabled in Xcode and ready to translate). All UI strings live in the OsaurusCore string catalog; see **[LOCALIZATION.md](LOCALIZATION.md)** for how to add strings, add languages, and run validation. To pick up a language and get credited on the contributor leaderboard, see **[TRANSLATORS.md](TRANSLATORS.md)**.
+Osaurus ships English (source), German, Simplified Chinese, Korean, Russian, and community-maintained Traditional Chinese. Every one of them has untranslated screens and a backlog of machine-assisted strings awaiting native review, and **Spanish and Japanese** are enabled in Xcode but not started. All UI strings live in the OsaurusCore string catalog; see **[LOCALIZATION.md](LOCALIZATION.md)** for how to add strings, add languages, and run validation. For live per-language status, ways to help (reviewing counts), and the contributor leaderboard, see **[TRANSLATORS.md](TRANSLATORS.md)**.
 
 ## Security
 

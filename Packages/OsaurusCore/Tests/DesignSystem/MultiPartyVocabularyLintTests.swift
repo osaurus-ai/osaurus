@@ -50,6 +50,15 @@ struct MultiPartyVocabularyLintTests {
         Banned(phrase: "Osaurus ID → Workspaces", use: "Sharing → Workspaces"),
         Banned(phrase: "→ Relays", use: "Sharing → Access → Remote Access"),
         Banned(phrase: "**Approvals** in the sidebar", use: "Inbox → Needs You"),
+        Banned(phrase: "Management window", use: "Settings… (⌘,)"),
+        Banned(phrase: "Management sidebar", use: "the Settings sidebar"),
+        Banned(phrase: "Automate → Automations", use: "Automations (a top-level sidebar row)"),
+        Banned(phrase: "osaurus_list", use: "osaurus_inspect with action list"),
+        Banned(phrase: "Auto with Tools", use: "Auto plus Auto-discover relevant tools"),
+        Banned(phrase: "/anthropic/v1", use: "/v1/messages"),
+        Banned(phrase: "Pause Duration (default 2.0s", use: "Pause Detection (default 1.5s)"),
+        Banned(phrase: "makes Coder, Researcher, and Writer", use: "the starter teammates"),
+        Banned(phrase: "Curator", use: "the Knowledge view's open tickets"),
     ]
 
     /// Approval buttons say Allow. Knowledge proposals and the store review

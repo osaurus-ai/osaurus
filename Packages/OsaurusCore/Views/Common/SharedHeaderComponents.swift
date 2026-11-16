@@ -32,7 +32,7 @@ struct HeaderActionButton: View {
     @State private var isHovered = false
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var enabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(43, enabled: enabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(43, enabled: enabled) }
 
     init(
         icon: String,
@@ -53,7 +53,7 @@ struct HeaderActionButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: icon)
-                .glyphSize(12, weight: .medium)
+                .glyphSize(.caption, weight: .medium)
                 .foregroundColor(isTinted ? theme.text.link : theme.text.secondary)
                 .frame(width: NativeComponentInspectionStyle.metric(43, "height", 28, theme), height: NativeComponentInspectionStyle.metric(43, "height", 28, theme))
                 .componentInspectionSurface(43, background: isActive ? theme.selection.background : (isHovered ? theme.action.tertiary.hover.background : theme.action.tertiary.default.background), radius: 14, selected: isActive)
@@ -62,7 +62,7 @@ struct HeaderActionButton: View {
                         Text(badge > 99 ? "99+" : "\(badge)")
                             .componentInspectionText(43, role: .caption, fallback: .micro, weight: 700, theme: theme)
                             .foregroundColor(theme.action.primary.default.foreground)
-                            .padding(.horizontal, badge > 9 ? 4 : 0)
+                            .padding(.horizontal, badge > 9 ? theme.space.s4 : theme.space.s0)
                             .frame(minWidth: 14, minHeight: 14)
                             .background(Capsule().fill(theme.action.primary.default.background))
                             .overlay(Capsule().strokeBorder(theme.surface.canvas, lineWidth: theme.stroke.default))
@@ -70,7 +70,7 @@ struct HeaderActionButton: View {
                             .accessibilityHidden(true)
                     }
                 }
-                .padding(.horizontal, theme.catalogLayoutMetric("component.library.43.elements.layout.headerActionButton.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(43, "padding", 4, theme))).catalogLayoutTarget("component.library.43.elements.layout.headerActionButton.body.paddingX")
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.43.elements.layout.headerActionButton.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(43, "padding", theme.space.s4, theme))).catalogLayoutTarget("component.library.43.elements.layout.headerActionButton.body.paddingX")
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -93,16 +93,16 @@ struct CloseButton: View {
     @State private var isHovered = false
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var enabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(43, enabled: enabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(43, enabled: enabled) }
 
     var body: some View {
         Button(action: action) {
             Image(systemName: "xmark")
-                .glyphSize(12, weight: .semibold)
+                .glyphSize(.caption, weight: .semibold)
                 .foregroundColor(isHovered ? theme.status.error.foreground : theme.text.secondary)
                 .frame(width: NativeComponentInspectionStyle.metric(43, "height", 28, theme), height: NativeComponentInspectionStyle.metric(43, "height", 28, theme))
                 .componentInspectionSurface(43, background: .clear, radius: 14)
-                .padding(.horizontal, theme.catalogLayoutMetric("component.library.43.elements.layout.closeButton.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(43, "padding", 4, theme))).catalogLayoutTarget("component.library.43.elements.layout.closeButton.body.paddingX")
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.43.elements.layout.closeButton.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(43, "padding", theme.space.s4, theme))).catalogLayoutTarget("component.library.43.elements.layout.closeButton.body.paddingX")
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -124,7 +124,7 @@ struct PinButton: View {
     @State private var isPinned = false
     @Environment(\.theme) private var inheritedTheme
     @Environment(\.isEnabled) private var enabled
-    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(43, enabled: enabled, authoritative: true) }
+    private var theme: any ThemeProtocol { inheritedTheme.catalogFamily(43, enabled: enabled) }
 
     var body: some View {
         Button {
@@ -132,12 +132,12 @@ struct PinButton: View {
             ChatWindowManager.shared.setWindowPinned(id: windowId, pinned: isPinned)
         } label: {
             Image(systemName: isPinned ? "pin.fill" : "pin")
-                .glyphSize(12, weight: .semibold)
+                .glyphSize(.caption, weight: .semibold)
                 .foregroundColor(isPinned || isHovered ? theme.text.link : theme.text.secondary)
                 .rotationEffect(.degrees(isPinned ? 0 : 45))
                 .frame(width: NativeComponentInspectionStyle.metric(43, "height", 28, theme), height: NativeComponentInspectionStyle.metric(43, "height", 28, theme))
                 .componentInspectionSurface(43, background: isHovered ? theme.action.tertiary.hover.background : theme.action.tertiary.default.background, radius: 14, selected: isPinned)
-                .padding(.horizontal, theme.catalogLayoutMetric("component.library.43.elements.layout.pinButton.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(43, "padding", 4, theme))).catalogLayoutTarget("component.library.43.elements.layout.pinButton.body.paddingX")
+                .padding(.horizontal, theme.catalogLayoutMetric("component.library.43.elements.layout.pinButton.body.paddingX", inheriting: NativeComponentInspectionStyle.metric(43, "padding", theme.space.s4, theme))).catalogLayoutTarget("component.library.43.elements.layout.pinButton.body.paddingX")
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)

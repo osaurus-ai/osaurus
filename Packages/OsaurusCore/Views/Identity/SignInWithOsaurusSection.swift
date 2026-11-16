@@ -45,18 +45,16 @@ struct SignInWithOsaurusSection: View {
     }
 
     private func row(_ entry: LoginWithOsaurusHistoryEntry) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             Image(systemName: icon(for: entry.outcome))
-                .glyphSize(12, weight: .semibold)
+                .glyphSize(.caption, weight: .semibold)
                 .foregroundColor(color(for: entry.outcome))
                 .frame(width: 16)
 
-            VStack(alignment: .leading, spacing: 2) {
+            SettingsRowText(compact: true) {
                 Text(verbatim: entry.host)
-                    .font(SettingsFont.compactLabel)
-                    .foregroundColor(theme.text.primary)
+            } description: {
                 Text(verbatim: summary(for: entry))
-                    .font(SettingsFont.rowDescription)
                     .foregroundColor(theme.text.secondary)
             }
 

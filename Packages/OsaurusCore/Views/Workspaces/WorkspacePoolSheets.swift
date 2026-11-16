@@ -125,8 +125,7 @@ struct WorkspacePoolTopUpSheet: View {
     @ViewBuilder
     private var waitingBody: some View {
         HStack(alignment: .top, spacing: theme.space.s8) {
-            ProgressView()
-                .controlSize(.small)
+            SettingsSpinner()
             VStack(alignment: .leading, spacing: theme.space.s4) {
                 Text(
                     String(
@@ -289,7 +288,7 @@ struct WorkspaceAutoReloadSheet: View {
             }
         } else if !loaded {
             HStack(spacing: theme.space.s8) {
-                ProgressView().controlSize(.small)
+                SettingsSpinner()
                 Text("Loading auto-reload settings…", bundle: .module)
                     .catalogTypography(.body, theme: theme, fallback: SettingsFont.rowDescription)
                     .foregroundColor(theme.text.secondary)
@@ -459,7 +458,6 @@ private struct DollarField: View {
     }
 }
 
-#if OSAURUS_DESIGN_SYSTEM
 extension WorkspacePoolTopUpSheet {
     static func inspectionSample(waiting: Bool) -> Self {
         var view = Self(workspaceId: "local-display", workspaceName: "Local workspace")
@@ -472,4 +470,3 @@ extension WorkspaceAutoReloadSheet {
         view._loaded = State(initialValue: true); view._enabled = State(initialValue: true); return view
     }
 }
-#endif

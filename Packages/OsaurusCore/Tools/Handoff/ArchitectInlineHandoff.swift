@@ -383,11 +383,6 @@ enum ArchitectInlineHandoff {
 
     // MARK: - Keep
 
-    /// The open item the Orchestrator records for a keep offer.
-    static func keepItem(draftID: UUID, name: String) -> String {
-        "keep_draft \(draftID.uuidString): offered to keep \"\(name)\""
-    }
-
     /// A completed run's envelope with the keep offer; anything else as is.
     static func withKeepOffer(_ envelope: String, draftID: UUID, name: String, tool: String) -> String {
         guard !ToolEnvelope.isError(envelope),
@@ -397,8 +392,7 @@ enum ArchitectInlineHandoff {
         payload["keep_offer"] = ["keep_draft": draftID.uuidString, "name": name]
         payload["present"] =
             "Give the user the result. Then offer once, in one short sentence, to keep it as a workflow "
-            + "named \"\(name)\" they can run again, and add `\(keepItem(draftID: draftID, name: name))` to "
-            + "open_items when you call state. Only if they say yes, call architect_handoff with "
+            + "named \"\(name)\" they can run again. Only if they say yes, call architect_handoff with "
             + "`keep_draft: \"\(draftID.uuidString)\"`."
         return ToolEnvelope.success(tool: tool, result: payload)
     }

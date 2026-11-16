@@ -69,7 +69,7 @@ struct WorkflowStarterPreviewSheet: View {
     private var preview: some View {
         VStack(alignment: .leading, spacing: 0) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: theme.space.s16) {
                     header
                     section(L("You fill in")) {
                         if fields.isEmpty {
@@ -86,7 +86,7 @@ struct WorkflowStarterPreviewSheet: View {
                     }
                     section(L("What it does")) {
                         ForEach(Array(WorkflowSummary.steps(def).enumerated()), id: \.element.id) { index, step in
-                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            HStack(alignment: .firstTextBaseline, spacing: theme.space.s8) {
                                 Text(verbatim: "\(index + 1).")
                                     .foregroundColor(theme.text.tertiary)
                                     .textStyle(.body)
@@ -161,7 +161,7 @@ struct WorkflowStarterPreviewSheet: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             Text(verbatim: template.name)
                 .font(SettingsFont.detailTitle)
                 .foregroundColor(theme.text.primary)
@@ -176,7 +176,7 @@ struct WorkflowStarterPreviewSheet: View {
     }
 
     private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             Text(verbatim: title)
                 .textStyle(.caption, weight: 600)
                 .foregroundColor(theme.text.secondary)

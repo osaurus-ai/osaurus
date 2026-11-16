@@ -10,46 +10,25 @@ enum ModelPickerInspectionStyle {
         theme.assignedColor(key + property, fallback: fallback)
     }
     static func rowHeight(_ theme: any ThemeProtocol) -> CGFloat {
-        #if OSAURUS_DESIGN_SYSTEM
-        return max(metric("height", 36, theme), theme.assignedLineHeight(key + "label", fallback: 20) + 2 * metric("padding", 0, theme))
-        #else
-        return 36
-        #endif
+        return max(metric("height", 36, theme), theme.assignedLineHeight(key + "label", fallback: 20) + 2 * metric("padding", theme.space.s0, theme))
     }
 }
 
 extension View {
     @ViewBuilder func modelPickerTextStyle(_ role: ThemeTextStyleRole, property: String, weight: Int? = nil) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         assignedTypography(ModelPickerInspectionStyle.key + property, fallback: SettingsFont(role: role, weightOverride: weight))
-        #else
-        textStyle(role, weight: weight)
-        #endif
     }
     @ViewBuilder func modelPickerFont(_ font: SettingsFont, property: String) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         assignedTypography(ModelPickerInspectionStyle.key + property, fallback: font)
-        #else
-        self.font(font)
-        #endif
     }
     @ViewBuilder func modelPickerInk(_ property: String, fallback: Color, muted: Bool = false) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         modifier(InspectorModelPickerInk(property: property, fallback: fallback, muted: muted))
-        #else
-        foregroundStyle(fallback)
-        #endif
     }
     @ViewBuilder func modelPickerRowChrome(selected: Bool, hovered: Bool, focused: Bool) -> some View {
-        #if OSAURUS_DESIGN_SYSTEM
         modifier(InspectorModelPickerRow(selected: selected, hovered: hovered, focused: focused))
-        #else
-        pickerCardRowChrome(highlighted: selected || hovered || focused)
-        #endif
     }
 }
 
-#if OSAURUS_DESIGN_SYSTEM
 private struct InspectorModelPickerInk: ViewModifier {
     @Environment(\.theme) private var theme
     @Environment(\.isEnabled) private var enabled
@@ -69,7 +48,7 @@ private struct InspectorModelPickerRow: ViewModifier {
     func body(content: Content) -> some View {
         let key = ModelPickerInspectionStyle.key + "elements.row."
         let radius = theme.assignedMetric(key + "radius", fallback: theme.radius.medium)
-        content.padding(theme.assignedMetric(key + "padding", fallback: 12))
+        content.padding(theme.assignedMetric(key + "padding", fallback: theme.space.s12))
             .frame(minHeight: theme.assignedMetric(key + "height", fallback: 36))
             .contentShape(Rectangle())
             .assignedInteractionBackground(key, state: !enabled ? "disabledBackground" : selected ? "selected" : hovered || focused ? "hover" : "background", fallback: theme.surface.overlay, in: RoundedRectangle(cornerRadius: radius))
@@ -138,8 +117,8 @@ struct InspectorNativeModelPickerRecipe {
         label = attributes("label", .caption); text = attributes("text", .micro); caption = attributes("caption", .micro)
         func height(_ a: [NSAttributedString.Key: Any]) -> CGFloat { (a[.paragraphStyle] as? NSParagraphStyle)?.minimumLineHeight ?? 18 }
         labelHeight = height(label); textHeight = height(text); captionHeight = height(caption)
-        padding = theme.assignedMetric(key + "padding", fallback: 12)
-        gap = theme.assignedMetric(key + "gap", fallback: 4)
+        padding = theme.assignedMetric(key + "padding", fallback: theme.space.s12)
+        gap = theme.assignedMetric(key + "gap", fallback: theme.space.s4)
         minimumHeight = theme.assignedMetric(key + "height", fallback: 36)
         radius = theme.assignedMetric(key + "radius", fallback: theme.radius.medium)
         borderWidth = theme.assignedMetric(key + "borderWidth", fallback: theme.stroke.default)
@@ -161,4 +140,3 @@ struct InspectorNativeModelPickerRecipe {
         return NSAttributedString(string: value, attributes: a)
     }
 }
-#endif

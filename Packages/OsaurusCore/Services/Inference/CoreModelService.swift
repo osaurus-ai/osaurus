@@ -897,18 +897,20 @@ public actor CoreModelService {
         }()
         let inputTokens = messages.reduce(0) { $0 + TokenEstimator.estimate($1.content) }
         let wire = probe?.snapshot()
+        let completion = probe?.completion
+        let reportedOutputTokens = completion?.outputTokens
         let attribution = activity.attribution
         InsightsService.logInference(
             source: .system,
             model: model,
             inputTokens: inputTokens,
-            outputTokens: response.map { TokenEstimator.estimate($0) },
+            outputTokens: reportedOutputTokens ?? response.map { TokenEstimator.estimate($0) },
             inputTokenSource: .estimated,
-            outputTokenSource: .estimated,
+            outputTokenSource: reportedOutputTokens == nil ? .estimated : .reported,
             durationMs: Date().timeIntervalSince(startedAt) * 1000,
             temperature: params.temperature,
             maxTokens: params.maxTokens,
-            finishReason: error == nil ? .stop : .error,
+            finishReason: error == nil ? loggedFinishReason(completion?.finishReason) : .error,
             errorMessage: error,
             requestBody: requestBody,
             responseBody: response,
@@ -926,6 +928,18 @@ public actor CoreModelService {
         )
     }
 
+    /// Map a provider `finish_reason` onto the Insights vocabulary. Anthropic
+    /// `max_tokens`, Gemini `MAX_TOKENS` and Responses `incomplete` are all
+    /// cut-offs; no reported reason logs as `stop`.
+    static func loggedFinishReason(_ providerReason: String?) -> RequestLog.FinishReason {
+        guard let reason = providerReason?.lowercased() else { return .stop }
+        switch reason {
+        case "max_tokens", "incomplete": return .length
+        case "tool_use": return .toolCalls
+        default: return RequestLog.FinishReason(rawValue: reason) ?? .stop
+        }
+    }
+
     /// Drains `stream` into the full text, handing every visible chunk to
     /// `onDelta` as it arrives. Hint sentinels (billing, reasoning, tool,
     /// stats) that a remote stream interleaves are dropped from both. With
@@ -941,6 +955,8 @@ public actor CoreModelService {
         for try await delta in stream {
             if let stats = StreamingStatsHint.decode(delta) {
                 stopReason = stats.stopReason
+                WireTransportProbe.current?.recordCompletion(
+                    finishReason: stats.stopReason, outputTokens: stats.tokenCount)
                 continue
             }
             if StreamingToolHint.isSentinel(delta) || delta.isEmpty { continue }

@@ -37,6 +37,23 @@ struct OnboardingPlan: Codable, Sendable, Equatable {
     /// Nil until the first task's run settles.
     var firstTaskSucceeded: Bool?
 
+    /// After the first task, the team the person went back to: the card
+    /// tapped and what came of its request. Kept apart from `pathId` and the
+    /// first task's record, which stay as setup left them.
+    struct Browse: Codable, Sendable, Equatable {
+        var pathId: String?
+        var requestOutcome: RequestOutcome?
+        var path: OnboardingPath? { OnboardingPaths.path(id: pathId) }
+    }
+
+    var browse: Browse?
+    /// A walkthrough task was sent; its run's end places the offer.
+    var offerPending: Bool?
+    /// The reply the offer to meet another teammate sits under.
+    var offerTurnId: UUID?
+    /// Done exploring: Done, Skip setup, or a message of their own.
+    var doneExploring: Bool?
+
     init(sessionId: UUID?) {
         steps = OnboardingSteps.all.map { Step(id: $0.id, status: .pending) }
         self.sessionId = sessionId
@@ -58,6 +75,12 @@ struct OnboardingPlan: Codable, Sendable, Equatable {
 
     /// Every step is settled.
     var isComplete: Bool { steps.allSatisfy { $0.status == .done || $0.status == .skipped } }
+
+    /// After a task, the team stays open to try until the person is done.
+    var canExplore: Bool { finishReason == .firstTask && doneExploring != true }
+
+    /// The walkthrough has let go of the window: dismissed, or done exploring.
+    var isClosed: Bool { finishReason == .dismissed || doneExploring == true }
 
     func status(of id: String) -> Status? { steps.first { $0.id == id }?.status }
 
@@ -116,6 +139,41 @@ struct OnboardingPlan: Codable, Sendable, Equatable {
         finishReason = reason
         firstAskId = askId
         if reason == .dismissed { firstTaskSucceeded = false }
+        if reason == .firstTask { offerPending = true }
+    }
+
+    // MARK: - Exploring after the first task
+
+    /// Meet Another Teammate: the cards again.
+    mutating func exploreTeam() {
+        guard canExplore else { return }
+        browse = Browse()
+        offerTurnId = nil
+    }
+
+    mutating func browseSelect(pathId: String) {
+        guard browse != nil else { return }
+        browse = Browse(pathId: pathId)
+    }
+
+    /// Back to the cards from a browsed teammate's asks.
+    mutating func browseBack() {
+        guard browse?.pathId != nil else { return }
+        browse = Browse()
+    }
+
+    /// A browsed teammate's ask was sent: its reply gets the offer again.
+    mutating func browseSent() {
+        browse = nil
+        offerPending = true
+    }
+
+    mutating func endExploring() {
+        guard canExplore else { return }
+        doneExploring = true
+        browse = nil
+        offerPending = nil
+        offerTurnId = nil
     }
 }
 

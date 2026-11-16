@@ -22,7 +22,7 @@ struct ParticipantAvatar: View {
         AgentAvatarView(
             mascotId: nil,
             name: Self.monogramSource(name),
-            tint: Self.color(for: seed ?? name),
+            tint: theme.dataInk(seed: seed ?? name),
             diameter: diameter,
             monogramFontSize: diameter * 0.43,
             borderWidth: theme.stroke.default
@@ -38,20 +38,6 @@ struct ParticipantAvatar: View {
         return String(trimmed)
     }
 
-    /// FNV-1a over the lowercased seed: stable across launches, unlike
-    /// `String.hashValue`.
-    static func hue(for seed: String) -> Double {
-        var hash: UInt64 = 0xcbf2_9ce4_8422_2325
-        for byte in seed.lowercased().utf8 {
-            hash ^= UInt64(byte)
-            hash = hash &* 0x0000_0100_0000_01b3
-        }
-        return Double(hash % 360) / 360.0
-    }
-
-    static func color(for seed: String) -> Color {
-        Color(hue: hue(for: seed), saturation: 0.55, brightness: 0.8)
-    }
 }
 
 extension ParticipantAvatar {

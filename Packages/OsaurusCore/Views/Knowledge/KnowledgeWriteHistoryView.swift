@@ -95,7 +95,7 @@ struct KnowledgeWriteHistoryView: View {
     @State private var showsReverted = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             filterBar
 
             if visibleRuns.isEmpty {
@@ -111,7 +111,7 @@ struct KnowledgeWriteHistoryView: View {
     // MARK: - Filter bar
 
     private var filterBar: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             collectionMenu
 
             Spacer(minLength: 8)
@@ -179,16 +179,15 @@ struct KnowledgeWriteHistoryView: View {
     }
 
     private func runRow(_ run: KnowledgeWriteRun) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
+            HStack(spacing: theme.space.s10) {
                 Image(systemName: run.isFullyReverted ? "arrow.uturn.backward.circle" : "doc.badge.gearshape")
-                    .glyphSize(13)
+                    .glyphSize(.label)
                     .foregroundColor(run.isFullyReverted ? theme.text.tertiary : theme.text.link)
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text(headline(for: run))
-                        .textStyle(run.records.count == 1 ? .code : .caption)
-                        .fontWeight(run.records.count == 1 ? .regular : .medium)
+                        .textStyle(run.records.count == 1 ? .code : .caption, weight: run.records.count == 1 ? 400 : 500)
                         .foregroundColor(
                             run.isFullyReverted ? theme.text.tertiary : theme.text.primary
                         )
@@ -219,7 +218,7 @@ struct KnowledgeWriteHistoryView: View {
                         toggle(run.id)
                     } label: {
                         Image(systemName: expanded.contains(run.id) ? "chevron.down" : "chevron.right")
-                            .glyphSize(10, weight: .semibold)
+                            .glyphSize(.micro, weight: .semibold)
                     }
                     .buttonStyle(.plain)
                     .foregroundColor(theme.text.secondary)
@@ -239,7 +238,7 @@ struct KnowledgeWriteHistoryView: View {
             }
 
             if expanded.contains(run.id) {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: theme.space.s4) {
                     ForEach(run.records) { record in
                         recordRow(record)
                     }
@@ -252,7 +251,7 @@ struct KnowledgeWriteHistoryView: View {
     }
 
     private func recordRow(_ record: KnowledgeWriteRecord) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: theme.space.s6) {
             StatusChip(label(for: record.operation), tint: color(for: record.operation))
 
             Text(record.relPath)

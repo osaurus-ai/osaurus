@@ -23,7 +23,7 @@ struct ServerSettingsActionBar: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             statusBadge
 
             if requiresRestart {
@@ -43,12 +43,12 @@ struct ServerSettingsActionBar: View {
             .opacity(hasUnsavedChanges ? 1 : 0.5)
 
             Button(action: onSave) {
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     if saving {
-                        ProgressView().scaleEffect(0.55)
+                        SettingsSpinner()
                     } else {
                         Image(systemName: "checkmark")
-                            .glyphSize(10, weight: .semibold)
+                            .glyphSize(.micro, weight: .semibold)
                     }
                     Text(saving ? "Saving…" : "Save Changes", bundle: .module)
                 }
@@ -63,15 +63,13 @@ struct ServerSettingsActionBar: View {
         .background(
             theme.surface.subtle
                 .overlay(alignment: .top) {
-                    Rectangle()
-                        .fill(theme.border.default)
-                        .frame(height: 1)
+                    ThemeHairlineDivider()
                 }
         )
     }
 
     private var statusBadge: some View {
-        HStack(spacing: 7) {
+        HStack(spacing: theme.space.s6) {
             Circle()
                 .fill(hasUnsavedChanges ? theme.status.warning.foreground : theme.status.success.foreground)
                 .frame(width: 7, height: 7)

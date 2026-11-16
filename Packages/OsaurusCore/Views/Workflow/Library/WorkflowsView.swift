@@ -525,12 +525,10 @@ struct WorkflowsView: View {
         let base = tabWorkflows(tab)
         let tags = Self.tagCounts(base)
         if !tags.isEmpty {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: theme.space.s6) {
-                    tagChip(nil, label: L("All"), count: base.count)
-                    ForEach(tags, id: \.tag) { entry in
-                        tagChip(entry.tag, label: entry.tag, count: entry.count)
-                    }
+            FilterChipScroller {
+                tagChip(nil, label: L("All"), count: base.count)
+                ForEach(tags, id: \.tag) { entry in
+                    tagChip(entry.tag, label: entry.tag, count: entry.count)
                 }
             }
         }

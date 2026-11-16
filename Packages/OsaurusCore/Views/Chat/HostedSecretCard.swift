@@ -22,7 +22,7 @@ struct HostedSecretCard: View {
         VStack(alignment: .leading, spacing: theme.space.s8) {
             HStack(spacing: theme.space.s8) {
                 Image(systemName: "key.fill")
-                    .glyphSize(12, weight: .semibold)
+                    .glyphSize(.caption, weight: .semibold)
                     .foregroundColor(theme.status.warning.foreground)
                 Text(String(format: L("The agent on %1$@ needs %2$@"), hostName, prompt.key))
                     .textStyle(.label, weight: 600)

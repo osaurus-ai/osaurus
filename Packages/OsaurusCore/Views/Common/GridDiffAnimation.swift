@@ -29,12 +29,13 @@ enum GridDiff {
         ThemeManager.shared.currentTheme.motion.springAnimation
     }
 
-    static var cellTransition: AnyTransition {
-        .asymmetric(
-            insertion: .scale(scale: 0.85).combined(with: .opacity),
-            removal: .scale(scale: 0.85).combined(with: .opacity)
-        )
-    }
+    /// Built once and shared. `gridDiffCell()` reads this for every cell in
+    /// every `ForEach` pass, so a computed property re-allocated five nested
+    /// `AnyTransition` boxes per cell per render on the main thread.
+    @MainActor static let cellTransition: AnyTransition = .asymmetric(
+        insertion: .scale(scale: 0.85).combined(with: .opacity),
+        removal: .scale(scale: 0.85).combined(with: .opacity)
+    )
 }
 
 extension View {

@@ -14,10 +14,10 @@ struct DirectoryPickerView: View {
     @State private var showFilePicker = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             // Directory display field with theme styling
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: theme.space.s12) {
+                VStack(alignment: .leading, spacing: theme.space.s4) {
                     Text(directoryDisplayText)
                         .font(SettingsFont.mono)
                         .foregroundColor(theme.text.primary)
@@ -37,7 +37,7 @@ struct DirectoryPickerView: View {
 
                 Spacer()
 
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     SettingsIconButton(
                         "folder.badge.gearshape",
                         help: "Select custom directory",

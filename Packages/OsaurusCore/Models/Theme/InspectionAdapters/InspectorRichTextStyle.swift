@@ -4,30 +4,15 @@ import AppKit
 enum RichTextInspectionStyle {
     static let key = "component.library.31."
     static func scope(_ theme: any ThemeProtocol) -> any ThemeProtocol {
-        #if OSAURUS_DESIGN_SYSTEM
         if (theme as? CatalogResolvedTheme)?.family == 31 { return theme }
-        #endif
-        return theme.catalogFamily(31, authoritative: true)
+        return theme.catalogFamily(31)
     }
     static func parent(_ theme: any ThemeProtocol) -> any ThemeProtocol {
-        #if OSAURUS_DESIGN_SYSTEM
         if let scoped = theme as? CatalogResolvedTheme, scoped.family == 31 { return scoped.base }
-        #endif
         return theme
     }
-    static func hasOverride(_ property: String) -> Bool {
-        #if OSAURUS_DESIGN_SYSTEM
-        let defaults = ["text": "type.chatBody", "foreground": "color.text.primary", "accent": "color.border.focus"]
-        guard let snapshot = DesignThemeOverlay.shared.current(), let role = snapshot.document.mappings[key + property] else { return false }
-        return role != defaults[property] || snapshot.changedTokens.contains(role)
-        #else
-        return false
-        #endif
-    }
     static func metric(_ property: String, _ fallback: CGFloat, _ theme: any ThemeProtocol) -> CGFloat {
-        #if OSAURUS_DESIGN_SYSTEM
         guard (theme as? CatalogResolvedTheme)?.family == 31 else { return fallback }
-        #endif
         return theme.assignedMetric(key + property, fallback: fallback)
     }
     static func spacing(before segment: ContentSegment, theme: any ThemeProtocol) -> CGFloat {
@@ -42,9 +27,7 @@ enum RichTextInspectionStyle {
         return theme.catalogLayoutMetric(key + "elements.layout." + field, inheriting: metric("gap", segment.spacingBefore, theme))
     }
     static func prepare(_ view: SelectableNSTextView, theme: any ThemeProtocol) {
-        #if OSAURUS_DESIGN_SYSTEM
         view.inspectedQuoteWidth = metric("borderWidth", 3, theme)
         view.inspectedQuoteRadius = metric("radius", 1.5, theme)
-        #endif
     }
 }

@@ -25,6 +25,10 @@ enum OnboardingAction: Hashable, Sendable {
     case ask(String)
     case topic(String)
     case chooseBrain
+    /// After a task: the team's cards again.
+    case exploreTeam
+    /// After a task: done exploring, setup lets go.
+    case doneExploring
     /// Takes the open discovery's next step.
     case discover
     /// Opens a discovery from the Set Up Osaurus list.
@@ -56,7 +60,8 @@ struct OnboardingPanel: Equatable, Sendable {
     }
 
     /// Which part of the walkthrough the panel belongs to; the header's title.
-    enum Step: Equatable, Sendable { case brain, team, firstTask }
+    /// `explore` is the offer under a task's reply to meet someone else.
+    enum Step: Equatable, Sendable { case brain, team, firstTask, explore }
 
     /// Osaurus itself, as the sidebar shows it: the last row of the team.
     struct Orchestrator: Equatable, Sendable {
@@ -94,7 +99,8 @@ struct OnboardingPanel: Equatable, Sendable {
     ) -> OnboardingPanel? {
         var panel = OnboardingPanel(sessionId: sessionId)
         let members = Dictionary(team.map { ($0.teammate, $0) }, uniquingKeysWith: { first, _ in first })
-        if let path = plan.path {
+        let browse = plan.canExplore ? plan.browse : nil
+        if let path = browse?.path ?? (plan.isFinished ? nil : plan.path) {
             if let teammate = path.teammate, let member = members[teammate] {
                 panel.teammate = Teammate(pathId: path.id, name: member.name, mascotId: member.avatar)
             } else if path.teammate == nil {
@@ -102,7 +108,17 @@ struct OnboardingPanel: Equatable, Sendable {
                     pathId: path.id, name: osaurus.name, mascotId: osaurus.mascotId, imageURL: osaurus.imageURL)
             }
         }
-        guard !plan.isFinished else { return nil }
+        if plan.isFinished {
+            guard let browse else { return nil }
+            if let path = browse.path {
+                panel.step = .firstTask
+                fillFirstTask(&panel, path: path, requestOutcome: browse.requestOutcome, brain: brain)
+            } else {
+                panel.step = .team
+                panel.cards = cards(members: members, osaurus: osaurus)
+            }
+            return panel
+        }
         switch plan.current?.id {
         case OnboardingSteps.brain:
             panel.teammate = nil
@@ -111,38 +127,55 @@ struct OnboardingPanel: Equatable, Sendable {
         case OnboardingSteps.choice:
             panel.teammate = nil
             panel.step = .team
-            panel.cards = OnboardingPaths.available(teammates: Set(members.keys)).map { path in
-                let member = path.teammate.flatMap { members[$0] }
-                return Card(
-                    id: path.id,
-                    name: member?.name ?? (path.teammate == nil ? osaurus.name : path.job),
-                    pitch: path.pitch,
-                    icon: path.icon,
-                    note: path.note,
-                    access: path.request.flatMap(accessLabel),
-                    mascotId: path.teammate == nil ? osaurus.mascotId : member?.avatar,
-                    imageURL: path.teammate == nil ? osaurus.imageURL : nil
-                )
-            }
+            panel.cards = cards(members: members, osaurus: osaurus)
         case OnboardingSteps.firstTask:
             guard let path = plan.path else { return nil }
             panel.step = .firstTask
-            fillFirstTask(&panel, path: path, plan: plan, brain: brain)
+            fillFirstTask(&panel, path: path, requestOutcome: plan.requestOutcome, brain: brain)
         default:
             return nil
         }
         return panel
     }
 
+    /// The offer under a task's reply: meet someone else, or be done.
+    static func exploreOffer(sessionId: UUID) -> OnboardingPanel {
+        var panel = OnboardingPanel(sessionId: sessionId)
+        panel.step = .explore
+        panel.buttons = [
+            Button(action: .doneExploring, title: L("Done"), icon: nil, style: .quiet),
+            Button(action: .exploreTeam, title: L("Meet Another Teammate"), icon: "person.2", style: .primary),
+        ]
+        return panel
+    }
+
+    private static func cards(members: [OsaurusCore.Teammate: OnboardingOpening.Member], osaurus: Orchestrator)
+        -> [Card]
+    {
+        OnboardingPaths.available(teammates: Set(members.keys)).map { path in
+            let member = path.teammate.flatMap { members[$0] }
+            return Card(
+                id: path.id,
+                name: member?.name ?? (path.teammate == nil ? osaurus.name : path.job),
+                pitch: path.pitch,
+                icon: path.icon,
+                note: path.note,
+                access: path.request.flatMap(accessLabel),
+                mascotId: path.teammate == nil ? osaurus.mascotId : member?.avatar,
+                imageURL: path.teammate == nil ? osaurus.imageURL : nil
+            )
+        }
+    }
+
     private static func fillFirstTask(
         _ panel: inout OnboardingPanel,
         path: OnboardingPath,
-        plan: OnboardingPlan,
+        requestOutcome: OnboardingPlan.RequestOutcome?,
         brain: OnboardingBrainState
     ) {
         let controls = [Button(action: .back, title: L("Back"), icon: "chevron.left", style: .quiet)]
         let readsPersonal = path.asks.contains(where: \.readsPersonalData)
-        if let request = path.request, request != .topic, plan.requestOutcome == nil {
+        if let request = path.request, request != .topic, requestOutcome == nil {
             if readsPersonal, let provider = brain.disclosedProvider {
                 panel.note = String(
                     format: L("What it reads is sent to %@ to write the answer."),
@@ -157,7 +190,7 @@ struct OnboardingPanel: Equatable, Sendable {
 
         var asks = path.asks
         var notes: [String] = []
-        if plan.requestOutcome == .denied {
+        if requestOutcome == .denied {
             asks = asks.filter { !$0.dependsOnRequest }
             notes.append(
                 path.request == .downloadsFolder
@@ -175,7 +208,7 @@ struct OnboardingPanel: Equatable, Sendable {
         panel.topicField = path.request == .topic && brain.canAnswer
 
         var buttons = asks.map { Button(action: .ask($0.id), title: $0.label, icon: nil, style: .ask) }
-        if plan.requestOutcome == .denied, case .permission(let permission) = path.request {
+        if requestOutcome == .denied, case .permission(let permission) = path.request {
             buttons.append(
                 Button(
                     action: .openSettings(permission),
@@ -185,13 +218,13 @@ struct OnboardingPanel: Equatable, Sendable {
                 )
             )
         }
-        if plan.requestOutcome == .denied, path.request == .downloadsFolder {
+        if requestOutcome == .denied, path.request == .downloadsFolder {
             buttons += [
                 Button(action: .request, title: L("Try Again"), icon: "arrow.clockwise", style: .primary),
                 Button(action: .openFilesAndFolders, title: L("Open System Settings"), icon: "gear", style: .quiet),
             ]
         }
-        if plan.requestOutcome == .denied, path.request == .projectFolder {
+        if requestOutcome == .denied, path.request == .projectFolder {
             buttons.append(
                 Button(action: .request, title: requestTitle(.projectFolder), icon: path.icon, style: .primary)
             )

@@ -104,7 +104,7 @@ struct ArchitectChatEmptyState: View {
         if !quickActions.isEmpty {
             VStack(alignment: .leading, spacing: theme.space.s8) {
                 WorkflowSectionHeader(title: mode == .start ? L("Or start from an idea") : L("Start from"))
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     ForEach(Array(quickActions.enumerated()), id: \.element.id) { index, action in
                         if index > 0 { ThemeHairlineDivider(color: theme.border.subtle) }
                         ArchitectSuggestionRow(action: action) { onPick(action.prompt) }
@@ -129,7 +129,7 @@ private struct ArchitectSuggestionRow: View {
         Button(action: onPick) {
             HStack(spacing: theme.space.s12) {
                 Image(systemName: action.icon)
-                    .glyphSize(12)
+                    .glyphSize(.caption)
                     .foregroundStyle(theme.status.info.foreground)
                     .frame(width: theme.space.s16)
                     .accessibilityHidden(true)
@@ -138,7 +138,7 @@ private struct ArchitectSuggestionRow: View {
                     .foregroundStyle(theme.text.primary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Image(systemName: "arrow.up.left")
-                    .glyphSize(10, weight: .semibold)
+                    .glyphSize(.micro, weight: .semibold)
                     .foregroundStyle(isHovered ? theme.text.secondary : theme.text.tertiary)
                     .accessibilityHidden(true)
             }

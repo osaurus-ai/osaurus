@@ -99,7 +99,7 @@ struct WorkflowFlowCanvas: View {
         if count > 1 {
             HStack(spacing: theme.space.s4) {
                 Image(systemName: "arrow.triangle.branch")
-                    .glyphSize(10, weight: .semibold)
+                    .glyphSize(.micro, weight: .semibold)
                 Text(verbatim: L("These \(count) run at the same time"))
                     .textStyle(.footnote, weight: 500)
                     .lineLimit(1)
@@ -268,7 +268,7 @@ struct WorkflowFlowCanvas: View {
     }
 
     private func draw(in graphics: GraphicsContext, ends: (first: [String], last: [String]), time: TimeInterval) {
-        let ink = theme.statusInk
+        let (info, success, warning) = (theme.statusInk(.info), theme.statusInk(.success), theme.statusInk(.warning))
         let types = WorkflowFlowStyle.edgeTypes(model.definition)
         let dashPhase = -CGFloat((time * 24).truncatingRemainder(dividingBy: 11))
 
@@ -305,7 +305,7 @@ struct WorkflowFlowCanvas: View {
             let passed = isDone(fromStatus) && toStatus != nil && toStatus != .pending && toStatus != .skipped
             let type = types["\(edge.from)→\(edge.to)"]
             stroke(
-                from, to, color: active ? ink.info : passed ? ink.success : edgeColor(type), active: active,
+                from, to, color: active ? info : passed ? success : edgeColor(type), active: active,
                 dashed: edge.when != nil, bold: type != nil, opacity: lineOpacity(edge.from, edge.to))
         }
 
@@ -313,7 +313,7 @@ struct WorkflowFlowCanvas: View {
             for id in ends.first {
                 guard let to = frames[id] else { continue }
                 let s = status(id)
-                let color = isWorking(s) ? ink.info : s != nil && s != .pending ? ink.success : theme.text.tertiary
+                let color = isWorking(s) ? info : s != nil && s != .pending ? success : theme.text.tertiary
                 stroke(
                     give, to, color: color, active: isWorking(s), dashed: false, bold: false,
                     opacity: lineOpacity(id, id))
@@ -323,7 +323,7 @@ struct WorkflowFlowCanvas: View {
             let finished = model.run?.status == .completed
             for id in ends.last {
                 guard let from = frames[id] else { continue }
-                let color = finished && isDone(status(id)) ? ink.success : theme.text.tertiary
+                let color = finished && isDone(status(id)) ? success : theme.text.tertiary
                 stroke(
                     from, get, color: color, active: false, dashed: false, bold: false, opacity: lineOpacity(id, id))
             }
@@ -340,7 +340,7 @@ struct WorkflowFlowCanvas: View {
                 roundedRect: frame.insetBy(dx: -outset, dy: -outset), cornerRadius: theme.radius.large + outset,
                 style: .continuous)
             layer.stroke(
-                ring, with: .color(record.status == .awaitingUser ? ink.warning : ink.info),
+                ring, with: .color(record.status == .awaitingUser ? warning : info),
                 lineWidth: theme.stroke.focus)
         }
     }
@@ -389,7 +389,7 @@ struct WorkflowFlowBookend: View {
         VStack(alignment: .leading, spacing: theme.space.s8) {
             HStack(spacing: theme.space.s8) {
                 Image(systemName: icon)
-                    .glyphSize(compact ? 11 : 13, weight: .semibold)
+                    .glyphSize(compact ? .footnote : .label, weight: .semibold)
                     .foregroundColor(theme.text.secondary)
                     .frame(width: compact ? theme.space.s24 : theme.space.s32, height: compact ? theme.space.s24 : theme.space.s32)
                     .settingsChrome(.inset, radius: compact ? theme.radius.small : theme.radius.medium)
@@ -416,7 +416,7 @@ struct WorkflowFlowBookend: View {
         } else if filled, entries.contains(where: { !$0.text.isEmpty }) {
             VStack(alignment: .leading, spacing: theme.space.s6) {
                 ForEach(entries.prefix(Self.shownLimit)) { entry in
-                    VStack(alignment: .leading, spacing: 0) {
+                    VStack(alignment: .leading, spacing: theme.space.s0) {
                         if !entry.label.isEmpty {
                             Text(verbatim: entry.label)
                                 .textStyle(.micro, weight: 500)
@@ -590,7 +590,7 @@ struct WorkflowFlowStepCard: View {
                 .strikethrough(isBypassed)
                 .lineLimit(1)
             Spacer(minLength: 0)
-            if let status { WorkflowStepStatusIcon(status: status).glyphSize(10).accessibilityHidden(true) }
+            if let status { WorkflowStepStatusIcon(status: status).glyphSize(.micro).accessibilityHidden(true) }
         }
         .padding(.horizontal, theme.space.s8)
         .padding(.vertical, theme.space.s6)
@@ -612,14 +612,14 @@ struct WorkflowFlowStepCard: View {
                     let line = line
                     Text(verbatim: line.text)
                         .textStyle(.caption)
-                        .foregroundColor(line.isError ? theme.statusInk.error : theme.text.secondary)
+                        .foregroundColor(line.isError ? theme.statusInk(.error) : theme.text.secondary)
                         .lineLimit(3)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 0)
                 if let status {
                     WorkflowStepStatusIcon(status: status)
-                        .glyphSize(12)
+                        .glyphSize(.caption)
                         .id(status)
                         .transition(.scale.combined(with: .opacity))
                         .accessibilityHidden(true)
@@ -645,8 +645,8 @@ struct WorkflowFlowStepCard: View {
             HStack(spacing: theme.space.s6) {
                 ForEach(reach) { badge in
                     Image(systemName: badge.systemImage)
-                        .glyphSize(10, weight: .semibold)
-                        .foregroundColor(badge.tone == .risky ? theme.statusInk.error : theme.statusInk.warning)
+                        .glyphSize(.micro, weight: .semibold)
+                        .foregroundColor(badge.tone == .risky ? theme.statusInk(.error) : theme.statusInk(.warning))
                         .help(badge.detail.map { "\(badge.label): \($0)" } ?? badge.label)
                         .accessibilityLabel(Text(verbatim: badge.label))
                 }
@@ -670,9 +670,9 @@ struct WorkflowFlowStepCard: View {
         } else if let thumbnail, livePreview == nil {
             WorkflowMediaThumbnail(path: thumbnail, side: side)
         } else {
-            let tint = isPlaceholder || isBypassed ? theme.text.tertiary : Self.accent(node)
+            let tint = isPlaceholder || isBypassed ? theme.text.tertiary : Self.accent(node, theme: theme)
             Image(systemName: WorkflowFlowStyle.icon(node))
-                .glyphSize(compact ? 11 : 14, weight: .semibold)
+                .glyphSize(compact ? .footnote : .body, weight: .semibold)
                 .foregroundColor(tint)
                 .frame(width: side, height: side)
                 .settingsChrome(.tinted(tint), radius: compact ? theme.radius.small : theme.radius.medium)
@@ -682,19 +682,19 @@ struct WorkflowFlowStepCard: View {
 
     /// A calm tint per family of step, so the kinds read at a glance: AI,
     /// code, the web and tools, fan-out, other workflows, people, media.
-    static func accent(_ node: WorkflowNode) -> Color {
-        let hue: Double
+    static func accent(_ node: WorkflowNode, theme: any ThemeProtocol) -> Color {
+        let ink: DataInk
         switch node.kind {
-        case .inference?, .agent?: hue = 0.75
-        case .code?, .state?: hue = 0.58
-        case .http?, .tool?: hue = 0.07
-        case .map?: hue = 0.47
-        case .workflow?: hue = 0.92
-        case .dialog?, .reply?: hue = 0.13
-        case .media?: hue = 0.84
-        case .wait?, nil: return Color(hue: 0, saturation: 0, brightness: 0.62)
+        case .inference?, .agent?: ink = .purple
+        case .code?, .state?: ink = .blue
+        case .http?, .tool?: ink = .orange
+        case .map?: ink = .teal
+        case .workflow?: ink = .pink
+        case .dialog?, .reply?: ink = .indigo
+        case .media?: ink = .cyan
+        case .wait?, nil: ink = .gray
         }
-        return Color(hue: hue, saturation: 0.55, brightness: 0.82)
+        return theme.dataInk(ink)
     }
 
     private func port(_ color: Color) -> some View {
@@ -736,7 +736,7 @@ struct WorkflowFlowStepCard: View {
         if status == .running, let progress = record?.progress, !isMap {
             VStack(alignment: .leading, spacing: theme.space.s4) {
                 if let fraction = progress.fraction {
-                    ProgressView(value: fraction).progressViewStyle(.linear).controlSize(.small)
+                    SettingsProgressBar(value: fraction)
                 }
                 if !progress.detail.isEmpty {
                     Text(verbatim: progress.detail)
@@ -784,7 +784,7 @@ struct WorkflowFlowStepCard: View {
         return VStack(alignment: .leading, spacing: theme.space.s6) {
             HStack(spacing: theme.space.s6) {
                 Image(systemName: "square.stack.3d.down.right")
-                    .glyphSize(10, weight: .semibold)
+                    .glyphSize(.micro, weight: .semibold)
                 Text(
                     verbatim: concurrency == 1
                         ? L("Repeats for each item, one at a time")
@@ -828,7 +828,7 @@ struct WorkflowFlowStepCard: View {
     private func nestedRow(_ spec: SubworkflowSpec) -> some View {
         HStack(spacing: theme.space.s6) {
             Image(systemName: "flowchart")
-                .glyphSize(10, weight: .semibold)
+                .glyphSize(.micro, weight: .semibold)
                 .foregroundColor(theme.text.secondary)
             Text(verbatim: spec.workflow)
                 .textStyle(.footnote, weight: 500)
@@ -851,12 +851,11 @@ struct WorkflowFlowStepCard: View {
     /// How the step's run went, as a color: nil before it starts and when
     /// it was skipped.
     private var statusColor: Color? {
-        let ink = theme.statusInk
         switch status {
-        case .running?: return ink.info
-        case .awaitingUser?: return ink.warning
-        case .done?, .pinned?: return ink.success
-        case .failed?: return ink.error
+        case .running?: return theme.statusInk(.info)
+        case .awaitingUser?: return theme.statusInk(.warning)
+        case .done?, .pinned?: return theme.statusInk(.success)
+        case .failed?: return theme.statusInk(.error)
         case .pending?, .skipped?, nil: return nil
         }
     }
@@ -941,7 +940,7 @@ struct WorkflowMapItemsGrid: View {
             if let error = items.errors[index] {
                 Text(verbatim: error)
                     .textStyle(.footnote)
-                    .foregroundColor(theme.statusInk.error)
+                    .foregroundColor(theme.statusInk(.error))
                     .fixedSize(horizontal: false, vertical: true)
             } else if items.results.indices.contains(index) {
                 WorkflowFlowValueView(value: items.results[index], maxHeight: Self.detailHeight)
@@ -965,9 +964,9 @@ struct WorkflowMapItemsGrid: View {
     private func color(_ state: MapItemState) -> Color {
         switch state {
         case .pending: return theme.border.default
-        case .running: return theme.statusInk.info
-        case .done: return theme.statusInk.success
-        case .failed: return theme.statusInk.error
+        case .running: return theme.statusInk(.info)
+        case .done: return theme.statusInk(.success)
+        case .failed: return theme.statusInk(.error)
         }
     }
 }
@@ -1014,7 +1013,7 @@ struct WorkflowFlowValueView: View {
         case .object(let fields):
             VStack(alignment: .leading, spacing: theme.space.s6) {
                 ForEach(fields.keys.sorted(), id: \.self) { key in
-                    VStack(alignment: .leading, spacing: 0) {
+                    VStack(alignment: .leading, spacing: theme.space.s0) {
                         Text(verbatim: WorkflowFormFields.humanized(key))
                             .textStyle(.micro, weight: 500)
                             .foregroundColor(theme.text.tertiary)

@@ -153,7 +153,7 @@ struct ComputerUseSettingsView: View {
     private func detail(_ item: ComputerUseTab) -> some View {
         switch item {
         case .appleScript:
-            VStack(spacing: 0) {
+            VStack(spacing: theme.space.s0) {
                 SettingsPageHeader(title: item.title, subtitle: item.subtitle)
                 AppleScriptAutomationView()
             }
@@ -181,12 +181,12 @@ struct ComputerUseSettingsView: View {
 
     private var aboutCard: some View {
         SettingsSection(title: "What It Is") {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 bodyText(
                     "When you turn it on for an agent, Computer Use lets that agent operate macOS apps for you — working through a goal step by step and showing every action in a live feed."
                 )
 
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
                     aboutRow(icon: "eye", text: "Reads what's on screen to understand each app.")
                     aboutRow(icon: "cursorarrow.click.2", text: "Clicks, types, and scrolls to carry out your request.")
                     aboutRow(
@@ -199,9 +199,9 @@ struct ComputerUseSettingsView: View {
     }
 
     private func aboutRow(icon: String, text: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: theme.space.s10) {
             Image(systemName: icon)
-                .glyphSize(12, weight: .medium)
+                .glyphSize(.caption, weight: .medium)
                 .foregroundColor(theme.text.link)
                 .frame(width: 18, alignment: .center)
                 .padding(.top, theme.space.s2)
@@ -249,12 +249,12 @@ struct ComputerUseSettingsView: View {
 
     private var enableCard: some View {
         SettingsSection(title: "Turn It On") {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 bodyText(
                     "Computer Use is off by default. You enable it per agent — and only custom agents can use it (the Default agent can't)."
                 )
 
-                VStack(alignment: .leading, spacing: 10) {
+                VStack(alignment: .leading, spacing: theme.space.s10) {
                     stepRow(number: 1, text: "Open the Agents tab and select a custom agent.")
                     stepRow(number: 2, text: "Open Abilities → Subagents and turn on Computer Use.")
                     stepRow(
@@ -267,7 +267,7 @@ struct ComputerUseSettingsView: View {
     }
 
     private func stepRow(number: Int, text: String) -> some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: theme.space.s10) {
             Text("\(number)")
                 .font(SettingsFont.smallLabel)
                 .foregroundColor(theme.text.link)
@@ -284,7 +284,7 @@ struct ComputerUseSettingsView: View {
 
     private var consentCard: some View {
         SettingsSection(title: "Staying in Control") {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: theme.space.s10) {
                 consentRow(
                     icon: "checkmark.circle.fill",
                     color: theme.status.success.foreground,
@@ -307,9 +307,9 @@ struct ComputerUseSettingsView: View {
     }
 
     private func consentRow(icon: String, color: Color, text: String) -> some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: theme.space.s8) {
             Image(systemName: icon)
-                .glyphSize(12)
+                .glyphSize(.caption)
                 .foregroundColor(color)
                 .padding(.top, theme.space.s2)
             Text(text)
@@ -323,7 +323,7 @@ struct ComputerUseSettingsView: View {
 
     private var screenContextCard: some View {
         SettingsSection(title: "Screen Context") {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: theme.space.s14) {
                 bodyText(
                     "Give the assistant ambient awareness of what you're working on. When on, Osaurus freezes a quick snapshot of your open windows and the field you're focused on at the start of each chat, and shares it as background context. It's built from on-screen text only — no screenshots — and is scrubbed by the Privacy Filter before it reaches a cloud model."
                 )
@@ -351,12 +351,12 @@ struct ComputerUseSettingsView: View {
 
     private var policyCard: some View {
         SettingsSection(title: "Autonomy") {
-            VStack(alignment: .leading, spacing: 16) {
+            VStack(alignment: .leading, spacing: theme.space.s16) {
                 bodyText(
                     "Choose how much an agent can do on its own. Per-app rules and each agent's own ceiling can only make this stricter — never less safe."
                 )
 
-                VStack(spacing: 8) {
+                VStack(spacing: theme.space.s8) {
                     ForEach(AutonomyPreset.allCases) { preset in
                         presetOptionRow(preset)
                     }
@@ -373,12 +373,12 @@ struct ComputerUseSettingsView: View {
             policy.globalPreset = preset
             persist()
         } label: {
-            HStack(spacing: 12) {
+            HStack(spacing: theme.space.s12) {
                 Image(systemName: isSelected ? "largecircle.fill.circle" : "circle")
-                    .glyphSize(16)
+                    .glyphSize(.medium)
                     .foregroundColor(isSelected ? theme.text.link : theme.text.tertiary)
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text(preset.displayLabel)
                         .font(SettingsFont.sectionTitle)
                         .foregroundColor(theme.text.primary)
@@ -401,12 +401,12 @@ struct ComputerUseSettingsView: View {
     /// actually does for each effect class, so the abstract stance becomes
     /// concrete. Mirrors `AutonomyPreset.disposition(for:)` exactly.
     private var whatHappensSummary: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             Text("What this means right now", bundle: .module)
                 .font(SettingsFont.smallLabel)
                 .foregroundColor(theme.text.secondary)
 
-            VStack(spacing: 8) {
+            VStack(spacing: theme.space.s8) {
                 ForEach(EffectClass.allCases, id: \.self) { effect in
                     effectSummaryRow(effect)
                 }
@@ -420,13 +420,13 @@ struct ComputerUseSettingsView: View {
     private func effectSummaryRow(_ effect: EffectClass) -> some View {
         let info = effectInfo(effect)
         let disposition = policy.globalPreset.disposition(for: effect)
-        return HStack(spacing: 10) {
+        return HStack(spacing: theme.space.s10) {
             Image(systemName: info.icon)
-                .glyphSize(12)
+                .glyphSize(.caption)
                 .foregroundColor(theme.text.secondary)
                 .frame(width: 18, alignment: .center)
 
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(LocalizedStringKey(info.title), bundle: .module)
                     .font(SettingsFont.compactLabel)
                     .foregroundColor(theme.text.primary)
@@ -473,7 +473,7 @@ struct ComputerUseSettingsView: View {
     private var advancedCard: some View {
         SettingsSection(title: "Advanced") {
             DisclosureGroup(isExpanded: $showAdvanced) {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: theme.space.s16) {
                     perAppSection
                     allowlistSection
                     cloudVisionSection
@@ -481,7 +481,7 @@ struct ComputerUseSettingsView: View {
                 }
                 .padding(.top, theme.space.s16)
             } label: {
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     Text("Per-app rules, app allowlist, and cloud vision.", bundle: .module)
                         .font(SettingsFont.rowDescription)
                         .foregroundColor(theme.text.tertiary)
@@ -501,7 +501,7 @@ struct ComputerUseSettingsView: View {
     }
 
     private var perAppSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             sectionTitle(L("Per-app rules"))
             hintText(
                 "Hold a specific app to a stricter stance than your default. A rule can only add caution, never remove it."
@@ -541,7 +541,7 @@ struct ComputerUseSettingsView: View {
     }
 
     private var allowlistSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             sectionTitle(L("App allowlist"))
             hintText(
                 "Leave empty to allow Computer Use in any app. Add apps to restrict it to ONLY those — every other app is blocked before any action."
@@ -570,7 +570,7 @@ struct ComputerUseSettingsView: View {
     }
 
     private var cloudVisionSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             sectionTitle(L("Cloud vision"))
             hintText(
                 "Perception stays on this Mac by default. If an agent uses a cloud model, you can let it send screenshots for the rare cases on-screen text isn't enough — but only after sensitive text is masked on-device first."
@@ -618,9 +618,9 @@ struct ComputerUseSettingsView: View {
         name: String,
         @ViewBuilder trailing: () -> Trailing
     ) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             Image(systemName: icon)
-                .glyphSize(12)
+                .glyphSize(.caption)
                 .foregroundColor(iconColor)
             Text(name)
                 .font(SettingsFont.compactLabel)
@@ -636,7 +636,7 @@ struct ComputerUseSettingsView: View {
     private func removeButton(help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: "trash")
-                .glyphSize(12)
+                .glyphSize(.caption)
                 .foregroundColor(theme.status.error.foreground)
         }
         .buttonStyle(PlainButtonStyle())
@@ -659,7 +659,7 @@ struct ComputerUseSettingsView: View {
     private func appAddRow(placeholder: String, text: Binding<String>, action: @escaping () -> Void)
         -> some View
     {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             SettingsTextField(placeholder: placeholder, text: text, onSubmit: action)
             Button(action: action) {
                 Label(L("Add"), systemImage: "plus")

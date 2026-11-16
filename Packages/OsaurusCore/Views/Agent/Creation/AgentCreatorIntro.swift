@@ -35,7 +35,7 @@ struct AgentCreationStepper: View {
             ForEach(AgentCreationStage.allCases) { item in
                 if item != .describe {
                     Rectangle()
-                        .fill(item <= stage ? theme.statusInk.success : theme.border.default)
+                        .fill(item <= stage ? theme.statusInk(.success) : theme.border.default)
                         .frame(width: theme.space.s16, height: theme.stroke.default)
                 }
                 HStack(spacing: theme.space.s4) {
@@ -59,15 +59,15 @@ struct AgentCreationStepper: View {
     private func marker(_ item: AgentCreationStage) -> some View {
         if item < stage {
             Image(systemName: "checkmark.circle.fill")
-                .glyphSize(10, weight: .semibold)
-                .foregroundStyle(theme.statusInk.success)
+                .glyphSize(.micro, weight: .semibold)
+                .foregroundStyle(theme.statusInk(.success))
         } else if item == stage {
             Image(systemName: "circle.inset.filled")
-                .glyphSize(10, weight: .semibold)
-                .foregroundStyle(theme.statusInk.info)
+                .glyphSize(.micro, weight: .semibold)
+                .foregroundStyle(theme.statusInk(.info))
         } else {
             Image(systemName: "circle")
-                .glyphSize(10)
+                .glyphSize(.micro)
                 .foregroundStyle(theme.text.tertiary)
         }
     }
@@ -130,7 +130,7 @@ struct AgentCreatorIntro: View {
     private var starters: some View {
         VStack(alignment: .leading, spacing: theme.space.s8) {
             WorkflowSectionHeader(title: L("Or start from an idea"))
-            VStack(spacing: 0) {
+            VStack(spacing: theme.space.s0) {
                 let templates = AgentStarterTemplate.allCases.filter { $0 != .blank }
                 ForEach(Array(templates.enumerated()), id: \.element.id) { index, template in
                     if index > 0 { ThemeHairlineDivider(color: theme.border.subtle) }
@@ -144,7 +144,7 @@ struct AgentCreatorIntro: View {
     private var noModelNotice: some View {
         HStack(alignment: .top, spacing: theme.space.s12) {
             Image(systemName: "cpu")
-                .glyphSize(14, weight: .medium)
+                .glyphSize(.body, weight: .medium)
                 .foregroundStyle(theme.status.warning.foreground)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: theme.space.s8) {
@@ -174,18 +174,16 @@ private struct AgentStarterRow: View {
             HStack(spacing: theme.space.s12) {
                 SettingsIconTile(icon: template.icon)
                     .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: theme.space.s2) {
+                SettingsRowText {
                     Text(verbatim: template.label)
-                        .font(SettingsFont.rowTitle)
-                        .foregroundStyle(theme.text.primary)
+                } description: {
                     Text(verbatim: template.tagline)
-                        .font(SettingsFont.rowDescription)
                         .foregroundStyle(theme.text.secondary)
                         .lineLimit(2)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 Image(systemName: "arrow.right")
-                    .glyphSize(10, weight: .semibold)
+                    .glyphSize(.micro, weight: .semibold)
                     .foregroundStyle(isHovered ? theme.text.secondary : theme.text.tertiary)
                     .accessibilityHidden(true)
             }

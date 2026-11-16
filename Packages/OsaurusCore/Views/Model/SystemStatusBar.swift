@@ -20,31 +20,31 @@ struct SystemStatusBar: View {
     /// Formats a GB value as "512 GB" or "1.5 TB" once it crosses 1000 GB.
     private func formatCapacity(_ gigabytes: Double) -> String {
         if gigabytes >= 1000 {
-            return String(format: L("%.1f TB"), gigabytes / 1000)
+            return String(format: LCached("%.1f TB"), gigabytes / 1000)
         }
-        return String(format: L("%.0f GB"), gigabytes)
+        return String(format: LCached("%.0f GB"), gigabytes)
     }
 
     var body: some View {
-        HStack(spacing: 20) {
+        HStack(spacing: theme.space.s20) {
             ResourceGauge(
-                label: L("RAM"),
+                label: LCached("RAM"),
                 icon: "memorychip",
                 usedFraction: totalMemoryGB > 0 ? usedMemoryGB / totalMemoryGB : 0,
                 detail: String(
-                    format: L("%@ free / %@"),
+                    format: LCached("%@ free / %@"),
                     formatCapacity(max(0, totalMemoryGB - usedMemoryGB)),
                     formatCapacity(totalMemoryGB)
                 )
             )
 
             ResourceGauge(
-                label: L("Storage"),
+                label: LCached("Storage"),
                 icon: DirectoryPickerService.shared.hasValidDirectory ? "externaldrive" : "internaldrive",
                 usedFraction: totalStorageGB > 0
                     ? (totalStorageGB - availableStorageGB) / totalStorageGB : 0,
                 detail: String(
-                    format: L("%@ free / %@"),
+                    format: LCached("%@ free / %@"),
                     formatCapacity(availableStorageGB),
                     formatCapacity(totalStorageGB)
                 )
@@ -73,13 +73,13 @@ struct ResourceGauge: View {
     }
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: icon)
-                .glyphSize(12, weight: .medium)
+                .glyphSize(.caption, weight: .medium)
                 .foregroundColor(theme.text.secondary)
 
-            VStack(alignment: .leading, spacing: 7) {
-                HStack(spacing: 4) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
+                HStack(spacing: theme.space.s4) {
                     Text(label)
                         .font(SettingsFont.smallLabel)
                         .foregroundColor(theme.text.secondary)

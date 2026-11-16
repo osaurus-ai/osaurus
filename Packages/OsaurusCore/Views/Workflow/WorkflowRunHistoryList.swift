@@ -293,8 +293,8 @@ struct WorkflowRunHistoryList: View {
 
     var body: some View {
         let filtered = filteredRuns
-        VStack(spacing: 12) {
-            HStack(spacing: 8) {
+        VStack(spacing: theme.space.s12) {
+            HStack(spacing: theme.space.s8) {
                 SidebarSearchField(text: $state.query, placeholder: "Search runs...", isFocused: $isSearchFocused)
                 filterMenu
             }
@@ -303,10 +303,10 @@ struct WorkflowRunHistoryList: View {
                 if isLoaded {
                     SidebarEmptyState(icon: "clock.arrow.circlepath", title: "No workflow runs yet", hint: emptyHint)
                 } else {
-                    ProgressView().controlSize(.small).frame(maxHeight: .infinity)
+                    SettingsSpinner().frame(maxHeight: .infinity)
                 }
             } else if filtered.isEmpty, hasActiveFilter, query.trimmingCharacters(in: .whitespaces).isEmpty {
-                VStack(spacing: 8) {
+                VStack(spacing: theme.space.s8) {
                     SidebarEmptyState(icon: "line.3.horizontal.decrease.circle", title: "No runs match this filter")
                     Button {
                         withAnimation(theme.motion.quick) { clearFilters() }
@@ -356,7 +356,7 @@ struct WorkflowRunHistoryList: View {
             return runID
         }()
         return ScrollView {
-            LazyVStack(alignment: .leading, spacing: 2) {
+            LazyVStack(alignment: .leading, spacing: theme.space.s2) {
                 ForEach(items) { item in
                     switch item {
                     case .header(let day):
@@ -490,7 +490,7 @@ struct WorkflowRunHistoryList: View {
                 }
             }
         } label: {
-            HStack(alignment: .center, spacing: 4) {
+            HStack(alignment: .center, spacing: theme.space.s4) {
                 Image(
                     systemName: isActive
                         ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle"
@@ -513,6 +513,10 @@ struct WorkflowRunHistoryList: View {
                             : (theme.isDark
                                 ? theme.surface.canvas : theme.surface.hover)
                     )
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
+                    .strokeBorder(isActive ? theme.selectionBorder : .clear, lineWidth: theme.selectionStroke)
             )
             .contentShape(Rectangle())
         }
@@ -544,17 +548,17 @@ private struct WorkflowRunHistoryRow<RowMenu: View>: View {
 
     var body: some View {
         let tint = WorkflowRunStyle.color(run.status, theme: theme)
-        HStack(spacing: 6) {
+        HStack(spacing: theme.space.s6) {
             Button(action: action) {
-                HStack(alignment: .top, spacing: 10) {
+                HStack(alignment: .top, spacing: theme.space.s10) {
                     ZStack {
                         Circle()
-                            .fill(tint.opacity(theme.isDark ? 0.16 : 0.12))
+                            .fill(theme.wash(behind: tint))
                             .frame(width: 26, height: 26)
                         WorkflowRunStatusIcon(status: run.status, size: 11)
                     }
-                    VStack(alignment: .leading, spacing: 2) {
-                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    VStack(alignment: .leading, spacing: theme.space.s2) {
+                        HStack(alignment: .firstTextBaseline, spacing: theme.space.s6) {
                             Text(verbatim: run.workflowName)
                                 .font(SettingsFont.compactLabel)
                                 .foregroundColor(theme.text.primary)
@@ -569,7 +573,7 @@ private struct WorkflowRunHistoryRow<RowMenu: View>: View {
                         Text(verbatim: outcome)
                             .font(SettingsFont.rowDescription)
                             .foregroundColor(
-                                run.status == .failed ? theme.statusInk.error : theme.text.secondary
+                                run.status == .failed ? theme.statusInk(.error) : theme.text.secondary
                             )
                             .lineLimit(2)
                             .help(run.error?.reason ?? outcome)
@@ -585,7 +589,7 @@ private struct WorkflowRunHistoryRow<RowMenu: View>: View {
             .buttonStyle(.plain)
             SettingsActionMenu(accessibilityLabel: L("More"), content: menu) {
                 Image(systemName: "ellipsis")
-                    .glyphSize(11, weight: .semibold)
+                    .glyphSize(.footnote, weight: .semibold)
                     .foregroundColor(theme.text.secondary)
                     .frame(width: SidebarStyle.actionButtonSize, height: SidebarStyle.actionButtonSize)
                     .contentShape(Rectangle())

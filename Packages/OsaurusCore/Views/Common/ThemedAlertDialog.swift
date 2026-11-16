@@ -141,8 +141,6 @@ public final class ThemedAlertCenter: ObservableObject {
 public enum ThemedAlertScope: Hashable, Sendable {
     /// Alert scoped to a specific chat window
     case chat(UUID)
-    /// Alert scoped to the management/settings view
-    case management
     /// Alert scoped to the main content area
     case content
     /// Alert scoped to toast overlay panels
@@ -286,7 +284,7 @@ public struct AlertButtonConfig {
 private struct ThemedAlertDialogContent: View {
     @Environment(\.theme) private var baseTheme
     @Environment(\.isEnabled) private var baseComponentEnabled
-    private var theme: any ThemeProtocol { baseTheme.catalogFamily(inspectionFamily ?? 17, enabled: baseComponentEnabled, authoritative: inspectionFamily != nil) }
+    private var theme: any ThemeProtocol { baseTheme.catalogFamily(inspectionFamily ?? 17, enabled: baseComponentEnabled) }
     private func inspectionMetric(_ property: String, _ fallback: CGFloat) -> CGFloat {
         guard let inspectionFamily else { return fallback }
         return theme.assignedMetric("component.library.\(inspectionFamily)." + property, fallback: fallback)
@@ -326,7 +324,7 @@ private struct ThemedAlertDialogContent: View {
                 .overlay(alignment: .topTrailing) {
                     if showsCloseButton, let cancel = cancelButton {
                         closeButton(cancel)
-                            .padding(.horizontal, 10)
+                            .padding(.horizontal, theme.space.s10)
                             // With no artwork above the title, the X
                             // shares the title row: centre it on the
                             // heading line below the 24pt top inset.
@@ -354,7 +352,7 @@ private struct ThemedAlertDialogContent: View {
     // MARK: - Dialog Content
 
     private var dialogContent: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             // Header with icon
             headerSection
 
@@ -370,15 +368,13 @@ private struct ThemedAlertDialogContent: View {
                 // Optional accessory (e.g. "Don't ask again" toggle)
                 if let accessory = accessory {
                     accessory
-                        .padding(.top, 12)
+                        .padding(.top, theme.space.s12)
                 }
 
                 if !inlineButtons.isEmpty {
                     // Divider
-                    Rectangle()
-                        .fill(theme.border.subtle)
-                        .frame(height: 1)
-                        .padding(.top, 16)
+                    ThemeHairlineDivider()
+                        .padding(.top, theme.space.s16)
 
                     // Buttons
                     buttonSection
@@ -389,6 +385,12 @@ private struct ThemedAlertDialogContent: View {
         .padding(.horizontal, dialogLayout("paddingX", inheriting: inspectionMetric("padding", 24))).catalogLayoutTarget(dialogLayoutKey("paddingX"))
         .padding(.bottom, dialogLayout("paddingBottom", inheriting: inspectionMetric("padding", 16))).catalogLayoutTarget(dialogLayoutKey("paddingBottom"))
         .frame(width: width ?? 340)
+        // Measured before the flexible frame below, which reports the height
+        // it was offered rather than the content's.
+        .background(
+            GeometryReader { geo in
+                Color.clear.preference(key: ThemedAlertCardHeightKey.self, value: geo.size.height)
+            })
         .frame(minHeight: inspectionMetric("height", 0))
         .applyIf(inspectionFamily != nil) { $0.environment(\.theme, theme) }
         .assignedBaseChrome(inspectionFamily ?? 17, fallback: .overlay)
@@ -397,12 +399,12 @@ private struct ThemedAlertDialogContent: View {
     // MARK: - Header Section
 
     private var headerSection: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: theme.space.s12) {
             if !headerImageNames.isEmpty {
                 // Custom artwork header (announcement-style dialogs). Kept
                 // small and static — no pulsing ring — so it reads as a
                 // friendly mark, not an attention grab.
-                HStack(alignment: .bottom, spacing: 12) {
+                HStack(alignment: .bottom, spacing: theme.space.s12) {
                     ForEach(headerImageNames, id: \.self) { name in
                         Image(name, bundle: .module)
                             .resizable()
@@ -441,7 +443,7 @@ private struct ThemedAlertDialogContent: View {
                 .frame(width: 48, height: 48)
 
             Image(systemName: iconName)
-                .glyphSize(20, weight: .semibold)
+                .glyphSize(.xlarge, weight: .semibold)
                 .foregroundColor(iconStatus.foreground)
         }
     }
@@ -454,7 +456,7 @@ private struct ThemedAlertDialogContent: View {
             .foregroundColor(theme.text.secondary)
             .multilineTextAlignment(.center)
             .lineSpacing(2)
-            .padding(.top, 8)
+            .padding(.top, theme.space.s8)
             .fixedSize(horizontal: false, vertical: true)
     }
 
@@ -464,20 +466,20 @@ private struct ThemedAlertDialogContent: View {
         let inline = inlineButtons
         return Group {
             if inline.count <= 2 {
-                HStack(spacing: 12) {
+                HStack(spacing: theme.space.s12) {
                     ForEach(Array(inline.enumerated()), id: \.element.title) { idx, button in
                         alertButton(button, isPrimary: idx == inlinePrimaryIndex)
                     }
                 }
             } else {
-                VStack(spacing: 10) {
+                VStack(spacing: theme.space.s10) {
                     ForEach(Array(inline.enumerated()), id: \.element.title) { idx, button in
                         alertButton(button, isPrimary: idx == inlinePrimaryIndex)
                     }
                 }
             }
         }
-        .padding(.top, 16)
+        .padding(.top, theme.space.s16)
     }
 
     /// Buttons rendered inline. When the close icon is shown, the cancel
@@ -500,21 +502,12 @@ private struct ThemedAlertDialogContent: View {
     }
 
     private func closeButton(_ cancel: AlertButtonConfig) -> some View {
-        Button {
+        SettingsIconButton("xmark", help: cancel.title, size: .compact) {
             dismissWithAnimation { cancel.action() }
-        } label: {
-            Image(systemName: "xmark")
-                .glyphSize(11, weight: .bold)
-                .foregroundColor(theme.text.secondary)
-                .frame(width: 22, height: 22)
-                .background(Circle().fill(theme.action.secondary.default.background))
-                .overlay(Circle().stroke(theme.action.border, lineWidth: theme.stroke.default))
         }
-        .buttonStyle(PlainButtonStyle())
         // Cancel was promoted to the corner X, so it carries the Esc
         // shortcut here instead of in the inline row.
         .keyboardShortcut(.cancelAction)
-        .help(Text(cancel.title))
     }
 
     private func alertButton(_ config: AlertButtonConfig, isPrimary: Bool) -> some View {
@@ -667,6 +660,14 @@ private struct ThemedAlertPresenterModifier: ViewModifier {
                 }
             }
     }
+}
+
+/// Height of the alert card a `ThemedAlertHost` is showing. A host overlaid
+/// on a view sized to its own content clips a taller card; that view reads
+/// this to grow while the alert is up.
+struct ThemedAlertCardHeightKey: PreferenceKey {
+    static var defaultValue: CGFloat { 0 }
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 /// Host view that renders the active alert as a global overlay.

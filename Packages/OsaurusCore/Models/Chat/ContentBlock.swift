@@ -31,6 +31,9 @@ struct ToolCallItem: Equatable {
     /// there would vanish from history as soon as the next send began).
     /// A repeating loop should be VISIBLE, not just internally counted.
     var repeatCount: Int = 1
+    /// Why the call ran without its approval card; shown as "Ran without
+    /// asking". Nil when it asked or never needed to.
+    var approvalSkip: ToolApprovalSkipReason? = nil
 
     static func == (lhs: ToolCallItem, rhs: ToolCallItem) -> Bool {
         lhs.call.id == rhs.call.id && lhs.call.type == rhs.call.type
@@ -38,6 +41,7 @@ struct ToolCallItem: Equatable {
             && lhs.call.function.arguments == rhs.call.function.arguments
             && lhs.result == rhs.result && lhs.duration == rhs.duration
             && lhs.repeatCount == rhs.repeatCount && lhs.unobservedResult == rhs.unobservedResult
+            && lhs.approvalSkip == rhs.approvalSkip
     }
 }
 
@@ -674,6 +678,18 @@ extension ContentBlock {
     ) -> [ContentBlock] {
         var blocks: [ContentBlock] = []
         var previousRole: MessageRole? = previousTurn?.role
+
+        // The known-files index scans (and JSON-parses) every file_read result
+        // in `turns`. Build it at most once per call, and only when a file-edit
+        // card actually needs to infer its path — rebuilding it per edit call
+        // made full rebuilds O(edits × reads × payload) on the main actor.
+        var knownFilesCache: [(path: String, content: String)]?
+        func cachedKnownFiles() -> [(path: String, content: String)] {
+            if let cached = knownFilesCache { return cached }
+            let built = Self.knownFileContents(in: turns)
+            knownFilesCache = built
+            return built
+        }
         var previousTurnId: UUID? = previousTurn?.id
         // Start of the assistant group being built: the first assistant turn
         // after the user message. A tool-calling response spans several
@@ -978,7 +994,8 @@ extension ContentBlock {
                             ToolCallItem(
                                 call: call, result: result,
                                 duration: turn.toolCallDurations[call.id],
-                                repeatCount: repeatCounts?[call.id] ?? 1)
+                                repeatCount: repeatCounts?[call.id] ?? 1,
+                                approvalSkip: turn.toolCallApprovalSkips[call.id])
                         )
                         flushRegularItems()
                         turnBlocks.append(
@@ -993,7 +1010,7 @@ extension ContentBlock {
                             isStreaming: false,
                             fallbackPath: FileDiff.inferredEditPath(
                                 partialArgs: call.function.arguments,
-                                knownFiles: Self.knownFileContents(in: turns)
+                                knownFiles: cachedKnownFiles()
                             )
                         )
                     {
@@ -1006,7 +1023,8 @@ extension ContentBlock {
                             ToolCallItem(
                                 call: call, result: result,
                                 duration: turn.toolCallDurations[call.id],
-                                repeatCount: repeatCounts?[call.id] ?? 1)
+                                repeatCount: repeatCounts?[call.id] ?? 1,
+                                approvalSkip: turn.toolCallApprovalSkips[call.id])
                         )
                         flushRegularItems()
                         turnBlocks.append(
@@ -1020,7 +1038,7 @@ extension ContentBlock {
                             partialArgs: call.function.arguments,
                             fallbackPath: FileDiff.inferredEditPath(
                                 partialArgs: call.function.arguments,
-                                knownFiles: Self.knownFileContents(in: turns)
+                                knownFiles: cachedKnownFiles()
                             )
                         )
                     {
@@ -1045,7 +1063,8 @@ extension ContentBlock {
                             ToolCallItem(
                                 call: call, result: result,
                                 duration: turn.toolCallDurations[call.id],
-                                repeatCount: repeatCounts?[call.id] ?? 1)
+                                repeatCount: repeatCounts?[call.id] ?? 1,
+                                approvalSkip: turn.toolCallApprovalSkips[call.id])
                         )
                     }
                 }
@@ -1081,7 +1100,7 @@ extension ContentBlock {
                         partialArgs: partialArgs,
                         fallbackPath: FileDiff.inferredEditPath(
                             partialArgs: partialArgs,
-                            knownFiles: Self.knownFileContents(in: turns)
+                            knownFiles: cachedKnownFiles()
                         )
                     )
                 {
@@ -1273,6 +1292,14 @@ extension ContentBlock {
         return nil
     }
 
+    /// Largest `file_read` result (UTF-8 bytes) `knownFileContents` will
+    /// JSON-parse. Bigger reads are left out of the index; an edit against
+    /// them just keeps its placeholder card name until `path` streams.
+    static let knownFileParseByteLimit = 1_048_576
+
+    /// Per-entry character cap for `knownFileContents`.
+    static let knownFileContentCap = 262_144
+
     /// Reconstructs a SharedArtifact from an enriched share_artifact tool result.
     /// Contents of every file the conversation has seen, keyed by path —
     /// `file_read` result text (line-number display prefixes stripped) and
@@ -1288,6 +1315,10 @@ extension ContentBlock {
                 switch call.function.name {
                 case "file_read", "sandbox_read_file":
                     guard let result = turn.toolResults[call.id],
+                        // Skip oversized reads before the full JSON parse:
+                        // only a 256KB prefix is kept below anyway, and
+                        // parsing multi-MB envelopes here hung the main thread.
+                        result.utf8.count <= knownFileParseByteLimit,
                         let payload = ToolEnvelope.successPayload(result) as? [String: Any],
                         (payload["kind"] as? String) != "directory",
                         // Image and workbook envelopes carry descriptive
@@ -1298,17 +1329,29 @@ extension ContentBlock {
                         let path = payload["path"] as? String, !path.isEmpty,
                         let text = payload["text"] as? String
                     else { continue }
-                    // Reads render each line as `<line number>|<content>`;
-                    // strip the display prefix so excerpts match raw bytes.
-                    let content =
-                        payload["line_format"] == nil
-                        ? text
-                        : text.components(separatedBy: "\n")
+                    // Cap BEFORE any per-line work: splitting a large payload
+                    // on the main actor hung the UI for seconds
+                    // (APPLE-MACOS-2YA). Only the capped prefix is ever
+                    // returned, so nothing is lost.
+                    var capped = text.prefix(knownFileContentCap)
+                    let content: String
+                    if payload["line_format"] == nil {
+                        content = String(capped)
+                    } else {
+                        // Drop a line cut mid-way by the cap so a truncated
+                        // `<line number>|` prefix is never kept as content.
+                        if capped.endIndex < text.endIndex, let lastNewline = capped.lastIndex(of: "\n") {
+                            capped = capped[..<lastNewline]
+                        }
+                        // Reads render each line as `<line number>|<content>`;
+                        // strip the display prefix so excerpts match raw bytes.
+                        content = String(capped).components(separatedBy: "\n")
                             .map { line -> Substring in
                                 guard let bar = line.firstIndex(of: "|") else { return line[...] }
                                 return line[line.index(after: bar)...]
                             }
                             .joined(separator: "\n")
+                    }
                     latest[path] = content
                 case "file_write", "sandbox_write_file":
                     guard let data = call.function.arguments.data(using: .utf8),
@@ -1316,10 +1359,14 @@ extension ContentBlock {
                         let path = (obj["path"] as? String), !path.isEmpty,
                         let content = obj["content"] as? String
                     else { continue }
-                    // Appends only add bytes; overwrites replace them.
-                    latest[path] = (obj["mode"] as? String) == "append"
-                        ? (latest[path] ?? "") + content
-                        : content
+                    // Appends only add bytes; overwrites replace them. Entries
+                    // stay within the cap so repeated appends can't grow them.
+                    if (obj["mode"] as? String) == "append" {
+                        let base = latest[path] ?? ""
+                        latest[path] = String((base + content.prefix(knownFileContentCap)).prefix(knownFileContentCap))
+                    } else {
+                        latest[path] = String(content.prefix(knownFileContentCap))
+                    }
                 default:
                     continue
                 }
@@ -1329,7 +1376,7 @@ extension ContentBlock {
         // `String.contains` — cap each entry so a huge file_read (up to 5MB)
         // can't turn the tick into a main-thread scan. An excerpt past the
         // cap just leaves the card on its placeholder.
-        return latest.map { (path: $0.key, content: String($0.value.prefix(262_144))) }
+        return latest.map { (path: $0.key, content: String($0.value.prefix(knownFileContentCap))) }
     }
 
     private static func parseSharedArtifactFromResult(_ result: String) -> SharedArtifact? {
@@ -1516,11 +1563,11 @@ extension ContentBlock {
 
     /// Tools whose results are surfaced through dedicated inline UI
     /// (todo banner, completion banner, clarify overlay) rather than
-    /// the generic tool-call chip group, plus the Orchestrator's `state`,
-    /// which is bookkeeping and never shown (Insights keeps it).
+    /// the generic tool-call chip group, plus the Orchestrator's retired
+    /// `state` call, which saved chats still carry and is never shown.
     /// Centralized so the chip filter and any other render-time skip stay
     /// in lockstep.
-    private static let agentLoopToolNames: Set<String> = ["todo", "complete", "clarify", StateTool.toolName]
+    private static let agentLoopToolNames: Set<String> = ["todo", "complete", "clarify", "state"]
 
     static func isAgentLoopToolName(_ name: String) -> Bool {
         agentLoopToolNames.contains(name)

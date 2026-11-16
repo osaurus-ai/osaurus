@@ -129,7 +129,7 @@ struct WhatsAppSettingsView: View {
             sectionStatus: sectionStatus(for:),
             onBack: onBack
         ) { sectionId in
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: theme.space.s20) {
                 switch AgentChannelProviderSetupSection(rawValue: sectionId) {
                 case .connect:
                     connectSectionContent
@@ -250,7 +250,7 @@ struct WhatsAppSettingsView: View {
     // MARK: - Connect
 
     private var connectSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             Text(
                 "WhatsApp runs through a local bridge helper speaking the WhatsApp Web protocol, linked to your own account like a browser session — no bot account, token, or Meta Business setup. This uses an unofficial protocol: WhatsApp may log the session out, and a dedicated number is recommended.",
                 bundle: .module
@@ -266,7 +266,7 @@ struct WhatsAppSettingsView: View {
     }
 
     private var helperStatusSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             AgentChannelSectionHeading(L("WhatsApp bridge helper"))
             helperRow
             if case .failed(let message) = helperInstallState.phase {
@@ -281,12 +281,12 @@ struct WhatsAppSettingsView: View {
 
     private var helperRow: some View {
         let helperVerified = diagnostics?.helperVerified ?? false
-        return HStack(alignment: .top, spacing: 10) {
+        return HStack(alignment: .top, spacing: theme.space.s10) {
             Image(systemName: helperIconName)
-                .glyphSize(13)
+                .glyphSize(.label)
                 .foregroundColor(helperIconColor)
                 .padding(.top, theme.space.s2)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(L("Integrity-verified helper (osaurus-wa)"))
                     .font(SettingsFont.compactLabel)
                     .foregroundColor(theme.text.primary)
@@ -385,7 +385,7 @@ struct WhatsAppSettingsView: View {
     // MARK: - Link (QR pairing)
 
     private var linkSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(L("Link your WhatsApp account"))
 
             linkStatusRow
@@ -410,12 +410,12 @@ struct WhatsAppSettingsView: View {
                 "Scan a QR code from your phone: WhatsApp → Settings → Linked Devices → Link a Device."
             )
         }
-        return HStack(alignment: .top, spacing: 10) {
+        return HStack(alignment: .top, spacing: theme.space.s10) {
             Image(systemName: linked ? "checkmark.circle.fill" : "qrcode")
-                .glyphSize(13)
+                .glyphSize(.label)
                 .foregroundColor(linked ? theme.status.success.foreground : theme.text.tertiary)
                 .padding(.top, theme.space.s2)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(linked ? L("Account linked") : L("No account linked"))
                     .font(SettingsFont.compactLabel)
                     .foregroundColor(theme.text.primary)
@@ -447,7 +447,7 @@ struct WhatsAppSettingsView: View {
     }
 
     private var pairingCard: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: theme.space.s10) {
             if let code = passkeyConfirmCode {
                 passkeyConfirmContent(code: code)
             } else if passkeyChallengeJSON != nil {
@@ -468,8 +468,7 @@ struct WhatsAppSettingsView: View {
                 .multilineTextAlignment(.center)
                 .fixedSize(horizontal: false, vertical: true)
             } else {
-                ProgressView()
-                    .scaleEffect(0.8)
+                SettingsSpinner(size: .large)
                 Text("Waiting for a QR code from the helper...", bundle: .module)
                     .font(SettingsFont.footnote)
                     .foregroundColor(theme.text.tertiary)
@@ -495,7 +494,7 @@ struct WhatsAppSettingsView: View {
     /// browser tab (approving the passkey prompt there) and pastes the JSON
     /// back — the same flow other WhatsApp bridges use for this gate.
     private var passkeyChallengeContent: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             Label(L("This account is protected by a passkey"), systemImage: "person.badge.key.fill")
                 .textStyle(.caption, weight: 600)
                 .foregroundColor(theme.text.primary)
@@ -531,7 +530,7 @@ struct WhatsAppSettingsView: View {
     }
 
     private func passkeyConfirmContent(code: String) -> some View {
-        VStack(spacing: 8) {
+        VStack(spacing: theme.space.s8) {
             Label(L("Check your phone"), systemImage: "iphone.badge.play")
                 .textStyle(.caption, weight: 600)
                 .foregroundColor(theme.text.primary)
@@ -734,7 +733,7 @@ struct WhatsAppSettingsView: View {
     }
 
     private var stepReceiveSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(L("Turn on receiving"))
 
             SettingsToggle(
@@ -763,7 +762,7 @@ struct WhatsAppSettingsView: View {
     // MARK: - Access
 
     private var accessSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             stepAccessSection
             receiveOptionsSection
             attachmentsSection
@@ -772,11 +771,11 @@ struct WhatsAppSettingsView: View {
     }
 
     private var stepAccessSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(L("Choose chats and people"))
 
             HStack {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text(discoveredChats.isEmpty ? L("Load known WhatsApp chats") : L("WhatsApp chats loaded"))
                         .font(SettingsFont.compactLabel)
                         .foregroundColor(theme.text.primary)
@@ -821,7 +820,7 @@ struct WhatsAppSettingsView: View {
     /// readable direct chats plus anything already allowlisted. Manual entry
     /// lives under Advanced.
     private var senderPickerSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             Text("Authorized senders", bundle: .module)
                 .font(SettingsFont.compactLabel)
                 .foregroundColor(theme.text.primary)
@@ -843,11 +842,11 @@ struct WhatsAppSettingsView: View {
                 .fixedSize(horizontal: false, vertical: true)
             } else {
                 let allowed = Set(parseIds(senderAllowlistText))
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     ForEach(senderCandidates, id: \.self) { handle in
-                        HStack(spacing: 9) {
+                        HStack(spacing: theme.space.s8) {
                             Image(systemName: "person.crop.circle")
-                                .glyphSize(11, weight: .semibold)
+                                .glyphSize(.footnote, weight: .semibold)
                                 .foregroundColor(theme.text.secondary)
                                 .frame(width: 20)
                             Text(handle)
@@ -887,9 +886,9 @@ struct WhatsAppSettingsView: View {
     /// The most common setup trap: chats are selected but the sender
     /// allowlist is empty, so receiving silently never starts.
     private var missingSendersWarning: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: theme.space.s8) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .glyphSize(11)
+                .glyphSize(.footnote)
                 .foregroundColor(theme.status.warning.foreground)
                 .padding(.top, theme.space.s2)
             Text(
@@ -917,7 +916,7 @@ struct WhatsAppSettingsView: View {
             },
             isSelected: { $0.isSelected }
         )
-        return VStack(alignment: .leading, spacing: 8) {
+        return VStack(alignment: .leading, spacing: theme.space.s8) {
             HStack {
                 Text("Known Chats", bundle: .module)
                     .font(SettingsFont.compactLabel)
@@ -946,13 +945,13 @@ struct WhatsAppSettingsView: View {
         _ chat: DiscoveredChat,
         access: AgentChannelReadWriteSelection
     ) -> some View {
-        HStack(spacing: 9) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: chat.kind == "group" ? "person.3.fill" : "person.crop.circle.fill")
-                .glyphSize(11, weight: .semibold)
+                .glyphSize(.footnote, weight: .semibold)
                 .foregroundColor(theme.text.secondary)
                 .frame(width: 20)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(chat.name)
                     .font(SettingsFont.smallLabel)
                     .foregroundColor(theme.text.primary)
@@ -978,7 +977,7 @@ struct WhatsAppSettingsView: View {
 
     private var advancedSection: some View {
         AgentChannelAdvancedSection {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 Text(
                     "Manual IDs are a fallback for chats not returned by discovery. Direct chats use E.164 phone numbers (+15551234567); groups use their JID (1203630XXXX@g.us).",
                     bundle: .module
@@ -1015,14 +1014,14 @@ struct WhatsAppSettingsView: View {
     }
 
     private var sendingSectionContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: theme.space.s20) {
             sendingSection
             ChannelPostingSection(kind: .whatsapp, connectionId: AgentChannelConnection.nativeWhatsAppConnectionId)
         }
     }
 
     private var receiveOptionsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(L("Incoming message options"))
 
             SettingsToggle(
@@ -1045,7 +1044,7 @@ struct WhatsAppSettingsView: View {
 
     private var attachmentsSection: some View {
         SettingsFieldRow(label: "Attachments") {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 SettingsToggle(
                     title: "Handle Attachments",
                     description: L(
@@ -1055,7 +1054,7 @@ struct WhatsAppSettingsView: View {
                 )
 
                 if attachmentIngestionEnabled {
-                    VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: theme.space.s12) {
                         AgentChannelMultilineSettingsField(
                             title: L("Allowed Attachment Folders"),
                             text: $allowedAttachmentRootsText,
@@ -1082,7 +1081,7 @@ struct WhatsAppSettingsView: View {
 
     private var sendingSection: some View {
         SettingsFieldRow(label: "Sending") {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: theme.space.s12) {
                 SettingsToggle(
                     title: "Allow Sending on WhatsApp",
                     description: L(
@@ -1107,7 +1106,7 @@ struct WhatsAppSettingsView: View {
     // MARK: - Verify
 
     private var stepVerifySection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             AgentChannelSectionHeading(L("Verify an incoming message"))
 
             Text(

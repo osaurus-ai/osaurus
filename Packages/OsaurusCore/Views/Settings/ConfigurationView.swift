@@ -318,8 +318,8 @@ struct ConfigurationView: View {
                 .fill(theme.scrim)
                 .ignoresSafeArea()
 
-            VStack(spacing: 24) {
-                VStack(spacing: 8) {
+            VStack(spacing: theme.space.s24) {
+                VStack(spacing: theme.space.s8) {
                     Text("Resetting Osaurus", bundle: .module)
                         .font(SettingsFont.detailTitle)
                         .foregroundColor(theme.text.primary)
@@ -330,7 +330,7 @@ struct ConfigurationView: View {
                 }
 
                 if let journey = onboardingService.resetJourney {
-                    VStack(alignment: .leading, spacing: 10) {
+                    VStack(alignment: .leading, spacing: theme.space.s10) {
                         ForEach(journey.steps) { step in
                             FactoryResetStepRow(step: step)
                         }
@@ -340,9 +340,7 @@ struct ConfigurationView: View {
                     .settingsChrome(.inset)
                     .animation(theme.motion.quick, value: journey)
                 } else {
-                    ProgressView()
-                        .scaleEffect(1.5)
-                        .tint(theme.action.primary.default.background)
+                    SettingsSpinner(size: .large, tint: theme.action.primary.default.background)
                 }
             }
             .padding(theme.space.s40)
@@ -554,7 +552,7 @@ private struct FactoryResetStepRow: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             statusIcon
                 .frame(width: 16)
             Text(label)
@@ -579,19 +577,17 @@ private struct FactoryResetStepRow: View {
         switch step.status {
         case .completed:
             Image(systemName: "checkmark.circle.fill")
-                .glyphSize(14)
+                .glyphSize(.body)
                 .foregroundColor(theme.status.success.foreground)
         case .inProgress:
-            ProgressView()
-                .controlSize(.small)
-                .scaleEffect(0.7)
+            SettingsSpinner(size: .mini)
         case .pending:
             Image(systemName: "circle")
-                .glyphSize(14)
-                .foregroundColor(theme.text.disabled)
+                .glyphSize(.body)
+                .foregroundColor(theme.text.tertiary)
         case .failed:
             Image(systemName: "xmark.octagon.fill")
-                .glyphSize(14)
+                .glyphSize(.body)
                 .foregroundColor(theme.status.error.foreground)
         }
     }

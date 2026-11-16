@@ -46,17 +46,17 @@ struct ToolPermissionBanner: View {
     }
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             ZStack {
                 Circle()
                     .fill(theme.status.warning.background)
                     .frame(width: 36, height: 36)
                 Image(systemName: "lock.shield.fill")
-                    .glyphSize(16)
+                    .glyphSize(.medium)
                     .foregroundColor(theme.status.warning.foreground)
             }
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(title)
                     .font(SettingsFont.sectionTitle)
                     .foregroundColor(theme.text.primary)
@@ -72,9 +72,9 @@ struct ToolPermissionBanner: View {
                     NSWorkspace.shared.open(url)
                 }
             }) {
-                HStack(spacing: 4) {
+                HStack(spacing: theme.space.s4) {
                     Image(systemName: "gear")
-                        .glyphSize(11)
+                        .glyphSize(.footnote)
                     Text("Open System Settings", bundle: .module)
                         .font(SettingsFont.compactLabel)
                 }

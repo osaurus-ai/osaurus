@@ -51,7 +51,7 @@ struct AcknowledgementsView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             SettingsPageHeader(
                 title: "Acknowledgements",
                 subtitle: "Open source libraries used by Osaurus",

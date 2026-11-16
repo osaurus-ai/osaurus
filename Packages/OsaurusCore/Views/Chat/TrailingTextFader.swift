@@ -117,9 +117,7 @@ final class TrailingTextFader {
         // retain cycle that displayLink(target:) creates and to keep the fader
         // independent of NSView attachment state
         let t = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.tick()
-            }
+            onMainRunLoopTick { self?.tick() }
         }
         RunLoop.main.add(t, forMode: .common)
         timer = t

@@ -1,0 +1,48 @@
+{
+  "id": "firstrun.ask-keeper-note",
+  "domain": "workflow",
+  "label": "first run • Keeper card: What did I last write down",
+  "query": "walkthrough ask: What did I last write down",
+  "notes": "The walkthrough's `keeper.note` ask: the prepared workflow it runs, from workflow.team-ask-keeper-note. Runs the shipped file. Every tool step returns its fixture under its teammate, so nothing on this Mac is read. Fixture dates and expected arguments are `{{date:…}}` tokens on this Mac's calendar at run time.",
+  "fixtures": {},
+  "expect": {
+    "workflow": {
+      "bundled": "prepared-ask-keeper-note",
+      "input": {},
+      "toolResults": {
+        "read": {
+          "notes": [
+            {
+              "id": "note-read-1",
+              "title": "Gift ideas for Sam",
+              "modified": "{{date:yesterday_start+1260m}}",
+              "preview": "Board game, hiking socks"
+            }
+          ],
+          "count": 1
+        }
+      },
+      "toolArguments": {
+        "read": {
+          "limit": 3
+        }
+      },
+      "outputKeys": [
+        "answer"
+      ],
+      "outputContains": {
+        "answer": [
+          "gift"
+        ]
+      },
+      "outputExcludes": {
+        "answer": [
+          "{",
+          "}",
+          "\": \"",
+          "\\n"
+        ]
+      }
+    }
+  }
+}

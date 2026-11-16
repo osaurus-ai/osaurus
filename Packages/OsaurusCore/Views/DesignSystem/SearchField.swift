@@ -83,7 +83,7 @@ struct SearchField: View {
             }
         }
         .padding(.horizontal, theme.assignedMetric("component.input.paddingX", fallback: theme.settingsFieldInset))
-        .padding(.vertical, theme.assignedMetric("component.input.paddingY", fallback: 0))
+        .padding(.vertical, theme.assignedMetric("component.input.paddingY", fallback: theme.space.s0))
         .frame(minHeight: theme.assignedMetric("component.control.heightDefault", fallback: theme.controlSize.defaultHeight))
         .frame(width: fillsAvailableWidth ? nil : width)
         .frame(maxWidth: fillsAvailableWidth ? .infinity : nil)

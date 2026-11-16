@@ -35,21 +35,22 @@ struct SetupStepRail<Step: Hashable>: View {
     }
 
     private var rail: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
             ForEach(Array(steps.enumerated()), id: \.element) { index, step in
                 let status = state(step)
                 let isCurrent = step == current
                 Button {
                     withAnimation(theme.motion.quick) { current = step }
                 } label: {
-                    HStack(spacing: 10) {
+                    HStack(spacing: theme.space.s10) {
                         ZStack {
                             Circle()
                                 .fill(isCurrent ? theme.surface.selected : theme.surface.hover)
+                                .overlay(Circle().strokeBorder(isCurrent ? theme.selectionBorder : .clear, lineWidth: theme.selectionStroke))
                                 .frame(width: 26, height: 26)
                             if status == .done {
                                 Image(systemName: "checkmark")
-                                    .glyphSize(11, weight: .bold)
+                                    .glyphSize(.footnote, weight: .bold)
                                     .foregroundColor(theme.status.success.foreground)
                             } else {
                                 Text("\(index + 1)")
@@ -57,7 +58,7 @@ struct SetupStepRail<Step: Hashable>: View {
                                     .foregroundColor(isCurrent ? theme.text.link : theme.text.secondary)
                             }
                         }
-                        VStack(alignment: .leading, spacing: 1) {
+                        VStack(alignment: .leading, spacing: theme.space.s2) {
                             Text(title(step))
                                 .font(SettingsFont.compactLabel)
                                 .foregroundColor(isCurrent ? theme.text.primary : theme.text.secondary)
@@ -100,7 +101,7 @@ struct StepDoneBanner: View {
     @Environment(\.theme) private var theme
     let text: String
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: "checkmark.circle.fill").foregroundColor(theme.status.success.foreground)
             Text(text).font(SettingsFont.compactLabel).foregroundColor(theme.text.primary)
         }
@@ -114,9 +115,9 @@ struct StepIssueList: View {
     @Environment(\.theme) private var theme
     let items: [SetupItem]
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             ForEach(items) { item in
-                HStack(alignment: .top, spacing: 8) {
+                HStack(alignment: .top, spacing: theme.space.s8) {
                     Image(systemName: item.isBlocking ? "exclamationmark.circle.fill" : "info.circle")
                         .foregroundColor(
                             item.isBlocking ? theme.status.warning.foreground : theme.status.info.foreground
@@ -145,12 +146,12 @@ struct StepActionButton: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 6) {
+            HStack(spacing: theme.space.s6) {
                 if isLoading {
-                    ProgressView().controlSize(.small)
+                    SettingsSpinner()
                 } else {
                     Image(systemName: icon)
-                        .glyphSize(11, weight: .semibold)
+                        .glyphSize(.footnote, weight: .semibold)
                 }
                 Text(title, bundle: .module)
                     .font(SettingsFont.compactLabel)
@@ -170,12 +171,12 @@ struct StepActionButton: View {
 struct OrSeparator: View {
     @Environment(\.theme) private var theme
     var body: some View {
-        HStack(spacing: 10) {
-            Rectangle().fill(theme.border.default).frame(height: 1)
+        HStack(spacing: theme.space.s10) {
+            ThemeHairlineDivider()
             Text("or", bundle: .module)
                 .font(SettingsFont.smallLabel)
                 .foregroundColor(theme.text.tertiary)
-            Rectangle().fill(theme.border.default).frame(height: 1)
+            ThemeHairlineDivider()
         }
     }
 }
@@ -194,13 +195,13 @@ struct PermissionsStep: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             if items.isEmpty {
                 StepDoneBanner(text: doneText)
             } else {
                 StepIssueList(items: items)
                 ForEach(permissions, id: \.self) { permission in
-                    HStack(spacing: 10) {
+                    HStack(spacing: theme.space.s10) {
                         Image(systemName: permission.iconName)
                             .foregroundColor(theme.text.secondary)
                             .frame(width: 18)

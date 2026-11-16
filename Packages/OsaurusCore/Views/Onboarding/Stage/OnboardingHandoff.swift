@@ -12,7 +12,7 @@ import AppKit
 @MainActor
 enum OnboardingHandoff {
     /// The first chat window's size before the person resizes it.
-    static let compactChatSize = CGSize(width: 960, height: 720)
+    static let compactChatSize = CGSize(width: 960, height: 820)
 
     /// Centered on `visibleFrame`, never below the chat's minimum, never
     /// larger than the screen.

@@ -230,7 +230,7 @@ Agent names must be unique within a bundle. JSON only: agent files are not YAML.
 }
 ```
 
-- `requirements.models[0].strictness`: `preferred` (the default) means that if the agent's `model` isn't available on this Mac, the agent uses the user's default model and the result says so. `always` means the agent keeps its model, and Osaurus asks the user to download or choose one before it runs (the item reports `needs_user_action`).
+- `requirements.models[0].strictness`: `preferred` (the default) means that if the agent's `model` isn't available on this Mac, the agent uses the user's default model and the result says so. `always` means the agent keeps its model, and Osaurus asks the user to download or choose one before it runs (the item reports `needs_user_action`). An `always` main model also locks the installed agent to it (`model_locked: true`, **Lock Model** in the agent's Configure → Model): its chats show a fixed model chip instead of the model picker, and if the model or its provider later goes missing the chat says so and refuses to send instead of falling back to another model. The user can turn Lock Model off in the agent's settings.
 - `actions`: quick-action chips shown in the agent's empty chat. `icon` is an SF Symbol name.
 
 ### Agent keys
@@ -270,6 +270,7 @@ All keys except `name` are optional. These are the ones a bundle is likely to us
 | `description` | One line the Orchestrator uses to decide when to delegate to this agent. Generated from the prompt when omitted. |
 | `system_prompt` | The agent's instructions. |
 | `model` | `foundation` (Apple's on-device model), a local model id, or `<provider>/<model>` for a cloud provider the user has set up. Omit it to use the user's current model. See `strictness` above. |
+| `model_locked` | `true` locks the agent's chats to `model` (set automatically by `strictness: always`). |
 | `temperature`, `max_tokens` | Sampling overrides. Omit them to use the model's own defaults. |
 | `capabilities` | Per-agent switches: `tools_enabled`, `memory_enabled`, `search_memory_enabled`, `web_search_enabled`, `knowledge_enabled`, `db_enabled`, `self_scheduling_enabled`, `computer_use_enabled`, `browser_use_enabled`, `image_enabled`, `applescript_enabled`, `speak_enabled`, `render_chart_enabled`, `relay_enabled`, and `apple_apps` (a list such as `["calendar", "reminders"]`). |
 | `skills` | The skill allow-list (below). |

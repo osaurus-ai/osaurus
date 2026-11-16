@@ -115,9 +115,9 @@ struct ChannelRoutingSection: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
+            HStack(alignment: .firstTextBaseline, spacing: theme.space.s8) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text("Who answers messages", bundle: .module)
                         .font(SettingsFont.sectionTitle)
                         .foregroundColor(theme.text.primary)
@@ -192,8 +192,8 @@ struct ChannelRoutingSection: View {
     // MARK: Table
 
     private var table: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 10) {
+        VStack(spacing: theme.space.s0) {
+            HStack(spacing: theme.space.s10) {
                 columnTitle(L("Where")).frame(maxWidth: .infinity, alignment: .leading)
                 columnTitle(L("Who answers")).frame(width: 150, alignment: .leading)
                 columnTitle(L("Replies")).frame(width: 128, alignment: .leading)
@@ -204,7 +204,7 @@ struct ChannelRoutingSection: View {
             .background(theme.surface.hover)
 
             if roster.rules.isEmpty {
-                HStack(spacing: 8) {
+                HStack(spacing: theme.space.s8) {
                     Image(systemName: "tray")
                         .foregroundColor(theme.text.tertiary)
                     Text(
@@ -220,7 +220,7 @@ struct ChannelRoutingSection: View {
             }
 
             ForEach(Array(roster.rules.enumerated()), id: \.element.id) { index, rule in
-                if index > 0 { Divider().opacity(0.5) }
+                if index > 0 { ThemeHairlineDivider() }
                 ruleRow(rule)
             }
         }
@@ -237,11 +237,11 @@ struct ChannelRoutingSection: View {
     }
 
     private func ruleRow(_ rule: ChannelAgentRoster.Rule) -> some View {
-        HStack(alignment: .center, spacing: 10) {
+        HStack(alignment: .center, spacing: theme.space.s10) {
             whereCell(rule).frame(maxWidth: .infinity, alignment: .leading)
             whoCell(rule).frame(width: 150, alignment: .leading)
             repliesCell(rule).frame(width: 128, alignment: .leading)
-            HStack(spacing: 6) {
+            HStack(spacing: theme.space.s6) {
                 Toggle(
                     "",
                     isOn: Binding(
@@ -261,11 +261,11 @@ struct ChannelRoutingSection: View {
     }
 
     private func whereCell(_ rule: ChannelAgentRoster.Rule) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
             Button {
                 roomsFor = rule.id
             } label: {
-                HStack(spacing: 4) {
+                HStack(spacing: theme.space.s4) {
                     if rule.roomIds.isEmpty {
                         roomChip(L("Any room"), muted: true)
                     } else {
@@ -273,7 +273,7 @@ struct ChannelRoutingSection: View {
                         ViewThatFits(in: .horizontal) {
                             ForEach(Array(stride(from: min(rule.roomIds.count, 4), through: 1, by: -1)), id: \.self) {
                                 shown in
-                                HStack(spacing: 4) {
+                                HStack(spacing: theme.space.s4) {
                                     ForEach(rule.roomIds.prefix(shown), id: \.self) { room in
                                         roomChip(rooms.label(room), muted: false)
                                     }
@@ -283,7 +283,7 @@ struct ChannelRoutingSection: View {
                         }
                     }
                     Image(systemName: "chevron.down")
-                        .glyphSize(7, weight: .bold)
+                        .glyphSize(.tiny, weight: .bold)
                         .foregroundColor(theme.text.tertiary)
                 }
             }
@@ -310,7 +310,7 @@ struct ChannelRoutingSection: View {
             if !badges.isEmpty {
                 ViewThatFits(in: .horizontal) {
                     ForEach(Array(stride(from: badges.count, through: 1, by: -1)), id: \.self) { shown in
-                        HStack(spacing: 4) {
+                        HStack(spacing: theme.space.s4) {
                             ForEach(badges.prefix(shown), id: \.self) { badge in
                                 Text(badge)
                                     .font(SettingsFont.chip)
@@ -350,7 +350,7 @@ struct ChannelRoutingSection: View {
 
     private func whoCell(_ rule: ChannelAgentRoster.Rule) -> some View {
         let missing = ChannelRoutingNames.isMissing(rule.target)
-        return HStack(spacing: 6) {
+        return HStack(spacing: theme.space.s6) {
             Image(
                 systemName: rule.target?.isAgent == false
                     ? "point.3.connected.trianglepath.dotted" : "person.crop.circle"
@@ -416,17 +416,17 @@ struct ChannelRoutingSection: View {
     private var summary: some View {
         let lines = roster.routingLines()
         let warnings = roster.routingWarnings(readableRoomIds: rooms.readable)
-        return VStack(alignment: .leading, spacing: 6) {
+        return VStack(alignment: .leading, spacing: theme.space.s6) {
             Text("Where messages go", bundle: .module)
                 .font(SettingsFont.smallLabel)
                 .foregroundColor(theme.text.secondary)
             ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: theme.space.s6) {
                     Text(lineKey(line.kind))
                         .font(SettingsFont.smallLabel)
                         .foregroundColor(theme.text.primary)
                     Image(systemName: "arrow.right")
-                        .glyphSize(8, weight: .bold)
+                        .glyphSize(.tiny, weight: .bold)
                         .foregroundColor(theme.text.tertiary)
                     Text(
                         line.targets.isEmpty
@@ -544,7 +544,7 @@ struct ChannelRoomSelection: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             Picker("", selection: $anyRoom) {
                 Text("Any room", bundle: .module).tag(true)
                 Text("Only these rooms", bundle: .module).tag(false)
@@ -563,7 +563,7 @@ struct ChannelRoomSelection: View {
                     .fixedSize(horizontal: false, vertical: true)
                 } else {
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 4) {
+                        VStack(alignment: .leading, spacing: theme.space.s4) {
                             ForEach(listed, id: \.self) { room in
                                 Toggle(
                                     isOn: Binding(
@@ -576,7 +576,7 @@ struct ChannelRoomSelection: View {
                                             }
                                         })
                                 ) {
-                                    HStack(spacing: 6) {
+                                    HStack(spacing: theme.space.s6) {
                                         Text(rooms.label(room))
                                             .font(SettingsFont.caption)
                                             .foregroundColor(theme.text.primary)
@@ -596,7 +596,7 @@ struct ChannelRoomSelection: View {
                     // collapses to nothing.
                     .frame(height: min(CGFloat(listed.count) * 22 + 4, 180))
                 }
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     SettingsTextField(placeholder: L("Room ID"), text: $typed, onSubmit: addTyped)
                     Button(L("Add"), action: addTyped)
                         .assignedSettingsButtonStyle(.secondary, size: .compact)
@@ -640,7 +640,7 @@ struct ChannelRoomPickerPopover: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             Text(title)
                 .font(SettingsFont.sectionTitle)
                 .foregroundColor(theme.text.primary)
@@ -692,12 +692,12 @@ struct ChannelAddRulePopover: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             Text("Add a routing rule", bundle: .module)
                 .font(SettingsFont.sectionTitle)
                 .foregroundColor(theme.text.primary)
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 Text("Who answers", bundle: .module)
                     .font(SettingsFont.smallLabel)
                     .foregroundColor(theme.text.secondary)
@@ -743,7 +743,7 @@ struct ChannelAddRulePopover: View {
                 }
             }
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 Text("Where", bundle: .module)
                     .font(SettingsFont.smallLabel)
                     .foregroundColor(theme.text.secondary)
@@ -803,9 +803,9 @@ struct ChannelPostingSection: View {
     private var canPost: Bool { !rooms.writable.isEmpty }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
+            HStack(alignment: .firstTextBaseline, spacing: theme.space.s8) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text("Agents that post on their own", bundle: .module)
                         .font(SettingsFont.sectionTitle)
                         .foregroundColor(theme.text.primary)
@@ -825,9 +825,9 @@ struct ChannelPostingSection: View {
             }
 
             if !roster.posting.isEmpty {
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     ForEach(Array(roster.posting.enumerated()), id: \.element.id) { index, entry in
-                        if index > 0 { Divider().opacity(0.5) }
+                        if index > 0 { ThemeHairlineDivider() }
                         postingRow(entry)
                     }
                 }
@@ -865,9 +865,9 @@ struct ChannelPostingSection: View {
 
     private func postingRow(_ entry: ChannelAgentRoster.AgentPosting) -> some View {
         let agent = AgentManager.shared.agent(for: entry.agentId)
-        return HStack(spacing: 10) {
+        return HStack(spacing: theme.space.s10) {
             Image(systemName: "person.crop.circle")
-                .glyphSize(12)
+                .glyphSize(.caption)
                 .foregroundColor(theme.text.secondary)
             Text(agent?.name ?? L("Missing agent"))
                 .font(SettingsFont.compactLabel)

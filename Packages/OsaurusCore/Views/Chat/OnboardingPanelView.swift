@@ -47,7 +47,7 @@ struct OnboardingPanelView: View {
         ) { perform(button.action) }
     }
 
-    private var divider: some View { theme.border.subtle.frame(height: 1) }
+    private var divider: some View { ThemeHairlineDivider() }
 
     // MARK: - Setup card
 
@@ -56,7 +56,7 @@ struct OnboardingPanelView: View {
     private var setupCard: some View {
         let shape = RoundedRectangle(cornerRadius: theme.radius.large, style: .continuous)
         let hasDetail = panel.note != nil || panel.topicField
-        return VStack(alignment: .leading, spacing: 0) {
+        return VStack(alignment: .leading, spacing: theme.space.s0) {
             OnboardingSetupHeader(step: panel.step, teammate: panel.teammate) { perform(.dismissSetup) }
                 .padding(theme.space.s16)
 
@@ -75,7 +75,7 @@ struct OnboardingPanelView: View {
             }
             if !asks.isEmpty {
                 divider
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: theme.space.s0) {
                     ForEach(Array(asks.enumerated()), id: \.element.id) { index, ask in
                         if index > 0 { divider }
                         OnboardingPanelRow(trailingSymbol: "arrow.right", action: { perform(ask.action) }) {
@@ -112,7 +112,7 @@ struct OnboardingPanelView: View {
     private func noteRow(_ note: String) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: theme.space.s8) {
             Image(systemName: "info.circle")
-                .glyphSize(11, weight: .semibold)
+                .glyphSize(.footnote, weight: .semibold)
                 .foregroundStyle(theme.text.tertiary)
             Text(note)
                 .textStyle(.footnote)
@@ -158,7 +158,7 @@ struct OnboardingPanelView: View {
 
     private func askList(_ asks: [OnboardingPanel.Button]) -> some View {
         let shape = RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
-        return VStack(alignment: .leading, spacing: 0) {
+        return VStack(alignment: .leading, spacing: theme.space.s0) {
             ForEach(asks.indices, id: \.self) { index in
                 let ask = asks[index]
                 if index > 0 { divider }
@@ -173,7 +173,7 @@ struct OnboardingPanelView: View {
                             .fixedSize(horizontal: false, vertical: true)
                             .frame(maxWidth: .infinity, alignment: .leading)
                         Image(systemName: "arrow.right")
-                            .glyphSize(11, weight: .semibold)
+                            .glyphSize(.footnote, weight: .semibold)
                             .foregroundStyle(theme.text.tertiary)
                     }
                     .padding(.horizontal, theme.space.s12)

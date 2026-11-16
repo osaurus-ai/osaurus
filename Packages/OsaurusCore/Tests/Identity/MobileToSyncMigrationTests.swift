@@ -254,8 +254,8 @@ struct MobileToSyncMigrationTests {
     // MARK: Attribution
 
     @Test func participantColorIsStableAndMonogramSkipsPrefixes() {
-        #expect(ParticipantAvatar.hue(for: "0xABC") == ParticipantAvatar.hue(for: "0xabc"))
-        #expect(ParticipantAvatar.hue(for: "alice") != ParticipantAvatar.hue(for: "bob"))
+        #expect(DataInk.slot(forSeed: "0xABC") == DataInk.slot(forSeed: "0xabc"))
+        #expect(DataInk.slot(forSeed: "alice") != DataInk.slot(forSeed: "bob"))
         #expect(ParticipantAvatar.monogramSource("@alice") == "alice")
         #expect(ParticipantAvatar.monogramSource("0x9c3e…11aa") == "9c3e…11aa")
         #expect(ParticipantAvatar.isPerson(Participant(kind: .invitePeer)))

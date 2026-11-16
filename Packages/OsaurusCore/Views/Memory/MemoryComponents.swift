@@ -58,7 +58,7 @@ struct PinnedFactsPanel: View {
                 .padding(.vertical, theme.space.s16)
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 0) {
+                    LazyVStack(spacing: theme.space.s0) {
                         ForEach(filteredFacts) { fact in
                             PinnedFactRow(
                                 fact: fact,
@@ -263,6 +263,7 @@ struct MemoryCountLabel: View {
 // MARK: - Agent Memory Row
 
 struct MemoryAgentRow: View {
+    @Environment(\.theme) private var theme
     let agent: Agent
     let count: Int
     let onSelect: () -> Void
@@ -276,7 +277,7 @@ struct MemoryAgentRow: View {
             action: onSelect
         ) {
             Circle()
-                .fill(agentColorFor(agent.name))
+                .fill(theme.dataInk(seed: agent.name))
                 .frame(width: 8, height: 8)
         } trailing: {
             MemoryCountLabel(count: count)
@@ -298,7 +299,7 @@ struct IdentityEditSheet: View {
     @State private var editText: String = ""
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             HStack {
                 VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text("Edit Identity", bundle: .module)
@@ -311,7 +312,7 @@ struct IdentityEditSheet: View {
                 Spacer()
                 Button(action: { dismiss() }) {
                     Image(systemName: "xmark")
-                        .glyphSize(12, weight: .semibold)
+                        .glyphSize(.caption, weight: .semibold)
                         .foregroundColor(theme.text.secondary)
                         .frame(width: 28, height: 28)
                         .settingsChrome(.inset)
@@ -320,11 +321,11 @@ struct IdentityEditSheet: View {
             }
             .padding(.horizontal, theme.space.s16).padding(.vertical, theme.space.s16)
 
-            Divider().opacity(0.5)
+            ThemeHairlineDivider()
 
             SettingsTextEditor(text: $editText)
 
-            Divider().opacity(0.5)
+            ThemeHairlineDivider()
 
             HStack {
                 Text(pluralizedMemory(max(1, editText.count / MemoryConfiguration.charsPerToken), "token"))
@@ -376,7 +377,7 @@ struct AddOverrideSheet: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             HStack {
                 VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text("Add Override", bundle: .module)
@@ -389,7 +390,7 @@ struct AddOverrideSheet: View {
                 Spacer()
                 Button(action: { dismiss() }) {
                     Image(systemName: "xmark")
-                        .glyphSize(12, weight: .semibold)
+                        .glyphSize(.caption, weight: .semibold)
                         .foregroundColor(theme.text.secondary)
                         .frame(width: 28, height: 28)
                         .settingsChrome(.inset)
@@ -398,13 +399,13 @@ struct AddOverrideSheet: View {
             }
             .padding(.horizontal, theme.space.s16).padding(.vertical, theme.space.s16)
 
-            Divider().opacity(0.5)
+            ThemeHairlineDivider()
 
             SettingsTextField(placeholder: L("e.g., My name is Terence"), text: $text, focus: $isFocused)
             .padding(.horizontal, theme.space.s16)
             .padding(.vertical, theme.space.s16)
 
-            Divider().opacity(0.5)
+            ThemeHairlineDivider()
 
             HStack {
                 Spacer()
@@ -450,7 +451,7 @@ struct ContextPreviewSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             HStack {
                 VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text("Memory Context Preview", bundle: .module)
@@ -466,7 +467,7 @@ struct ContextPreviewSheet: View {
 
                 Button(action: { dismiss() }) {
                     Image(systemName: "xmark")
-                        .glyphSize(12, weight: .semibold)
+                        .glyphSize(.caption, weight: .semibold)
                         .foregroundColor(theme.text.secondary)
                         .frame(width: 28, height: 28)
                         .settingsChrome(.inset)
@@ -475,7 +476,7 @@ struct ContextPreviewSheet: View {
             }
             .padding(.horizontal, theme.space.s16).padding(.vertical, theme.space.s16)
 
-            Divider().opacity(0.5)
+            ThemeHairlineDivider()
 
             ScrollView {
                 Text(context)

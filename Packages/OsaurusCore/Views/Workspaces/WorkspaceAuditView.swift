@@ -64,11 +64,11 @@ struct WorkspaceAuditCard: View {
                         .foregroundColor(theme.text.secondary)
                 }
 
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: theme.space.s0) {
                     ForEach(visible) { record in
                         WorkspaceAuditRow(record: record)
                         if record.id != visible.last?.id {
-                            Divider().opacity(0.5)
+                            ThemeHairlineDivider()
                         }
                     }
                 }
@@ -115,13 +115,13 @@ struct WorkspaceAuditCard: View {
     // MARK: - Pieces
 
     private var headerActions: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Button {
                 Task { await verify() }
             } label: {
-                HStack(spacing: 5) {
+                HStack(spacing: theme.space.s4) {
                     Image(systemName: "checkmark.shield")
-                        .glyphSize(10.5, weight: .semibold)
+                        .glyphSize(.footnote, weight: .semibold)
                     Text("Verify", bundle: .module)
                 }
             }
@@ -132,9 +132,9 @@ struct WorkspaceAuditCard: View {
             Button {
                 Task { await export() }
             } label: {
-                HStack(spacing: 5) {
+                HStack(spacing: theme.space.s4) {
                     Image(systemName: "square.and.arrow.up")
-                        .glyphSize(10.5, weight: .semibold)
+                        .glyphSize(.footnote, weight: .semibold)
                     Text("Export", bundle: .module)
                 }
             }
@@ -145,7 +145,7 @@ struct WorkspaceAuditCard: View {
     }
 
     private var filterRow: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: theme.space.s6) {
             filterChip(nil, label: L("All"))
             ForEach(WorkspaceAuditEventKind.Category.allCases, id: \.self) { category in
                 filterChip(category, label: Self.label(for: category))
@@ -164,9 +164,9 @@ struct WorkspaceAuditCard: View {
     }
 
     private func verificationRow(_ verification: WorkspaceAuditVerification) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: verification.isIntact ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
-                .glyphSize(12, weight: .semibold)
+                .glyphSize(.caption, weight: .semibold)
                 .foregroundColor(
                     verification.isIntact ? theme.status.success.foreground : theme.status.error.foreground
                 )
@@ -179,11 +179,7 @@ struct WorkspaceAuditCard: View {
         .padding(.vertical, theme.space.s8)
         .background(
             RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
-                .fill(
-                    (verification.isIntact ? theme.status.success.foreground : theme.status.error.foreground).opacity(
-                        0.08
-                    )
-                )
+                .fill(verification.isIntact ? theme.status.success.background : theme.status.error.background)
         )
     }
 
@@ -267,14 +263,14 @@ struct WorkspaceAuditRow: View {
     let record: WorkspaceAuditRecord
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: theme.space.s10) {
             Image(systemName: icon)
-                .glyphSize(11, weight: .semibold)
+                .glyphSize(.footnote, weight: .semibold)
                 .foregroundColor(tint)
                 .frame(width: 16, alignment: .center)
                 .padding(.top, theme.space.s2)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(title)
                     .font(SettingsFont.compactLabel)
                     .foregroundColor(theme.text.primary)

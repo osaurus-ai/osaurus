@@ -110,14 +110,16 @@ enum FolderToolError: LocalizedError {
             }
         }
 
-        var pivotHint: String? {
+        func pivotHint(hasShell: Bool) -> String? {
             switch self {
             case .imageOnlyPdf:
-                return
-                    "Use an OCR tool (e.g. `ocrmypdf`, `tesseract`) via shell_run to recover the text."
+                return hasShell
+                    ? "Use an OCR tool (e.g. `ocrmypdf`, `tesseract`) via shell_run to recover the text."
+                    : "It is a scanned PDF with no text layer; tell the user it can't be read here."
             case .image:
-                return
-                    "Ask the user to attach the image to chat for a vision model, or use an OCR tool via shell_run."
+                return hasShell
+                    ? "Ask the user to attach the image to chat for a vision model, or use an OCR tool via shell_run."
+                    : "Ask the user to attach the image to chat for a vision model."
             case .parseFailed, .unsupportedFormat, .nulByte, .decodeFailed:
                 return nil
             }
@@ -3279,7 +3281,7 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
                     + "complete new content (\(target.contentHint); any length), or assemble the text in a workspace "
                     + "file first and render the document from it with `source_path`.",
                 field: "mode",
-                expected: "omit `mode` (or `write`) for .\(ext); documents are regenerated whole",
+                expected: "omit `mode` (or `overwrite`) for .\(ext); documents are regenerated whole",
                 tool: name,
                 retryable: false
             )
@@ -3381,9 +3383,13 @@ struct FileWriteTool: OsaurusTool, PermissionedTool {
         }
         var warnings: [String] = []
         if existed {
-            // Only promise an undo when this call is inside a journal capture.
-            warnings.append(
+            // Only promise an undo when this call is inside a journal capture
+            // and the turn can call `file_undo` (sandbox mode hides it).
+            let canUndo =
                 ChatExecutionContext.currentChangeSetId != nil
+                && (ChatExecutionContext.toolExecutionScope?.permits("file_undo") ?? true)
+            warnings.append(
+                canUndo
                     ? "Overwrites the existing .\(ext) at '\(relativePath)' (previous bytes are captured for `file_undo`)."
                     : "Overwrites the existing .\(ext) at '\(relativePath)'."
             )
@@ -4950,6 +4956,11 @@ struct FileSearchTool: OsaurusTool {
                 options: [.skipsHiddenFiles]
             )
 
+            // Proper glob → regex conversion: all metacharacters escaped, so
+            // `*.+(test)*` can't silently become a regex that matches nothing.
+            let fileRegex = filePattern.flatMap {
+                try? NSRegularExpression(pattern: FolderToolHelpers.globToRegex($0))
+            }
             var visited = 0
             while let fileURL = enumerator?.nextObject() as? URL {
                 guard totalMatches < collectCap else { break }
@@ -4983,16 +4994,11 @@ struct FileSearchTool: OsaurusTool {
                     continue
                 }
 
-                // Check file pattern (proper glob → regex conversion: all
-                // metacharacters escaped, so `*.+(test)*` can't silently
-                // become a regex that matches nothing).
-                if let pattern = filePattern {
-                    let regex = FolderToolHelpers.globToRegex(pattern)
-                    if fileURL.lastPathComponent.range(of: regex, options: .regularExpression)
-                        == nil
-                    {
-                        continue
-                    }
+                if filePattern != nil {
+                    let name = fileURL.lastPathComponent
+                    guard let fileRegex,
+                        fileRegex.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)) != nil
+                    else { continue }
                 }
 
                 // Search file
@@ -5485,6 +5491,9 @@ struct FileSearchTool: OsaurusTool {
         }
 
         guard let rootPath else { return .skipped(.undecodable) }
+        // Most files don't match: one pass over the text instead of
+        // splitting it into lines. A match in a line is a match in the text.
+        guard content.localizedCaseInsensitiveContains(pattern) else { return .matches([]) }
         let relativePath = FolderToolHelpers.resultPath(for: url, under: rootPath)
 
         let lines = FolderToolHelpers.contentLines(content)

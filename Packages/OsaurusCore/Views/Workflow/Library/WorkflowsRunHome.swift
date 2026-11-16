@@ -271,7 +271,7 @@ extension WorkflowsView {
         } else if let run {
             HStack(spacing: theme.space.s4) {
                 Image(systemName: WorkflowRunStyle.icon(run.status))
-                    .glyphSize(10, weight: .semibold)
+                    .glyphSize(.micro, weight: .semibold)
                     .foregroundStyle(WorkflowRunStyle.color(run.status, theme: theme))
                     .accessibilityHidden(true)
                 Text(verbatim: WorkflowRunPresentation.relativeTime(run.finishedAt ?? run.startedAt))
@@ -297,9 +297,7 @@ extension WorkflowsView {
     private func runButton(_ workflow: InstalledWorkflow, live: WorkflowRun?) -> some View {
         if let live {
             Button { openRun(live) } label: {
-                ProgressView()
-                    .controlSize(.mini)
-                    .frame(width: theme.space.s16, height: theme.space.s16)
+                SettingsSpinner(size: .mini)
             }
             .buttonStyle(SettingsIconButtonStyle(size: .extraSmall, role: .tertiary))
             .help(L("Running. Open the run"))
@@ -414,7 +412,7 @@ struct WorkflowsRunningNow: View {
                                 .foregroundStyle(theme.text.secondary)
                         }
                     }
-                    VStack(spacing: 0) {
+                    VStack(spacing: theme.space.s0) {
                         ForEach(Array(activity.enumerated()), id: \.element.id) { index, run in
                             if index > 0 {
                                 ThemeHairlineDivider(color: theme.border.subtle)
@@ -479,7 +477,7 @@ private struct WorkflowRunningNowRow: View {
                 }
                 Text(verbatim: WorkflowRunPresentation.progressLine(run, definition: definition))
                     .textStyle(.caption)
-                    .foregroundStyle(run.status == .failed ? theme.statusInk.error : theme.text.secondary)
+                    .foregroundStyle(run.status == .failed ? theme.statusInk(.error) : theme.text.secondary)
                     .lineLimit(1)
                 if !run.nodes.isEmpty, !run.status.isTerminal {
                     WorkflowStepStrip(run: run)
@@ -514,7 +512,7 @@ private struct WorkflowRunningNowRow: View {
             } label: {
                 HStack(spacing: theme.space.s6) {
                     Image(systemName: "stop.fill")
-                        .glyphSize(8)
+                        .glyphSize(.tiny)
                         .accessibilityHidden(true)
                     Text("Stop", bundle: .module)
                 }
@@ -523,7 +521,7 @@ private struct WorkflowRunningNowRow: View {
             .help(L("Stop this run"))
         default:
             Image(systemName: "chevron.right")
-                .glyphSize(9, weight: .semibold)
+                .glyphSize(.tiny, weight: .semibold)
                 .foregroundStyle(theme.text.tertiary)
                 .frame(height: theme.space.s24)
                 .accessibilityHidden(true)

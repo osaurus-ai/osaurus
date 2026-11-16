@@ -47,12 +47,12 @@ struct WorkflowNodeEditor: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
+            HStack(spacing: theme.space.s10) {
                 Image(systemName: WorkflowFlowStyle.icon(node))
-                    .glyphSize(14)
+                    .glyphSize(.body)
                     .foregroundColor(theme.text.link)
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text("Edit Step", bundle: .module)
                         .textStyle(.heading)
                         .foregroundColor(theme.text.primary)
@@ -62,17 +62,17 @@ struct WorkflowNodeEditor: View {
                 }
                 Spacer()
             }
-            .padding(20)
+            .padding(theme.space.s20)
             Divider()
             ScrollView {
                 form
-                    .padding(20)
+                    .padding(theme.space.s20)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             Divider()
             footer
-                .padding(.horizontal, 20)
-                .padding(.vertical, 14)
+                .padding(.horizontal, theme.space.s20)
+                .padding(.vertical, theme.space.s14)
         }
         .fittedSheetFrame(width: 560, height: 620)
         .background(theme.surface.canvas)
@@ -88,7 +88,7 @@ struct WorkflowNodeEditor: View {
 
     @ViewBuilder
     private var form: some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: theme.space.s16) {
             if editingJSON {
                 codeEditor($json, minHeight: 320)
             } else {
@@ -221,7 +221,7 @@ struct WorkflowNodeEditor: View {
             }
 
             DisclosureGroup(isExpanded: $showsAdvanced) {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
                     if case .inference = node.kind {
                         field("Slot id") {
                             SettingsTextField(placeholder: "main", text: $slot, monospaced: true)
@@ -254,7 +254,7 @@ struct WorkflowNodeEditor: View {
     }
 
     private var footer: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Button(role: .destructive) {
                 WorkflowStepActions.delete(node, in: draftID)
                 onClose()
@@ -287,7 +287,7 @@ struct WorkflowNodeEditor: View {
     }
 
     private func field<Content: View>(_ label: LocalizedStringKey, @ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
             Text(label, bundle: .module)
                 .textStyle(.caption, weight: 500)
                 .foregroundColor(theme.text.secondary)
@@ -557,17 +557,17 @@ struct WorkflowToolMenu: View {
                 }
             }
         } label: {
-            HStack(spacing: 6) {
+            HStack(spacing: theme.space.s6) {
                 Text(verbatim: selection?.name ?? L("Choose a tool"))
                     .textStyle(.code)
                     .foregroundColor(theme.text.primary)
                     .lineLimit(1)
                 Image(systemName: "chevron.up.chevron.down")
-                    .glyphSize(8, weight: .semibold)
+                    .glyphSize(.tiny, weight: .semibold)
                     .foregroundColor(theme.text.tertiary)
             }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
+            .padding(.horizontal, theme.space.s8)
+            .padding(.vertical, theme.space.s4)
             .settingsChrome(.inset)
             .overlay(RoundedRectangle(cornerRadius: theme.radius.medium).strokeBorder(theme.border.strong))
             .contentShape(Rectangle())
@@ -642,20 +642,20 @@ struct WorkflowEditorMenuLabel: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: theme.space.s6) {
             Text(verbatim: text)
                 .textStyle(.bodySmall)
                 .foregroundColor(theme.text.primary)
                 .lineLimit(1)
             if let icon {
-                Image(systemName: icon).glyphSize(9).foregroundColor(theme.text.tertiary)
+                Image(systemName: icon).glyphSize(.tiny).foregroundColor(theme.text.tertiary)
             }
             Image(systemName: "chevron.up.chevron.down")
-                .glyphSize(8, weight: .semibold)
+                .glyphSize(.tiny, weight: .semibold)
                 .foregroundColor(theme.text.tertiary)
         }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 5)
+        .padding(.horizontal, theme.space.s8)
+        .padding(.vertical, theme.space.s4)
         .settingsChrome(.inset)
         .overlay(RoundedRectangle(cornerRadius: theme.radius.medium).strokeBorder(theme.border.strong))
         .contentShape(Rectangle())
@@ -682,7 +682,7 @@ struct WorkflowStepModelMenu: View {
             guard other.id != node.id, case .inference(let spec) = other.kind else { return false }
             return spec.modelSlot == slotID
         }
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
             WorkflowModelSlotPicker(
                 requirement: requirement, bound: bound, boundLabel: { WorkflowModelChoices.runsOn($0) }
             ) { pick($0) }

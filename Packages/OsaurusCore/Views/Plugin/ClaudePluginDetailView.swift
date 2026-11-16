@@ -42,7 +42,7 @@ struct ClaudePluginDetailView: View {
     private var snapshot: ClaudePluginManifestSnapshot? { plugin.snapshot }
 
     private var pluginColor: Color {
-        plugin.hasUpdate ? .orange : theme.action.primary.default.background
+        plugin.hasUpdate ? theme.status.warning.foreground : theme.action.primary.default.background
     }
 
     private var hasUserConfig: Bool {
@@ -187,8 +187,8 @@ struct ClaudePluginDetailView: View {
     }
 
     private func heroStatBadge(icon: String, text: String, color: Color) -> some View {
-        HStack(spacing: 4) {
-            Image(systemName: icon).glyphSize(10)
+        HStack(spacing: theme.space.s4) {
+            Image(systemName: icon).glyphSize(.micro)
             Text(text)
                 .font(SettingsFont.smallLabel)
                 .lineLimit(1)
@@ -200,11 +200,11 @@ struct ClaudePluginDetailView: View {
     // MARK: - Sections
 
     private func userConfigBanner(onConfigure: @escaping () -> Void) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             Image(systemName: "slider.horizontal.3")
-                .glyphSize(14)
+                .glyphSize(.body)
                 .foregroundColor(theme.text.link)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text("Configuration available", bundle: .module)
                     .font(SettingsFont.sectionTitle)
                     .foregroundColor(theme.text.primary)
@@ -228,10 +228,10 @@ struct ClaudePluginDetailView: View {
     }
 
     private var installOutcomeNotice: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: "exclamationmark.circle")
-                    .glyphSize(13, weight: .semibold)
+                    .glyphSize(.label, weight: .semibold)
                     .foregroundColor(theme.status.warning.foreground)
                 Text("Import needs attention", bundle: .module)
                     .font(SettingsFont.compactLabel)
@@ -244,7 +244,7 @@ struct ClaudePluginDetailView: View {
             )
             .font(SettingsFont.rowDescription)
             .foregroundColor(theme.text.secondary)
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 ForEach(installOutcomeMessages, id: \.self) { message in
                     Text("• \(message)")
                         .font(SettingsFont.monoSmall)
@@ -335,11 +335,11 @@ struct ClaudePluginDetailView: View {
     }
 
     private func keywordsSection(_ keywords: [String]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             sectionHeader(title: "Keywords")
             // Simple horizontal-flow using ViewThatFits-style wrap; for
             // brevity we line them up with HStack + wraps via FlexView.
-            FlowLayout(spacing: 6) {
+            FlowLayout(spacing: theme.space.s6) {
                 ForEach(keywords, id: \.self) { keyword in
                     StatusChip(keyword, tone: .accent)
                 }
@@ -350,14 +350,14 @@ struct ClaudePluginDetailView: View {
     }
 
     private var componentsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: theme.space.s12) {
             sectionHeader(title: "Components")
             if plugin.totalCount == 0 {
                 Text("No artifacts installed for this plugin.", bundle: .module)
                     .font(SettingsFont.caption)
                     .foregroundColor(theme.text.secondary)
             } else {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: theme.space.s14) {
                     ForEach(ClaudePluginArtifactKind.allCases, id: \.self) { kind in
                         componentGroup(kind: kind)
                     }
@@ -371,12 +371,12 @@ struct ClaudePluginDetailView: View {
     @ViewBuilder
     private func componentGroup(kind: ClaudePluginArtifactKind) -> some View {
         let count = plugin.counts[kind]
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             groupHeader(kind: kind, count: count)
             if count == 0 {
                 groupEmptyPlaceholder(kind: kind)
             } else {
-                VStack(spacing: 6) {
+                VStack(spacing: theme.space.s6) {
                     switch kind {
                     case .skill:
                         ForEach(plugin.skills) { skill in
@@ -401,9 +401,9 @@ struct ClaudePluginDetailView: View {
     }
 
     private func groupHeader(kind: ClaudePluginArtifactKind, count: Int) -> some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             Image(systemName: kind.icon)
-                .glyphSize(12, weight: .medium)
+                .glyphSize(.caption, weight: .medium)
                 .foregroundColor(kind.tint(theme))
             Text(kind.titlePlural)
                 .font(SettingsFont.compactLabel)
@@ -536,7 +536,7 @@ struct ClaudePluginDetailView: View {
     @ViewBuilder
     private func transportBadge(for mcp: InstalledClaudeMCP) -> some View {
         if mcp.isStdio {
-            StatusChip("stdio", tint: .purple, icon: "terminal")
+            StatusChip("stdio", tint: theme.dataInk(.purple), icon: "terminal")
         } else {
             StatusChip("HTTP", tone: .accent, icon: "network")
         }
@@ -546,7 +546,7 @@ struct ClaudePluginDetailView: View {
         let isSandbox = host == .sandbox
         return StatusChip(
             isSandbox ? "Sandbox" : "Host",
-            tint: isSandbox ? theme.action.primary.default.background : .orange,
+            tint: isSandbox ? theme.action.primary.default.background : theme.dataInk(.orange),
             icon: isSandbox ? "shield.lefthalf.filled" : "macwindow"
         )
     }
@@ -558,21 +558,18 @@ struct ClaudePluginDetailView: View {
             list.append(contentsOf: snapshot.declaresUnsupportedComponents)
             return list
         }()
-        return HStack(spacing: 10) {
+        return HStack(spacing: theme.space.s10) {
             Image(systemName: "exclamationmark.bubble")
-                .glyphSize(14)
+                .glyphSize(.body)
                 .foregroundColor(theme.status.warning.foreground)
-            VStack(alignment: .leading, spacing: 2) {
+            SettingsRowText(compact: true) {
                 Text("Some components are not honored yet", bundle: .module)
-                    .font(SettingsFont.compactLabel)
-                    .foregroundColor(theme.text.primary)
+            } description: {
                 Text(
                     "This plugin declared: \(parts.joined(separator: ", ")). Osaurus stores the metadata but does not yet execute these surfaces.",
                     bundle: .module
                 )
-                .font(SettingsFont.rowDescription)
                 .foregroundColor(theme.text.secondary)
-                .fixedSize(horizontal: false, vertical: true)
             }
             Spacer()
         }
@@ -581,7 +578,7 @@ struct ClaudePluginDetailView: View {
     }
 
     private func changelogSection(_ content: String) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             sectionHeader(title: "Changelog")
             ScrollView {
                 Text(content)
@@ -600,9 +597,9 @@ struct ClaudePluginDetailView: View {
     }
 
     private var externalLinksSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             sectionHeader(title: "External links")
-            VStack(spacing: 6) {
+            VStack(spacing: theme.space.s6) {
                 if let repo = snapshot?.repository, !repo.isEmpty,
                     let url = URL(string: repo)
                 {
@@ -639,16 +636,16 @@ struct ClaudePluginDetailView: View {
 
     private func linkRow(icon: String, title: String, url: URL) -> some View {
         Button(action: { NSWorkspace.shared.open(url) }) {
-            HStack(spacing: 8) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: icon)
-                    .glyphSize(12)
+                    .glyphSize(.caption)
                     .foregroundColor(theme.text.link)
                 Text(title)
                     .font(SettingsFont.caption)
                     .foregroundColor(theme.text.primary)
                 Spacer()
                 Image(systemName: "arrow.up.right.square")
-                    .glyphSize(11)
+                    .glyphSize(.footnote)
                     .foregroundColor(theme.text.tertiary)
             }
             .padding(.horizontal, theme.space.s8)
@@ -750,22 +747,19 @@ private struct ArtifactNestedRow<Trailing: View, Preview: View>: View {
     }
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             // Leading region — the only area that triggers the popover.
             // Wrapping the tap gesture here (instead of on the whole
             // row) keeps the trailing controls free for their own
             // gestures (Restart button, etc.).
-            HStack(spacing: 10) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: theme.radius.medium)
-                        .fill(tint.opacity(0.12))
-                    Image(systemName: icon)
-                        .glyphSize(12, weight: .medium)
-                        .foregroundColor(tint)
-                }
-                .frame(width: 28, height: 28)
+            HStack(spacing: theme.space.s10) {
+                Image(systemName: icon)
+                    .glyphSize(.caption, weight: .medium)
+                    .foregroundColor(tint)
+                    .frame(width: 28, height: 28)
+                    .settingsChrome(.tinted(tint))
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text(title)
                         .font(SettingsFont.compactLabel)
                         .foregroundColor(theme.text.primary)
@@ -790,7 +784,7 @@ private struct ArtifactNestedRow<Trailing: View, Preview: View>: View {
                     .frame(width: 420)
             }
 
-            HStack(spacing: 6) {
+            HStack(spacing: theme.space.s6) {
                 trailing()
             }
         }
@@ -811,14 +805,12 @@ private struct MCPRestartButton: View {
 
     var body: some View {
         Button(action: restart) {
-            HStack(spacing: 4) {
+            HStack(spacing: theme.space.s4) {
                 if isRestarting {
-                    ProgressView()
-                        .scaleEffect(0.4)
-                        .frame(width: 10, height: 10)
+                    SettingsSpinner(size: .mini)
                 } else {
                     Image(systemName: "arrow.clockwise")
-                        .glyphSize(10, weight: .semibold)
+                        .glyphSize(.micro, weight: .semibold)
                 }
                 Text("Restart", bundle: .module)
                     .font(SettingsFont.smallLabel)
@@ -876,17 +868,14 @@ private struct ArtifactPreviewCard<Pills: View, Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .top, spacing: 12) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: theme.radius.medium)
-                        .fill(tint.opacity(0.14))
-                    Image(systemName: icon)
-                        .glyphSize(16, weight: .medium)
-                        .foregroundColor(tint)
-                }
-                .frame(width: 36, height: 36)
-                VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
+            HStack(alignment: .top, spacing: theme.space.s12) {
+                Image(systemName: icon)
+                    .glyphSize(.medium, weight: .medium)
+                    .foregroundColor(tint)
+                    .frame(width: 36, height: 36)
+                    .settingsChrome(.tinted(tint))
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text(title)
                         .font(SettingsFont.cardTitle)
                         .foregroundColor(theme.text.primary)
@@ -928,14 +917,14 @@ private struct SkillPreviewView: View {
             title: skill.name,
             subtitle: skill.description.isEmpty ? nil : skill.description,
             pills: {
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     if let category = skill.category, !category.isEmpty {
                         StatusChip(category, tone: .accent, icon: "tag")
                     }
                 }
             },
             content: {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: theme.space.s12) {
                     metadataRow
                     if !skill.keywords.isEmpty {
                         keywordChips
@@ -947,7 +936,7 @@ private struct SkillPreviewView: View {
     }
 
     private var metadataRow: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             PreviewMeta(theme: theme, icon: "tag", label: "v\(skill.version)")
             if let author = skill.author, !author.isEmpty {
                 PreviewMeta(theme: theme, icon: "person", label: author)
@@ -971,7 +960,7 @@ private struct SkillPreviewView: View {
     }
 
     private var keywordChips: some View {
-        FlowLayout(spacing: 5) {
+        FlowLayout(spacing: theme.space.s4) {
             ForEach(skill.keywords, id: \.self) { keyword in
                 StatusChip(keyword, tone: .accent)
             }
@@ -985,7 +974,7 @@ private struct SkillPreviewView: View {
                 .font(SettingsFont.rowDescription.italic())
                 .foregroundColor(theme.text.tertiary)
         } else {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 Text("Instructions", bundle: .module)
                     .font(SettingsFont.smallLabel)
                     .foregroundColor(theme.text.secondary)
@@ -1024,7 +1013,7 @@ private struct SchedulePreviewView: View {
                 }
             },
             content: {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: theme.space.s12) {
                     metadataRow
                     instructionsBlock
                 }
@@ -1033,7 +1022,7 @@ private struct SchedulePreviewView: View {
     }
 
     private var metadataRow: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             if let next = schedule.nextRunText, !next.isEmpty {
                 PreviewMeta(
                     theme: theme,
@@ -1061,7 +1050,7 @@ private struct SchedulePreviewView: View {
                 .font(SettingsFont.rowDescription.italic())
                 .foregroundColor(theme.text.tertiary)
         } else {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 Text("Instructions", bundle: .module)
                     .font(SettingsFont.smallLabel)
                     .foregroundColor(theme.text.secondary)
@@ -1105,7 +1094,7 @@ private struct CommandPreviewView: View {
         if let template = command.template,
             !template.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 Text("Template", bundle: .module)
                     .font(SettingsFont.smallLabel)
                     .foregroundColor(theme.text.secondary)
@@ -1142,13 +1131,13 @@ private struct MCPPreviewView: View {
             title: mcp.name,
             subtitle: nil,
             pills: {
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     if mcp.isStdio {
-                        StatusChip("stdio", tint: .purple, icon: "terminal")
+                        StatusChip("stdio", tint: theme.dataInk(.purple), icon: "terminal")
                         StatusChip(
                             mcp.executionHost == .sandbox ? "Sandbox" : "Host",
                             tint: mcp.executionHost == .sandbox
-                                ? theme.action.primary.default.background : .orange,
+                                ? theme.action.primary.default.background : theme.dataInk(.orange),
                             icon: mcp.executionHost == .sandbox
                                 ? "shield.lefthalf.filled" : "macwindow"
                         )
@@ -1161,7 +1150,7 @@ private struct MCPPreviewView: View {
                 }
             },
             content: {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: theme.space.s12) {
                     if mcp.isStdio {
                         monospaceField(label: "Command", value: commandLine)
                         if let cwd = mcp.workingDirectory, !cwd.isEmpty {
@@ -1185,7 +1174,7 @@ private struct MCPPreviewView: View {
     }
 
     private func monospaceField(label: LocalizedStringKey, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
             Text(label, bundle: .module)
                 .font(SettingsFont.smallLabel)
                 .foregroundColor(theme.text.secondary)
@@ -1201,13 +1190,13 @@ private struct MCPPreviewView: View {
     }
 
     private var envBlock: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
             Text("Environment", bundle: .module)
                 .font(SettingsFont.smallLabel)
                 .foregroundColor(theme.text.secondary)
-            VStack(spacing: 4) {
+            VStack(spacing: theme.space.s4) {
                 ForEach(mcp.envEntries) { entry in
-                    HStack(spacing: 8) {
+                    HStack(spacing: theme.space.s8) {
                         Text(entry.key)
                             .font(SettingsFont.monoSmall)
                             .foregroundColor(theme.text.primary)
@@ -1240,9 +1229,9 @@ private struct PreviewMeta: View {
     let label: String
 
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: theme.space.s4) {
             Image(systemName: icon)
-                .glyphSize(10)
+                .glyphSize(.micro)
             Text(label)
                 .font(SettingsFont.rowDescription)
                 .lineLimit(1)

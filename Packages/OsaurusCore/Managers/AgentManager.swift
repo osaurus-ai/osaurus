@@ -545,6 +545,7 @@ public final class AgentManager: ObservableObject {
             generatedDescriptionPromptHash: agent.generatedDescriptionPromptHash,
             systemPrompt: agent.systemPrompt,
             defaultModel: agent.defaultModel,
+            modelLocked: agent.modelLocked,
             temperature: agent.temperature,
             maxTokens: agent.maxTokens,
             generationSettings: agent.generationSettings,
@@ -575,6 +576,18 @@ public final class AgentManager: ObservableObject {
             // A copy of a template-made agent is still that template's kin.
             sourceTemplateName: agent.sourceTemplateName
         )
+    }
+
+    /// Whether a custom agent already uses `name`, ignoring case and
+    /// surrounding whitespace. New Agent cannot create a second one.
+    func isCustomAgentNameTaken(_ name: String) -> Bool {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        return agents.contains {
+            !$0.isBuiltIn
+                && $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                    .caseInsensitiveCompare(trimmed) == .orderedSame
+        }
     }
 
     /// Save a pre-built agent, refresh the list, and assign a cryptographic address.
@@ -1661,6 +1674,22 @@ extension AgentManager {
             ?? defaultAgentModel
     }
 
+    /// The model every chat with this agent must run on, or nil when the
+    /// agent is not locked. Only a custom agent on the built-in loop with
+    /// its own `defaultModel` can be locked; a lock with nothing to lock to
+    /// is no lock.
+    public func lockedModel(for agentId: UUID?) -> String? {
+        guard let agentId, let agent = agent(for: agentId) else { return nil }
+        return Self.lockedModel(of: agent)
+    }
+
+    static func lockedModel(of agent: Agent) -> String? {
+        guard agent.modelLocked == true, !agent.isBuiltIn, (agent.runtime ?? .builtIn) == .builtIn,
+            let model = agent.defaultModel?.trimmingCharacters(in: .whitespacesAndNewlines), !model.isEmpty
+        else { return nil }
+        return model
+    }
+
     /// Get the effective temperature for an agent
     public func effectiveTemperature(for agentId: UUID) -> Float? {
         if agentId == Agent.configuratorId {
@@ -2134,6 +2163,36 @@ extension AgentManager {
         } else {
             refresh()
         }
+    }
+
+    /// Turn Lock Model on or off for a custom agent.
+    public func updateModelLocked(for agentId: UUID, locked: Bool) {
+        guard var agent = agent(for: agentId), !agent.isBuiltIn, (agent.modelLocked == true) != locked else { return }
+        agent.modelLocked = locked ? true : nil
+        update(agent)
+    }
+
+    /// Custom agents only: built-in agents always follow the global approval
+    /// settings (`ToolApprovalResolver.scope`).
+    public func updateToolApprovalMode(for agentId: UUID, mode: AgentToolApprovalMode) {
+        guard var agent = agent(for: agentId), !agent.isBuiltIn, agent.settings.toolApprovalMode != mode else { return }
+        agent.settings.toolApprovalMode = mode
+        update(agent)
+    }
+
+    /// Sets or, with nil, clears this agent's own policy for one tool.
+    public func updateToolPolicy(for agentId: UUID, tool: String, policy: ToolPermissionPolicy?) {
+        guard var agent = agent(for: agentId), !agent.isBuiltIn, agent.settings.toolPolicies[tool] != policy else {
+            return
+        }
+        agent.settings.toolPolicies[tool] = policy
+        update(agent)
+    }
+
+    public func resetToolPolicies(for agentId: UUID) {
+        guard var agent = agent(for: agentId), !agent.isBuiltIn, !agent.settings.toolPolicies.isEmpty else { return }
+        agent.settings.toolPolicies = [:]
+        update(agent)
     }
 
 }

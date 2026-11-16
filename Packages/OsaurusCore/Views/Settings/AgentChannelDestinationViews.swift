@@ -57,9 +57,9 @@ struct AgentChannelDefaultAgentPostingSheet: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             HStack {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
                     Text(AgentManager.shared.agent(for: Agent.defaultId)?.name ?? L("Default"))
                         .font(SettingsFont.detailTitle)
                         .foregroundColor(theme.text.primary)
@@ -164,7 +164,7 @@ struct AgentChannelDestinationRowCard: View {
 
     var body: some View {
         let presentation = self.presentation
-        return HStack(spacing: 10) {
+        return HStack(spacing: theme.space.s10) {
             ZStack {
                 RoundedRectangle(cornerRadius: theme.radius.medium)
                     .fill(
@@ -175,14 +175,14 @@ struct AgentChannelDestinationRowCard: View {
                         )
                     )
                 Image(systemName: connectionKind.icon)
-                    .glyphSize(13, weight: .semibold)
+                    .glyphSize(.label, weight: .semibold)
                     .foregroundColor(FixedPalette.onMedia)
             }
             .frame(width: 32, height: 32)
             .opacity(binding.isUsable ? 1 : 0.5)
 
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                HStack(spacing: theme.space.s6) {
                     Text(presentation.title)
                         .font(SettingsFont.compactLabel)
                         .foregroundColor(theme.text.primary)
@@ -310,7 +310,7 @@ struct AgentChannelAgentOnChannelsSection: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             if rows.isEmpty {
                 Text(
                     "This agent isn't on any channel yet. Open a channel under Channels and add it there.",
@@ -320,7 +320,7 @@ struct AgentChannelAgentOnChannelsSection: View {
                 .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
             } else {
-                VStack(spacing: 8) {
+                VStack(spacing: theme.space.s8) {
                     ForEach(rows) { row in
                         channelRow(row)
                     }
@@ -332,10 +332,10 @@ struct AgentChannelAgentOnChannelsSection: View {
                 Button {
                     AppDelegate.shared?.showManagementWindow(initialTab: .agentChannels)
                 } label: {
-                    HStack(spacing: 4) {
+                    HStack(spacing: theme.space.s4) {
                         Text("Open Channels", bundle: .module)
                         Image(systemName: "arrow.up.right")
-                            .glyphSize(9, weight: .semibold)
+                            .glyphSize(.tiny, weight: .semibold)
                     }
                     .textStyle(.footnote, weight: 500)
                 }
@@ -353,7 +353,7 @@ struct AgentChannelAgentOnChannelsSection: View {
     }
 
     private func channelRow(_ row: Row) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             ZStack {
                 RoundedRectangle(cornerRadius: theme.radius.medium)
                     .fill(
@@ -364,12 +364,12 @@ struct AgentChannelAgentOnChannelsSection: View {
                         )
                     )
                 Image(systemName: row.kind.icon)
-                    .glyphSize(12, weight: .semibold)
+                    .glyphSize(.caption, weight: .semibold)
                     .foregroundColor(FixedPalette.onMedia)
             }
             .frame(width: 28, height: 28)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(row.name)
                     .font(SettingsFont.compactLabel)
                     .foregroundColor(theme.text.primary)
@@ -385,10 +385,10 @@ struct AgentChannelAgentOnChannelsSection: View {
                 ManagementStateManager.shared.pendingChannelConnectionId = row.connectionId
                 AppDelegate.shared?.showManagementWindow(initialTab: .agentChannels)
             } label: {
-                HStack(spacing: 4) {
+                HStack(spacing: theme.space.s4) {
                     Text("Edit in Channels", bundle: .module)
                     Image(systemName: "arrow.up.right")
-                        .glyphSize(9, weight: .semibold)
+                        .glyphSize(.tiny, weight: .semibold)
                 }
                 .textStyle(.footnote, weight: 500)
             }
@@ -478,11 +478,11 @@ struct AgentChannelAgentDestinationsSection: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             if sendingPaused && !bindings.isEmpty {
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     Image(systemName: "pause.circle.fill")
-                        .glyphSize(11)
+                        .glyphSize(.footnote)
                     Text(
                         "Sending is paused by the global switch in Channels settings — nothing is delivered from these destinations until it's back on.",
                         bundle: .module
@@ -502,7 +502,7 @@ struct AgentChannelAgentDestinationsSection: View {
                 .foregroundColor(theme.text.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
             } else {
-                VStack(spacing: 8) {
+                VStack(spacing: theme.space.s8) {
                     ForEach(bindings) { binding in
                         AgentChannelDestinationRowCard(
                             binding: binding,
@@ -528,9 +528,9 @@ struct AgentChannelAgentDestinationsSection: View {
                 Button {
                     sheetTarget = .add
                 } label: {
-                    HStack(spacing: 4) {
+                    HStack(spacing: theme.space.s4) {
                         Image(systemName: "plus")
-                            .glyphSize(9, weight: .semibold)
+                            .glyphSize(.tiny, weight: .semibold)
                         Text("Add Place", bundle: .module)
                     }
                 }
@@ -544,10 +544,10 @@ struct AgentChannelAgentDestinationsSection: View {
                     Button {
                         ManagementStateManager.shared.selectedTab = .agentChannels
                     } label: {
-                        HStack(spacing: 4) {
+                        HStack(spacing: theme.space.s4) {
                             Text("Channels & Outbox settings", bundle: .module)
                             Image(systemName: "arrow.up.right")
-                                .glyphSize(9, weight: .semibold)
+                                .glyphSize(.tiny, weight: .semibold)
                         }
                         .textStyle(.footnote, weight: 500)
                     }
@@ -680,10 +680,10 @@ struct AgentChannelDestinationEditorSheet: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             header
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: theme.space.s20) {
                     identitySection
                     destinationSection
                     behaviorSection
@@ -740,7 +740,7 @@ struct AgentChannelDestinationEditorSheet: View {
     }
 
     private var header: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: theme.space.s12) {
             ZStack {
                 RoundedRectangle(cornerRadius: theme.radius.medium)
                     .fill(
@@ -751,12 +751,12 @@ struct AgentChannelDestinationEditorSheet: View {
                         )
                     )
                 Image(systemName: connectionKind.icon)
-                    .glyphSize(17, weight: .semibold)
+                    .glyphSize(.large, weight: .semibold)
                     .foregroundColor(FixedPalette.onMedia)
             }
             .frame(width: 40, height: 40)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text(isNew ? L("Add a Place") : L("Customize Place"))
                     .font(SettingsFont.detailTitle)
                     .foregroundColor(theme.text.primary)
@@ -779,12 +779,12 @@ struct AgentChannelDestinationEditorSheet: View {
     }
 
     private var identitySection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             fieldLabel(L("Agent"))
             if pinnedAgentId != nil {
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     Image(systemName: "person.crop.circle")
-                        .glyphSize(12)
+                        .glyphSize(.caption)
                         .foregroundColor(theme.text.secondary)
                     Text(agentDisplayName(agentId))
                         .font(SettingsFont.compactLabel)
@@ -805,7 +805,7 @@ struct AgentChannelDestinationEditorSheet: View {
     }
 
     private var destinationSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             fieldLabel(L("Channel"))
             SettingsMenuPicker(selection: $connectionId) {
                 ForEach(connectionOptions, id: \.self) { option in
@@ -839,8 +839,8 @@ struct AgentChannelDestinationEditorSheet: View {
     @ViewBuilder
     private var roomSelector: some View {
         if isDiscoveringRooms && discoveredRooms.isEmpty {
-            HStack(spacing: 8) {
-                ProgressView().controlSize(.small)
+            HStack(spacing: theme.space.s8) {
+                SettingsSpinner()
                 Text("Finding conversations…", bundle: .module)
                     .font(SettingsFont.rowDescription)
                     .foregroundColor(theme.text.tertiary)
@@ -849,7 +849,7 @@ struct AgentChannelDestinationEditorSheet: View {
             .padding(.vertical, theme.space.s24)
             .settingsChrome(.surface)
         } else if discoveredRooms.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 Text("No conversations found on this channel yet.", bundle: .module)
                     .font(SettingsFont.smallLabel)
                     .foregroundColor(theme.text.secondary)
@@ -872,7 +872,7 @@ struct AgentChannelDestinationEditorSheet: View {
             .padding(theme.space.s12)
             .settingsChrome(.surface)
         } else {
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s8) {
                 AgentChannelSelectorSearchField(
                     placeholder: L("Search conversations"),
                     text: $roomQuery
@@ -894,9 +894,9 @@ struct AgentChannelDestinationEditorSheet: View {
                     .fixedSize(horizontal: false, vertical: true)
                 }
                 if !roomId.isEmpty, !discoveredRooms.contains(where: { $0.id == roomId }) {
-                    HStack(spacing: 5) {
+                    HStack(spacing: theme.space.s4) {
                         Image(systemName: "info.circle")
-                            .glyphSize(10)
+                            .glyphSize(.micro)
                         Text(L("Currently set to \(roomId) (not in this list)"))
                             .font(SettingsFont.monoSmall)
                     }
@@ -924,14 +924,14 @@ struct AgentChannelDestinationEditorSheet: View {
             roomId = room.id
             if label.isEmpty { label = room.name }
         } label: {
-            HStack(spacing: 9) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                    .glyphSize(13, weight: .semibold)
+                    .glyphSize(.label, weight: .semibold)
                     .foregroundColor(selected ? theme.text.link : theme.text.tertiary)
                     .frame(width: 20)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 5) {
+                VStack(alignment: .leading, spacing: theme.space.s2) {
+                    HStack(spacing: theme.space.s4) {
                         Text(displayName)
                             .font(SettingsFont.smallLabel)
                             .foregroundColor(
@@ -964,7 +964,7 @@ struct AgentChannelDestinationEditorSheet: View {
     }
 
     private var behaviorSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             fieldLabel(L("When the agent wants to post"))
             AssignedBaseSegmentedPicker(
                 selection: $outboundMode,
@@ -979,10 +979,10 @@ struct AgentChannelDestinationEditorSheet: View {
                 .fixedSize(horizontal: false, vertical: true)
 
             if outboundMode == .autonomous {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: theme.space.s8) {
+                    HStack(spacing: theme.space.s8) {
                         Image(systemName: "exclamationmark.triangle.fill")
-                            .glyphSize(12)
+                            .glyphSize(.caption)
                             .foregroundColor(theme.status.warning.foreground)
                         Text(
                             "Auto-send lets this agent post messages without asking you. Room permissions, rate limits, and the global Sending switch still apply.",
@@ -1043,7 +1043,7 @@ struct AgentChannelDestinationEditorSheet: View {
     /// reference id the agent uses. All have safe defaults.
     private var advancedSection: some View {
         AgentChannelAdvancedSection {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: theme.space.s14) {
                 fieldLabel(
                     L("Room ID"),
                     hint: L("Set the room directly if it doesn't appear in the list above.")
@@ -1074,12 +1074,12 @@ struct AgentChannelDestinationEditorSheet: View {
     }
 
     private var sourcesSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             fieldLabel(
                 L("Allowed Run Kinds"),
                 hint: L("Which kinds of agent runs may post here. Replies to incoming messages are separate and unaffected.")
             )
-            HStack(spacing: 16) {
+            HStack(spacing: theme.space.s16) {
                 ForEach(AgentChannelBindingRunSource.allCases, id: \.self) { source in
                     Toggle(isOn: sourceBinding(source)) {
                         Text(sourceLabel(source))
@@ -1114,7 +1114,7 @@ struct AgentChannelDestinationEditorSheet: View {
     }
 
     private var rateSection: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             fieldLabel(L("Rate Limits"))
             HStack(spacing: theme.space.s12) {
                 Text("Max sends per hour", bundle: .module)
@@ -1172,11 +1172,11 @@ struct AgentChannelDestinationEditorSheet: View {
     private var readinessSection: some View {
         let findings = readinessFindings
         if !findings.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 ForEach(findings, id: \.self) { finding in
-                    HStack(spacing: 6) {
+                    HStack(spacing: theme.space.s6) {
                         Image(systemName: "exclamationmark.circle.fill")
-                            .glyphSize(11)
+                            .glyphSize(.footnote)
                             .foregroundColor(theme.status.warning.foreground)
                         Text(finding)
                             .font(SettingsFont.rowDescription)
@@ -1206,7 +1206,7 @@ struct AgentChannelDestinationEditorSheet: View {
     }
 
     private var footer: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: theme.space.s8) {
             if let statusMessage {
                 AgentChannelInlineStatusMessage(
                     message: statusMessage,
@@ -1248,16 +1248,14 @@ struct AgentChannelDestinationEditorSheet: View {
         .background(
             theme.surface.subtle
                 .overlay(
-                    Rectangle()
-                        .fill(theme.border.subtle)
-                        .frame(height: 1),
+                    ThemeHairlineDivider(),
                     alignment: .top
                 )
         )
     }
 
     private func fieldLabel(_ title: String, hint: String? = nil) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
             Text(LocalizedStringKey(title), bundle: .module)
                 .font(SettingsFont.compactLabel)
                 .foregroundColor(theme.text.tertiary)
@@ -1547,16 +1545,16 @@ struct AgentChannelOutboxView: View {
         items: [AgentChannelOutboundIntent],
         emptyDetail: String
     ) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             Text(LocalizedStringKey(title), bundle: .module)
                 .font(SettingsFont.compactLabel)
                 .foregroundColor(theme.text.primary)
 
             Group {
                 if items.isEmpty {
-                    VStack(spacing: 6) {
+                    VStack(spacing: theme.space.s6) {
                         Image(systemName: "tray")
-                            .glyphSize(18, weight: .medium)
+                            .glyphSize(.large, weight: .medium)
                             .foregroundColor(theme.text.tertiary)
                         Text(LocalizedStringKey(emptyDetail), bundle: .module)
                             .font(SettingsFont.rowDescription)
@@ -1566,7 +1564,7 @@ struct AgentChannelOutboxView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, theme.space.s16)
                 } else {
-                    VStack(spacing: 0) {
+                    VStack(spacing: theme.space.s0) {
                         ForEach(items) { intent in
                             intentRow(intent)
                             if intent.id != items.last?.id {
@@ -1597,9 +1595,9 @@ struct AgentChannelOutboxView: View {
     }
 
     private func intentRow(_ intent: AgentChannelOutboundIntent) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 8) {
+        HStack(alignment: .top, spacing: theme.space.s12) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
+                HStack(spacing: theme.space.s8) {
                     statusBadge(intent.status)
                     Text(routeDescription(intent))
                         .font(SettingsFont.footnote)
@@ -1627,7 +1625,7 @@ struct AgentChannelOutboxView: View {
             Spacer()
 
             if intent.status.isUnresolved && intent.status != .sending {
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     AgentChannelSheetActionButton(
                         title: L("Review…"),
                         busyTitle: L("Working..."),
@@ -1822,11 +1820,11 @@ struct AgentChannelOutboundReviewSheet: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             header
             Divider()
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: theme.space.s14) {
                     destinationSection
                     if intent.status == .deliveryUnknown {
                         unknownDeliveryNotice
@@ -1843,11 +1841,11 @@ struct AgentChannelOutboundReviewSheet: View {
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             Image(systemName: "doc.text.magnifyingglass")
-                .glyphSize(20)
+                .glyphSize(.xlarge)
                 .foregroundColor(theme.text.link)
-            VStack(alignment: .leading, spacing: 1) {
+            VStack(alignment: .leading, spacing: theme.space.s2) {
                 Text("Review Outbound Message", bundle: .module)
                     .font(SettingsFont.cardTitle)
                     .foregroundColor(theme.text.primary)
@@ -1866,7 +1864,7 @@ struct AgentChannelOutboundReviewSheet: View {
     }
 
     private var destinationSection: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
             detailRow(L("Agent"), agentName(intent.agentId))
             detailRow(
                 L("Channel"),
@@ -1890,9 +1888,9 @@ struct AgentChannelOutboundReviewSheet: View {
     }
 
     private var unknownDeliveryNotice: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: theme.space.s8) {
             Image(systemName: "exclamationmark.triangle.fill")
-                .glyphSize(12)
+                .glyphSize(.caption)
                 .foregroundColor(theme.status.warning.foreground)
             Text(
                 "Delivery of this message was not confirmed — it may already be visible in the channel. \"Send Again\" can post a duplicate; use \"Mark as Sent\" if you can see it in the channel.",
@@ -1907,7 +1905,7 @@ struct AgentChannelOutboundReviewSheet: View {
     }
 
     private var payloadSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: theme.space.s6) {
             Text("Exact message", bundle: .module)
                 .font(SettingsFont.compactLabel)
                 .foregroundColor(theme.text.tertiary)
@@ -1972,7 +1970,7 @@ struct AgentChannelOutboundReviewSheet: View {
     }
 
     private func detailRow(_ title: String, _ value: String) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: theme.space.s8) {
             Text(LocalizedStringKey(title), bundle: .module)
                 .font(SettingsFont.chip)
                 .foregroundColor(theme.text.tertiary)

@@ -46,7 +46,7 @@ If you prefer manual configuration:
 
 2. **Download a Model**
 
-   - Open Voice settings → Models tab
+   - Open Settings… (⌘,) → Local Models → **Speech** (Voice → Speech Models opens the same list)
    - Browse available models and click Download
    - Wait for the download to complete
 
@@ -89,22 +89,25 @@ Models are stored at: `~/Library/Application Support/FluidAudio/Models/`
 
 ### Settings
 
-These live under Settings… (⌘,) → Voice → **Chat Voice**.
+The switch is on the Voice page; the rest is shared with Transcription Mode.
 
-| Setting                 | Description                                 | Default |
-| ----------------------- | ------------------------------------------- | ------- |
-| **Voice Input Enabled** | Master toggle for voice in chat             | On      |
-| **Sensitivity**         | Voice detection threshold                   | Medium  |
-| **Pause Duration**      | Seconds of silence before auto-send         | 2.0     |
-| **Confirmation Delay**  | Seconds to show confirmation before sending | 1.5     |
+| Setting                    | Where                                               | Description                                 | Default   |
+| -------------------------- | --------------------------------------------------- | ------------------------------------------- | --------- |
+| **Voice Input in Chat**    | Voice                                               | Master toggle for voice in chat             | On        |
+| **Sensitivity Level**      | Voice → Setup → Voice Sensitivity                   | Voice detection threshold, for every voice mode | Medium |
+| **Stop Mode**              | Voice → Transcription → Stop Behavior & Cleanup     | Automatic (send after a pause) or Manual    | Automatic |
+| **Pause Detection**        | Voice → Transcription → Stop Behavior & Cleanup     | Seconds of silence before auto-send (0 = off) | 1.5s    |
+| **Confirmation Delay**     | Voice → Transcription → Stop Behavior & Cleanup     | Seconds to cancel before the message sends  | 2.0s      |
+| **Silence Timeout**        | Voice → Transcription → Stop Behavior & Cleanup     | Close voice input after this much silence (10–120s) | 30s |
+| **Clean Up Transcription** | Voice → Transcription → Stop Behavior & Cleanup     | The Core Model removes filler words         | On        |
 
 ### Sensitivity Levels
 
-| Level      | Energy Threshold | Silence Detection | Best For                          |
-| ---------- | ---------------- | ----------------- | --------------------------------- |
-| **Low**    | Higher           | 0.4 seconds       | Noisy environments, louder speech |
-| **Medium** | Balanced         | 0.6 seconds       | Normal conversation               |
-| **High**   | Lower            | 1.2 seconds       | Quiet environments, soft speech   |
+| Level      | VAD Threshold | Silence Detection | Best For                          |
+| ---------- | ------------- | ----------------- | --------------------------------- |
+| **Low**    | 0.85          | 0.3 seconds       | Noisy environments, louder speech |
+| **Medium** | 0.75          | 0.5 seconds       | Normal conversation               |
+| **High**   | 0.55          | 0.8 seconds       | Quiet environments, soft speech   |
 
 ### Auto-Send Behavior
 
@@ -114,7 +117,7 @@ When pause duration is set:
 2. When you pause, a countdown appears
 3. If you resume speaking, the countdown resets
 4. After the countdown, message sends automatically
-5. Set pause duration to 0 to disable (manual send only)
+5. Set Pause Detection to 0 (or Stop Mode to Manual) to disable (manual send only)
 
 ---
 
@@ -209,14 +212,18 @@ VAD Mode enables hands-free agent activation. Say a agent's name (or a custom wa
 
 ### VAD Settings
 
+Under Settings… (⌘,) → Voice → **Wake Word**:
+
 | Setting                    | Description                           | Default      |
 | -------------------------- | ------------------------------------- | ------------ |
 | **Enable Wake Word**       | Master toggle (VAD mode)              | Off          |
-| **Enabled Agents**       | Which agents respond to wake-words  | None         |
-| **Custom Wake Phrase**     | Optional activation phrase            | Empty        |
-| **Wake-Word Sensitivity**  | Detection threshold                   | Medium       |
+| **Activated Agents**       | Which agents respond to wake-words    | None         |
+| **Custom Wake Phrase (Optional)** | Optional activation phrase     | Empty        |
+| **Detection Sensitivity**  | A link to Voice → Setup → Voice Sensitivity, shared by every voice mode | Medium |
 | **Auto-Start Voice Input** | Begin recording after activation      | On           |
-| **Silence Timeout**        | Auto-close after N seconds of silence | 0 (disabled) |
+
+Voice input started by a wake word closes after the shared **Silence Timeout**
+(Voice → Transcription, default 30s).
 
 ### Status Indicators
 
@@ -224,8 +231,8 @@ VAD status is shown in two places:
 
 **Menu Bar Icon** — The main Osaurus menu bar icon shows a status dot:
 
-- **Blue pulsing dot** (top-right) — VAD is listening for wake-words
-- **Orange dot** — VAD is processing speech
+- **Pulsing dot in the info color** (top-right) — VAD is listening for wake-words
+- **Dot in the error color** — VAD hit an error (the tooltip says "Voice: Error")
 - **No dot** — VAD is inactive
 
 **Popover Controls** — Click the Osaurus menu bar icon to access:
@@ -283,24 +290,24 @@ Transcription Mode allows you to dictate text directly into any application usin
 
 | Setting                   | Description                        | Default |
 | ------------------------- | ---------------------------------- | ------- |
-| **Transcription Enabled** | Master toggle for the feature      | Off     |
-| **Activation Hotkey**     | Global hotkey to trigger dictation | None    |
+| **Enable Transcription Mode** | Master toggle for the feature (Voice → Transcription) | Off |
+| **Global Hotkey**         | Global hotkey to trigger dictation (Activation Hotkey section) | None |
 
 ### Using Transcription Mode
 
 1. **Focus a text field** — Click into any text input in any application
 2. **Press the hotkey** — The transcription overlay appears
 3. **Speak naturally** — Your words are typed in real-time
-4. **Stop transcription** — Press `Esc` or click the Done button
+4. **Stop transcription** — It stops on its own after a pause (automatic Stop Mode), or press the hotkey again or click **Stop and insert**. `Esc` cancels and discards
 
 ### The Overlay UI
 
 When transcription is active, a minimal floating overlay appears at the top of your screen:
 
-- **Status indicator** — Shows "Listening" with a pulsing accent color
-- **Waveform** — Animated bars respond to your audio level
-- **Done button** — Click to stop transcription
-- **Close button** — Cancel and discard (same as pressing Esc)
+- **Status badge** — A pulsing dot with "Listening", or "Processing" while the transcript is finished
+- **Waveform** — Animated bars respond to your audio level (a spinner while processing)
+- **Stop and insert** button — Shown when transcription won't stop on its own (manual Stop Mode, or Pause Detection 0)
+- **Cancel (Esc)** button — Cancel and discard (same as pressing Esc)
 
 The overlay stays on top of all windows and follows the app's appearance (System, Light or Dark).
 
@@ -452,14 +459,14 @@ Parakeet TDT v2 is optimized exclusively for English.
 
 2. **Verify disk space**
 
-   - Large models need 3+ GB free space
+   - Each Parakeet model needs about 600 MB free space
 
 3. **Check the download progress**
 
    - Downloads can take several minutes for large models
 
-4. **Try a smaller model first**
-   - Test with Tiny or Small model
+4. **Try the other model**
+   - Both are about 600 MB; if one fails, try Parakeet TDT v2 or v3 instead
 
 ### Transcription Mode Not Typing
 

@@ -34,7 +34,7 @@ struct MemoryManagementConsoleView: View {
     @State private var isPreviewLoading = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: theme.space.s14) {
             searchToolbar
             filtersRow
 
@@ -46,7 +46,7 @@ struct MemoryManagementConsoleView: View {
                 contextPreviewPanel
             }
 
-            Divider().opacity(0.5)
+            ThemeHairlineDivider()
 
             resultsPanel
         }
@@ -77,7 +77,7 @@ struct MemoryManagementConsoleView: View {
     }
 
     private var searchToolbar: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: theme.space.s10) {
             SearchField(text: $searchText, placeholder: "Search memories", fillsAvailableWidth: true)
                 .onSubmit { refresh() }
                 .onChange(of: searchText) { _, newValue in
@@ -85,8 +85,7 @@ struct MemoryManagementConsoleView: View {
                 }
 
             if isLoading {
-                ProgressView()
-                    .controlSize(.small)
+                SettingsSpinner()
             }
 
             consoleToggleButton(
@@ -153,10 +152,10 @@ struct MemoryManagementConsoleView: View {
     }
 
     private var contextPreviewPanel: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
+            HStack(spacing: theme.space.s8) {
                 Image(systemName: "doc.text.magnifyingglass")
-                    .glyphSize(11, weight: .semibold)
+                    .glyphSize(.footnote, weight: .semibold)
                     .foregroundColor(theme.text.link)
                 Text("Bounded context preview", bundle: .module)
                     .font(SettingsFont.compactLabel)
@@ -167,7 +166,7 @@ struct MemoryManagementConsoleView: View {
                     .foregroundColor(theme.text.secondary)
             }
 
-            HStack(spacing: 10) {
+            HStack(spacing: theme.space.s10) {
                 SettingsTextField(placeholder: L("Preview query"), text: $previewQuery)
 
                 SettingsMenuPicker(selection: $previewAgentId) {
@@ -186,7 +185,7 @@ struct MemoryManagementConsoleView: View {
                     loadContextPreview()
                 } label: {
                     Image(systemName: "eye")
-                        .glyphSize(12, weight: .semibold)
+                        .glyphSize(.caption, weight: .semibold)
                         .frame(width: 28, height: 28)
                 }
                 .buttonStyle(.plain)
@@ -195,15 +194,14 @@ struct MemoryManagementConsoleView: View {
             }
 
             if isPreviewLoading {
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .controlSize(.small)
+                HStack(spacing: theme.space.s8) {
+                    SettingsSpinner()
                     Text("Assembling preview...", bundle: .module)
                         .font(SettingsFont.caption)
                         .foregroundColor(theme.text.tertiary)
                 }
             } else if let contextPreview {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: theme.space.s6) {
                     HStack {
                         Text(
                             contextPreview.wasEmpty
@@ -243,8 +241,8 @@ struct MemoryManagementConsoleView: View {
 
     @ViewBuilder
     private func diagnosticsPanel(_ health: MemoryStorageHealth) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
+            HStack(spacing: theme.space.s8) {
                 Circle()
                     .fill(healthColor(health.level))
                     .frame(width: 8, height: 8)
@@ -294,11 +292,11 @@ struct MemoryManagementConsoleView: View {
             }
 
             if !health.diagnostics.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: theme.space.s4) {
                     ForEach(health.diagnostics, id: \.self) { diagnostic in
-                        HStack(alignment: .top, spacing: 6) {
+                        HStack(alignment: .top, spacing: theme.space.s6) {
                             Image(systemName: "exclamationmark.triangle")
-                                .glyphSize(10, weight: .medium)
+                                .glyphSize(.micro, weight: .medium)
                                 .foregroundColor(theme.status.warning.foreground)
                             Text(diagnostic)
                                 .font(SettingsFont.rowDescription)
@@ -313,8 +311,8 @@ struct MemoryManagementConsoleView: View {
     }
 
     private var resultsPanel: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(spacing: theme.space.s8) {
                 Text("Results", bundle: .module)
                     .font(SettingsFont.compactLabel)
                     .foregroundColor(theme.text.tertiary)
@@ -330,9 +328,8 @@ struct MemoryManagementConsoleView: View {
             }
 
             if isLoading && snapshot == nil {
-                HStack(spacing: 8) {
-                    ProgressView()
-                        .controlSize(.small)
+                HStack(spacing: theme.space.s8) {
+                    SettingsSpinner()
                     Text("Loading memories...", bundle: .module)
                         .font(SettingsFont.caption)
                         .foregroundColor(theme.text.tertiary)
@@ -340,10 +337,10 @@ struct MemoryManagementConsoleView: View {
                 .frame(maxWidth: .infinity, alignment: .center)
                 .padding(.vertical, theme.space.s24)
             } else if let items = snapshot?.items, !items.isEmpty {
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                         if index > 0 {
-                            Divider().opacity(0.5)
+                            ThemeHairlineDivider()
                         }
                         MemoryConsoleResultRow(
                             item: item,
@@ -375,7 +372,7 @@ struct MemoryManagementConsoleView: View {
     }
 
     private func healthTile(_ label: String, _ value: String, footnote: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
             Text(label)
                 .font(SettingsFont.chip)
                 .foregroundColor(theme.text.tertiary)
@@ -533,9 +530,9 @@ private struct MemoryConsoleResultRow: View {
     let onForget: () -> Void
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .top, spacing: theme.space.s10) {
             Image(systemName: icon)
-                .glyphSize(12, weight: .semibold)
+                .glyphSize(.caption, weight: .semibold)
                 .foregroundColor(item.isDisabled ? theme.text.tertiary : theme.text.link)
                 .frame(width: 22, height: 22)
                 .background(
@@ -543,8 +540,8 @@ private struct MemoryConsoleResultRow: View {
                         .fill(theme.surface.hover)
                 )
 
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 7) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
+                HStack(spacing: theme.space.s6) {
                     Text(LocalizedStringKey(item.kind.displayName), bundle: .module)
                         .font(SettingsFont.compactLabel)
                         .foregroundColor(theme.text.primary)
@@ -569,7 +566,7 @@ private struct MemoryConsoleResultRow: View {
                     .lineLimit(2)
             }
 
-            HStack(spacing: 4) {
+            HStack(spacing: theme.space.s4) {
                 iconButton("info.circle", help: "Inspect memory", action: onInspect)
                 iconButton("pause.circle", help: "Disable memory", action: onDisable)
                     .disabled(!item.canDisable)
@@ -596,7 +593,7 @@ private struct MemoryConsoleResultRow: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: systemName)
-                .glyphSize(12, weight: .medium)
+                .glyphSize(.caption, weight: .medium)
                 .foregroundColor(theme.text.secondary)
                 .frame(width: 26, height: 26)
                 .settingsChrome(.inset)
@@ -615,9 +612,9 @@ private struct MemoryConsoleInspectSheet: View {
     private var theme: ThemeProtocol { themeManager.currentTheme }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 4) {
+        VStack(spacing: theme.space.s0) {
+            HStack(alignment: .top, spacing: theme.space.s12) {
+                VStack(alignment: .leading, spacing: theme.space.s4) {
                     Text(item.kind.displayName)
                         .font(SettingsFont.detailTitle)
                         .foregroundColor(theme.text.primary)
@@ -628,7 +625,7 @@ private struct MemoryConsoleInspectSheet: View {
                 Spacer()
                 Button(action: { dismiss() }) {
                     Image(systemName: "xmark")
-                        .glyphSize(12, weight: .semibold)
+                        .glyphSize(.caption, weight: .semibold)
                         .foregroundColor(theme.text.secondary)
                         .frame(width: 28, height: 28)
                         .settingsChrome(.inset)
@@ -638,14 +635,14 @@ private struct MemoryConsoleInspectSheet: View {
             }
             .padding(theme.space.s16)
 
-            Divider().opacity(0.5)
+            ThemeHairlineDivider()
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: theme.space.s16) {
                     inspectBlock("Privacy-safe detail", item.detail.text, monospaced: false)
 
                     if item.detail.redactionCount > 0 {
-                        VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: theme.space.s6) {
                             Text("Redactions", bundle: .module)
                                 .font(SettingsFont.compactLabel)
                                 .foregroundColor(theme.text.tertiary)
@@ -667,7 +664,7 @@ private struct MemoryConsoleInspectSheet: View {
     }
 
     private var metadataGrid: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             Text("Metadata", bundle: .module)
                 .font(SettingsFont.compactLabel)
                 .foregroundColor(theme.text.tertiary)
@@ -705,7 +702,7 @@ private struct MemoryConsoleInspectSheet: View {
     }
 
     private func inspectBlock(_ title: String, _ text: String, monospaced: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             Text(title)
                 .font(SettingsFont.compactLabel)
                 .foregroundColor(theme.text.tertiary)
@@ -721,7 +718,7 @@ private struct MemoryConsoleInspectSheet: View {
     }
 
     private func metadataTile(_ label: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: theme.space.s2) {
             Text(label)
                 .font(SettingsFont.chip)
                 .foregroundColor(theme.text.tertiary)

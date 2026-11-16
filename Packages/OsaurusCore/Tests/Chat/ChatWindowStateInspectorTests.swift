@@ -320,6 +320,27 @@ struct ChatWindowStateInspectorTests {
         }
     }
 
+    @Test("toggling the sidebar publishes the rail width in the same change, so the tab strip moves with it")
+    func sidebarTogglePublishesItsWidth() async throws {
+        try await ChatHistoryTestStorage.run {
+            let window = ChatWindowState(windowId: UUID(), agentId: Agent.defaultId)
+            defer { window.cleanup() }
+            window.sidebarColumnWidth = 280  // ChatView's laid-out width
+
+            window.toggleSidebar()
+            #expect(window.sidebarColumnWidth == 0)
+            window.toggleSidebar()
+            #expect(window.sidebarColumnWidth == 280, "reopening restores the last docked width")
+
+            // Stepped aside for the inspector: the rail isn't on screen, so
+            // the toggle leaves the width to ChatView's layout.
+            window.isSidebarAutoHidden = true
+            window.sidebarColumnWidth = 0
+            window.toggleSidebar()
+            #expect(window.sidebarColumnWidth == 0)
+        }
+    }
+
     @Test("the inspector keeps the user's width until the chat column would drop below its floor")
     func inspectorWidth() {
         #expect(ChatView.changesPanelWidth(totalWidth: 1400, sidebarWidth: 260, preferredWidth: 380) == 380)

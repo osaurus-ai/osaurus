@@ -71,7 +71,7 @@ struct SandboxEnvironmentsSection: View {
             subtitle: "Each agent gets its own Linux container and user. Its home folder is on this Mac; the rest of its environment, such as apk packages, lives in the sandbox.",
             anchorId: "sandbox.environments"
         ) {
-            VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: theme.space.s0) {
                 if entries.isEmpty {
                     SettingsEmptyState(
                         inline: "person.2",
@@ -204,14 +204,24 @@ struct SandboxEnvironmentsSection: View {
             AgentManager.shared.agents.map { ($0.id, $0.name) },
             uniquingKeysWith: { first, _ in first }
         )
-        let loaded = await Task.detached(priority: .utility) {
-            SandboxRootfsTemplateStore.listEnvironments().map { (name: $0.name, lastUsedAt: $0.stamp?.lastUsedAt) }
+        // Listing and sizing both hit the disk (sizing is a getattrlist per
+        // clone that APFS answers by walking extents), so do all of it off
+        // the main actor and hand back plain data.
+        let (loaded, sizes) = await Task.detached(priority: .utility) {
+            let environments = SandboxRootfsTemplateStore.listEnvironments().map {
+                (name: $0.name, lastUsedAt: $0.stamp?.lastUsedAt)
+            }
+            var sizes: [String: Int64] = [:]
+            for env in environments where SandboxPodLayout.isAgentName(env.name) {
+                sizes[env.name] = SandboxRootfsTemplateStore.allocatedBytes(agentName: env.name)
+            }
+            return (environments, sizes)
         }.value
         entries = SandboxEnvironmentEntry.entries(
             environments: loaded,
             runningMembers: running,
             agentNames: agentNames,
-            allocatedBytes: SandboxRootfsTemplateStore.allocatedBytes(agentName:)
+            allocatedBytes: { sizes[$0] }
         )
     }
 }

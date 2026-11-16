@@ -463,7 +463,7 @@ struct PluginsView: View {
     // MARK: - Grid Content
 
     private var gridContent: some View {
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             headerBar
                 .settingsHeaderEntrance(hasAppeared: hasAppeared)
 
@@ -663,8 +663,7 @@ struct PluginsView: View {
 
     private var loadingState: some View {
         VStack(spacing: theme.space.s16) {
-            ProgressView()
-                .scaleEffect(1.2)
+            SettingsSpinner(size: .large)
             Text("Loading repository...", bundle: .module)
                 .catalogTypography(.body, theme: theme, fallback: SettingsFont.body)
                 .foregroundColor(theme.text.secondary)
@@ -786,7 +785,7 @@ struct PluginsView: View {
     private func offlineBanner(message: String) -> some View {
         HStack(spacing: theme.space.s8) {
             Image(systemName: "wifi.slash")
-                .glyphSize(14)
+                .glyphSize(.body)
                 .foregroundColor(theme.status.warning.foreground)
 
             Text(message)
@@ -1019,9 +1018,9 @@ private struct PluginCard: View {
     private var hasMissingPermissions: Bool { !missingPermissions.isEmpty }
     private var pluginColor: Color {
         plugin.hasLoadError
-            ? .red
+            ? theme.status.error.foreground
             : hasMissingPermissions || hasMissingSecrets
-                ? .orange
+                ? theme.status.warning.foreground
                 : theme.action.primary.default.background
     }
 
@@ -1051,7 +1050,7 @@ private struct PluginCard: View {
             }
             statusBadge
             if plugin.isInstalling {
-                ProgressView().controlSize(.mini)
+                SettingsSpinner(size: .mini)
             }
         } content: {
             if let description = plugin.pluginDescription {
@@ -1115,15 +1114,15 @@ private struct PluginCard: View {
         if PluginManager.supersededPluginIds.contains(plugin.pluginId) && plugin.isInstalled {
             StatusChip(L("Built into Osaurus"), tone: .accent, icon: "checkmark.seal.fill")
         } else if plugin.hasLoadError {
-            StatusChip(L("Error"), tint: .red, icon: "exclamationmark.triangle.fill")
+            StatusChip(L("Error"), tone: .error, icon: "exclamationmark.triangle.fill")
         } else if hasMissingSecrets {
             StatusChip(L("Key Required"), tone: .warning, icon: "key.fill")
         } else if hasMissingPermissions {
             StatusChip(L("Permission"), tone: .warning, icon: "lock.shield")
         } else if plugin.hasUpdate {
-            StatusChip(L("Update"), tint: .orange, icon: "arrow.up.circle.fill")
+            StatusChip(L("Update"), tone: .warning, icon: "arrow.up.circle.fill")
         } else if plugin.isInstalled {
-            StatusChip(L("Installed"), tint: .green, icon: "checkmark.circle.fill")
+            StatusChip(L("Installed"), tone: .success, icon: "checkmark.circle.fill")
         }
     }
 
@@ -1260,7 +1259,7 @@ private struct PluginDetailView: View {
     }
 
     private var pluginColor: Color {
-        plugin.hasLoadError ? .red : theme.action.primary.default.background
+        plugin.hasLoadError ? theme.status.error.foreground : theme.action.primary.default.background
     }
 
     private func handleInstallError(_ error: Error) {
@@ -1427,7 +1426,7 @@ private struct PluginDetailView: View {
             },
             primary: {
                 if plugin.isInstalling {
-                    ProgressView().controlSize(.small)
+                    SettingsSpinner()
                 } else if plugin.hasUpdate {
                     SettingsButton(.primary, "Update", icon: "arrow.up.circle.fill") {
                         Task {
@@ -1482,18 +1481,18 @@ private struct PluginDetailView: View {
                     heroStatBadge(
                         icon: "wrench.and.screwdriver",
                         text: toolCount == 1 ? L("1 tool") : L("\(toolCount) tools"),
-                        color: .orange
+                        color: theme.dataInk(.orange)
                     )
                 }
                 if skillCount > 0 {
                     heroStatBadge(
                         icon: "lightbulb",
                         text: skillCount == 1 ? L("1 skill") : L("\(skillCount) skills"),
-                        color: .cyan
+                        color: theme.dataInk(.cyan)
                     )
                 }
                 if loadedPlugin?.webConfig != nil {
-                    heroStatBadge(icon: "globe", text: L("Web App"), color: .purple)
+                    heroStatBadge(icon: "globe", text: L("Web App"), color: theme.dataInk(.purple))
                 }
             }
         }
@@ -1502,7 +1501,7 @@ private struct PluginDetailView: View {
     private func heroStatBadge(icon: String, text: String, color: Color) -> some View {
         HStack(spacing: theme.space.s4) {
             Image(systemName: icon)
-                .glyphSize(10)
+                .glyphSize(.micro)
             Text(text)
                 .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
                 .lineLimit(1)
@@ -1519,7 +1518,7 @@ private struct PluginDetailView: View {
                     detailCard {
                         HStack(spacing: theme.space.s12) {
                             Image(systemName: "lock.shield.fill")
-                                .glyphSize(20)
+                                .glyphSize(.xlarge)
                                 .foregroundColor(theme.status.warning.foreground)
 
                             VStack(alignment: .leading, spacing: theme.space.s2) {
@@ -1546,7 +1545,7 @@ private struct PluginDetailView: View {
                                 }
                             } label: {
                                 HStack(spacing: theme.space.s4) {
-                                    Image(systemName: "checkmark.shield.fill").glyphSize(10)
+                                    Image(systemName: "checkmark.shield.fill").glyphSize(.micro)
                                     Text("Allow", bundle: .module).catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                                 }
                             }
@@ -1557,7 +1556,7 @@ private struct PluginDetailView: View {
                     detailCard {
                         HStack(spacing: theme.space.s12) {
                             Image(systemName: "exclamationmark.circle.fill")
-                                .glyphSize(20)
+                                .glyphSize(.xlarge)
                                 .foregroundColor(theme.status.error.foreground)
 
                             VStack(alignment: .leading, spacing: theme.space.s2) {
@@ -1576,7 +1575,7 @@ private struct PluginDetailView: View {
                                 showRetryConfirm = true
                             } label: {
                                 HStack(spacing: theme.space.s4) {
-                                    Image(systemName: "arrow.clockwise").glyphSize(11)
+                                    Image(systemName: "arrow.clockwise").glyphSize(.footnote)
                                     Text("Retry", bundle: .module).catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                                 }
                             }
@@ -1615,7 +1614,7 @@ private struct PluginDetailView: View {
         return detailCard {
             HStack(spacing: theme.space.s12) {
                 Image(systemName: "checkmark.seal.fill")
-                    .glyphSize(20)
+                    .glyphSize(.xlarge)
                     .foregroundColor(theme.text.link)
 
                 VStack(alignment: .leading, spacing: theme.space.s2) {
@@ -1634,7 +1633,7 @@ private struct PluginDetailView: View {
                         AppDelegate.shared?.showManagementWindow(initialTab: nativeTab)
                     } label: {
                         HStack(spacing: theme.space.s4) {
-                            Image(systemName: nativeTab.icon).glyphSize(10)
+                            Image(systemName: nativeTab.icon).glyphSize(.micro)
                             Text("Open \(nativeTab.label) Settings", bundle: .module)
                         }
                     }
@@ -1647,7 +1646,7 @@ private struct PluginDetailView: View {
                     showDeleteConfirm = true
                 } label: {
                     HStack(spacing: theme.space.s4) {
-                        Image(systemName: "trash").glyphSize(10)
+                        Image(systemName: "trash").glyphSize(.micro)
                         Text("Uninstall", bundle: .module)
                             .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                     }
@@ -1667,7 +1666,7 @@ private struct PluginDetailView: View {
         detailCard {
             HStack(spacing: theme.space.s12) {
                 Image(systemName: "key.fill")
-                    .glyphSize(20)
+                    .glyphSize(.xlarge)
                     .foregroundColor(theme.status.warning.foreground)
 
                 VStack(alignment: .leading, spacing: theme.space.s2) {
@@ -1685,7 +1684,7 @@ private struct PluginDetailView: View {
                     showSecretsSheet = true
                 } label: {
                     HStack(spacing: theme.space.s4) {
-                        Image(systemName: "key.fill").glyphSize(10)
+                        Image(systemName: "key.fill").glyphSize(.micro)
                         Text("Configure", bundle: .module).catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                     }
                 }
@@ -1701,7 +1700,7 @@ private struct PluginDetailView: View {
             VStack(alignment: .leading, spacing: theme.space.s8) {
                 HStack(spacing: theme.space.s8) {
                     Image(systemName: "lock.shield.fill")
-                        .glyphSize(20)
+                        .glyphSize(.xlarge)
                         .foregroundColor(theme.status.warning.foreground)
 
                     VStack(alignment: .leading, spacing: theme.space.s2) {
@@ -1723,7 +1722,7 @@ private struct PluginDetailView: View {
                             onChange()
                         } label: {
                             HStack(spacing: theme.space.s6) {
-                                Image(systemName: perm.systemIconName).glyphSize(11)
+                                Image(systemName: perm.systemIconName).glyphSize(.footnote)
                                 Text("Grant \(perm.displayName)", bundle: .module)
                                     .componentInspectionText(48, role: .caption, fallback: .footnote, weight: 500, theme: theme)
                             }
@@ -1739,7 +1738,7 @@ private struct PluginDetailView: View {
                         }
                     } label: {
                         HStack(spacing: theme.space.s4) {
-                            Image(systemName: "gear").glyphSize(10)
+                            Image(systemName: "gear").glyphSize(.micro)
                             Text("Open Settings", bundle: .module).catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
                         }
                         .foregroundColor(theme.text.secondary)
@@ -1830,7 +1829,7 @@ private struct PluginDetailView: View {
                             }
                         } label: {
                             HStack(spacing: theme.space.s4) {
-                                Image(systemName: "link").glyphSize(10)
+                                Image(systemName: "link").glyphSize(.micro)
                                 Text(link.label).catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
                             }
                             .foregroundColor(theme.text.link)
@@ -1856,7 +1855,7 @@ private struct PluginDetailView: View {
         VStack(alignment: .leading, spacing: theme.space.s12) {
             HStack(spacing: theme.space.s8) {
                 Image(systemName: icon)
-                    .glyphSize(12, weight: .semibold)
+                    .glyphSize(.caption, weight: .semibold)
                     .foregroundColor(theme.text.link)
                 Text(title)
                     .catalogTypography(.heading, theme: theme, fallback: SettingsFont.cardTitle)
@@ -2042,9 +2041,9 @@ private struct PluginRoutesSummary: View {
 
     private func authColor(_ auth: PluginManifest.RouteAuth) -> Color {
         switch auth {
-        case .none: return .green
-        case .verify: return .orange
-        case .owner: return .blue
+        case .none: return theme.dataInk(.green)
+        case .verify: return theme.dataInk(.orange)
+        case .owner: return theme.dataInk(.blue)
         }
     }
 }
@@ -2071,7 +2070,7 @@ private struct MarketplaceCategoryChips: View {
             allowsDeselect: false,
             title: { byId[$0]?.displayName ?? $0 },
             count: { byId[$0]?.count },
-            tint: { ClaudeMarketplacePalette.color(for: $0) }
+            tint: { ClaudeMarketplacePalette.color(for: $0, theme: theme) }
         )
     }
 }
@@ -2133,7 +2132,7 @@ struct UpdateAllPluginsBanner: View {
                     .fill(theme.status.info.background)
                     .frame(width: 36, height: 36)
                 Image(systemName: "arrow.up.circle.fill")
-                    .glyphSize(16)
+                    .glyphSize(.medium)
                     .foregroundColor(theme.text.link)
             }
 
@@ -2154,12 +2153,10 @@ struct UpdateAllPluginsBanner: View {
             Button(action: action) {
                 HStack(spacing: theme.space.s4) {
                     if isUpdating {
-                        ProgressView()
-                            .scaleEffect(0.6)
-                            .frame(width: 12, height: 12)
+                        SettingsSpinner(size: .mini)
                     } else {
                         Image(systemName: "arrow.up.circle")
-                            .glyphSize(11)
+                            .glyphSize(.footnote)
                     }
                     Text(isUpdating ? "Updating..." : "Update all", bundle: .module)
                         .catalogTypography(.label, theme: theme, fallback: SettingsFont.compactLabel)
@@ -2452,7 +2449,7 @@ struct ClaudePluginsMarketplaceView: View {
         VStack(spacing: theme.space.s12) {
             HStack(spacing: theme.space.s8) {
                 Image(systemName: "wifi.slash")
-                    .glyphSize(14)
+                    .glyphSize(.body)
                     .foregroundColor(theme.status.warning.foreground)
                 Text(message)
                     .catalogTypography(.body, theme: theme, fallback: SettingsFont.body)

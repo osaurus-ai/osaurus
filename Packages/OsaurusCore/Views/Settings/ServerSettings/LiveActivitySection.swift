@@ -28,7 +28,7 @@ struct LiveActivitySection: View {
             status: .engineReady,
             blurb:
                 "Aggregated BatchEngine readout across every model loaded right now. Refreshes every 2 seconds.",
-            spacing: 16
+            spacing: theme.space.s16
         ) {
             BatchDiagnosticsView(snapshot: snapshot)
 
@@ -47,7 +47,7 @@ struct LiveActivitySection: View {
     }
 
     private var inferenceActivityReadout: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s10) {
             Text(L("Inference now"))
                 .font(SettingsFont.smallLabel)
                 .foregroundColor(theme.text.secondary)
@@ -59,8 +59,8 @@ struct LiveActivitySection: View {
             }
 
             ForEach(inferenceActivities) { activity in
-                HStack(alignment: .top, spacing: 10) {
-                    VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .top, spacing: theme.space.s10) {
+                    VStack(alignment: .leading, spacing: theme.space.s2) {
                         Text(activity.modelName)
                             .font(SettingsFont.smallLabel)
                             .lineLimit(1)
@@ -105,14 +105,14 @@ struct LiveActivitySection: View {
     /// upstream by `shouldRecordAsLastEffectiveGeneration`, so this describes
     /// a real turn.
     private var effectiveSamplerReadout: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             Text(L("Sampler last used"))
                 .font(SettingsFont.smallLabel)
                 .foregroundColor(theme.text.secondary)
 
             ForEach(effectiveGeneration.keys.sorted(), id: \.self) { model in
                 if let effective = effectiveGeneration[model] {
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: theme.space.s2) {
                         Text(model)
                             .font(SettingsFont.smallLabel)
                             .lineLimit(1)
@@ -138,14 +138,14 @@ struct LiveActivitySection: View {
     /// behaviour looks like the control is ignored. Shown per model, populated
     /// only for turns that actually ran native MTP.
     private var mtpRuntimeReadout: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: theme.space.s8) {
             Text(L("Speculative decoding last run"))
                 .font(SettingsFont.smallLabel)
                 .foregroundColor(theme.text.secondary)
 
             ForEach(lastMTP.keys.sorted(), id: \.self) { model in
                 if let stats = lastMTP[model] {
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: theme.space.s2) {
                         Text(model)
                             .font(SettingsFont.smallLabel)
                             .lineLimit(1)

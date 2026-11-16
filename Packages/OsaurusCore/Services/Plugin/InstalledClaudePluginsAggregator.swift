@@ -48,9 +48,9 @@ public enum ClaudePluginArtifactKind: CaseIterable, Sendable {
     func tint(_ theme: any ThemeProtocol) -> Color {
         switch self {
         case .skill: return theme.action.primary.default.background
-        case .schedule: return .orange
-        case .command: return .blue
-        case .mcp: return .purple
+        case .schedule: return theme.dataInk(.orange)
+        case .command: return theme.dataInk(.blue)
+        case .mcp: return theme.dataInk(.purple)
         }
     }
 

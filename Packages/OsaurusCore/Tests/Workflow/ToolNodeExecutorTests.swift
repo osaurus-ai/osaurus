@@ -174,6 +174,20 @@ struct ToolNodeExecutorTests {
         #expect(kind(3) == ToolEnvelope.Kind.rejected.rawValue)
         #expect(kind(99) == ToolEnvelope.Kind.executionError.rawValue)
     }
+
+    @Test
+    func failureHint_travelsWithTheMessage() {
+        let envelope = ToolEnvelope.failure(
+            kind: .notFound, message: "No results from any search provider.", tool: "search_and_extract",
+            retryable: true, metadata: ["hint": "Try a broader query.", "attempts": [["provider": "ddg"]]])
+        let failure = ToolNodeExecutor.parseFailure(envelope)
+        #expect(failure.message == "No results from any search provider. Try a broader query.")
+        #expect(failure.kind == ToolEnvelope.Kind.notFound.rawValue)
+        #expect(failure.retryable)
+
+        let plain = ToolEnvelope.failure(kind: .invalidArgs, message: "path is outside the folder", tool: "file_write")
+        #expect(ToolNodeExecutor.parseFailure(plain).message == "path is outside the folder")
+    }
 }
 
 struct ToolNodeModelTests {

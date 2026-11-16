@@ -69,9 +69,9 @@ struct VoiceSetupTab: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 0) {
+            VStack(spacing: theme.space.s0) {
                 // Onboarding hero — kept in a narrow, centered column
-                VStack(spacing: 0) {
+                VStack(spacing: theme.space.s0) {
                     Spacer()
                         .frame(height: 40)
 
@@ -144,14 +144,13 @@ struct VoiceSetupTab: View {
     // MARK: - Requirements Section
 
     private var requirementsSection: some View {
-        HStack(spacing: 24) {
+        HStack(spacing: theme.space.s24) {
             // Microphone requirement
             microphoneRequirementItem
 
             // Separator
-            Rectangle()
-                .fill(theme.border.subtle)
-                .frame(width: 1, height: 20)
+            ThemeHairlineDivider(axis: .vertical)
+                .frame(height: 20)
 
             // Model requirement
             modelRequirementItem
@@ -162,12 +161,12 @@ struct VoiceSetupTab: View {
     }
 
     private var microphoneRequirementItem: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             // Status icon
             ZStack {
                 if speechService.microphonePermissionGranted {
                     Image(systemName: "checkmark.circle.fill")
-                        .glyphSize(16, weight: .medium)
+                        .glyphSize(.medium, weight: .medium)
                         .foregroundColor(theme.status.success.foreground)
                 } else {
                     Circle()
@@ -197,7 +196,7 @@ struct VoiceSetupTab: View {
     }
 
     private var modelRequirementItem: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             // `voice.stt.model` landing: the checklist item is the fastest
             // route to a working transcription model.
             // Icon with status
@@ -219,7 +218,7 @@ struct VoiceSetupTab: View {
     private var modelStatusIcon: some View {
         if hasModel {
             Image(systemName: "checkmark.circle.fill")
-                .glyphSize(16, weight: .medium)
+                .glyphSize(.medium, weight: .medium)
                 .foregroundColor(theme.status.success.foreground)
         } else if let progress = downloadProgress {
             ZStack {
@@ -265,7 +264,7 @@ struct VoiceSetupTab: View {
     // MARK: - Voice Test Section
 
     private var voiceTestSection: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: theme.space.s12) {
             // Mic button with waveform ring
             micButton
 
@@ -274,9 +273,9 @@ struct VoiceSetupTab: View {
 
             // Error message
             if let error = testError {
-                HStack(spacing: 6) {
+                HStack(spacing: theme.space.s6) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .glyphSize(11)
+                        .glyphSize(.footnote)
                     Text(error)
                         .font(SettingsFont.caption)
                 }
@@ -326,10 +325,10 @@ struct VoiceSetupTab: View {
 
                     // Icon
                     Image(systemName: isTestingVoice ? "stop.fill" : "mic.fill")
-                        .glyphSize(32, weight: .medium)
+                        .glyphSize(.hero, weight: .medium)
                         .foregroundColor(
                             isSetupComplete
-                                ? (isTestingVoice ? .white : (theme.isDark ? theme.surface.canvas : .white))
+                                ? (isTestingVoice ? theme.text.onDanger : theme.action.primary.default.foreground)
                                 : theme.text.tertiary
                         )
                 }
@@ -351,7 +350,7 @@ struct VoiceSetupTab: View {
     }
 
     private var transcriptionArea: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: theme.space.s8) {
             if testTranscription.isEmpty {
                 // Hint text
                 Text(
@@ -364,7 +363,7 @@ struct VoiceSetupTab: View {
                 .animation(theme.motion.quick, value: isTestingVoice)
             } else {
                 // Transcription with cursor
-                HStack(spacing: 0) {
+                HStack(spacing: theme.space.s0) {
                     Text(testTranscription)
                         .font(SettingsFont.body)
                         .foregroundColor(theme.text.primary)
@@ -387,9 +386,9 @@ struct VoiceSetupTab: View {
     // MARK: - Privacy Footer
 
     private var privacyFooter: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: theme.space.s6) {
             Image(systemName: "lock.fill")
-                .glyphSize(10)
+                .glyphSize(.micro)
                 .foregroundColor(theme.text.tertiary)
 
             Text("All processing happens on your Mac", bundle: .module)

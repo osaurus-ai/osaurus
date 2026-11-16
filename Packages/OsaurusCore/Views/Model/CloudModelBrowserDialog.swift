@@ -56,7 +56,7 @@ struct CloudModelBrowserDialog: View {
             .filter(categoryFilter.includes)
         let canBrowse = providerManager.isOsaurusRouterEnabled && !providerManager.isOffline && !catalog.isEmpty
 
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             header
             if canBrowse {
                 searchAndFilters(categories: categories)
@@ -106,8 +106,8 @@ struct CloudModelBrowserDialog: View {
     }
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 16) {
-            VStack(alignment: .leading, spacing: 6) {
+        HStack(alignment: .top, spacing: theme.space.s16) {
+            VStack(alignment: .leading, spacing: theme.space.s6) {
                 Text("Osaurus Cloud", bundle: .module)
                     .textStyle(.heading)
                     .foregroundStyle(theme.text.primary)
@@ -140,7 +140,7 @@ struct CloudModelBrowserDialog: View {
     }
 
     private func searchAndFilters(categories: [CloudModelCategory]) -> some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: theme.space.s16) {
             SearchField(text: $searchText, placeholder: "Search model name or provider", fillsAvailableWidth: true)
                 .accessibilityLabel(Text("Search model name or provider", bundle: .module))
                 .focused($focusedControl, equals: .search)
@@ -219,7 +219,7 @@ struct CloudModelBrowserDialog: View {
     }
 
     private var searchEmptyState: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: theme.space.s12) {
             Text("No models match", bundle: .module)
                 .textStyle(.body, weight: 600)
             Text("Try another search or clear your filters.", bundle: .module)
@@ -240,14 +240,13 @@ struct CloudModelBrowserDialog: View {
     }
 
     private var catalogStatus: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: theme.space.s12) {
             if !providerManager.isOsaurusRouterEnabled {
                 statusText("Osaurus Cloud is off", detail: "Open Credits to enable Osaurus Cloud.")
             } else if providerManager.isOffline {
                 statusText("You're offline", detail: "Connect to the internet to browse Cloud models.")
             } else if isRefreshing || providerState?.isConnecting == true {
-                ProgressView()
-                    .controlSize(.small)
+                SettingsSpinner()
                     .accessibilityLabel(Text("Loading Cloud models", bundle: .module))
                 statusText("Loading Cloud models…", detail: "The catalog will appear when the connection is ready.")
             } else if refreshFailed || providerState?.lastError != nil {
@@ -265,7 +264,7 @@ struct CloudModelBrowserDialog: View {
     }
 
     private func statusText(_ title: LocalizedStringKey, detail: LocalizedStringKey) -> some View {
-        VStack(spacing: 8) {
+        VStack(spacing: theme.space.s8) {
             Text(title, bundle: .module)
                 .textStyle(.body, weight: 600)
                 .foregroundStyle(theme.text.primary)
@@ -287,7 +286,7 @@ struct CloudModelBrowserDialog: View {
     }
 
     private func footer(canBrowse: Bool, resultCount: Int) -> some View {
-        HStack(spacing: 16) {
+        HStack(spacing: theme.space.s16) {
             Button(action: onManageCloud) {
                 Text("Manage Credits", bundle: .module)
             }
@@ -350,7 +349,7 @@ private struct CloudModelBrowserRow: View {
             isFavorite
             ? Text("Remove \(model.displayName) from favorites", bundle: .module)
             : Text("Add \(model.displayName) to favorites", bundle: .module)
-        return HStack(alignment: .center, spacing: 0) {
+        return HStack(alignment: .center, spacing: theme.space.s0) {
             Button {
                 onSelect()
             } label: {
@@ -374,7 +373,7 @@ private struct CloudModelBrowserRow: View {
                 onToggleFavorite()
             } label: {
                 Image(systemName: isFavorite ? "star.fill" : "star")
-                    .glyphSize(14, weight: .medium)
+                    .glyphSize(.body, weight: .medium)
                     .foregroundStyle(isFavorite ? theme.text.link : theme.text.secondary)
                     .frame(width: 28, height: 28)
                     .contentShape(Rectangle())
@@ -406,14 +405,14 @@ private struct CloudModelBrowserRow: View {
     }
 
     private func modelRowLabel(_ model: ModelPickerItem, isSelected: Bool) -> some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: theme.space.s12) {
             Image(systemName: "checkmark")
-                .glyphSize(12, weight: .semibold)
+                .glyphSize(.caption, weight: .semibold)
                 .frame(width: 16)
                 .opacity(isSelected ? 1 : 0)
                 .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: theme.space.s4) {
+                HStack(spacing: theme.space.s8) {
                     Text(model.displayName)
                         .textStyle(.body, weight: 500)
                         .lineLimit(1)

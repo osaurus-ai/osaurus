@@ -82,7 +82,7 @@ final class OsaurusImportTool: OsaurusTool, PermissionedTool, @unchecked Sendabl
             || (ChatExecutionContext.isExternalSurface && !ChatExecutionContext.hasRemoteReviewer)
         {
             return ToolEnvelope.failure(
-                kind: .permissionDenied,
+                kind: .rejected,
                 message: "Installing needs the user's approval in the Osaurus app, and this run has no way to show it. "
                     + "Nothing was installed.",
                 tool: name, retryable: false)
@@ -178,6 +178,11 @@ final class OsaurusImportTool: OsaurusTool, PermissionedTool, @unchecked Sendabl
         if openedTemplates > 0 && review.refusals.isEmpty {
             return ToolEnvelope.success(tool: name, result: ["status": "template_review_opened", "summary": parts.joined(separator: " ")])
         }
-        return ToolEnvelope.failure(kind: .notFound, message: parts.joined(separator: " "), tool: name, retryable: false)
+        if !review.refusals.isEmpty {
+            return ToolEnvelope.failure(kind: .rejected, message: parts.joined(separator: " "), tool: name, retryable: false)
+        }
+        return ToolEnvelope.failure(
+            kind: .invalidArgs, message: parts.joined(separator: " "), field: "source",
+            expected: "a link or setup text for something Osaurus can install", tool: name, retryable: false)
     }
 }

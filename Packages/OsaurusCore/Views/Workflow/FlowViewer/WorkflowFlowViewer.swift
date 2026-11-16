@@ -107,10 +107,10 @@ struct WorkflowFlowViewer: View {
         let badges = snapshot.badges()
         let reach = WorkflowFlowStory.reach(rows.flatMap { $0 }, badges: badges)
         let node = selected.flatMap { snapshot.definition.node($0) }
-        return VStack(spacing: 0) {
+        return VStack(spacing: theme.space.s0) {
             topBar(snapshot, rows: rows, matches: matches, reach: reach)
             ThemeHairlineDivider()
-            HStack(spacing: 0) {
+            HStack(spacing: theme.space.s0) {
                 canvasArea(
                     snapshot, rows: rows, selected: selected, matches: matches, badges: badges, reach: reach)
                 if let node {
@@ -129,7 +129,7 @@ struct WorkflowFlowViewer: View {
     private var missing: some View {
         VStack(spacing: theme.space.s12) {
             Image(systemName: "flowchart")
-                .glyphSize(28)
+                .glyphSize(.display)
                 .foregroundColor(theme.text.tertiary)
             Text(verbatim: L("This workflow isn't here anymore."))
                 .textStyle(.body, weight: 600)
@@ -206,12 +206,12 @@ struct WorkflowFlowViewer: View {
         let sources = [root] + trail
         return HStack(spacing: theme.space.s4) {
             Image(systemName: "flowchart")
-                .glyphSize(12, weight: .semibold)
+                .glyphSize(.caption, weight: .semibold)
                 .foregroundColor(theme.text.link)
             ForEach(Array(sources.enumerated()), id: \.offset) { index, crumb in
                 if index > 0 {
                     Image(systemName: "chevron.right")
-                        .glyphSize(9, weight: .semibold)
+                        .glyphSize(.tiny, weight: .semibold)
                         .foregroundColor(theme.text.tertiary)
                 }
                 let title =
@@ -649,8 +649,8 @@ struct WorkflowFlowDialogCard: View {
         VStack(alignment: .leading, spacing: theme.space.s12) {
             HStack(alignment: .firstTextBaseline, spacing: theme.space.s8) {
                 Image(systemName: "text.badge.checkmark")
-                    .glyphSize(12, weight: .semibold)
-                    .foregroundStyle(theme.statusInk.warning)
+                    .glyphSize(.caption, weight: .semibold)
+                    .foregroundStyle(theme.statusInk(.warning))
                     .accessibilityHidden(true)
                 Text(verbatim: dialog.title)
                     .textStyle(.label, weight: 600)

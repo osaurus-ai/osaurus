@@ -59,4 +59,44 @@ struct WorkflowRunningStepTimeoutTests {
             #expect(service.runningStepTimeout(sessionID: session) == nil)
         }
     }
+
+    @Test func aChatsRunWaitingOnAPersonReportsWaiting_untilTheyAnswer() async throws {
+        let latch = Latch()
+        let session = "session-\(UUID().uuidString)"
+        let definition = WorkflowDefinition(
+            inputSchema: WF.object([:]), outputSchema: WF.object([:]),
+            nodes: [
+                WorkflowNode(
+                    id: "ask", name: "Ask",
+                    kind: .dialog(DialogSpec(title: "Role", fields: [DialogField(key: "jd", label: "JD")])),
+                    timeout: 120)
+            ],
+            edges: [], output: .object([:]))
+        try await WorkflowExecutorOverride.with({
+            ClosureExecutor { _, awaiting in
+                await awaiting(true)
+                await latch.wait()
+                await awaiting(false)
+                return WorkflowNodeOutcome(output: .object([:]))
+            }
+        }) {
+            let service = WorkflowRunService.shared
+            let runID = service.startTest(
+                draftID: UUID(), template: WF.template(definition), bindings: InstallBindings(), input: .object([:]),
+                sessionID: session)
+
+            var waiting = false
+            for _ in 0 ..< 500 where !waiting {
+                waiting = service.isAwaitingPerson(sessionID: session)
+                if !waiting { try await Task.sleep(for: .milliseconds(10)) }
+            }
+            #expect(waiting)
+            #expect(!service.isAwaitingPerson(sessionID: "another-chat"))
+            #expect(RunProgressLoadingPhase.current(agentId: nil, sessionId: session) == .workflowAwaitingPerson)
+
+            await latch.release()
+            _ = await service.result(of: runID)
+            #expect(!service.isAwaitingPerson(sessionID: session))
+        }
+    }
 }

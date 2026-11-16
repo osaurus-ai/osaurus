@@ -12,6 +12,7 @@
 import Foundation
 
 enum DiscoveryItem: String, CaseIterable, Codable, Sendable {
+    case team
     case tryWorkflow = "try_workflow"
     case turnOnWorkflow = "turn_on_workflow"
     case keeperFolders = "keeper_folders"
@@ -50,6 +51,11 @@ struct DiscoverySnapshot: Sendable, Equatable {
     /// Some default workflow has completed a run.
     var defaultWorkflowSucceeded = false
     var defaultAutomationExists = false
+    /// Some day-one teammate exists.
+    var teammateExists = false
+    /// The install was seeded with the team, or the team was made on
+    /// purpose since; a team the person then deleted is not offered again.
+    var teamSeeded = false
     var keeperExists = false
     var keeperRedactionOn = false
     /// A folder other than Downloads, on an agent other than Builder.
@@ -99,7 +105,7 @@ enum DiscoveryCatalog {
 
     /// The default order, which follows the first run.
     static let defaultOrder: [DiscoveryItem] = [
-        .tryWorkflow, .turnOnWorkflow, .keeperFolders, .keeperRedaction, .history, .people, .navigator, .builder,
+        .team, .tryWorkflow, .turnOnWorkflow, .keeperFolders, .keeperRedaction, .history, .people, .navigator, .builder,
         .ownAgent, .memory, .toolServer, .orchestratorFolder, .privacyAI, .search, .shortcuts, .store, .skills,
         .channels, .computerUse, .messages, .phone, .encryption, .music, .voice,
     ]
@@ -142,6 +148,7 @@ enum DiscoveryCatalog {
             done ? .done : (shown ? .open : .hidden)
         }
         switch item {
+        case .team: return openUnless(s.teammateExists || s.teamSeeded)
         case .tryWorkflow:
             return openUnless(
                 s.defaultWorkflowSucceeded || s.defaultAutomationExists,
@@ -182,6 +189,7 @@ enum DiscoveryCatalog {
     /// The card's title.
     static func title(_ item: DiscoveryItem, names: [Teammate: String]) -> String {
         switch item {
+        case .team: return L("Create Your Team")
         case .tryWorkflow: return L("Try a Default Workflow")
         case .turnOnWorkflow: return L("Turn On a Default Workflow")
         case .keeperFolders: return String(format: L("Give %@ Your Documents and Desktop"), names[.keeper] ?? "Keeper")
@@ -212,6 +220,7 @@ enum DiscoveryCatalog {
 
     static func icon(_ item: DiscoveryItem) -> String {
         switch item {
+        case .team: return "person.3"
         case .tryWorkflow: return "play.circle"
         case .turnOnWorkflow: return "clock"
         case .keeperFolders: return "folder.badge.plus"
@@ -245,6 +254,10 @@ enum DiscoveryCatalog {
         let courier = names[.courier] ?? "Courier"
         let scout = names[.scout] ?? "Scout"
         switch item {
+        case .team:
+            return L(
+                "Osaurus can add a small team of agents, each for one app or folder: Planner for Calendar and Reminders, Courier for Mail, Keeper for Downloads and Notes, and Scout for the web. Then you can ask me about your day, your mail, or your files."
+            )
         case .tryWorkflow:
             return L("Osaurus came with workflows that do a whole job in one go. Run one here to see what it gives you.")
         case .turnOnWorkflow:

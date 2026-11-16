@@ -22,12 +22,10 @@ struct HotkeyRecorder: View {
                 Text("Recording… Press new shortcut", bundle: .module)
                     .assignedTypography("component.library.9.caption", fallback: SettingsFont.rowDescription)
                     .foregroundColor(theme.text.secondary)
-                    #if OSAURUS_DESIGN_SYSTEM
-                    .padding(.horizontal, 0).padding(.vertical, 0)
+                    .padding(.horizontal, theme.space.s0).padding(.vertical, theme.space.s0)
                     .frame(minHeight: theme.catalogMetric("height", fallback: 0))
                     .assignedBaseChrome(9, fallback: nil, selected: true)
                     .assignedBaseFocusRing(9, visible: baseComponentEnabled, radius: theme.catalogMetric("radius", fallback: 8), keyboardOnly: false)
-                    #endif
                 SettingsButton(.secondary, "Cancel", size: .compact) {
                     isRecording = false
                 }

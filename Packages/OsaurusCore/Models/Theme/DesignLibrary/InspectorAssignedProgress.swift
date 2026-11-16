@@ -1,4 +1,3 @@
-#if OSAURUS_DESIGN_SYSTEM
 import SwiftUI
 import AppKit
 import QuartzCore
@@ -29,17 +28,17 @@ struct InspectorAssignedProgressStyle: ProgressViewStyle {
     @ViewBuilder func makeBody(configuration: Configuration) -> some View {
         Group {
             if let fraction = configuration.fractionCompleted {
-                VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: theme.space.s0) {
                     label(configuration)
-                        .padding(.bottom, theme.catalogLayoutMetric("component.library.12.elements.layout.progressLabelGap", inheriting: theme.assignedMetric("component.library.12.gap", fallback: 8)))
+                        .padding(.bottom, theme.catalogLayoutMetric("component.library.12.elements.layout.progressLabelGap", inheriting: theme.assignedMetric("component.library.12.gap", fallback: theme.space.s8)))
                         .catalogLayoutTarget("component.library.12.elements.layout.progressLabelGap")
                     SettingsProgressBar(value: fraction)
                     caption(configuration)
-                        .padding(.top, theme.catalogLayoutMetric("component.library.12.elements.layout.progressCaptionGap", inheriting: theme.assignedMetric("component.library.12.gap", fallback: 8)))
+                        .padding(.top, theme.catalogLayoutMetric("component.library.12.elements.layout.progressCaptionGap", inheriting: theme.assignedMetric("component.library.12.gap", fallback: theme.space.s8)))
                         .catalogLayoutTarget("component.library.12.elements.layout.progressCaptionGap")
                 }
             } else {
-                HStack(spacing: theme.catalogLayoutMetric("component.library.12.elements.layout.spinnerContentGap", inheriting: theme.assignedMetric("component.library.12.gap", fallback: 8))) {
+                HStack(spacing: theme.catalogLayoutMetric("component.library.12.elements.layout.spinnerContentGap", inheriting: theme.assignedMetric("component.library.12.gap", fallback: theme.space.s8))) {
                     spinner
                     label(configuration)
                     caption(configuration)
@@ -152,4 +151,3 @@ private struct InspectorLayerSpinner: NSViewRepresentable {
         }
     }
 }
-#endif

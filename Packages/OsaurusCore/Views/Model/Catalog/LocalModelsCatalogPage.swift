@@ -15,8 +15,6 @@ struct LocalModelsCatalogPage: View {
     @ObservedObject var source: LocalModelCatalogSource
     let kindTabs: AnyView
     let sourcesButton: AnyView
-    /// Repo id from a `local-models` URL, applied once on first appear.
-    var deeplinkModelId: String?
 
     @ObservedObject private var badgeStore = ManagementBadgeStore.shared
     @ObservedObject private var managementState = ManagementStateManager.shared
@@ -50,12 +48,12 @@ struct LocalModelsCatalogPage: View {
         let selectedItem = selection.flatMap { id in source.items.first { $0.id == id } }
         let inspectorCovers = regionWidth > 0 && regionWidth - Self.inspectorWidth < Self.minTableWidth
 
-        VStack(spacing: 0) {
+        VStack(spacing: theme.space.s0) {
             header(searched: searched)
                 .settingsHeaderEntrance(hasAppeared: hasAppeared)
             LiveSystemStatusBar()
                 .opacity(hasAppeared ? 1 : 0)
-            HStack(spacing: 0) {
+            HStack(spacing: theme.space.s0) {
                 ScrollView {
                     SettingsPageContent {
                         if let banner = source.banner(scope: scope) {
@@ -96,9 +94,6 @@ struct LocalModelsCatalogPage: View {
         .onAppear {
             source.activate()
             withAnimation(theme.motion.standard.delay(0.05)) { hasAppeared = true }
-            if let modelId = deeplinkModelId, !modelId.isEmpty, source.kind == .language {
-                applyModelDeepLink(modelId)
-            }
             DispatchQueue.main.async { applyPendingModelDetail() }
         }
         .onChange(of: searchText) { _, newValue in

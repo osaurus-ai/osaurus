@@ -46,6 +46,18 @@ enum ToolPermissionPromptService {
         case allowOnce
         case allowForRun
         case alwaysAllow
+        /// This tool runs without asking for the requesting agent only.
+        case alwaysAllowForAgent
+        /// The requesting agent's Tool Approvals becomes Never Ask.
+        case neverAskForAgent
+    }
+
+    /// The custom agent whose own run raised a card, offered the
+    /// agent-scoped "Don't ask again" entries. Only the Mac's own panel
+    /// offers them; phone, synced-device and notification answers do not.
+    struct AgentApprovalChoice: Sendable, Equatable {
+        let agentId: UUID
+        let agentName: String
     }
 
     /// Re-evaluated immediately before an entry is presented. A non-nil value
@@ -84,6 +96,11 @@ enum ToolPermissionPromptService {
         /// A caller-owned approval must publish its new authority before the
         /// next queued request revalidates. Nil preserves generic callers.
         var commitApproval: (@MainActor @Sendable (ApprovalOutcome) -> Void)? = nil
+        /// Registry cards persist "Always Allow" and the agent-scoped
+        /// answers here, before the next queued card revalidates.
+        var commitResolution: (@MainActor @Sendable (PromptResolution) -> Void)? = nil
+        /// Set only for a custom agent's own run on this Mac.
+        var agentChoice: AgentApprovalChoice? = nil
 
         /// Only paired-phone cards reach the phone's `GET /approvals`, as in
         /// the computer-use and config queues: a card from a Mac chat is
@@ -112,7 +129,9 @@ enum ToolPermissionPromptService {
         return .make(
             granted: ChatExecutionContext.workflowGrantedPaths ?? [],
             writable: ChatExecutionContext.workflowWritableRoots, workspace: hooks?.workspace,
-            asksBeforeReplacing: hooks != nil)
+            folderRoot: ChatExecutionContext.currentFolderRoot, asksBeforeReplacing: hooks != nil,
+            sandboxPathsRouteToVM: ChatExecutionContext.sandboxReadBridge != nil
+                && !ChatExecutionContext.hostFolderIsDispatchTarget)
     }
 
     /// The bounds the sandbox enforces on a VM call: the VM size from the
@@ -178,6 +197,17 @@ enum ToolPermissionPromptService {
         }
     }
 
+    /// A card that is not a tool approval, today the system-permission
+    /// panel. It shares the presenter slot so it never stacks on an approval
+    /// card, and goes ahead of approvals still waiting their turn.
+    struct AheadCard {
+        let id: UUID
+        let view: AnyView
+        let onReturn: () -> Void
+        let onEscape: () -> Void
+    }
+
+    private static var aheadQueue: [AheadCard] = []
     private static var queue: [PendingPrompt] = []
     private static var continuations: [UUID: CheckedContinuation<PromptResolution, Never>] = [:]
     private static var slot: PresenterSlot?
@@ -244,6 +274,10 @@ enum ToolPermissionPromptService {
     static var presentedPresentationForTesting: ToolApprovalPresentation? {
         presentedRequest?.presentation
     }
+    /// The agent the presented card offers the agent-scoped entries for.
+    static var presentedAgentChoiceForTesting: AgentApprovalChoice? {
+        presentedRequest?.agentChoice
+    }
 
     /// Deny everything outstanding.
     static func resetForTesting() {
@@ -253,6 +287,7 @@ enum ToolPermissionPromptService {
         slot = nil
         presentedRequest = nil
         queue.removeAll()
+        aheadQueue.removeAll()
     }
 
     // MARK: - Remote approvals (Osaurus Connect)
@@ -342,6 +377,7 @@ enum ToolPermissionPromptService {
         let scope: String
         let prompt: SyncedPrompt
         let commitApproval: (@MainActor @Sendable (ApprovalOutcome) -> Void)?
+        let commitResolution: (@MainActor @Sendable (PromptResolution) -> Void)?
     }
 
     private static var syncedHeld: [UUID: HeldPrompt] = [:]
@@ -358,7 +394,8 @@ enum ToolPermissionPromptService {
                 surface: request.executionSurface?.rawValue,
                 requestedAt: Date()
             ),
-            commitApproval: request.commitApproval
+            commitApproval: request.commitApproval,
+            commitResolution: request.commitResolution
         )
         AttentionProducers.beginWaiting(itemId: id, step: L("Waiting for approval"))
         postSyncedChange(scope: scope)
@@ -397,7 +434,9 @@ enum ToolPermissionPromptService {
         argumentsJSON: String,
         knowledgeWritePreview: KnowledgeWritePreview? = nil,
         perCallApprovalOnly: Bool = false,
-        executionSurface: ToolExecutionSurface? = nil
+        executionSurface: ToolExecutionSurface? = nil,
+        agentChoice: AgentApprovalChoice? = nil,
+        revalidate: Revalidation? = nil
     ) async -> Bool {
         switch await requestApprovalOutcome(
             toolName: toolName,
@@ -406,7 +445,9 @@ enum ToolPermissionPromptService {
             argumentsJSON: argumentsJSON,
             knowledgeWritePreview: knowledgeWritePreview,
             perCallApprovalOnly: perCallApprovalOnly,
-            executionSurface: executionSurface
+            executionSurface: executionSurface,
+            agentChoice: agentChoice,
+            revalidate: revalidate
         ) {
         case .denied: return false
         case .allowOnce, .allowForRun, .alwaysAllow: return true
@@ -426,6 +467,11 @@ enum ToolPermissionPromptService {
     ///
     /// `descriptionIsForModel` marks `description` as the tool's schema
     /// text, which the sheet replaces with plain copy instead of showing.
+    ///
+    /// `agentChoice` adds **Always Allow for *Agent*…** and **Never Ask for
+    /// *Agent*…** to the Mac's panel; dropped for per-call tools and for cards
+    /// answered elsewhere. `revalidate` settles a queued card silently when an
+    /// earlier answer already covers it.
     static func requestApprovalOutcome(
         toolName: String,
         description: String,
@@ -433,11 +479,15 @@ enum ToolPermissionPromptService {
         argumentsJSON: String,
         knowledgeWritePreview: KnowledgeWritePreview? = nil,
         perCallApprovalOnly: Bool = false,
-        executionSurface: ToolExecutionSurface? = nil
+        executionSurface: ToolExecutionSurface? = nil,
+        agentChoice: AgentApprovalChoice? = nil,
+        revalidate: Revalidation? = nil
     ) async -> ApprovalOutcome {
         if isHeadlessTestProcess { return .denied }
         if Task.isCancelled { return .denied }
 
+        let requester = Requester.current
+        let offeredChoice = requester == .thisMac && !perCallApprovalOnly ? agentChoice : nil
         let resolution = await enqueue(
             PromptRequest(
                 toolName: toolName,
@@ -447,13 +497,17 @@ enum ToolPermissionPromptService {
                 perCallApprovalOnly: perCallApprovalOnly,
                 offersRunLease: !perCallApprovalOnly,
                 executionSurface: executionSurface,
-                requester: .current,
+                requester: requester,
                 descriptionIsForModel: descriptionIsForModel,
                 stepReason: ChatExecutionContext.currentWorkflowStepReason,
                 sandboxFacts: sandboxFacts(for: executionSurface),
-                workflowFacts: workflowFacts()
+                workflowFacts: workflowFacts(),
+                commitResolution: { resolution in
+                    persist(resolution, toolName: toolName, agentChoice: offeredChoice)
+                },
+                agentChoice: offeredChoice
             ),
-            revalidate: nil
+            revalidate: revalidate
         )
         switch resolution {
         case .denied:
@@ -462,9 +516,30 @@ enum ToolPermissionPromptService {
             return .allowOnce
         case .allowForRun:
             return .allowForRun
+        case .alwaysAllow, .alwaysAllowForAgent, .neverAskForAgent:
+            return .alwaysAllow
+        }
+    }
+
+    /// Writes a lasting answer from a registry card. An agent-scoped answer
+    /// without an offered agent (it cannot arrive from the panel) is only a
+    /// single approval.
+    private static func persist(
+        _ resolution: PromptResolution,
+        toolName: String,
+        agentChoice: AgentApprovalChoice?
+    ) {
+        switch resolution {
         case .alwaysAllow:
             ToolRegistry.shared.setPolicy(.auto, for: toolName)
-            return .alwaysAllow
+        case .alwaysAllowForAgent:
+            guard let agentChoice else { return }
+            AgentManager.shared.updateToolPolicy(for: agentChoice.agentId, tool: toolName, policy: .auto)
+        case .neverAskForAgent:
+            guard let agentChoice else { return }
+            AgentManager.shared.updateToolApprovalMode(for: agentChoice.agentId, mode: .neverAsk)
+        case .denied, .allowOnce, .allowForRun:
+            break
         }
     }
 
@@ -513,7 +588,7 @@ enum ToolPermissionPromptService {
         )
         switch resolution {
         case .denied: return .denied
-        case .allowOnce, .allowForRun: return .allowOnce
+        case .allowOnce, .allowForRun, .alwaysAllowForAgent, .neverAskForAgent: return .allowOnce
         case .alwaysAllow: return .alwaysAllow
         }
     }
@@ -559,7 +634,7 @@ enum ToolPermissionPromptService {
         )
         switch resolution {
         case .denied: return .denied
-        case .allowOnce: return .allowOnce
+        case .allowOnce, .alwaysAllowForAgent, .neverAskForAgent: return .allowOnce
         case .allowForRun: return .allowForRun
         case .alwaysAllow: return .alwaysAllow
         }
@@ -664,7 +739,7 @@ enum ToolPermissionPromptService {
     nonisolated private static func attentionOutcome(for outcome: PromptResolution) -> AttentionResolution.Outcome {
         switch outcome {
         case .denied: return .denied
-        case .allowOnce, .alwaysAllow: return .approved
+        case .allowOnce, .alwaysAllow, .alwaysAllowForAgent, .neverAskForAgent: return .approved
         case .allowForRun: return .allowedForConversation
         }
     }
@@ -674,6 +749,10 @@ enum ToolPermissionPromptService {
     /// guard, immediate cancellation) simply pumps again.
     private static func pump() {
         guard slot == nil else { return }
+        if !aheadQueue.isEmpty {
+            presentAhead(aheadQueue.removeFirst())
+            return
+        }
         while !queue.isEmpty {
             let next = queue.removeFirst()
             // Resolved (cancelled) while it was still queued.
@@ -711,12 +790,14 @@ enum ToolPermissionPromptService {
             AttentionProducers.endWaiting(itemId: id)
             if let continuation = continuations.removeValue(forKey: id) {
                 commit(outcome, to: held.commitApproval)
+                held.commitResolution?(outcome)
                 continuation.resume(returning: outcome)
             }
             postSyncedChange(scope: held.scope)
             return
         }
         let commitApproval = pendingRequest(id: id)?.commitApproval
+        let commitResolution = pendingRequest(id: id)?.commitResolution
         queue.removeAll { $0.id == id }
         if let current = slot, current.id == id {
             tearDown(current)
@@ -730,6 +811,7 @@ enum ToolPermissionPromptService {
             )
             AttentionProducers.endWaiting(itemId: id)
             commit(outcome, to: commitApproval)
+            commitResolution?(outcome)
             continuation.resume(returning: outcome)
         }
         pump()
@@ -746,6 +828,7 @@ enum ToolPermissionPromptService {
         case .allowOnce: commitApproval?(.allowOnce)
         case .allowForRun: commitApproval?(.allowForRun)
         case .alwaysAllow: commitApproval?(.alwaysAllow)
+        case .alwaysAllowForAgent, .neverAskForAgent: commitApproval?(.allowOnce)
         }
     }
 
@@ -757,6 +840,31 @@ enum ToolPermissionPromptService {
         }
         handles.panel.orderOut(nil)
         lastRenderedCardSize = nil
+    }
+
+    // MARK: - Cards ahead of the queue
+
+    /// Shows `card` as soon as the presented approval (if any) is answered,
+    /// ahead of every approval still queued.
+    static func presentAheadOfQueue(_ card: AheadCard) {
+        aheadQueue.append(card)
+        pump()
+    }
+
+    /// Closes or unqueues a card from `presentAheadOfQueue`.
+    static func dismissAheadCard(id: UUID) {
+        aheadQueue.removeAll { $0.id == id }
+        if let current = slot, current.id == id {
+            tearDown(current)
+            slot = nil
+        }
+        pump()
+    }
+
+    private static func presentAhead(_ card: AheadCard) {
+        let handles = makePanel(view: card.view, onAllow: card.onReturn, onDeny: card.onEscape)
+        slot = .presented(card.id, handles)
+        showPresentedPanel(handles.panel)
     }
 
     // MARK: - Presentation
@@ -790,20 +898,30 @@ enum ToolPermissionPromptService {
             onAllowForRun: onAllowForRun,
             knowledgeWritePreview: request.knowledgeWritePreview,
             perCallApprovalOnly: request.perCallApprovalOnly,
-            queuedBehind: queuedBehind
+            queuedBehind: queuedBehind,
+            agentChoices: request.agentChoice.map { choice in
+                ToolPermissionView.AgentChoices(
+                    agentName: choice.agentName,
+                    onAlwaysAllowForAgent: { resolve(id: id, outcome: .alwaysAllowForAgent) },
+                    onNeverAskForAgent: { resolve(id: id, outcome: .neverAskForAgent) }
+                )
+            }
         )
         .environment(\.theme, themeManager.currentTheme)
 
         let handles = makePanel(view: permissionView, onAllow: onAllow, onDeny: onDeny)
         slot = .presented(id, handles)
+        showPresentedPanel(handles.panel)
+    }
+
+    private static func showPresentedPanel(_ panel: NSPanel) {
         // Apply the card size reported during the sizing layout pass, when
         // the panel was not yet registered and the callback could not act.
         if let renderedSize = lastRenderedCardSize {
             resizePanelToRenderedContent(renderedSize)
         }
         NSApp.activate(ignoringOtherApps: true)
-        handles.panel.makeKeyAndOrderFront(nil)
-        let panel = handles.panel
+        panel.makeKeyAndOrderFront(nil)
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             panel.makeKey()
             if let contentView = panel.contentView { panel.makeFirstResponder(contentView) }

@@ -56,10 +56,10 @@ struct ServerSettingsCard<Content: View>: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: theme.space.s4) {
+            HStack(spacing: theme.space.s10) {
                 Image(systemName: section.icon)
-                    .glyphSize(14, weight: .semibold)
+                    .glyphSize(.body, weight: .semibold)
                     .foregroundColor(theme.text.link)
                     .frame(width: 20)
 
@@ -93,7 +93,7 @@ struct ServerSettingsPlannedBanner: View {
     @Environment(\.theme) private var theme
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: theme.space.s8) {
             ServerSettingsStatusBadge(status: .needsBridge)
             Text(LocalizedStringKey(blurb), bundle: .module)
                 .font(SettingsFont.rowDescription)

@@ -163,15 +163,17 @@ struct BraveScrapeBackend: SearchBackend {
         guard let html = String(data: data, encoding: .utf8), !html.isEmpty else {
             throw SearchBackendError("Brave HTML: empty response", kind: .empty)
         }
-        if SearchHTML.isLikelyChallengePage(html) {
+        let hits = Self.parseHTML(html, max: request.maxResults)
+        if hits.isEmpty, SearchHTML.isLikelyChallengePage(html) {
             throw SearchBackendError("Brave HTML: challenge_page", kind: .challenge)
         }
-        return Self.parseHTML(html, max: request.maxResults)
+        return hits
     }
 
     /// Brave's modern markup wraps each result in `<div class="snippet ...">`
-    /// with the title link as `<a class="title ...">` and the snippet text as
-    /// `<div class="description ...">`. Ads come through the same wrapper but
+    /// with the title link as `<a class="title ...">` or `<a class="l1">`
+    /// and the snippet text in `<div class="generic-snippet">` (formerly
+    /// `<div class="description">`). Ads come through the same wrapper but
     /// with `data-type="ad"` and `/a/redirect` hrefs; filter them out.
     static func parseHTML(_ html: String, max: Int) -> [SearchHit] {
         let chunks = SearchHTML.sliceByClass(html, className: "snippet")
@@ -188,7 +190,9 @@ struct BraveScrapeBackend: SearchBackend {
             guard let rawURL = url, rawURL.hasPrefix("http") else { continue }
 
             let title = SearchHTML.firstInnerByClass(in: chunk, className: "title") ?? ""
-            let snippet = SearchHTML.firstInnerByClass(in: chunk, className: "description") ?? ""
+            let snippet =
+                SearchHTML.firstInnerByClass(in: chunk, className: "description")
+                ?? SearchHTML.firstInnerByClass(in: chunk, className: "generic-snippet") ?? ""
             let cleanedTitle = SearchHTML.stripHTML(title)
             if cleanedTitle.isEmpty { continue }
 
@@ -250,7 +254,40 @@ struct BingScrapeBackend: SearchBackend {
         if Self.isChallengePage(html) {
             throw SearchBackendError("Bing HTML: challenge_page", kind: .challenge)
         }
-        return Self.parseHTML(html, max: request.maxResults)
+        let hits = Self.parseHTML(html, max: request.maxResults)
+        if Self.matchesOnlyLeadingTerm(hits, query: request.query) {
+            throw SearchBackendError("Bing HTML: results match only the first query word", kind: .empty)
+        }
+        return hits
+    }
+
+    private static let stopWords: Set<String> = [
+        "a", "an", "and", "are", "as", "at", "be", "by", "can", "do", "does", "for", "from", "how", "in", "is",
+        "it", "of", "on", "or", "the", "to", "vs", "what", "when", "where", "which", "who", "why", "with",
+    ]
+
+    static func terms(_ text: String) -> [String] {
+        text.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init)
+    }
+
+    /// Bing serves scripted clients results for the query's first word
+    /// alone ("how heat pumps work" returns the film Heat and the Miami
+    /// Heat) while the page title still names the full query. Such a page
+    /// is decoy results, not an answer: most hits mention none of the
+    /// query's other words.
+    static func matchesOnlyLeadingTerm(_ hits: [SearchHit], query: String) -> Bool {
+        let significant = terms(query).filter { !stopWords.contains($0) }
+        let others = Set(significant.dropFirst()).subtracting([significant.first ?? ""])
+        guard !others.isEmpty, !hits.isEmpty else { return false }
+        func singular(_ word: String) -> String {
+            word.count > 3 && word.hasSuffix("s") ? String(word.dropLast()) : word
+        }
+        let wanted = Set(others.map(singular))
+        let relevant = hits.filter { hit in
+            let words = Set(terms(hit.title + " " + hit.snippet + " " + hit.url).map(singular))
+            return !words.isDisjoint(with: wanted)
+        }
+        return relevant.count * 2 < hits.count
     }
 
     /// Bing's anti-bot interstitial ("One last step — please solve the

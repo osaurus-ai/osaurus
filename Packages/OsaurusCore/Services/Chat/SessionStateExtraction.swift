@@ -2,16 +2,28 @@
 //  SessionStateExtraction.swift
 //  osaurus
 //
-//  The last resort for an Orchestrator turn that ended without a `state`
-//  call, after the forced step: one tool-free generation on the chat's own
-//  model, given the previous object and the turn, that answers with the
-//  object. It never runs after Stop, a final `clarify`, or a parked
-//  `awaiting_user` (the turn has nothing settled to record), and an answer
-//  that is not a non-empty state object leaves the previous object marked
-//  stale.
+//  The Orchestrator's session state is the harness's: after each settled
+//  turn, one tool-free generation on the chat's own model, given the
+//  previous object and the turn, answers with the object. It never runs
+//  after Stop, a final `clarify`, or a parked `awaiting_user` (the turn has
+//  nothing settled to record), and an answer that is not a non-empty state
+//  object leaves the previous object marked stale. The Orchestrator has no
+//  tool that writes state.
 //
 
 import Foundation
+
+/// How the last model step of an Orchestrator turn ended.
+enum TurnEnding: Sendable, Equatable {
+    /// Plain text and no tool calls.
+    case finalText
+    /// The step cap, just before the tool-free wrap-up.
+    case iterationCap
+    /// A `clarify` question. The turn has no answer yet, by design.
+    case clarify
+    /// A parked `awaiting_user` handoff or workflow run.
+    case awaitingUser
+}
 
 enum SessionStateExtraction {
 
@@ -26,9 +38,9 @@ enum SessionStateExtraction {
     static let maxLines = 24
     static let maxLineCharacters = 500
 
-    /// Same endings the forced step accepts: an answer, or the step cap.
-    static func applies(interrupted: Bool, lastStepEndedOn ending: StateStepEnding?, stateWritten: Bool) -> Bool {
-        guard !interrupted, !stateWritten, let ending else { return false }
+    /// A settled turn: it ended on an answer, or at the step cap.
+    static func applies(interrupted: Bool, lastStepEndedOn ending: TurnEnding?) -> Bool {
+        guard !interrupted, let ending else { return false }
         return ending == .finalText || ending == .iterationCap
     }
 
@@ -65,7 +77,7 @@ enum SessionStateExtraction {
         return [first] + lines.suffix(maxLines - 1)
     }
 
-    /// The object in the answer, decoded and bounded like a `state` call.
+    /// The object in the answer, decoded and bounded.
     /// Nil when the answer holds no JSON object or the object is empty.
     static func parse(_ answer: String) -> SessionState? {
         let text = answer.trimmingCharacters(in: .whitespacesAndNewlines)

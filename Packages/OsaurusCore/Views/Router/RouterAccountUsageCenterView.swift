@@ -8,20 +8,14 @@ struct RouterAccountUsageCenterView: View {
     @ObservedObject private var accountService = OsaurusRouterAccountService.shared
 
     private var theme: any ThemeProtocol {
-        #if OSAURUS_DESIGN_SYSTEM
         if let inspectionTheme { return inspectionTheme }
-        #endif
         return themeManager.currentTheme
     }
 
-#if OSAURUS_DESIGN_SYSTEM
     private var inspectionTheme: (any ThemeProtocol)?
     var inspectionSnapshot: RouterAccountUsageSnapshot?
-#endif
     private var displayedSnapshot: RouterAccountUsageSnapshot {
-#if OSAURUS_DESIGN_SYSTEM
         if let value = inspectionSnapshot { return value }
-#endif
         return model.snapshot
     }
 
@@ -185,7 +179,7 @@ struct RouterAccountUsageCenterView: View {
                         isLoading: model.isBusy
                     )
                 } else {
-                    VStack(spacing: 0) {
+                    VStack(spacing: theme.space.s0) {
                         ForEach(rows) { row in
                             activityRow(row)
                             if row.id != rows.last?.id {
@@ -277,8 +271,7 @@ struct RouterAccountUsageCenterView: View {
                         Task { await model.runSignedRequestDiagnostics() }
                     } label: {
                         if model.isSigningDiagnostics {
-                            ProgressView()
-                                .scaleEffect(0.7)
+                            SettingsSpinner()
                         } else {
                             Label(localized: "Run", systemImage: "checkmark.seal")
                         }
@@ -328,8 +321,7 @@ struct RouterAccountUsageCenterView: View {
                         chooseSupportExportURL()
                     } label: {
                         if model.isExportingSupport {
-                            ProgressView()
-                                .scaleEffect(0.7)
+                            SettingsSpinner()
                         } else {
                             Label(localized: "Export", systemImage: "square.and.arrow.up")
                         }
@@ -515,10 +507,10 @@ struct RouterAccountUsageCenterView: View {
         VStack(alignment: .leading, spacing: theme.space.s4) {
             HStack(spacing: theme.space.s6) {
                 Image(systemName: icon)
-                    .glyphSize(12, weight: .semibold)
+                    .glyphSize(.caption, weight: .semibold)
                     .foregroundColor(color)
                     .frame(width: 22, height: 22)
-                    .background(Circle().fill(color.opacity(0.13)))
+                    .background(Circle().fill(theme.wash(behind: color)))
                 Text(LocalizedStringKey(title), bundle: .module)
                     .catalogTypography(.label, theme: theme, fallback: SettingsFont.smallLabel)
                     .foregroundColor(theme.text.secondary)
@@ -544,7 +536,7 @@ struct RouterAccountUsageCenterView: View {
         VStack(alignment: .leading, spacing: theme.space.s12) {
             HStack(spacing: theme.space.s8) {
                 Image(systemName: icon)
-                    .glyphSize(13, weight: .semibold)
+                    .glyphSize(.label, weight: .semibold)
                     .foregroundColor(theme.text.link)
                     .frame(width: 20, height: 20)
                 Text(LocalizedStringKey(title), bundle: .module)
@@ -642,7 +634,6 @@ struct RouterAccountUsageCenterView: View {
     }
 }
 
-#if OSAURUS_DESIGN_SYSTEM
 extension RouterAccountUsageCenterView {
     static func inspectionAccount(_ state: String, theme: any ThemeProtocol) -> some View {
         var view = RouterAccountUsageCenterView()
@@ -650,11 +641,10 @@ extension RouterAccountUsageCenterView {
         let balance = OsaurusRouterBalanceResponse(balanceMicro: "1234567", frozen: state == "Frozen")
         let usage = OsaurusRouterUsageItem(id: "local-account-display", requestId: nil, model: "Local display model", provider: "Local sample", inputTokens: 1234, outputTokens: 56, costMicro: "1234", status: "completed", tokenSource: "provider", createdAt: "2026-10-22T12:00:00Z")
         view.inspectionSnapshot = RouterAccountUsageCenter.snapshot(routerEnabled: state != "Disabled", identityAvailable: state != "Missing identity", balance: state == "Error" ? nil : balance, lastError: state == "Error" ? "Local account error display." : nil, usageItems: [usage], transactions: [], ledgerEntries: [])
-        return VStack(alignment: .leading, spacing: 12) {
+        return VStack(alignment: .leading, spacing: theme.space.s12) {
             view.statusMetrics
             view.accountStatusSection
             view.sectionCard(title: "Populated totals", icon: "chart.bar") { view.keyValueGrid(view.creditsTotalsRows) }
         }.environment(\.theme, view.theme).allowsHitTesting(false)
     }
 }
-#endif

@@ -182,6 +182,7 @@ enum ConfigExporter {
         entry.systemPrompt = agent.systemPrompt
         entry.avatar = agent.avatar.flatMap(AgentMascot.init(storedID:))?.rawValue
         entry.model = agent.defaultModel.map { .value($0) } ?? .null
+        entry.modelLocked = agent.modelLocked == true ? true : nil
         entry.temperature = agent.temperature.map { .value(Double($0)) } ?? .null
         entry.maxTokens = agent.maxTokens.map { .value($0) } ?? .null
         entry.generationSettings = agent.generationSettings.map { .value($0) } ?? .null
@@ -227,6 +228,12 @@ enum ConfigExporter {
         entry.runtime = ConfigHarness.runtimeKey(for: agent.runtime)
         entry.claudeCode = agent.claudeCode.map { ConfigHarness.export($0, includeConfigWrites: false) }
         entry.sharedToolApproval = agent.sharedToolApproval
+        entry.toolApprovals = agent.settings.toolApprovalMode == .useGlobal ? nil : agent.settings.toolApprovalMode
+        if !agent.settings.toolPolicies.isEmpty {
+            var tools = entry.tools ?? AgentToolsEntry()
+            tools.policies = agent.settings.toolPolicies.mapValues(\.rawValue)
+            entry.tools = tools
+        }
         return entry
     }
 

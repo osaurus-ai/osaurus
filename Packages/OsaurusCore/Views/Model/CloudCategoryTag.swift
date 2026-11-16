@@ -13,7 +13,7 @@ struct CloudCategoryTag: View {
     var body: some View {
         StatusChip(
             String(localized: String.LocalizationValue(category.label), bundle: .module),
-            tint: category.tagColor(isDark: theme.isDark)
+            tint: theme.dataInk(category.dataInk)
         )
     }
 }

@@ -30,7 +30,7 @@ struct ClaudePluginCard: View {
     @State private var showError = false
 
     private var pluginColor: Color {
-        plugin.hasUpdate ? .orange : theme.action.primary.default.background
+        plugin.hasUpdate ? theme.status.warning.foreground : theme.action.primary.default.background
     }
 
     var body: some View {
@@ -85,9 +85,9 @@ struct ClaudePluginCard: View {
     @ViewBuilder
     private var statusBadge: some View {
         if plugin.hasUpdate {
-            StatusChip(L("Update"), tint: .orange, icon: "arrow.up.circle.fill")
+            StatusChip(L("Update"), tone: .warning, icon: "arrow.up.circle.fill")
         } else if plugin.needsPostInstallAttention {
-            StatusChip(L("Needs setup"), tint: .orange, icon: "exclamationmark.circle.fill")
+            StatusChip(L("Needs setup"), tone: .warning, icon: "exclamationmark.circle.fill")
         }
     }
 

@@ -76,8 +76,15 @@ public actor SkillSearchService {
 
     public func initialize() async {
         guard !isInitialized else { return }
+        guard EmbeddingService.vectorIndexesAvailable else {
+            SkillSearchLogger.search.error(
+                "Skill vector index closed: \(EmbeddingService.launchError?.localizedDescription ?? "embedding model unavailable")"
+            )
+            return
+        }
 
-        let storageDir = OsaurusPaths.skills().appendingPathComponent("vectura", isDirectory: true)
+        let storageDir = OsaurusPaths.skills().appendingPathComponent(
+            EmbeddingService.indexDirectoryName, isDirectory: true)
 
         for attempt in 1 ... 2 {
             do {
@@ -140,7 +147,7 @@ public actor SkillSearchService {
         do {
             let id = deterministicUUID(for: skill.id)
             let text = buildIndexText(for: skill)
-            _ = try await MediaActivityLogger.$embeddingPurpose.withValue("skill_index") {
+            _ = try await MediaActivityLogger.withEmbedding(purpose: "skill_index", role: .document) {
                 try await db.addDocument(text: text, id: id)
             }
         } catch {
@@ -185,7 +192,7 @@ public actor SkillSearchService {
         }
         do {
             let fetchCount = topK * 3
-            let results = try await MediaActivityLogger.$embeddingPurpose.withValue("skill_search") {
+            let results = try await MediaActivityLogger.withEmbedding(purpose: "skill_search", role: .query) {
                 try await db.search(
                     query: .text(query),
                     numResults: fetchCount,
@@ -245,8 +252,10 @@ public actor SkillSearchService {
 
     // MARK: - Rebuild
 
-    public func rebuildIndex() async {
-        guard let db = vectorDB else { return }
+    /// Returns whether every skill was embedded into the index.
+    @discardableResult
+    public func rebuildIndex() async -> Bool {
+        guard let db = vectorDB else { return false }
         do {
             try await db.reset()
             reverseIdMap.removeAll()
@@ -262,13 +271,15 @@ public actor SkillSearchService {
                 ids.append(id)
             }
             if !texts.isEmpty {
-                _ = try await MediaActivityLogger.$embeddingPurpose.withValue("skill_index") {
+                _ = try await MediaActivityLogger.withEmbedding(purpose: "skill_index", role: .document) {
                     try await db.addDocuments(texts: texts, ids: ids)
                 }
             }
             SkillSearchLogger.search.info("Skill index rebuilt with \(allSkills.count) skills")
+            return true
         } catch {
             SkillSearchLogger.search.error("Failed to rebuild skill index: \(error)")
+            return false
         }
     }
 

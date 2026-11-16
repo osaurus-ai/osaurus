@@ -48,7 +48,7 @@ struct SettingsCallout<Actions: View>: View {
     var body: some View {
         HStack(alignment: .top, spacing: theme.catalogLayoutMetric("component.library.18.elements.layout.settingsCallout.body.horizontalGap", inheriting: theme.space.s12)) {
             Image(systemName: icon)
-                .glyphSize(18, weight: .semibold)
+                .glyphSize(.large, weight: .semibold)
                 .foregroundColor(tint ?? theme.text.secondary)
                 .frame(width: 24)
 

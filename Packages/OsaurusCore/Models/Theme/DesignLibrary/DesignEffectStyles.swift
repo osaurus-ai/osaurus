@@ -1,7 +1,6 @@
 typealias DesignEffectLayer = ThemeEffectLayer
 typealias DesignEffectRecipe = ThemeEffectRecipe
 
-#if OSAURUS_DESIGN_SYSTEM
 import SwiftUI
 import AppKit
 
@@ -84,4 +83,3 @@ private struct ThemeEffectModifier: ViewModifier {
         }
     }
 }
-#endif

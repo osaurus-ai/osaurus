@@ -645,13 +645,10 @@ struct AgentLoopHooks {
     /// `authorizedToolNames`.
     var announcedToolCallRecovery: (() -> AgentToolLoop.AnnouncedToolCallRecovery?)?
 
-    /// Chat's forced `state` step (`ChatToolChoicePolicy.forceStateIfMissing`).
-    /// Asked at most once per run: when it would end on an ordinary final,
-    /// or when it reaches the step cap. True means the surface armed its
-    /// next `modelStep` to offer only `state` and force it; the driver runs
-    /// that one step and its call, then ends the run as it would have.
-    /// Assigned after construction like `authorizedToolNames`.
-    var armForcedStateStep: ((_ ending: StateStepEnding) async -> Bool)?
+    /// How the run ended, for the Orchestrator's session-state extraction:
+    /// called once on an ordinary final, or once at the step cap. Assigned
+    /// after construction like `authorizedToolNames`.
+    var noteTurnEnding: ((_ ending: TurnEnding) async -> Void)?
 
     init(
         isCancelled: @escaping () async -> Bool = { false },
@@ -1198,9 +1195,6 @@ enum AgentToolLoop {
         /// A malformed repeat of an already-successful desktop subagent call
         /// was replaced by the prior tool's summary.
         case desktopSummarySubstituted
-        /// The run ended after the surface's forced `state` step
-        /// (`AgentLoopHooks.armForcedStateStep`).
-        case forcedStateStep
         /// Terminal states that are already unambiguous from `Exit` itself.
         case typedTerminal
     }
@@ -1668,7 +1662,7 @@ enum AgentToolLoop {
         guard windowSource == .userCap else { return overBudgetMessage }
         return
             "Context window cannot fit this request. The limit in force is your "
-            + "Context Window Cap (Settings → Server → Cache → Context & KV Policy), "
+            + "Context Window Cap (Settings → Server → Server Settings → Cache → Context Window Cap (tokens)), "
             + "not the model's own window — raise or clear it, or shorten the input."
     }
 
@@ -1861,12 +1855,13 @@ enum AgentToolLoop {
                 continue
             }
             do {
-                try await scoped {
+                let skipReason = try await scoped {
                     try await ToolRegistry.shared.resolvePermissionGate(
                         name: call.invocation.toolName,
                         argumentsJSON: call.invocation.jsonArguments
                     )
                 }
+                ToolApprovalAudit.record(skipReason, callId: call.callId)
                 approved.append((slot, call.invocation, call.callId))
             } catch {
                 executions[slot] = AgentLoopToolExecution(
@@ -1910,7 +1905,7 @@ enum AgentToolLoop {
     /// not consume the structural tracking threshold. `share_artifact` is an
     /// action because it performs the requested delivery.
     static let taskTrackingControlToolNames: Set<String> = [
-        "todo", "complete", "clarify", PromptWorkingFolderTool.toolName, StateTool.toolName,
+        "todo", "complete", "clarify", PromptWorkingFolderTool.toolName,
     ]
 
     static let taskTrackingRequiredReason = "task_tracking_required"
@@ -2538,23 +2533,12 @@ enum AgentToolLoop {
             nil
         }
 
-        // The forced `state` step: the ending it was armed for, and whether
-        // its one step has run.
-        var forcedStateEnding: StateStepEnding?
-        var forcedStateAsked = false
-        var forcedStateStepRan = false
         while true {
-            if forcedStateStepRan, forcedStateEnding == .finalText {
-                await recordExit(.finalResponse, .forcedStateStep)
-                return RunResult(exit: .finalResponse, iterations: iteration)
-            }
-            if iteration >= policy.maxIterations + (forcedStateEnding == nil ? 0 : 1) {
-                guard iteration == policy.maxIterations, !forcedStateAsked,
-                    let arm = hooks.armForcedStateStep, !(await hooks.isCancelled())
-                else { break }
-                forcedStateAsked = true
-                guard await arm(.iterationCap) else { break }
-                forcedStateEnding = .iterationCap
+            if iteration >= policy.maxIterations {
+                if let note = hooks.noteTurnEnding, !(await hooks.isCancelled()) {
+                    await note(.iterationCap)
+                }
+                break
             }
             if await hooks.isCancelled() {
                 return RunResult(exit: .cancelled, iterations: iteration)
@@ -2594,16 +2578,6 @@ enum AgentToolLoop {
             // occur.
             if await hooks.isCancelled() {
                 return RunResult(exit: .cancelled, iterations: iteration - 1)
-            }
-            if let ending = forcedStateEnding, !forcedStateStepRan {
-                forcedStateStepRan = true
-                // A model that ignored the forced choice gets no second try:
-                // the run ends as it was going to.
-                if case .toolCalls = step {} else {
-                    if ending == .iterationCap { break }
-                    await recordExit(.finalResponse, .forcedStateStep)
-                    return RunResult(exit: .finalResponse, iterations: iteration)
-                }
             }
             switch step {
             case .finalResponse:
@@ -2694,13 +2668,7 @@ enum AgentToolLoop {
                     iteration -= 1
                     continue
                 }
-                if !forcedStateAsked, let arm = hooks.armForcedStateStep {
-                    forcedStateAsked = true
-                    if await arm(.finalText) {
-                        forcedStateEnding = .finalText
-                        continue
-                    }
-                }
+                await hooks.noteTurnEnding?(.finalText)
                 // An ordinary model final is authoritative. Todo is visible
                 // progress metadata; it must never override EOS/stop and make
                 // the driver regenerate the same answer until the step cap.

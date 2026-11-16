@@ -53,8 +53,7 @@ struct MutationsInFlightIndicator: View {
     var body: some View {
         if activity[agentId] > 0 {
             HStack(spacing: theme.space.s4) {
-                ProgressView()
-                    .controlSize(.mini)
+                SettingsSpinner(size: .mini)
                 Text("\(activity[agentId]) write\(activity[agentId] == 1 ? "" : "s")")
                     .catalogTypography(.caption, theme: theme, fallback: SettingsFont.footnote)
                     .foregroundColor(theme.text.tertiary)
@@ -127,7 +126,7 @@ struct DatabaseRowEditorSheet: View {
     @State private var nullValues: Set<String> = []
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: theme.space.s0) {
             SettingsSheetHeader(
                 icon: "square.and.pencil",
                 title: "Edit row",
@@ -203,8 +202,8 @@ struct DatabaseRowEditorSheet: View {
 
     @ViewBuilder
     private var footer: some View {
-        VStack(spacing: 0) {
-            Divider().opacity(0.5)
+        VStack(spacing: theme.space.s0) {
+            ThemeHairlineDivider()
             HStack(spacing: theme.space.s8) {
                 if row.isDeleted {
                     Button(action: onRestore) {

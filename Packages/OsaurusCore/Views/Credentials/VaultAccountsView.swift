@@ -17,7 +17,7 @@ struct VaultAccountService: Identifiable {
     let service: SignInService
     let title: String
     let symbol: String
-    let tint: Color
+    let tint: DataInk
 
     var id: String { service.key }
 
@@ -54,15 +54,15 @@ struct VaultAccountService: Identifiable {
                 host.hasPrefix("connection-")
                 ? connections.connections.first { SignInService.connection($0) == service }?.name ?? host
                 : host
-            return VaultAccountService(service: service, title: title, symbol: "link", tint: CredentialOrigin.workflow.tint)
+            return VaultAccountService(service: service, title: title, symbol: "link", tint: CredentialOrigin.workflow.ink)
         case .mcp(let id):
             guard let provider = MCPProviderManager.shared.configuration.provider(id: id) else { return nil }
             return VaultAccountService(
-                service: service, title: provider.name, symbol: CredentialOrigin.mcp.symbol, tint: CredentialOrigin.mcp.tint)
+                service: service, title: provider.name, symbol: CredentialOrigin.mcp.symbol, tint: CredentialOrigin.mcp.ink)
         case .modelProvider(let id):
             guard let provider = RemoteProviderManager.shared.configuration.provider(id: id) else { return nil }
             return VaultAccountService(
-                service: service, title: provider.name, symbol: "cloud.fill", tint: AppKeyRow.Group.models.tint)
+                service: service, title: provider.name, symbol: "cloud.fill", tint: AppKeyRow.Group.models.ink)
         case .channel(let kind):
             let title: String
             switch kind {
@@ -72,7 +72,7 @@ struct VaultAccountService: Identifiable {
             default: title = kind.rawValue.capitalized
             }
             return VaultAccountService(
-                service: service, title: title, symbol: CredentialOrigin.channel.symbol, tint: CredentialOrigin.channel.tint)
+                service: service, title: title, symbol: CredentialOrigin.channel.symbol, tint: CredentialOrigin.channel.ink)
         }
     }
 }
@@ -208,7 +208,7 @@ struct VaultAccountsView: View {
                 LibraryRow(
                     title: L("Not signed in"),
                     subtitle: L("Sign in once and every agent can use it."),
-                    leading: { LibraryIcon(symbol: service.symbol, tint: service.tint, size: 32) },
+                    leading: { LibraryIcon(symbol: service.symbol, tint: theme.dataInk(service.tint), size: 32) },
                     trailing: { StatusChip(L("Signed out"), tone: .warning, showsDot: true) }
                 )
             }
@@ -258,7 +258,7 @@ struct VaultAccountsView: View {
             title: session.name,
             subtitle: sessionSubtitle(session),
             isSelected: usedByAgent,
-            leading: { LibraryIcon(symbol: service.symbol, tint: service.tint, size: 32) },
+            leading: { LibraryIcon(symbol: service.symbol, tint: theme.dataInk(service.tint), size: 32) },
             badges: {
                 if isDefault {
                     StatusChip(L("Default"), tone: .accent, help: L("Agents without their own session use this one."))
@@ -270,7 +270,7 @@ struct VaultAccountsView: View {
             trailing: {
                 HStack(spacing: theme.space.s8) {
                     if busy[session.id] != nil {
-                        ProgressView().controlSize(.small)
+                        SettingsSpinner()
                         SettingsButton(.secondary, "Cancel", size: .compact) { cancelSignIn(session) }
                     } else if let status {
                         statusChip(status)
@@ -427,6 +427,7 @@ struct VaultAccountsView: View {
 // MARK: - Add or replace a session
 
 struct VaultSessionSheet: View {
+    @Environment(\.theme) private var theme
     enum Mode: Identifiable {
         /// A new session of a service.
         case add(VaultAccountService)
@@ -525,8 +526,8 @@ struct VaultSessionSheet: View {
                     }
                 }
                 if isWorking {
-                    HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
+                    HStack(spacing: theme.space.s8) {
+                        SettingsSpinner()
                         Text(pastesValue ? L("Saving…") : L("Waiting for the browser sign-in…"))
                             .font(SettingsFont.rowDescription)
                     }
