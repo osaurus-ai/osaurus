@@ -41,9 +41,13 @@ final class SyncApprovalPush {
         sessionId: UUID,
         agentId: UUID?,
         requester: String?,
+        onCall: Bool = false,
         before: [SyncHostedRunContract.PendingApproval],
         after: [SyncHostedRunContract.PendingApproval]
     ) {
+        // A turn of a live call: the call reads the card out and hears the answer. A notice, or a
+        // second call, rang through the one the user was on (2026-11-16).
+        guard !onCall else { return }
         let known = Set(before.map(\.id))
         let added = after.filter { !known.contains($0.id) }
         let targets = SyncWorkflowPush.shared.targets.filter {

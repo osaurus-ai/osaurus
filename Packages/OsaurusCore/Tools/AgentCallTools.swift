@@ -226,6 +226,18 @@ final class CallUserTool: OsaurusTool, @unchecked Sendable {
         let reasonReq = optionalString(args, "reason", expected: "a few words for a missed call")
         guard case .value(let reason) = reasonReq else { return reasonReq.failureEnvelope ?? "" }
 
+        // Already on a call with the user (this turn is one of its turns): nothing to ring, and
+        // ringing came through as a second call the phone turned down as busy (2026-11-16).
+        if ChatExecutionContext.isVoiceCall {
+            return ToolEnvelope.success(
+                tool: name,
+                result: [
+                    "outcome": "on_call",
+                    "note": "You're on a live call with the user right now. Say it to them directly; "
+                        + "the arranged call isn't needed.",
+                ]
+            )
+        }
         // The phone opens the call's chat when answered, so it must be a chat it can see.
         guard ChatExecutionContext.currentSessionSource == .chat,
             let sessionId = ChatExecutionContext.currentSessionId.flatMap(UUID.init(uuidString:))

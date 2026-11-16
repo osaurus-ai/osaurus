@@ -83,6 +83,8 @@ final class SyncHostRunner: ObservableObject {
         var requester: String?
         /// The agent answering, for the approval notices (`SyncApprovalPush`).
         var agentId: UUID? = nil
+        /// A turn of a live call: the call reads its approvals out itself.
+        var isVoiceCall = false
         var taskId: UUID?
         var stopRequested = false
         var published: [SyncHostedRunContract.PendingApproval] = []
@@ -486,6 +488,7 @@ final class SyncHostRunner: ObservableObject {
             syncReviewerScope: scope
         )
         dispatch.hostedRun = choices.run
+        active[scope]?.isVoiceCall = choices.run?.voiceCall ?? false
         guard let handle = await BackgroundTaskManager.shared.dispatchChat(dispatch) else {
             active[scope] = nil
             runningFor[session.id] = nil
@@ -913,14 +916,16 @@ final class SyncHostRunner: ObservableObject {
         writeApprovals(scope: scope, pending: pending)
         // The card is in the chat, which only the iPhone shows: it hears about it with the app closed.
         SyncApprovalPush.shared.changed(
-            sessionId: run.sessionId, agentId: run.agentId, requester: run.requester, before: before, after: pending)
+            sessionId: run.sessionId, agentId: run.agentId, requester: run.requester, onCall: run.isVoiceCall,
+            before: before, after: pending)
     }
 
     /// The run ended with approvals still published: their notices go too.
     private func clearApprovalNotices(_ run: ActiveRun?) {
         guard let run, !run.published.isEmpty else { return }
         SyncApprovalPush.shared.changed(
-            sessionId: run.sessionId, agentId: run.agentId, requester: run.requester, before: run.published, after: [])
+            sessionId: run.sessionId, agentId: run.agentId, requester: run.requester, onCall: run.isVoiceCall,
+            before: run.published, after: [])
     }
 
     /// Publishes the questions (secrets) the run in `scope` is waiting on.
