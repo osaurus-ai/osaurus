@@ -11722,7 +11722,7 @@ struct ChatView: View {
                 ZStack {
                     // Keep the titlebar over the window material, outside the chat canvas.
                     Group {
-                        if windowState.mainSurface == .workflows { WorkflowCanvasGrid() }
+                        if windowState.workflowsShowsGrid { WorkflowCanvasGrid() }
                         else { theme.surface.canvas }
                     }
                         .padding(.top, topInset)
@@ -12127,7 +12127,7 @@ struct ChatView: View {
                     }
                     .zIndex(2)
                 }
-                .environment(\.workflowSharedGrid, windowState.mainSurface == .workflows)
+                .environment(\.workflowSharedGrid, windowState.workflowsShowsGrid)
                 // Computer Use gated-action confirmations. Process-wide queue so
                 // the in-tool loop (which has no ChatSession handle) can park a
                 // request the user resolves; rendered above the input bar like the

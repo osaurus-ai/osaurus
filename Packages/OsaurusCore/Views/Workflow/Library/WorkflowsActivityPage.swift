@@ -2,9 +2,9 @@
 //  WorkflowsActivityPage.swift
 //  osaurus
 //
-//  Activity: everything workflows did, newest first, by day. Filters for
-//  what needs attention, what ran on its own and what you ran, and one
-//  workflow. A failure the workflow has not finished a run since opens
+//  Activity: everything workflows did, newest first, by day. All or what
+//  needs attention up front; what ran on its own, what you ran, and one
+//  workflow in ⋯. A failure the workflow has not finished a run since opens
 //  with what happened, its steps, and what to do: the fix, Run again, Ask
 //  Osaurus to fix it, and Technical details (the run page).
 //
@@ -17,8 +17,10 @@ struct WorkflowsActivityPage: View {
     let windowState: ChatWindowState
     @ObservedObject var overview: WorkflowsOverviewModel
     @ObservedObject private var installed = InstalledWorkflowStore.shared
-    @ObservedObject private var runs = WorkflowRunStore.shared
+    /// Redraws when a run starts, moves a step or ends, never per streamed word.
+    @ObservedObject private var live = WorkflowLiveRuns.shared
     @ObservedObject private var agents = AgentManager.shared
+    private var runs: WorkflowRunStore { .shared }
 
     let onRun: (InstalledWorkflow) -> Void
     let onSetUp: (InstalledWorkflow) -> Void
@@ -29,8 +31,11 @@ struct WorkflowsActivityPage: View {
     @State private var expanded: Set<String> = []
     @State private var collapsed: Set<String> = []
     @State private var focusItemID: String?
+    /// Bumps once the recorded runs load.
+    @State private var recordedCount = -1
 
     var body: some View {
+        let _ = recordedCount
         let all = items
         let unresolved = WorkflowActivityFeed.unresolved(all)
         let shown = WorkflowActivityFeed.filter(all, by: filter, workflowID: workflowFilter, unresolved: unresolved)
@@ -72,6 +77,10 @@ struct WorkflowsActivityPage: View {
         .onChange(of: filter) { _, _ in pages = 1 }
         .onChange(of: workflowFilter) { _, _ in pages = 1 }
         .task { await runs.loadRecentRunsIfNeeded() }
+        .onReceive(WorkflowRunStore.shared.$recentPersisted.map { $0?.count ?? -1 }.removeDuplicates()) {
+            recordedCount = $0
+        }
+        .background(theme.surface.canvas)
         .settingsLandingAnchor("workflows.activity")
     }
 
@@ -113,30 +122,55 @@ struct WorkflowsActivityPage: View {
         }
     }
 
+    /// All and Needs attention; the rarer cuts in ⋯, shown as a chip
+    /// while chosen.
     private func filters(all: [WorkflowActivityItem], unresolved: Set<String>) -> some View {
-        HStack(spacing: theme.space.s12) {
-            FilterChipRow(
-                WorkflowActivityFilter.allCases, selection: $filter, title: \.title,
-                icon: { $0 == .needsAttention && !unresolved.isEmpty ? "circle.fill" : nil },
-                count: { $0 == .needsAttention && !unresolved.isEmpty ? unresolved.count : nil },
-                tint: { $0 == .needsAttention ? theme.statusInk(.error) : nil })
-            Spacer(minLength: theme.space.s8)
-            workflowMenu(all)
+        let chips: [WorkflowActivityFilter] = [.needsAttention] + (filter.map { $0 == .needsAttention ? [] : [$0] } ?? [])
+        return VStack(alignment: .leading, spacing: theme.space.s8) {
+            HStack(spacing: theme.space.s12) {
+                FilterChipRow(
+                    chips, selection: $filter, title: \.title,
+                    icon: { $0 == .needsAttention && !unresolved.isEmpty ? "circle.fill" : nil },
+                    count: { $0 == .needsAttention && !unresolved.isEmpty ? unresolved.count : nil },
+                    tint: { $0 == .needsAttention ? theme.statusInk(.error) : nil })
+                Spacer(minLength: theme.space.s8)
+                moreFilters(all)
+            }
+            if let workflowFilter {
+                HStack(spacing: theme.space.s6) {
+                    Text(verbatim: L("Showing only \(workflowName(workflowFilter, in: all))."))
+                        .font(SettingsFont.footnote)
+                        .foregroundStyle(theme.text.secondary)
+                    WorkflowTextLink(title: L("Show all")) { self.workflowFilter = nil }
+                }
+            }
         }
     }
 
-    private func workflowMenu(_ all: [WorkflowActivityItem]) -> some View {
+    private func workflowName(_ id: UUID, in all: [WorkflowActivityItem]) -> String {
+        all.first { $0.workflowID == id }?.workflowName ?? installed.workflow(id: id)?.name ?? L("Workflow")
+    }
+
+    private func moreFilters(_ all: [WorkflowActivityItem]) -> some View {
         let choices = Dictionary(all.compactMap { item in item.workflowID.map { ($0, item.workflowName) } }, uniquingKeysWith: { first, _ in first })
             .sorted { $0.value.localizedStandardCompare($1.value) == .orderedAscending }
-        let title = workflowFilter.flatMap { id in choices.first { $0.key == id }?.value ?? installed.workflow(id: id)?.name }
-        return SettingsMenuButton(.secondary, title ?? L("All workflows"), size: .small, verbatim: true) {
-            Button(L("All workflows")) { workflowFilter = nil }
-            if !choices.isEmpty { Divider() }
-            ForEach(choices, id: \.key) { choice in
-                Button(choice.value) { workflowFilter = choice.key }
+        return SettingsActionMenu(accessibilityLabel: L("More filters")) {
+            Button(WorkflowActivityFilter.ranOnTheirOwn.title) { filter = .ranOnTheirOwn }
+            Button(WorkflowActivityFilter.runByMe.title) { filter = .runByMe }
+            if !choices.isEmpty {
+                Divider()
+                Menu(L("One Workflow")) {
+                    ForEach(choices, id: \.key) { choice in
+                        Button(choice.value) { workflowFilter = choice.key }
+                    }
+                }
             }
+        } label: {
+            Image(systemName: "line.3.horizontal.decrease")
         }
+        .buttonStyle(SettingsIconButtonStyle(size: .standard, role: .tertiary))
         .fixedSize()
+        .help(L("More filters"))
     }
 
     private var empty: some View {
@@ -177,10 +211,11 @@ struct WorkflowsActivityPage: View {
                         VStack(spacing: theme.space.s0) {
                             ForEach(Array(group.enumerated()), id: \.element.id) { index, item in
                                 if index > 0 { ThemeHairlineDivider(color: theme.border.subtle) }
-                                WorkflowActivityRow(
-                                    item: item, line: line(item), canExpand: item.isFailed,
-                                    onExpand: { toggle(item, unresolved: unresolved) },
-                                    onOpen: { open(item) })
+                                WorkflowRunRow(
+                                    status: item.run?.status ?? .failed, title: item.workflowName, line: line(item),
+                                    lineIsProblem: item.isFailed, time: .clock(item.date), expands: item.isFailed,
+                                    onOpen: { item.isFailed ? toggle(item, unresolved: unresolved) : open(item) }
+                                )
                                 .id(item.id)
                             }
                         }
@@ -265,87 +300,6 @@ struct WorkflowsActivityPage: View {
 
 // MARK: - Rows
 
-private struct WorkflowActivityStatusIcon: View {
-    @Environment(\.theme) private var theme
-    let item: WorkflowActivityItem
-
-    var body: some View {
-        Group {
-            if let run = item.run, !run.status.isTerminal {
-                WorkflowRunStatusIcon(status: run.status, size: 12)
-            } else if item.isFailed {
-                Image(systemName: "exclamationmark.triangle")
-                    .foregroundStyle(theme.statusInk(.error))
-            } else if item.run?.status == .cancelled {
-                Image(systemName: "minus.circle")
-                    .foregroundStyle(theme.text.tertiary)
-            } else {
-                Image(systemName: "checkmark")
-                    .foregroundStyle(theme.statusInk(.success))
-            }
-        }
-        .glyphSize(.footnote, weight: .semibold)
-        .frame(width: theme.space.s16)
-        .accessibilityHidden(true)
-    }
-}
-
-private struct WorkflowActivityRowText: View {
-    @Environment(\.theme) private var theme
-    let item: WorkflowActivityItem
-    let line: String
-
-    var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: theme.space.s16) {
-            Text(verbatim: AutomationSentence.Style.current.time(item.date))
-                .font(SettingsFont.footnote)
-                .monospacedDigit()
-                .foregroundStyle(theme.text.secondary)
-                .frame(minWidth: theme.space.s64, alignment: .leading)
-            VStack(alignment: .leading, spacing: theme.space.s2) {
-                Text(verbatim: item.workflowName)
-                    .textStyle(.body, weight: 600)
-                    .foregroundStyle(theme.text.primary)
-                    .lineLimit(1)
-                Text(verbatim: line)
-                    .font(SettingsFont.footnote)
-                    .foregroundStyle(item.isFailed ? theme.statusInk(.error) : theme.text.secondary)
-                    .lineLimit(2)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-}
-
-private struct WorkflowActivityRow: View {
-    @Environment(\.theme) private var theme
-    let item: WorkflowActivityItem
-    let line: String
-    let canExpand: Bool
-    let onExpand: () -> Void
-    let onOpen: () -> Void
-    @State private var isHovered = false
-
-    var body: some View {
-        HStack(alignment: .center, spacing: theme.space.s12) {
-            WorkflowActivityStatusIcon(item: item)
-            WorkflowActivityRowText(item: item, line: line)
-            if canExpand {
-                SettingsIconButton("chevron.down", help: L("What happened"), size: .small, action: onExpand)
-            }
-            WorkflowTextLink(title: item.run == nil ? L("Open workflow") : L("Open result"), action: onOpen)
-        }
-        .padding(.horizontal, theme.space.s16)
-        .padding(.vertical, theme.space.s12)
-        .background { if isHovered { theme.surface.hover } }
-        .contentShape(Rectangle())
-        .onTapGesture(perform: canExpand ? onExpand : onOpen)
-        .onHover { hovering in withAnimation(theme.motion.quick) { isHovered = hovering } }
-        .accessibilityElement(children: .contain)
-    }
-}
-
 private struct WorkflowActivityExpandedRow: View {
     @Environment(\.theme) private var theme
     let item: WorkflowActivityItem
@@ -368,10 +322,37 @@ private struct WorkflowActivityExpandedRow: View {
         let explanation = explanation
         VStack(alignment: .leading, spacing: theme.space.s12) {
             HStack(alignment: .center, spacing: theme.space.s12) {
-                WorkflowActivityStatusIcon(item: item)
-                WorkflowActivityRowText(item: item, line: line)
-                SettingsIconButton("chevron.up", help: L("Hide what happened"), size: .small, isActive: true, action: onCollapse)
+                WorkflowRunStatusIcon(status: item.run?.status ?? .failed, size: 12)
+                    .frame(width: theme.space.s16, height: theme.space.s16)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: theme.space.s2) {
+                    Text(verbatim: item.workflowName)
+                        .textStyle(.body, weight: 500)
+                        .foregroundStyle(theme.text.primary)
+                        .lineLimit(1)
+                    Text(verbatim: line)
+                        .font(SettingsFont.footnote)
+                        .foregroundStyle(theme.statusInk(.error))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Text(verbatim: AutomationSentence.Style.current.time(item.date))
+                    .font(SettingsFont.footnote)
+                    .monospacedDigit()
+                    .foregroundStyle(theme.text.tertiary)
+                Image(systemName: "chevron.up")
+                    .glyphSize(.tiny, weight: .semibold)
+                    .foregroundStyle(theme.text.tertiary)
+                    .accessibilityHidden(true)
             }
+            .contentShape(Rectangle())
+            .onTapGesture(perform: onCollapse)
+            .pointingHandCursor()
+            .help(L("Hide what happened"))
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction(named: Text("Hide what happened", bundle: .module), onCollapse)
             VStack(alignment: .leading, spacing: theme.space.s10) {
                 Text("What happened", bundle: .module)
                     .textStyle(.caption, weight: 600)
@@ -387,7 +368,8 @@ private struct WorkflowActivityExpandedRow: View {
             }
             .padding(.leading, theme.space.s16 + theme.space.s12)
         }
-        .padding(theme.space.s16)
+        .padding(.horizontal, theme.space.s16)
+        .padding(.vertical, theme.space.s12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .settingsChrome(.status(.error))
     }
@@ -435,10 +417,10 @@ private struct WorkflowActivityExpandedRow: View {
                 SettingsButton(.primary, remedy.title, size: .small, verbatim: true) { onRemedy(remedy) }
             }
             if workflow != nil {
-                SettingsButton(.secondary, "Run again", size: .small, action: onRunAgain)
+                SettingsButton(.secondary, "Run Again", size: .small, action: onRunAgain)
             }
             if item.run != nil, workflow != nil {
-                SettingsButton(.secondary, "Ask Osaurus to fix it", size: .small, action: onAskToFix)
+                SettingsButton(.secondary, "Ask Osaurus to Fix It", size: .small, action: onAskToFix)
             }
             if item.run != nil {
                 WorkflowTextLink(title: L("Technical details"), action: onOpen)

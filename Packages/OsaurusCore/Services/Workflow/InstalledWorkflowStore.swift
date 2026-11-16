@@ -378,13 +378,6 @@ public final class InstalledWorkflowStore: ObservableObject {
         try save(w)
     }
 
-    /// Keeps the "This one is working well" card away for this workflow.
-    public func dismissShareNudge(id: UUID) throws {
-        guard var w = workflow(id: id), !w.shareNudgeDismissed else { return }
-        w.shareNudgeDismissed = true
-        try save(w)
-    }
-
     /// Every tag in use, with how many workflows carry it, by name.
     public var allTags: [(tag: String, count: Int)] {
         var counts: [String: Int] = [:]

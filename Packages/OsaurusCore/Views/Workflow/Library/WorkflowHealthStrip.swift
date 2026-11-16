@@ -56,52 +56,23 @@ enum WorkflowHealth {
         return L("\(failed) of the last \(settled.count) runs failed")
     }
 
-    /// The line under the detail page's strip.
+    /// How the last runs went, in one sentence.
     static func summary(_ bars: [Bar]) -> String? {
         let settled = bars.filter { $0 != .empty }
         let failed = settled.filter { $0 == .failed }.count
         guard !settled.isEmpty else { return nil }
         if failed == 0 {
-            return settled.count == 1
-                ? L("Everything is working. The last run finished.")
-                : L("Everything is working. Last \(settled.count) runs all finished.")
+            return settled.count == 1 ? L("The last run worked.") : L("The last \(settled.count) runs worked.")
         }
-        if settled.count == 1 { return L("The last run failed.") }
+        if settled.count == 1 || (failed == 1 && settled.last == .failed) { return L("The last run failed.") }
         return L("\(failed) of the last \(settled.count) runs failed.")
     }
-}
 
-struct WorkflowHealthStripView: View {
-    @Environment(\.theme) private var theme
-    let bars: [WorkflowHealth.Bar]
-
-    var body: some View {
-        HStack(alignment: .bottom, spacing: theme.space.s2) {
-            ForEach(Array(bars.enumerated()), id: \.offset) { _, bar in
-                RoundedRectangle(cornerRadius: theme.radius.small, style: .continuous)
-                    .fill(fill(bar))
-                    .frame(width: theme.space.s6, height: height(bar))
-            }
-        }
-        .frame(height: theme.space.s16, alignment: .bottom)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(verbatim: WorkflowHealth.accessibilityLabel(bars)))
-        .help(WorkflowHealth.accessibilityLabel(bars))
-    }
-
-    private func fill(_ bar: WorkflowHealth.Bar) -> Color {
-        switch bar {
-        case .empty: return theme.border.subtle
-        case .worked: return theme.statusInk(.success)
-        case .failed: return theme.statusInk(.error)
-        }
-    }
-
-    private func height(_ bar: WorkflowHealth.Bar) -> CGFloat {
-        switch bar {
-        case .empty: return theme.space.s4
-        case .worked: return theme.space.s16
-        case .failed: return theme.space.s8
-        }
+    /// Recent Runs' headline: runs going now come first.
+    static func headline(_ bars: [Bar], running: Int) -> String? {
+        if running == 1 { return L("Running now.") }
+        if running > 1 { return L("\(running) running now.") }
+        return summary(bars)
     }
 }
+

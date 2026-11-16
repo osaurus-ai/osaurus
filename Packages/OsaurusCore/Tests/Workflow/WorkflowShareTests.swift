@@ -114,101 +114,10 @@ struct WorkflowShareSummaryTests {
     }
 }
 
-struct ShareNudgeEligibilityTests {
-    private static let calendar = Calendar(identifier: .gregorian)
-    private static let start = Date(timeIntervalSince1970: 1_800_000_000)
-
-    private static func workflow(source: InstalledWorkflow.Source? = nil, dismissed: Bool = false) -> InstalledWorkflow {
-        var w = InstalledWorkflow(template: WF.template(WF.intake()), bindings: InstallBindings())
-        w.source = source
-        w.shareNudgeDismissed = dismissed
-        return w
-    }
-
-    /// `count` completed runs, `perDay` a day, newest first.
-    private static func runs(_ count: Int, perDay: Int = 2, status: WorkflowRunStatus = .completed) -> [WorkflowRun] {
-        (0 ..< count).map { index in
-            var run = WorkflowRun(
-                workflowID: UUID(), workflowName: "Intake", templateID: UUID(), templateVersion: 1,
-                caller: WorkflowCaller(kind: .user), input: .object([:]), nodeIDs: ["a"],
-                startedAt: start.addingTimeInterval(-Double(index / perDay) * 86_400 - Double(index % perDay) * 60))
-            run.status = status
-            run.finishedAt = run.startedAt.addingTimeInterval(30)
-            return run
-        }
-    }
-
-    private static func eligible(
-        _ w: InstalledWorkflow = workflow(), runs: [WorkflowRun] = runs(10), builtIn: Bool = false, published: Bool = false
-    ) -> Bool {
-        ShareNudgeEligibility.isEligible(w, runs: runs, isBuiltIn: builtIn, isPublished: published, calendar: calendar)
-    }
-
-    @Test func tenGoodRunsOverFiveDaysEarnTheCard() {
-        #expect(Self.eligible())
-    }
-
-    @Test func storeInstalledWorkflowsNeverShowIt() {
-        #expect(!Self.eligible(Self.workflow(source: .init(registryID: "abc"))))
-    }
-
-    @Test func publishedAndStarterWorkflowsNeverShowIt() {
-        #expect(!Self.eligible(published: true))
-        #expect(!Self.eligible(builtIn: true))
-    }
-
-    @Test func dismissedWorkflowsNeverShowIt() {
-        #expect(!Self.eligible(Self.workflow(dismissed: true)))
-    }
-
-    @Test func needsTenRunsAcrossFiveDays() {
-        #expect(!Self.eligible(runs: Self.runs(9)))
-        #expect(!Self.eligible(runs: Self.runs(10, perDay: 3)))
-    }
-
-    @Test func anyFailureOrStopInTheLastTenBlocksIt() {
-        var list = Self.runs(10)
-        list[4].status = .failed
-        #expect(!Self.eligible(runs: list))
-        list[4].status = .cancelled
-        #expect(!Self.eligible(runs: list))
-    }
-
-    @Test func olderFailuresAndTestRunsDoNotCount() {
-        var older = Self.runs(12)
-        older[11].status = .failed
-        #expect(Self.eligible(runs: older))
-        var test = Self.runs(10)[0]
-        test.caller = WorkflowCaller(kind: .test)
-        test.status = .failed
-        test.startedAt = Self.start.addingTimeInterval(60)
-        #expect(Self.eligible(runs: Self.runs(10) + [test]))
-    }
-
-    @Test func oneWorkflowHoldsTheCardForAWeek() {
-        let first = UUID()
-        let other = UUID()
-        let shown = (workflowID: first, at: Self.start)
-        #expect(ShareNudgeCap.allows(first, shown: nil, now: Self.start))
-        #expect(ShareNudgeCap.allows(first, shown: shown, now: Self.start.addingTimeInterval(86_400)))
-        #expect(!ShareNudgeCap.allows(other, shown: shown, now: Self.start.addingTimeInterval(86_400)))
-        #expect(ShareNudgeCap.allows(other, shown: shown, now: Self.start.addingTimeInterval(ShareNudgeCap.interval)))
-    }
-
-    @Test func capRecordsTheFirstShowingOnly() throws {
-        let suite = "share-nudge-\(UUID().uuidString)"
-        let defaults = try #require(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        let cap = ShareNudgeCap(defaults: defaults)
-        let id = UUID()
-        cap.recordShown(id, now: Self.start)
-        cap.recordShown(id, now: Self.start.addingTimeInterval(3_600))
-        #expect(cap.shown?.at == Self.start)
-        #expect(!cap.allows(UUID(), now: Self.start.addingTimeInterval(3_600)))
-    }
-
+/// The share card is gone; its saved flag still round-trips for old records.
+struct ShareNudgeFlagTests {
     @Test func dismissFlagRoundTripsAndIsNotExported() throws {
-        var w = Self.workflow()
+        var w = InstalledWorkflow(template: WF.template(WF.intake()), bindings: InstallBindings())
         w.shareNudgeDismissed = true
         let data = try JSONEncoder().encode(w)
         #expect(try JSONDecoder().decode(InstalledWorkflow.self, from: data).shareNudgeDismissed)

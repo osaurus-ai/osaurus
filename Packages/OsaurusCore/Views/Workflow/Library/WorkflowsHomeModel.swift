@@ -5,8 +5,7 @@
 //  What Workflows Home shows, from the same facts the sidebar reads: how
 //  many workflows run on their own and how many need attention, the
 //  pinned workflows as tiles, every automation that runs a workflow
-//  (grouped by workflow) with how its last runs went, and the ways to
-//  automate with how many automations each already has.
+//  (grouped by workflow) with how it last went, and the ways to automate.
 //
 
 import Foundation
@@ -15,7 +14,6 @@ import Foundation
 enum WorkflowsHomeSection {
     static let ways = "workflows.home.ways"
     static let runningOnTheirOwn = "workflows.home.runningOnTheirOwn"
-    static let fromTheStore = "workflows.home.fromTheStore"
 }
 
 struct WorkflowsHomeModel {
@@ -38,7 +36,6 @@ struct WorkflowsHomeModel {
         let sentence: String
         let state: String
         let stateTone: ThemeStatusKind?
-        let bars: [WorkflowHealth.Bar]
     }
 
     struct Group: Identifiable {
@@ -54,8 +51,6 @@ struct WorkflowsHomeModel {
         let enabledCount: Int
         var id: AutomationCatalog.Entry { item.entry }
     }
-
-    static let healthRunCount = 7
 
     var runOnOwnCount = 0
     var attentionCount = 0
@@ -116,8 +111,7 @@ struct WorkflowsHomeModel {
                 return AutomationRow(
                     event: fact.event, workflowID: workflowID, workflowName: workflow.name,
                     sentence: AutomationSentence.long(fact.event, style: style),
-                    state: state.text, stateTone: state.tone,
-                    bars: WorkflowHealth.bars(newestFirst: WorkflowHealth.outcomes(runs), count: healthRunCount))
+                    state: state.text, stateTone: state.tone)
             }
             return Group(id: workflowID, name: workflow.name, rows: rows)
         }
@@ -135,12 +129,21 @@ struct WorkflowsHomeModel {
         return model
     }
 
-    /// "4 run on their own. 1 needs your attention."
-    static func subtitle(runOnOwn: Int, attention: Int) -> String {
-        guard runOnOwn > 0 || attention > 0 else { return L("Nothing runs on its own yet.") }
-        let running = L("\(runOnOwn) run on their own.")
-        guard attention > 0 else { return running }
-        return running + " " + L("\(attention) needs your attention.")
+    /// "1 running now. 4 run on their own. 1 needs your attention."
+    static func subtitle(runOnOwn: Int, attention: Int, running: Int = 0) -> String {
+        var parts: [String] = []
+        if running > 0 { parts.append(L("\(running) running now.")) }
+        if runOnOwn == 1 {
+            parts.append(L("1 runs on its own."))
+        } else if runOnOwn > 1 {
+            parts.append(L("\(runOnOwn) run on their own."))
+        }
+        if attention == 1 {
+            parts.append(L("1 needs your attention."))
+        } else if attention > 1 {
+            parts.append(L("\(attention) need your attention."))
+        }
+        return parts.isEmpty ? L("Nothing runs on its own yet.") : parts.joined(separator: " ")
     }
 
     /// A tile's last line.
@@ -150,7 +153,7 @@ struct WorkflowsHomeModel {
         let day = WorkflowRunWords.day(date, now: now, style: style)
         switch run.status {
         case .running, .awaitingUser: return L("Running now")
-        case .completed: return L("Ran \(day), \(style.time(date))")
+        case .completed: return L("Ran \(day)")
         case .failed, .needsSetup: return L("Failed \(day)")
         case .cancelled: return L("Stopped \(day)")
         }

@@ -30,7 +30,7 @@ struct WorkflowRunView: View {
     var header: Header = .full
     /// Steps open when the view appears, such as the one a run failed at.
     var initiallyOpen: Set<String> = []
-    /// Shown on a failed run as "Fix with the Architect". Nil where the
+    /// Shown on a failed run as "Ask Osaurus to Fix It". Nil where the
     /// surrounding card already offers it.
     var onFix: (() -> Void)?
     /// Shown on a failed run as "Retry from Failed Step", where it can be.
@@ -122,7 +122,7 @@ struct WorkflowRunView: View {
 
     /// Why the run stopped, under the name of the step it stopped at, with
     /// the failure's hint and, where offered, Retry from Failed Step and
-    /// Fix with the Architect.
+    /// Ask Osaurus to Fix It.
     @ViewBuilder
     private func errorCallout(_ error: WorkflowRunError) -> some View {
         let step = error.nodeID.flatMap { id in definition?.node(id)?.name }
@@ -719,14 +719,14 @@ struct WorkflowInsightsLink: View {
     }
 }
 
-/// "Fix with the Architect" on a failed run.
+/// "Ask Osaurus to Fix It" on a failed run.
 struct WorkflowFixButton: View {
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Label {
-                Text("Fix with the Architect", bundle: .module)
+                Text("Ask Osaurus to Fix It", bundle: .module)
             } icon: {
                 Image(systemName: "wrench.and.screwdriver")
             }

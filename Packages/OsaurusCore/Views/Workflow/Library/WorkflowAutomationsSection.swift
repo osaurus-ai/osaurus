@@ -2,9 +2,9 @@
 //  WorkflowAutomationsSection.swift
 //  osaurus
 //
-//  "When should this run?" on a workflow's page: each automation that
-//  starts it as a sentence whose words change it in place, a switch and a
-//  Remove, then ways to add another. Kinds the words can't say open the
+//  "When It Runs" on a workflow's page: each automation that starts it as
+//  a sentence whose words change it in place, with its switch (Remove on
+//  hover), then ways to add another. Kinds the words can't say open the
 //  Settings editor with the workflow chosen. An automation whose workflow
 //  needs an input with no default is saved off and shows the input editor
 //  until it is filled.
@@ -53,15 +53,13 @@ struct WorkflowAutomationsSection: View {
 
     var body: some View {
         let automations = automations
-        WorkflowPageCard(title: L("When should this run?"), icon: "bolt") {
-            VStack(alignment: .leading, spacing: theme.space.s12) {
-                if automations.isEmpty && !addingFeed {
-                    emptyState
-                } else {
-                    Text(verbatim: L("Read it like a sentence. Click any word to change it."))
-                        .font(SettingsFont.rowDescription)
-                        .foregroundStyle(theme.text.secondary)
-                    ForEach(automations) { event in
+        SettingsSection(title: "When It Runs", layout: .plain) {
+            if automations.isEmpty && !addingFeed {
+                emptyState
+            } else {
+                VStack(spacing: theme.space.s0) {
+                    ForEach(Array(automations.enumerated()), id: \.element.id) { index, event in
+                        if index > 0 { ThemeHairlineDivider(color: theme.border.subtle) }
                         WorkflowAutomationCard(
                             event: event, workflow: workflow,
                             isHighlighted: highlighted == event.id, needsSetup: workflow.needsSetup,
@@ -69,15 +67,20 @@ struct WorkflowAutomationsSection: View {
                             onRemove: { removing = $0 })
                     }
                     if addingFeed {
+                        if !automations.isEmpty { ThemeHairlineDivider(color: theme.border.subtle) }
                         WorkflowFeedDraftCard(
                             onSave: { url in
                                 addingFeed = false
                                 add(AutomationDefaults.feed(url: url))
                             },
                             onCancel: { addingFeed = false })
+                        .padding(.horizontal, theme.space.s16)
+                        .padding(.vertical, theme.space.s12)
                     }
-                    alsoRunIt(automations)
                 }
+                .clipShape(RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous))
+                .settingsChrome(.card)
+                alsoRunIt(automations)
             }
         }
         .settingsLandingAnchor("workflows.automate.schedule")
@@ -113,10 +116,9 @@ struct WorkflowAutomationsSection: View {
 
     private var emptyState: some View {
         VStack(alignment: .leading, spacing: theme.space.s12) {
-            SettingsRow(
-                title: "Want this to run on its own?",
-                description: "Pick a moment. You can change it or turn it off anytime."
-            ) { EmptyView() }
+            Text("Want this to run on its own?", bundle: .module)
+                .font(SettingsFont.rowDescription)
+                .foregroundStyle(theme.text.secondary)
             HStack(alignment: .top, spacing: theme.space.s8) {
                 if let suggested = AutomationPresets.presets(name: workflow.name, summary: workflow.summary)
                     .first(where: \.isSuggested)
@@ -160,8 +162,9 @@ struct WorkflowAutomationsSection: View {
         }
         .padding(theme.space.s12)
         .frame(maxWidth: .infinity, alignment: .topLeading)
-        .settingsChrome(.subtle)
+        .settingsChrome(.card)
         .contentShape(Rectangle())
+        .pointingHandCursor()
     }
 
     // MARK: Also run it
@@ -172,7 +175,6 @@ struct WorkflowAutomationsSection: View {
             HStack(spacing: theme.space.s6) { alsoRunItContent(hasAppLaunch: hasAppLaunch) }
             VStack(alignment: .leading, spacing: theme.space.s6) { alsoRunItContent(hasAppLaunch: hasAppLaunch) }
         }
-        .padding(.top, theme.space.s4)
     }
 
     @ViewBuilder
@@ -293,6 +295,7 @@ struct WorkflowAutomationCard: View {
 
     @State private var showsInputs = false
     @State private var editingFeed = false
+    @State private var isHovered = false
 
     private var manager: EventManager { .shared }
     private var schema: JSONValue { workflow.definition.inputSchema }
@@ -305,12 +308,13 @@ struct WorkflowAutomationCard: View {
         VStack(alignment: .leading, spacing: theme.space.s10) {
             HStack(alignment: .center, spacing: theme.space.s10) {
                 Image(systemName: EventSourceTemplate.icon(for: event))
-                    .glyphSize(.body, weight: .semibold)
-                    .foregroundStyle(event.isEnabled ? theme.action.primary.default.background : theme.text.tertiary)
-                    .frame(width: theme.space.s20)
+                    .glyphSize(.footnote, weight: .semibold)
+                    .foregroundStyle(event.isEnabled ? theme.text.secondary : theme.text.tertiary)
+                    .frame(width: theme.space.s16)
                     .accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: theme.space.s4) {
                     sentence
+                        .help(L("Click a word to change it."))
                     let state = WorkflowAutomationState.line(
                         event, needsSetup: needsSetup, inputsMissing: !missing.isEmpty,
                         hasTargetProblem: EventInspection.targetProblem(event) != nil)
@@ -319,6 +323,9 @@ struct WorkflowAutomationCard: View {
                         .foregroundStyle(state.tone.map(theme.statusInk) ?? theme.text.secondary)
                 }
                 Spacer(minLength: theme.space.s8)
+                SettingsIconButton("trash", help: L("Remove"), size: .small, isDestructive: true) { onRemove(event) }
+                    .opacity(isHovered ? 1 : 0)
+                    .accessibilityHidden(!isHovered)
                 if !inputFields.isEmpty {
                     SettingsIconButton(
                         "slider.horizontal.3", help: L("What it uses each time"), size: .small,
@@ -332,7 +339,6 @@ struct WorkflowAutomationCard: View {
                 .settingsSwitch()
                 .disabled(!missing.isEmpty)
                 .help(missing.isEmpty ? L("Turn this automation on or off") : L("Fill in what it uses first"))
-                SettingsIconButton("trash", help: L("Remove"), size: .small, isDestructive: true) { onRemove(event) }
             }
             if editingFeed, case .rss(let rss) = event.source {
                 WorkflowFeedDraftCard(
@@ -349,12 +355,15 @@ struct WorkflowAutomationCard: View {
                 WorkflowAutomationInputs(event: event, workflow: workflow)
             }
         }
-        .padding(theme.space.s12)
+        .padding(.horizontal, theme.space.s16)
+        .padding(.vertical, theme.space.s12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .settingsChrome(isHighlighted ? .selected : .inset)
+        .background { if isHighlighted { theme.surface.selected } }
         .animation(theme.motion.standard, value: isHighlighted)
+        .onHover { hovering in withAnimation(theme.motion.quick) { isHovered = hovering } }
         .accessibilityElement(children: .contain)
         .accessibilityLabel(Text(verbatim: AutomationSentence.sentence(event)))
+        .accessibilityAction(named: Text("Remove", bundle: .module)) { onRemove(event) }
     }
 
     // MARK: Sentence
@@ -538,9 +547,7 @@ struct WorkflowFeedDraftCard: View {
                     .disabled(!isValid)
             }
         }
-        .padding(theme.space.s12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .settingsChrome(.inset)
         .onAppear { url = initialURL }
     }
 }

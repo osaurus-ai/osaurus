@@ -206,7 +206,7 @@ enum WorkflowCardFacts {
     static func locality(_ template: Template) -> String? {
         let models = template.requirements.models
         guard !models.isEmpty else { return nil }
-        let catalog = SetupChecker.Environment.live().modelCatalog
+        let catalog = ConfigModelReference.liveCatalog()
         return models.contains { SetupChecker.mayUseCloud($0, catalog: catalog) } ? L("May use the cloud") : L("Runs on this Mac")
     }
 
@@ -456,7 +456,7 @@ struct InstalledWorkflowCard: View {
                 Divider()
             }
             Button(action: onRun) { Label(L("Run…"), systemImage: "play") }
-            Button(action: onEdit) { Label(L("Edit with the Architect"), systemImage: "pencil.and.outline") }
+            Button(action: onEdit) { Label(L("Edit…"), systemImage: "pencil.and.outline") }
             if update != nil {
                 Button(action: onUpdate) { Label(L("Update…"), systemImage: "arrow.up.circle") }
             }
@@ -592,7 +592,7 @@ struct WorkflowTemplateCard: View {
     private var menuItems: some View {
         Group {
             Button(action: onAdd) { Label(L("Add…"), systemImage: "plus.circle") }
-            Button(action: onEdit) { Label(L("Edit with the Architect"), systemImage: "pencil.and.outline") }
+            Button(action: onEdit) { Label(L("Edit…"), systemImage: "pencil.and.outline") }
             Divider()
             if !isBuiltIn {
                 Button(action: onRename) { Label(L("Rename…"), systemImage: "pencil") }

@@ -253,10 +253,19 @@ struct WorkflowHealthTests {
 
     @Test func summaries() {
         #expect(WorkflowHealth.summary(WorkflowHealth.bars(newestFirst: [], count: 14)) == nil)
-        #expect(WorkflowHealth.summary(WorkflowHealth.bars(newestFirst: [true], count: 14)) == "Everything is working. The last run finished.")
-        #expect(WorkflowHealth.summary(WorkflowHealth.bars(newestFirst: [true, true, true], count: 14)) == "Everything is working. Last 3 runs all finished.")
+        #expect(WorkflowHealth.summary(WorkflowHealth.bars(newestFirst: [true], count: 14)) == "The last run worked.")
+        #expect(WorkflowHealth.summary(WorkflowHealth.bars(newestFirst: [true, true, true], count: 14)) == "The last 3 runs worked.")
+        #expect(WorkflowHealth.summary(WorkflowHealth.bars(newestFirst: [false, true, true], count: 14)) == "The last run failed.")
         #expect(WorkflowHealth.summary(WorkflowHealth.bars(newestFirst: [false, true, false, true], count: 14)) == "2 of the last 4 runs failed.")
         #expect(WorkflowHealth.accessibilityLabel(WorkflowHealth.bars(newestFirst: [], count: 14)) == "No runs yet")
+    }
+
+    @Test func headlinePutsRunsInProgressFirst() {
+        let bars = WorkflowHealth.bars(newestFirst: [false, true], count: 14)
+        #expect(WorkflowHealth.headline(bars, running: 0) == WorkflowHealth.summary(bars))
+        #expect(WorkflowHealth.headline(bars, running: 1) == "Running now.")
+        #expect(WorkflowHealth.headline(bars, running: 3) == "3 running now.")
+        #expect(WorkflowHealth.headline([], running: 0) == nil)
     }
 }
 
@@ -320,10 +329,10 @@ struct WorkflowDetailStatusLineTests {
     @Test func byHandOnly() {
         #expect(
             Page.line(needsSetup: false, automations: [], lastRun: nil, now: wednesday, style: us).text
-                == "Only runs when you click Run. Not run yet.")
+                == "Runs when you start it. Not run yet.")
         let off = event(AutomationDefaults.schedule, enabled: false)
         let line = Page.line(needsSetup: false, automations: [off], lastRun: run(.completed), now: wednesday, style: us)
-        #expect(plain(line.text) == "Only runs when you click Run. Last ran today at 10:00 AM.")
+        #expect(plain(line.text) == "Runs when you start it. Last ran today at 10:00 AM.")
         #expect(line.tone == nil)
     }
 
@@ -401,6 +410,8 @@ struct WorkflowsHomeModelTests {
         #expect(WorkflowsHomeModel.subtitle(runOnOwn: 0, attention: 0) == "Nothing runs on its own yet.")
         #expect(WorkflowsHomeModel.subtitle(runOnOwn: 4, attention: 0) == "4 run on their own.")
         #expect(WorkflowsHomeModel.subtitle(runOnOwn: 4, attention: 1) == "4 run on their own. 1 needs your attention.")
+        #expect(WorkflowsHomeModel.subtitle(runOnOwn: 0, attention: 0, running: 2) == "2 running now.")
+        #expect(WorkflowsHomeModel.subtitle(runOnOwn: 1, attention: 0, running: 1) == "1 running now. 1 runs on its own.")
     }
 
     @Test func countsGroupsAndWays() {
@@ -428,7 +439,6 @@ struct WorkflowsHomeModelTests {
         #expect(model.automationCount == 3)
         #expect(model.otherAutomationCount == 3)
         let triageRow = model.groups.first?.rows.first
-        #expect(triageRow?.bars.count == WorkflowsHomeModel.healthRunCount)
         #expect(triageRow?.stateTone == .error)
         let schedule = model.ways.first { $0.item.entry == .kind(.schedule) }
         #expect(schedule?.state == "On for 2 workflows")
@@ -443,7 +453,7 @@ struct WorkflowsHomeModelTests {
         let model = WorkflowsHomeModel.make(
             workflows: [brief, Self.workflow("Unpinned")], automations: [:], workflowRuns: [ran], now: wednesday, style: us)
         #expect(model.pinned.map(\.name) == ["Morning Brief"])
-        #expect(plain(model.pinned.first?.lastRun ?? "") == "Ran today, 10:00 AM")
+        #expect(plain(model.pinned.first?.lastRun ?? "") == "Ran today")
         #expect(WorkflowsHomeModel.lastRunLine(nil) == "Not run yet")
         var failed = run(.failed, started: wednesday.addingTimeInterval(-86_400))
         failed.workflowID = brief.id

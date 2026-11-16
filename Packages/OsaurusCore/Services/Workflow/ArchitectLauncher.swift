@@ -74,7 +74,7 @@ enum ArchitectLauncher {
         return nil
     }
 
-    /// "Fix with the Architect" on a failed run: opens the workflow for
+    /// "Ask Osaurus to Fix It" on a failed run: opens the workflow for
     /// editing, hands the run to the draft so `workflow_runs` and
     /// `workflow_test` `from_run` default to it, and sends the brief, so the
     /// Architect starts reading the run and proposing a fix right away.

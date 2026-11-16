@@ -215,48 +215,9 @@ enum WorkflowLibraryLayout {
     static func pageTopInset(_ theme: any ThemeProtocol) -> CGFloat { theme.space.s48 }
 }
 
-/// A titled card on a Workflows page: the run's steps, its result, what a
-/// workflow does.
-struct WorkflowPageCard<Trailing: View, Content: View>: View {
-    @Environment(\.theme) private var theme
-    /// Already localized.
-    let title: String
-    let icon: String
-    @ViewBuilder var trailing: () -> Trailing
-    @ViewBuilder var content: () -> Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: theme.space.s16) {
-            HStack(spacing: theme.space.s8) {
-                Image(systemName: icon)
-                    .glyphSize(.caption, weight: .semibold)
-                    .foregroundStyle(theme.text.secondary)
-                    .frame(width: theme.space.s16)
-                    .accessibilityHidden(true)
-                Text(verbatim: title)
-                    .font(SettingsFont.sectionTitle)
-                    .foregroundStyle(theme.text.primary)
-                    .accessibilityAddTraits(.isHeader)
-                Spacer(minLength: theme.space.s8)
-                trailing()
-            }
-            content()
-        }
-        .padding(theme.space.s16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .workflowCanvasCard()
-    }
-}
-
 extension View {
-    /// The card surface on the Workflows canvas and in the Architect's draft.
+    /// The card surface in the Architect's draft.
     func workflowCanvasCard() -> some View { settingsChrome(.canvas) }
-}
-
-extension WorkflowPageCard where Trailing == EmptyView {
-    init(title: String, icon: String, @ViewBuilder content: @escaping () -> Content) {
-        self.init(title: title, icon: icon, trailing: { EmptyView() }, content: content)
-    }
 }
 
 // MARK: - Making a workflow
@@ -621,59 +582,6 @@ struct WorkflowRunProgressBar: View {
     }
 }
 
-/// One segment per step, in run order: done, working, waiting, failed, or
-/// still to come. The working step breathes.
-struct WorkflowStepStrip: View {
-    @Environment(\.theme) private var theme
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    let run: WorkflowRun
-    @State private var pulse = false
-
-    var body: some View {
-        HStack(spacing: theme.space.s2) {
-            ForEach(run.nodes) { node in
-                let tint = color(node.status)
-                RoundedRectangle(cornerRadius: theme.radius.small, style: .continuous)
-                    .fill(tint)
-                    .opacity(node.status == .running && pulse ? 0.45 : 1)
-                    .frame(height: theme.space.s4)
-                    .help(Text(verbatim: stepHelp(node)))
-            }
-        }
-        .animation(theme.motion.quick, value: run.nodes.map(\.status))
-        .onAppear {
-            guard !reduceMotion else { return }
-            withAnimation(theme.motion.slow.repeatForever(autoreverses: true)) { pulse = true }
-        }
-        .accessibilityElement()
-        .accessibilityLabel(Text("Steps", bundle: .module))
-        .accessibilityValue(
-            Text(verbatim: L("\(WorkflowRunPresentation.finishedSteps(run)) of \(run.nodes.count) done")))
-    }
-
-    private func color(_ status: NodeRunStatus) -> Color {
-        switch status {
-        case .done, .pinned: return theme.statusInk(.success)
-        case .running: return theme.statusInk(.info)
-        case .awaitingUser: return theme.statusInk(.warning)
-        case .failed: return theme.statusInk(.error)
-        case .skipped: return theme.border.default
-        case .pending: return theme.border.subtle
-        }
-    }
-
-    private func stepHelp(_ node: NodeRun) -> String {
-        switch node.status {
-        case .done, .pinned: return L("Done")
-        case .running: return L("Working")
-        case .awaitingUser: return L("Waiting on you")
-        case .failed: return L("Failed")
-        case .skipped: return L("Skipped")
-        case .pending: return L("Up next")
-        }
-    }
-}
-
 /// Seconds since a run started, ticking while it goes.
 struct WorkflowRunElapsed: View {
     @Environment(\.theme) private var theme
@@ -682,7 +590,7 @@ struct WorkflowRunElapsed: View {
     var body: some View {
         TimelineView(.periodic(from: run.startedAt, by: 1)) { context in
             let end = run.finishedAt ?? context.date
-            Text(verbatim: WorkflowRunView.duration(max(0, end.timeIntervalSince(run.startedAt))))
+            Text(verbatim: WorkflowRunWords.stopwatch(end.timeIntervalSince(run.startedAt)))
                 .textStyle(.caption)
                 .monospacedDigit()
                 .foregroundStyle(theme.text.tertiary)
@@ -962,73 +870,6 @@ struct WorkflowRowParts {
     var accessory = AnyView(EmptyView())
     var expanded = AnyView(EmptyView())
     var keyboard = WorkflowRowKeyboard()
-}
-
-/// One past or live run inside a list: status glyph, how it went, who
-/// started it, and when. A live run shows its steps filling in.
-struct WorkflowRunCompactRow: View {
-    @Environment(\.theme) private var theme
-    let run: WorkflowRun
-    let definition: WorkflowDefinition?
-    /// Shows the workflow's name first, for lists that mix workflows.
-    var showsWorkflowName = false
-    let onOpen: () -> Void
-
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: onOpen) {
-            VStack(alignment: .leading, spacing: theme.space.s6) {
-                HStack(alignment: .firstTextBaseline, spacing: theme.space.s8) {
-                    WorkflowRunStatusIcon(status: run.status, size: 11)
-                        .frame(width: theme.space.s16)
-                    if showsWorkflowName {
-                        Text(verbatim: run.workflowName)
-                            .textStyle(.body)
-                            .foregroundStyle(theme.text.primary)
-                            .lineLimit(1)
-                    }
-                    Text(verbatim: WorkflowRunPresentation.progressLine(run, definition: definition))
-                        .textStyle(.caption)
-                        .foregroundStyle(run.status == .failed ? theme.statusInk(.error) : theme.text.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .help(run.error?.reason ?? "")
-                    Spacer(minLength: theme.space.s8)
-                    WorkflowStartedByLabel(caller: run.caller)
-                    if run.status.isTerminal {
-                        Text(verbatim: WorkflowRunPresentation.relativeTime(run.finishedAt ?? run.startedAt))
-                            .textStyle(.caption)
-                            .foregroundStyle(theme.text.tertiary)
-                            .lineLimit(1)
-                            .fixedSize()
-                    } else {
-                        WorkflowRunElapsed(run: run).fixedSize()
-                    }
-                    Image(systemName: "chevron.right")
-                        .glyphSize(.tiny, weight: .semibold)
-                        .foregroundStyle(theme.text.tertiary)
-                        .opacity(isHovered ? 1 : 0)
-                        .accessibilityHidden(true)
-                }
-                if !run.status.isTerminal, !run.nodes.isEmpty {
-                    WorkflowStepStrip(run: run)
-                        .padding(.leading, theme.space.s16 + theme.space.s8)
-                        .transition(.opacity)
-                }
-            }
-            .padding(.horizontal, theme.space.s8)
-            .padding(.vertical, theme.space.s6)
-            .settingsChrome(isHovered ? .hover : nil)
-            .contentShape(Rectangle())
-        }
-        .assignedBasePlainButtonStyle()
-        .onHover { hovering in withAnimation(theme.motion.quick) { isHovered = hovering } }
-        .pointingHandCursor()
-        .anchorPreference(key: WorkflowRowActionBounds.self, value: .bounds) { [$0] }
-        .accessibilityElement(children: .combine)
-        .accessibilityHint(Text("Opens the run", bundle: .module))
-    }
 }
 
 /// One cursor owner for the row, avoiding nested push/pop hover callbacks and

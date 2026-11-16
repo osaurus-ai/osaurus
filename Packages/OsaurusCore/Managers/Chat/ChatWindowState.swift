@@ -717,19 +717,34 @@ final class ChatWindowState: ObservableObject {
     }
 
     /// A workflow's run (or its form when `runID` is nil) in the Workflows
-    /// window. From elsewhere in the app the run opens on its own; from the
-    /// workflow's page it pushes on top of it.
+    /// window, always with its workflow's page under it so Back reads the
+    /// workflow's name.
     func showWorkflowRun(workflowID: UUID, runID: UUID?, agentId: UUID = Agent.defaultId) {
         let page = WorkflowsPage.run(workflowID: workflowID, runID: runID, agentId: agentId)
-        let showingLibrary = mainSurface == .workflows && showsWorkflowLibrary
-        if showingLibrary, case .run(let shown, _, _)? = workflowsPath.last, shown == workflowID {
-            workflowsPath[workflowsPath.count - 1] = page
-        } else if showingLibrary {
-            workflowsPath.append(page)
-        } else {
-            workflowsPath = [page]
-        }
+        workflowsPath = Self.path(
+            showing: page, of: workflowID, from: workflowsPath,
+            inLibrary: mainSurface == .workflows && showsWorkflowLibrary)
         showMainSurface(.workflows)
+    }
+
+    /// Where a run page lands: in place of another run of the same
+    /// workflow, on top of its workflow's page or of Activity, else on top
+    /// of a fresh copy of its workflow's page. Outside the library the
+    /// path starts over.
+    static func path(
+        showing page: WorkflowsPage, of workflowID: UUID, from path: [WorkflowsPage], inLibrary: Bool
+    ) -> [WorkflowsPage] {
+        guard inLibrary else { return [.workflow(workflowID), page] }
+        switch path.last {
+        case .run(let shown, _, _)? where shown == workflowID:
+            return path.dropLast() + [page]
+        case .workflow(let shown)? where shown == workflowID:
+            return path + [page]
+        case .activity?:
+            return path + [page]
+        default:
+            return path + [.workflow(workflowID), page]
+        }
     }
 
     func showMainSurface(_ surface: MainSurface) {
@@ -764,6 +779,17 @@ final class ChatWindowState: ObservableObject {
             }
         }
         mainSurface = surface
+    }
+
+    /// The canvas grid sits behind Home and making a workflow; reading
+    /// pages (a workflow, a run, Activity) sit on the plain canvas.
+    var workflowsShowsGrid: Bool {
+        guard mainSurface == .workflows else { return false }
+        guard showsWorkflowLibrary else { return true }
+        switch workflowsPath.last {
+        case nil, .create?: return true
+        default: return false
+        }
     }
 
     /// Closed `workflows_opened` page token for the page the surface lands on.

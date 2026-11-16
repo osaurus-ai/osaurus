@@ -173,7 +173,7 @@ struct WorkflowsSidebar: View {
                         onSeeAllWays: {
                             close()
                             windowState.isWorkflowsDrawerPresented = false
-                            windowState.showWorkflowsHome(scrolledTo: WorkflowsHomeSection.ways)
+                            windowState.selectWorkflowsPage(.workflow(id))
                         },
                         onClose: close))
             })
@@ -245,7 +245,7 @@ struct WorkflowsSidebar: View {
 
     private var footer: some View {
         VStack(alignment: .leading, spacing: theme.space.s8) {
-            SettingsButton(.secondary, "New workflow", icon: "plus", size: .small, help: "Describe a task to the Architect (⌘N)") {
+            SettingsButton(.secondary, "New Workflow", icon: "plus", size: .small, help: "Describe a task and Osaurus builds it (⌘N)") {
                 windowState.isWorkflowsDrawerPresented = false
                 windowState.showNewWorkflow()
             }
@@ -314,9 +314,33 @@ struct WorkflowsSidebarWorkflowRow: View {
     @State private var isHovered = false
     @State private var showsAutomate = false
 
+    /// Run and Automate only where the pointer is, so the list reads as
+    /// names and states.
+    private var showsActions: Bool { isHovered || isSelected || showsAutomate }
+
     var body: some View {
+        WorkflowLiveRunReader(workflowID: row.workflowID) { going in
+            content(going: going)
+        }
+    }
+
+    private func content(going: WorkflowLiveRuns.Summary?) -> some View {
         HStack(spacing: theme.space.s8) {
-            WorkflowStatusMark(status: row.status)
+            Group {
+                if let going {
+                    if going.isWaitingOnYou {
+                        Image(systemName: "hand.raised.fill")
+                            .glyphSize(.footnote, weight: .semibold)
+                            .foregroundStyle(theme.statusInk(.warning))
+                    } else {
+                        SettingsSpinner(size: .mini)
+                    }
+                } else {
+                    WorkflowStatusMark(status: row.status)
+                }
+            }
+            .frame(width: theme.space.s16, height: theme.space.s16)
+            .help(going?.shortLine ?? WorkflowStatusMark.label(row.status))
             VStack(alignment: .leading, spacing: theme.space.s2) {
                 HStack(spacing: theme.space.s4) {
                     Text(verbatim: row.name)
@@ -331,9 +355,9 @@ struct WorkflowsSidebarWorkflowRow: View {
                             .accessibilityLabel(Text("Published", bundle: .module))
                     }
                 }
-                Text(verbatim: row.subtitle)
+                Text(verbatim: going?.shortLine ?? row.subtitle)
                     .textStyle(.caption)
-                    .foregroundStyle(row.status == .problem ? theme.statusInk(.error) : theme.text.secondary)
+                    .foregroundStyle(subtitleInk(going))
                     .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -341,6 +365,25 @@ struct WorkflowsSidebarWorkflowRow: View {
             .accessibilityElement(children: .combine)
             .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
             .accessibilityAction { onOpen() }
+            .accessibilityAction(named: Text("Run now", bundle: .module)) { onRun() }
+            if showsActions { actions }
+        }
+        .padding(.horizontal, theme.space.s10)
+        .padding(.vertical, theme.space.s8)
+        .sidebarRowChrome(isSelected: isSelected, isHovered: isHovered)
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onOpen)
+        .onHover { hovering in withAnimation(theme.motion.quick) { isHovered = hovering } }
+    }
+
+    private func subtitleInk(_ going: WorkflowLiveRuns.Summary?) -> Color {
+        if let going { return going.isWaitingOnYou ? theme.statusInk(.warning) : theme.text.secondary }
+        return row.status == .problem ? theme.statusInk(.error) : theme.text.secondary
+    }
+
+    @ViewBuilder
+    private var actions: some View {
+        HStack(spacing: theme.space.s8) {
             if row.canAutomate {
                 SidebarRowActionButton(icon: "bolt", help: "Automate") { showsAutomate.toggle() }
                     .accessibilityLabel(Text("Automate \(row.name)", bundle: .module))
@@ -352,18 +395,10 @@ struct WorkflowsSidebarWorkflowRow: View {
                         if showsAutomate { automatePopover { showsAutomate = false } }
                     }
             }
-            SettingsIconButton(
-                row.isPinned ? "play.fill" : "play", help: "Run now", size: .extraExtraSmall,
-                role: row.isPinned ? .primary : .secondary, action: onRun
-            )
-            .accessibilityLabel(Text("Run \(row.name) now", bundle: .module))
+            SettingsIconButton("play", help: "Run now", size: .extraExtraSmall, role: .secondary, action: onRun)
+                .accessibilityLabel(Text("Run \(row.name) now", bundle: .module))
         }
-        .padding(.horizontal, theme.space.s10)
-        .padding(.vertical, theme.space.s8)
-        .sidebarRowChrome(isSelected: isSelected, isHovered: isHovered)
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onOpen)
-        .onHover { hovering in withAnimation(theme.motion.quick) { isHovered = hovering } }
+        .transition(.opacity)
     }
 }
 

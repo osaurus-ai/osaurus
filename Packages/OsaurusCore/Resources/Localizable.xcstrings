@@ -573,6 +573,9 @@
         }
       }
     },
+    "%lld need your attention." : {
+
+    },
     "%lld needs your attention." : {
       "localizations" : {
         "en" : {
@@ -644,6 +647,9 @@
           }
         }
       }
+    },
+    "%lld running now." : {
+
     },
     "%lld sec" : {
 
@@ -750,6 +756,12 @@
         }
       }
     },
+    "1 needs your attention." : {
+
+    },
+    "1 runs on its own." : {
+
+    },
     "1 tool has its own policy for this agent. A tool set to Deny for every agent stays denied." : {
       "localizations" : {
         "de" : {
@@ -808,7 +820,13 @@
     "Add another" : {
 
     },
+    "Agents still call this workflow “%@”. Use the new name, or keep this one." : {
+
+    },
     "All activity" : {
+
+    },
+    "All Automations" : {
 
     },
     "All workflows" : {
@@ -1132,6 +1150,9 @@
         }
       }
     },
+    "Ask Osaurus to Fix It" : {
+
+    },
     "at" : {
 
     },
@@ -1295,6 +1316,12 @@
     "Can't start its workflow. Open it to see why." : {
 
     },
+    "Changes on Your Mac" : {
+
+    },
+    "Click a word to change it." : {
+
+    },
     "Configuration changes, which show their own review card." : {
       "localizations" : {
         "de" : {
@@ -1406,7 +1433,13 @@
         }
       }
     },
+    "Describe a task and Osaurus builds it (⌘N)" : {
+
+    },
     "Don't suggest sharing this workflow" : {
+
+    },
+    "Earlier Runs" : {
 
     },
     "Every %@" : {
@@ -1442,10 +1475,16 @@
     "Everything is working. The last run finished." : {
 
     },
+    "Everything your workflows did, newest first." : {
+
+    },
     "Failed %@" : {
 
     },
     "Fill in what it uses first" : {
+
+    },
+    "Finish setup so it can run" : {
 
     },
     "Finish setup to run" : {
@@ -1467,6 +1506,9 @@
 
     },
     "How to share" : {
+
+    },
+    "Import a Workflow File…" : {
 
     },
     "In Use" : {
@@ -1502,6 +1544,30 @@
           }
         }
       }
+    },
+    "Installed in this workflow's own sandbox." : {
+
+    },
+    "It connects to %@." : {
+
+    },
+    "It couldn't start: setup isn't finished." : {
+
+    },
+    "It didn't finish." : {
+
+    },
+    "It needs nothing else to run." : {
+
+    },
+    "It stopped at %@." : {
+
+    },
+    "It was stopped." : {
+
+    },
+    "It worked." : {
+
     },
     "Last %lld runs all worked" : {
 
@@ -1582,6 +1648,9 @@
           }
         }
       }
+    },
+    "Manage All Sign-Ins in Vault" : {
+
     },
     "Methods" : {
       "localizations" : {
@@ -1728,10 +1797,22 @@
     "Monthly on the %@" : {
 
     },
+    "More filters" : {
+
+    },
+    "More Options" : {
+
+    },
     "more ways" : {
 
     },
+    "Needs Attention" : {
+
+    },
     "needs setup" : {
+
+    },
+    "Needs Setup" : {
 
     },
     "Never Ask" : {
@@ -1873,6 +1954,9 @@
     "New mail arrived" : {
 
     },
+    "New Run…" : {
+
+    },
     "no answer" : {
 
     },
@@ -1880,6 +1964,15 @@
 
     },
     "No runs yet. Try it once to see what you get." : {
+
+    },
+    "No shared value for %@ yet. Add one in the Vault." : {
+
+    },
+    "No steps yet. Edit it to add some." : {
+
+    },
+    "None yet. Open an agent and turn it on under Workflows." : {
 
     },
     "not allowed" : {
@@ -2017,10 +2110,7 @@
     "One click to run" : {
 
     },
-    "Only runs when you click Run. Last ran %@." : {
-
-    },
-    "Only runs when you click Run. Not run yet." : {
+    "One Workflow" : {
 
     },
     "Open Advanced" : {
@@ -2038,10 +2128,16 @@
     "Open Set Up and sign in to the connection again." : {
 
     },
+    "Open the workflow" : {
+
+    },
     "Opens store.osaurus.ai in your browser" : {
 
     },
     "Osaurus could not start %@." : {
+
+    },
+    "Osaurus drafts the steps, tests them with you, and saves the workflow to your library." : {
 
     },
     "Osaurus is still using %@. Restart to switch to %@." : {
@@ -2082,6 +2178,9 @@
 
     },
     "Osaurus ran it" : {
+
+    },
+    "Osaurus Store" : {
 
     },
     "Osaurus tried to reach a service for “%@”, but it did not answer. Trying again may work." : {
@@ -2145,6 +2244,9 @@
     "Pick a day and time…" : {
 
     },
+    "Pick a moment, then a workflow." : {
+
+    },
     "Pick a moment, then pick a workflow" : {
 
     },
@@ -2152,9 +2254,6 @@
 
     },
     "posts something new" : {
-
-    },
-    "Ran %@, %@" : {
 
     },
     "Ran on its own" : {
@@ -2391,10 +2490,19 @@
     "Run a follow-up when another workflow fails." : {
 
     },
+    "Run actions" : {
+
+    },
+    "Run again (⌘Return)" : {
+
+    },
     "Run by hand" : {
 
     },
     "Run by me" : {
+
+    },
+    "Run now (⌘Return)" : {
 
     },
     "Run tool calls without showing an approval card. %@ Tools can run code and modify files, so enable this only if you trust the tools you have installed. To change this for one agent, use Tool Approvals on that agent's Tools tab." : {
@@ -2430,6 +2538,15 @@
           }
         }
       }
+    },
+    "Running Now" : {
+
+    },
+    "Running now · %@" : {
+
+    },
+    "Running now." : {
+
     },
     "Running on their own" : {
 
@@ -2483,6 +2600,9 @@
     "runs once on %@ at %@" : {
 
     },
+    "Runs show up here as your workflows run, whoever starts them." : {
+
+    },
     "runs when %@ has news" : {
 
     },
@@ -2504,13 +2624,25 @@
     "runs when Osaurus opens" : {
 
     },
+    "Runs when you start it. Last ran %@." : {
+
+    },
+    "Runs when you start it. Not run yet." : {
+
+    },
     "Saturdays" : {
+
+    },
+    "Search workflows" : {
 
     },
     "See all" : {
 
     },
     "See all ways to automate" : {
+
+    },
+    "See What Happened" : {
 
     },
     "Semantic search stays off until Osaurus restarts with %@." : {
@@ -2581,6 +2713,9 @@
         }
       }
     },
+    "Separate tags with commas, up to %lld. They stay on this Mac." : {
+
+    },
     "service did not answer" : {
 
     },
@@ -2627,7 +2762,13 @@
     "Shared by the people who made them" : {
 
     },
+    "Show all" : {
+
+    },
     "Show all in Activity" : {
+
+    },
+    "Showing only %@." : {
 
     },
     "sign-in expired" : {
@@ -2636,10 +2777,16 @@
     "sign-in refused" : {
 
     },
+    "Sign-Ins" : {
+
+    },
     "Something “%@” needs is not available on this Mac right now." : {
 
     },
     "Start the day with something ready for you." : {
+
+    },
+    "Step %lld: %@" : {
 
     },
     "Still asks:" : {
@@ -2685,6 +2832,9 @@
     "Sundays" : {
 
     },
+    "Tags help you find it in the sidebar's search." : {
+
+    },
     "Teammates and remote callers on a shared agent." : {
       "localizations" : {
         "de" : {
@@ -2722,16 +2872,28 @@
     "Technical details" : {
 
     },
+    "Technical name" : {
+
+    },
     "The %lld steps it follows" : {
 
     },
     "The 1 step it follows" : {
 
     },
+    "The last %lld runs worked." : {
+
+    },
     "The last run failed." : {
 
     },
     "The last run worked" : {
+
+    },
+    "The last run worked." : {
+
+    },
+    "The name agents use to call it." : {
 
     },
     "The site's feed address, like https://example.com/feed" : {
@@ -3262,6 +3424,12 @@
         }
       }
     },
+    "Try again (⌘Return)" : {
+
+    },
+    "Try It Now" : {
+
+    },
     "Tuesdays" : {
 
     },
@@ -3302,6 +3470,9 @@
         }
       }
     },
+    "Want this to run on its own?" : {
+
+    },
     "Watch a folder like Downloads or Desktop." : {
 
     },
@@ -3317,6 +3488,9 @@
     "Ways to automate" : {
 
     },
+    "Ways to Automate" : {
+
+    },
     "Wednesdays" : {
 
     },
@@ -3324,6 +3498,9 @@
 
     },
     "What gets shared" : {
+
+    },
+    "What It Needs" : {
 
     },
     "What it needs access to: %@" : {
@@ -3339,6 +3516,9 @@
 
     },
     "What stays on your Mac" : {
+
+    },
+    "What your automations ran" : {
 
     },
     "When %@ changes" : {
@@ -3378,6 +3558,9 @@
 
     },
     "When an app has news…" : {
+
+    },
+    "When It Runs" : {
 
     },
     "When new mail arrives" : {
@@ -122502,10 +122685,6 @@
           }
         }
       }
-    },
-    "Edit with the Architect" : {
-      "comment" : "Button to open the workflow's edit screen.",
-      "isCommentAutoGenerated" : true
     },
     "Edit…" : {
       "localizations" : {
@@ -338423,10 +338602,6 @@
     "The Architect changed this step in its latest edit." : {
 
     },
-    "The Architect drafts the steps, tests them with you, and saves the workflow to your library." : {
-      "comment" : "A description of how to use the Architect.",
-      "isCommentAutoGenerated" : true
-    },
     "The Architect is planning the steps…" : {
 
     },
@@ -387927,6 +388102,9 @@
         }
       }
     },
+    "Workflows made by others" : {
+
+    },
     "Workflows nest at most %lld deep; this call would go deeper." : {
       "comment" : "Auto-extracted format-string key (Apple String.LocalizationValue canonical form).",
       "extractionState" : "manual",
@@ -392121,7 +392299,13 @@
       "comment" : "\"You get\" is a placeholder.",
       "isCommentAutoGenerated" : true
     },
+    "You get: %@." : {
+
+    },
     "You give" : {
+
+    },
+    "You give it: %@." : {
 
     },
     "You have your own search providers configured - they keep handling searches while premium is off." : {
@@ -394631,6 +394815,9 @@
       }
     },
     "Your author page" : {
+
+    },
+    "Your Automations" : {
 
     },
     "Your automations, and how the last %lld runs went" : {

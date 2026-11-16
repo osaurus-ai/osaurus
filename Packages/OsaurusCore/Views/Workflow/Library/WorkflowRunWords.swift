@@ -10,13 +10,18 @@
 import Foundation
 
 /// The line under a workflow's name on its page, and the dot beside it
-/// (nil tone: neutral).
+/// (nil tone: neutral). A run going now says where it is.
 enum WorkflowStatusLine {
     static func line(
-        needsSetup: Bool, automations: [OsaurusEvent], lastRun: WorkflowRun?, now: Date = Date(),
+        needsSetup: Bool, liveRun: WorkflowLiveRuns.Summary? = nil, liveStepName: String? = nil,
+        automations: [OsaurusEvent], lastRun: WorkflowRun?, now: Date = Date(),
         style: AutomationSentence.Style = .current
     ) -> (text: String, tone: ThemeStatusKind?) {
         if needsSetup { return (L("Finish setup to run."), .warning) }
+        if let liveRun {
+            let progress = liveRun.progress(stepName: liveStepName)
+            return liveRun.isWaitingOnYou ? (progress, .warning) : (L("Running now · \(progress)"), .info)
+        }
         if let lastRun, lastRun.status == .failed { return (L("The last run failed."), .error) }
         let on = automations.filter(\.isEnabled)
         if !on.isEmpty {
@@ -25,9 +30,9 @@ enum WorkflowStatusLine {
             }
             return (L("On. \(AutomationSentence.sentence(on[0], style: style))"), .success)
         }
-        guard let lastRun else { return (L("Only runs when you click Run. Not run yet."), nil) }
-        let when = WorkflowRunWords.lastRan(lastRun.finishedAt ?? lastRun.startedAt, now: now, style: style)
-        return (L("Only runs when you click Run. Last ran \(when)."), nil)
+        guard let lastRun else { return (L("Runs when you start it. Not run yet."), nil) }
+        let when = WorkflowRunWords.lastRan(lastRun.startedAt, now: now, style: style)
+        return (L("Runs when you start it. Last ran \(when)."), nil)
     }
 }
 
@@ -143,6 +148,12 @@ enum WorkflowRunWords {
         L("took \(duration(seconds))")
     }
 
+    /// A run still going, as a stopwatch: "0:42", "12:05", "1:02:05".
+    static func stopwatch(_ seconds: TimeInterval) -> String {
+        let whole = Duration.seconds(max(0, Int(seconds)))
+        return whole.formatted(.time(pattern: seconds < 3600 ? .minuteSecond : .hourMinuteSecond))
+    }
+
     /// "42 sec", "3 min", "1 hr 5 min".
     static func duration(_ seconds: TimeInterval) -> String {
         let whole = max(0, Int(seconds.rounded()))
@@ -152,6 +163,26 @@ enum WorkflowRunWords {
         let hours = minutes / 60
         let rest = minutes % 60
         return rest == 0 ? L("\(hours) hr") : L("\(hours) hr \(rest) min")
+    }
+
+    /// The run page's one sentence about where a run stands, and its tone.
+    static func status(_ run: WorkflowRun, definition: WorkflowDefinition?) -> (text: String, tone: ThemeStatusKind?) {
+        let summary = WorkflowLiveRuns.Summary(run)
+        switch run.status {
+        case .awaitingUser:
+            return (summary.progress(stepName: summary.stepName(in: definition)), .warning)
+        case .running:
+            return (L("Running now · \(summary.progress(stepName: summary.stepName(in: definition)))"), .info)
+        case .completed:
+            return (L("It worked."), .success)
+        case .failed:
+            let step = run.nodes.first { $0.status == .failed }.flatMap { definition?.node($0.nodeID)?.name }
+            return (step.map { L("It stopped at \($0).") } ?? L("It didn't finish."), .error)
+        case .needsSetup:
+            return (L("It couldn't start: setup isn't finished."), .warning)
+        case .cancelled:
+            return (L("It was stopped."), nil)
+        }
     }
 
     /// "On schedule, took 42 sec"; a run still going says only how it started.

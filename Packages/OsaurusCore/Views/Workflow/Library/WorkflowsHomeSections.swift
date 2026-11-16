@@ -2,26 +2,31 @@
 //  WorkflowsHomeSections.swift
 //  osaurus
 //
-//  Home's sections under Running now: the pinned workflows as tiles with
-//  Run, every automation that runs a workflow with its switch and how its
-//  last runs went, and the ways to automate, each starting from a
-//  workflow you pick. Each hides when it has nothing to show.
+//  Home's sections under Running Now: what needs you, the pinned
+//  workflows as tiles with Run, and every automation that runs a workflow
+//  with its switch. Until the person has an automation, a few ways to
+//  start one instead. Each hides when it has nothing to show.
 //
 
 import AppKit
 import SwiftUI
 
-/// "4 run on their own. 1 needs your attention." under Home's title.
+/// "1 running now. 4 run on their own." under Home's title.
 struct WorkflowsHomeSubtitle: View {
     @Environment(\.theme) private var theme
     @ObservedObject var overview: WorkflowsOverviewModel
     @ObservedObject private var installed = InstalledWorkflowStore.shared
+    @ObservedObject private var live = WorkflowLiveRuns.shared
 
     var body: some View {
         let model = WorkflowsHomeModel.make(workflows: installed.workflows, automations: overview.automationFacts)
-        Text(verbatim: model.subtitle)
-            .font(SettingsFont.rowDescription)
-            .foregroundStyle(theme.text.secondary)
+        Text(
+            verbatim: WorkflowsHomeModel.subtitle(
+                runOnOwn: model.runOnOwnCount, attention: model.attentionCount, running: live.going.count)
+        )
+        .font(SettingsFont.rowDescription)
+        .foregroundStyle(theme.text.secondary)
+        .animation(theme.motion.quick, value: live.going.count)
     }
 }
 
@@ -30,15 +35,22 @@ struct WorkflowsHomeSections: View {
     let windowState: ChatWindowState
     @ObservedObject var overview: WorkflowsOverviewModel
     @ObservedObject private var installed = InstalledWorkflowStore.shared
-    @ObservedObject private var runs = WorkflowRunStore.shared
+    /// Redraws when a run starts, moves a step or ends, never per streamed word.
+    @ObservedObject private var live = WorkflowLiveRuns.shared
 
     let onRun: (InstalledWorkflow) -> Void
     let onSetUp: (InstalledWorkflow) -> Void
     let onAllActivity: () -> Void
 
     @State private var editorRequest: EventEditorRequest?
+    /// Bumps once the recorded runs load, so the tiles read them.
+    @State private var recordedCount = -1
+
+    private static var wayLimit: Int { 4 }
 
     var body: some View {
+        let _ = recordedCount
+        let runs = WorkflowRunStore.shared
         let model = WorkflowsHomeModel.make(
             workflows: installed.workflows, automations: overview.automationFacts,
             eventRuns: overview.recentRuns, workflowRuns: runs.recentRuns(),
@@ -50,11 +62,15 @@ struct WorkflowsHomeSections: View {
         VStack(alignment: .leading, spacing: theme.space.s32) {
             if !attention.isEmpty { needsAttention(attention) }
             if !model.pinned.isEmpty { pinned(model.pinned) }
-            if !model.groups.isEmpty || model.otherAutomationCount > 0 { runningOnTheirOwn(model) }
-            ways(model.ways)
-            fromTheStore
+            if !model.groups.isEmpty { automations(model) }
+            if model.groups.isEmpty, model.otherAutomationCount == 0, !installed.workflows.isEmpty {
+                ways(Array(model.ways.prefix(Self.wayLimit)))
+            }
         }
         .task { await runs.loadRecentRunsIfNeeded() }
+        .onReceive(WorkflowRunStore.shared.$recentPersisted.map { $0?.count ?? -1 }.removeDuplicates()) {
+            recordedCount = $0
+        }
         .sheet(item: $editorRequest) { request in
             EventEditorSheet(
                 request: request,
@@ -70,14 +86,13 @@ struct WorkflowsHomeSections: View {
     // MARK: Needs attention
 
     private func needsAttention(_ all: [WorkflowAttention]) -> some View {
-        VStack(alignment: .leading, spacing: theme.space.s12) {
-            WorkflowSectionHeader(title: L("Needs attention"), count: all.count) {
-                if all.count > WorkflowActivityFeed.attentionLimit {
-                    WorkflowTextLink(title: L("Show all in Activity")) {
-                        windowState.showWorkflowsActivity(.init(filter: .needsAttention))
-                    }
+        SettingsSection(title: "Needs Attention", layout: .plain) {
+            if all.count > WorkflowActivityFeed.attentionLimit {
+                WorkflowTextLink(title: L("See all")) {
+                    windowState.showWorkflowsActivity(.init(filter: .needsAttention))
                 }
             }
+        } content: {
             ForEach(all.prefix(WorkflowActivityFeed.attentionLimit)) { item in
                 WorkflowsAttentionBanner(
                     item: item,
@@ -98,8 +113,7 @@ struct WorkflowsHomeSections: View {
     // MARK: Pinned
 
     private func pinned(_ tiles: [WorkflowsHomeModel.Tile]) -> some View {
-        VStack(alignment: .leading, spacing: theme.space.s12) {
-            sectionTitle(L("Pinned"), subtitle: L("One click to run"))
+        SettingsSection(title: "Pinned", layout: .plain) {
             LazyVGrid(
                 columns: [GridItem(.adaptive(minimum: 180), spacing: theme.space.s12, alignment: .top)],
                 alignment: .leading, spacing: theme.space.s12
@@ -114,47 +128,16 @@ struct WorkflowsHomeSections: View {
         }
     }
 
-    // MARK: Running on their own
+    // MARK: Your automations
 
-    private func runningOnTheirOwn(_ model: WorkflowsHomeModel) -> some View {
-        VStack(alignment: .leading, spacing: theme.space.s12) {
-            HStack(alignment: .firstTextBaseline) {
-                sectionTitle(
-                    L("Running on their own"),
-                    subtitle: L("Your automations, and how the last \(WorkflowsHomeModel.healthRunCount) runs went"))
-                Spacer(minLength: theme.space.s8)
-                if !model.groups.isEmpty { WorkflowTextLink(title: L("All activity"), action: onAllActivity) }
-            }
-            if !model.groups.isEmpty {
-                VStack(spacing: theme.space.s0) {
-                    ForEach(Array(model.groups.enumerated()), id: \.element.id) { index, group in
-                        if index > 0 { ThemeHairlineDivider(color: theme.border.subtle) }
-                        if group.rows.count > 1 {
-                            Text(verbatim: group.name)
-                                .textStyle(.caption, weight: 500)
-                                .foregroundStyle(theme.text.tertiary)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, theme.space.s16)
-                                .padding(.top, theme.space.s12)
-                        }
-                        ForEach(group.rows) { row in
-                            WorkflowsHomeAutomationRow(row: row) {
-                                windowState.showWorkflowAutomation(workflowID: row.workflowID, intent: .highlight(row.id))
-                            }
-                        }
-                    }
-                }
-                .settingsChrome(.card)
-            }
-            if model.otherAutomationCount > 0 {
-                HStack(spacing: theme.space.s6) {
-                    Text(verbatim: L("\(model.otherAutomationCount) other automations run agents."))
-                        .font(SettingsFont.footnote)
-                        .foregroundStyle(theme.text.secondary)
-                    WorkflowTextLink(title: L("Open Automations")) {
-                        ManagementStateManager.shared.selectedTab = .automations
-                        AppDelegate.shared?.showManagementWindow(initialTab: .automations)
-                    }
+    private func automations(_ model: WorkflowsHomeModel) -> some View {
+        SettingsSection(title: "Your Automations", layout: .plain) {
+            WorkflowTextLink(title: L("See all"), action: onAllActivity)
+                .help(L("What your automations ran"))
+        } content: {
+            WorkflowRowList(items: model.groups.flatMap(\.rows)) { row in
+                WorkflowsHomeAutomationRow(row: row) {
+                    windowState.showWorkflowAutomation(workflowID: row.workflowID, intent: .highlight(row.id))
                 }
             }
         }
@@ -164,11 +147,12 @@ struct WorkflowsHomeSections: View {
 
     // MARK: Ways to automate
 
+    /// Until the person has an automation: a few moments to start one at,
+    /// each asking which workflow next.
     private func ways(_ ways: [WorkflowsHomeModel.Way]) -> some View {
-        VStack(alignment: .leading, spacing: theme.space.s12) {
-            sectionTitle(L("Ways to automate"), subtitle: L("Pick a moment, then pick a workflow"))
+        SettingsSection(title: "Ways to Automate", subtitle: "Pick a moment, then a workflow.", layout: .plain) {
             LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 180), spacing: theme.space.s12, alignment: .top)],
+                columns: [GridItem(.adaptive(minimum: 160), spacing: theme.space.s12, alignment: .top)],
                 alignment: .leading, spacing: theme.space.s12
             ) {
                 ForEach(ways) { way in
@@ -180,14 +164,7 @@ struct WorkflowsHomeSections: View {
                     .menuStyle(.button)
                     .buttonStyle(.plain)
                     .menuIndicator(.hidden)
-                    .disabled(installed.workflows.isEmpty)
                 }
-            }
-            HStack(spacing: theme.space.s4) {
-                Text(verbatim: L("Building something custom? Webhooks and event streams live under Advanced."))
-                    .font(SettingsFont.footnote)
-                    .foregroundStyle(theme.text.secondary)
-                WorkflowTextLink(title: L("Open Advanced"), action: WorkflowAutomationLinks.openAddAutomation)
             }
         }
         .id(WorkflowsHomeSection.ways)
@@ -240,40 +217,6 @@ struct WorkflowsHomeSections: View {
         let created = EventManager.shared.create(AutomationDefaults.event(for: workflow, source: source), telemetryOrigin: "user")
         windowState.showWorkflowAutomation(workflowID: workflow.id, intent: .highlight(created.id))
     }
-
-    // MARK: From the Store
-
-    /// Listings wait for a registry list to show; until then, the way to
-    /// the Store and how to share there.
-    private var fromTheStore: some View {
-        VStack(alignment: .leading, spacing: theme.space.s12) {
-            HStack(alignment: .firstTextBaseline) {
-                sectionTitle(L("From the Store"), subtitle: L("Shared by the people who made them"))
-                Spacer(minLength: theme.space.s8)
-                WorkflowTextLink(title: L("Browse the Store")) { NSWorkspace.shared.open(WorkflowsSidebar.storeURL) }
-            }
-            LazyVGrid(
-                columns: [GridItem(.adaptive(minimum: 180), spacing: theme.space.s12, alignment: .top)],
-                alignment: .leading, spacing: theme.space.s12
-            ) {
-                WorkflowsShareInviteCard()
-            }
-        }
-        .id(WorkflowsHomeSection.fromTheStore)
-        .settingsLandingAnchor("workflows.fromTheStore")
-    }
-
-    private func sectionTitle(_ title: String, subtitle: String) -> some View {
-        VStack(alignment: .leading, spacing: theme.space.s2) {
-            Text(verbatim: title)
-                .textStyle(.body, weight: 600)
-                .foregroundStyle(theme.text.primary)
-                .accessibilityAddTraits(.isHeader)
-            Text(verbatim: subtitle)
-                .font(SettingsFont.footnote)
-                .foregroundStyle(theme.text.secondary)
-        }
-    }
 }
 
 // MARK: - Tiles and rows
@@ -304,7 +247,7 @@ private struct WorkflowsAttentionBanner: View {
                     if let remedy = item.explanation.remedy {
                         SettingsButton(.primary, remedy.title, size: .small, verbatim: true) { onRemedy(remedy) }
                     }
-                    SettingsButton(.secondary, "See what happened", size: .small, action: onSeeWhatHappened)
+                    SettingsButton(.secondary, "See What Happened", size: .small, action: onSeeWhatHappened)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -359,6 +302,7 @@ private struct WorkflowsPinnedTile: View {
     }
 }
 
+/// "Mail Triage runs every weekday at 8:00 AM", how it last went, and its switch.
 private struct WorkflowsHomeAutomationRow: View {
     @Environment(\.theme) private var theme
     let row: WorkflowsHomeModel.AutomationRow
@@ -373,7 +317,7 @@ private struct WorkflowsHomeAutomationRow: View {
                 .frame(width: theme.space.s16)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: theme.space.s2) {
-                (Text(verbatim: row.workflowName).fontWeight(.semibold) + Text(verbatim: " " + row.sentence))
+                (Text(verbatim: row.workflowName).fontWeight(.medium) + Text(verbatim: " " + row.sentence))
                     .font(SettingsFont.compactLabel)
                     .foregroundStyle(theme.text.primary)
                     .lineLimit(2)
@@ -384,8 +328,6 @@ private struct WorkflowsHomeAutomationRow: View {
                     .lineLimit(1)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            WorkflowHealthStripView(bars: row.bars)
-                .fixedSize()
             Toggle(
                 L("\(row.workflowName) automation"),
                 isOn: Binding(
@@ -395,7 +337,7 @@ private struct WorkflowsHomeAutomationRow: View {
             .settingsSwitch()
         }
         .padding(.horizontal, theme.space.s16)
-        .padding(.vertical, theme.space.s10)
+        .padding(.vertical, theme.space.s12)
         .background { if isHovered { theme.surface.hover } }
         .contentShape(Rectangle())
         .onTapGesture(perform: onOpen)
@@ -403,47 +345,6 @@ private struct WorkflowsHomeAutomationRow: View {
         .pointingHandCursor()
         .accessibilityElement(children: .contain)
         .accessibilityAction(named: Text("Open the workflow", bundle: .module), onOpen)
-    }
-}
-
-/// "Made something useful?": a dashed card whose How to share explains
-/// where Share is and what it sends.
-private struct WorkflowsShareInviteCard: View {
-    @Environment(\.theme) private var theme
-    @State private var showsHow = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: theme.space.s6) {
-            Image(systemName: "square.and.arrow.up")
-                .glyphSize(.body, weight: .semibold)
-                .foregroundStyle(theme.text.secondary)
-                .accessibilityHidden(true)
-            Text("Made something useful?", bundle: .module)
-                .textStyle(.body, weight: 500)
-                .foregroundStyle(theme.text.primary)
-            Text("Share a workflow so others can use it.", bundle: .module)
-                .font(SettingsFont.footnote)
-                .foregroundStyle(theme.text.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: theme.space.s0)
-            WorkflowTextLink(title: L("How to share")) { showsHow = true }
-                .popover(isPresented: $showsHow, arrowEdge: .bottom) {
-                    Text(
-                        "Open a workflow you made and choose Share, then Publish to store.osaurus.ai and pick who can see it. You share the recipe, never your data: your results and accounts stay on your Mac.",
-                        bundle: .module
-                    )
-                    .font(SettingsFont.compactLabel)
-                    .foregroundStyle(theme.text.primary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(width: theme.space.s64 * 4 + theme.space.s32)
-                    .padding(theme.space.s16)
-                }
-        }
-        .padding(theme.space.s12)
-        .frame(maxWidth: .infinity, minHeight: theme.space.s64 + theme.space.s48, alignment: .topLeading)
-        .overlay(
-            RoundedRectangle(cornerRadius: theme.radius.medium, style: .continuous)
-                .strokeBorder(theme.border.strong, style: StrokeStyle(lineWidth: theme.stroke.default, dash: [5, 4])))
     }
 }
 
@@ -469,13 +370,9 @@ private struct WorkflowsWayCard: View {
                 .multilineTextAlignment(.leading)
                 .lineLimit(2)
                 .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: theme.space.s0)
-            Text(verbatim: way.state)
-                .font(SettingsFont.footnote)
-                .foregroundStyle(way.enabledCount > 0 ? theme.statusInk(.success) : theme.text.tertiary)
         }
         .padding(theme.space.s12)
-        .frame(maxWidth: .infinity, minHeight: theme.space.s64 + theme.space.s48, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: theme.space.s64 + theme.space.s32, alignment: .topLeading)
         .settingsChrome(isHovered ? .cardHover : .card)
         .contentShape(Rectangle())
         .onHover { hovering in withAnimation(theme.motion.quick) { isHovered = hovering } }

@@ -83,7 +83,7 @@ struct WorkflowCreationLanding<StarterCard: View>: View {
                                 // The existing composer owns 12pt outer side insets.
                                 .frame(maxWidth: 504)
                                 .padding(.bottom, -theme.space.s12)
-                            Text("The Architect drafts the steps, tests them with you, and saves the workflow to your library.", bundle: .module)
+                            Text("Osaurus drafts the steps, tests them with you, and saves the workflow to your library.", bundle: .module)
                                 .textStyle(.caption)
                                 .foregroundStyle(theme.text.tertiary)
                                 .multilineTextAlignment(.center)

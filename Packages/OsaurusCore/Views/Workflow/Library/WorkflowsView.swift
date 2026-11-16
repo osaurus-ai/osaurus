@@ -279,11 +279,10 @@ struct WorkflowsView: View {
                     windowState.showWorkflowRun(workflowID: id, runID: runID, agentId: windowState.agentId)
                 },
                 onShare: { share($0.template, entry: shareEntry(for: $0.templateID)) },
-                onEdit: { ArchitectLauncher.edit($0, in: windowState) },
                 onDone: { windowState.popWorkflowsPage() },
                 onSeeAllRuns: { windowState.showWorkflowsActivity(.init(workflowID: $0.id)) },
                 takeIntent: { windowState.takeWorkflowsAutomationIntent() },
-                actionMenu: { workflow in installedCard(workflow, detailActionMenu: true) }
+                actionMenu: { detailMenu($0) }
             )
             .id("workflow-\(id)")
             .transition(pushTransition)
@@ -292,8 +291,6 @@ struct WorkflowsView: View {
                 windowState: windowState, workflowID: workflowID, runID: runID, agentId: agentId,
                 onBack: { windowState.popWorkflowsPage() },
                 onShowRun: { windowState.showWorkflowRun(workflowID: workflowID, runID: $0, agentId: agentId) },
-                onShowWorkflow: previousPage == .workflow(workflowID)
-                    ? nil : { windowState.pushWorkflowsPage(.workflow($0)) },
                 onSetUp: { setupSubject = .setup($0) })
             .id("run-\(workflowID)")
             .transition(pushTransition)
@@ -318,11 +315,6 @@ struct WorkflowsView: View {
             home
                 .transition(.opacity)
         }
-    }
-
-    private var previousPage: ChatWindowState.WorkflowsPage? {
-        let path = windowState.workflowsPath
-        return path.count >= 2 ? path[path.count - 2] : nil
     }
 
     /// The title-bar back button's label for returning to `page`; nil is
@@ -372,19 +364,37 @@ struct WorkflowsView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 
+    /// The workflow page's ⋯: the card's menu with Pin and Share first.
+    private func detailMenu(_ workflow: InstalledWorkflow) -> InstalledWorkflowCard {
+        var card = installedCard(workflow, detailActionMenu: true)
+        let published = registryRecords.record(for: workflow.templateID)
+        card.leadingMenuItems = AnyView(
+            Group {
+                pinButton(workflow)
+                Button { share(workflow.template, entry: shareEntry(for: workflow.templateID)) } label: {
+                    Label(published == nil ? L("Share…") : L("Manage Published…"), systemImage: "square.and.arrow.up")
+                }
+            })
+        return card
+    }
+
+    private func pinButton(_ workflow: InstalledWorkflow) -> some View {
+        Button {
+            try? installed.setPinned(!workflow.isPinned, id: workflow.id)
+        } label: {
+            Label(
+                workflow.isPinned ? L("Unpin") : L("Pin"),
+                systemImage: workflow.isPinned ? "pin.slash" : "pin")
+        }
+    }
+
     /// The card's menu on a sidebar row, with Pin, Automate and Share first.
     private func sidebarMenu(_ workflow: InstalledWorkflow, label: AnyView) -> InstalledWorkflowCard {
         var card = installedCard(workflow)
         card.contextMenuLabel = label
         card.leadingMenuItems = AnyView(
             Group {
-                Button {
-                    try? installed.setPinned(!workflow.isPinned, id: workflow.id)
-                } label: {
-                    Label(
-                        workflow.isPinned ? L("Unpin") : L("Pin"),
-                        systemImage: workflow.isPinned ? "pin.slash" : "pin")
-                }
+                pinButton(workflow)
                 Button { windowState.selectWorkflowsPage(.workflow(workflow.id)) } label: {
                     Label(L("Automate…"), systemImage: "bolt")
                 }
@@ -490,7 +500,7 @@ struct WorkflowsView: View {
         windowState.workflowsSpotlightRunID = runID
     }
 
-    func openRun(_ run: WorkflowRun) {
+    func openRun(_ run: WorkflowLiveRuns.Summary) {
         windowState.showWorkflowRun(
             workflowID: run.workflowID, runID: run.id, agentId: run.caller.agentID ?? windowState.agentId)
     }
