@@ -207,13 +207,29 @@ final class SyncInboundApplier {
     }
 
     /// How many of the chat's messages haven't reached another device yet.
+    /// Off the main thread: `syncStatus` waits on the core's lock, which catching up holds for long
+    /// stretches, and froze the app at launch (2026-11-16, paused in `__psynch_mutexwait`). Status
+    /// changes during a read get one more read after it, not one each.
     private func refreshPendingDelivery(_ sessionId: UUID) {
+        guard pendingDeliveryReads[sessionId] == nil else {
+            pendingDeliveryAgain.insert(sessionId)
+            return
+        }
         guard let scope = scopeWatches[sessionId]?.scope, let core = SyncService.shared.core else { return }
-        let pending = Int((try? core.syncStatus(scope: scope))?.pendingOutbox ?? 0)
-        for session in Self.liveSessions(for: sessionId) where session.syncPendingCount != pending {
-            session.syncPendingCount = pending
+        pendingDeliveryReads[sessionId] = Task { @MainActor [weak self] in
+            let pending = await Task.detached(priority: .utility) {
+                Int((try? core.syncStatus(scope: scope))?.pendingOutbox ?? 0)
+            }.value
+            guard let self else { return }
+            self.pendingDeliveryReads[sessionId] = nil
+            for session in Self.liveSessions(for: sessionId) where session.syncPendingCount != pending {
+                session.syncPendingCount = pending
+            }
+            if self.pendingDeliveryAgain.remove(sessionId) != nil { self.refreshPendingDelivery(sessionId) }
         }
     }
+    private var pendingDeliveryReads: [UUID: Task<Void, Never>] = [:]
+    private var pendingDeliveryAgain: Set<UUID> = []
 
     private func scheduleStreamRender(_ sessionId: UUID) {
         guard renderTasks[sessionId] == nil else { return }
