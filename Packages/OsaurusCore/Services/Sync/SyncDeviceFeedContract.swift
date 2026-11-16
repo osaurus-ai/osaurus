@@ -68,17 +68,21 @@ enum SyncDeviceFeedContract {
     /// Each device's record under `prefix`, keyed by device key. With
     /// `writtenByThatDevice`, a value another device signed is dropped:
     /// requests and answers name their writer, results name their reader.
+    /// With `signedOnly`, an unsigned value is dropped too: one written before 0.1.0-beta.6 is let
+    /// through elsewhere, but these records came later, so an unsigned one names no writer to trust.
     static func perDevice<T: Decodable>(
         _ type: T.Type,
         prefix: String,
         in conversation: Conversation,
-        writtenByThatDevice: Bool
+        writtenByThatDevice: Bool,
+        signedOnly: Bool = false
     ) -> [String: T] {
         var result: [String: T] = [:]
         for entry in conversation.appData where entry.namespace.hasPrefix(prefix) {
             let device = String(entry.namespace.dropFirst(prefix.count))
             guard !device.isEmpty,
                 !writtenByThatDevice || SyncHostedRunContract.isSigned(entry, byNamespaceDevice: device),
+                !signedOnly || entry.authorDevice != nil,
                 let decoded = try? JSONDecoder().decode(type, from: entry.bytes)
             else { continue }
             result[device] = decoded
@@ -396,9 +400,27 @@ enum SyncDeviceFeedContract {
                 Tag(key: SyncConversationMapper.TagKey.device, value: device),
             ],
             replication: .synced,
-            limit: 1
+            limit: 8
         )
-        return try core.conversationsFiltered(filter: filter).first
+        // Tags are ordinary conversation data, so a conversation another user shared with this one
+        // could carry the same two and be taken for this Mac's own, and the requests in it run as this
+        // user. So: the one used before, once found; else one no other user is in (agents may be);
+        // else, as before, the first. The last is for a conversation that still lists this user's
+        // identity from before a change of phrase.
+        let found = try core.conversationsFiltered(filter: filter)
+        let pinKey = "SyncSystemConversation.\(kind).\(device)"
+        if let pinned = UserDefaults.standard.string(forKey: pinKey),
+            let conversation = found.first(where: { $0.scope == pinned })
+        {
+            return conversation
+        }
+        let me = "u:" + (try core.userKey())
+        let chosen =
+            found.first { conversation in
+                conversation.members.allSatisfy { !$0.principal.hasPrefix("u:") || $0.principal == me }
+            } ?? found.first
+        if let chosen { UserDefaults.standard.set(chosen.scope, forKey: pinKey) }
+        return chosen
     }
 
     /// This device's conversation of `kind`, made when missing.

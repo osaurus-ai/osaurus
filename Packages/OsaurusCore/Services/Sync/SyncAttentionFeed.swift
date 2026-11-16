@@ -205,7 +205,9 @@ final class SyncAttentionFeed {
             SyncDeviceFeedContract.attentionAnswerNamespace,
             from: conversation
         ) {
-            entries += legacy.answers.map { LabeledAnswer(id: $0.key, answer: $0.value, deviceLabel: legacyLabel) }
+            // Unsigned: never a workflow form's answer, which only this user's own device may send.
+            entries += legacy.answers.filter { $0.value.action != SyncDeviceFeedContract.submitAction }
+                .map { LabeledAnswer(id: $0.key, answer: $0.value, deviceLabel: legacyLabel) }
         }
         return entries.sorted { ($0.answer.answeredMs, $0.id) < ($1.answer.answeredMs, $1.id) }
     }

@@ -396,12 +396,14 @@ final class SyncManageFeed {
                 )?.results ?? [:]
             sources.append(RequestSource(device: device, requests: list.requests, results: results))
         }
-        let legacy =
-            SyncHostedRunContract.read(
-                SyncDeviceFeedContract.ManageRequests.self,
-                SyncDeviceFeedContract.manageRequestNamespace,
-                from: conversation
-            )?.requests ?? []
+        // The shared list from before per-device ones has no signer to check, so it keeps only what it
+        // could ask for then: starting a workflow, or sending a run's files, needs a request this
+        // user's own device signed.
+        let legacy = (SyncHostedRunContract.read(
+            SyncDeviceFeedContract.ManageRequests.self,
+            SyncDeviceFeedContract.manageRequestNamespace,
+            from: conversation
+        )?.requests ?? []).filter { $0.op != .runWorkflow && $0.op != .workflowOutput }
         let legacyResults =
             SyncHostedRunContract.read(
                 SyncDeviceFeedContract.ManageResults.self,

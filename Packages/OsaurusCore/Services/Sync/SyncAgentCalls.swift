@@ -333,7 +333,8 @@ final class SyncAgentCalls {
                 SyncDeviceFeedContract.CallAnswer.self,
                 prefix: SyncDeviceFeedContract.callAnswerNamespacePrefix,
                 in: conversation,
-                writtenByThatDevice: true
+                writtenByThatDevice: true,
+                signedOnly: true
             )
             for (device, answer) in byDevice where answer.callId == id {
                 found[device] = answer.outcome

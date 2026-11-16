@@ -122,7 +122,8 @@ final class SyncWorkflowActivities {
                 SyncDeviceFeedContract.PushActivities.self,
                 prefix: SyncDeviceFeedContract.pushActivityNamespacePrefix,
                 in: conversation,
-                writtenByThatDevice: true
+                writtenByThatDevice: true,
+                signedOnly: true
             )
             for (device, record) in byDevice {
                 guard let key = keys[device] else { continue }

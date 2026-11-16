@@ -151,7 +151,8 @@ final class SyncWorkflowPush {
                 SyncDeviceFeedContract.PushRegistration.self,
                 prefix: SyncDeviceFeedContract.pushRegistrationNamespacePrefix,
                 in: conversation,
-                writtenByThatDevice: true
+                writtenByThatDevice: true,
+                signedOnly: true
             )
             found += byDevice.map { ($0.key, $0.value) }
         }
